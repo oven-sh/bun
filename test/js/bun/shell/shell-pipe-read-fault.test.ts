@@ -34,6 +34,16 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            recv guarantees the streaming inner loop's mid-read
 //                            flush (`head_start` past the half-buffer cutoff)
 //                            fires in a single poll wake.
+//   SHELL_FAIL_EPOLL_WRITABLE=1 every epoll_ctl ADD asking for EPOLLOUT on a
+//                            socket this process made with socketpair() (the
+//                            child stdio pipes) fails with ENOMEM. Only writers
+//                            ask for EPOLLOUT, so this fails the child's
+//                            buffer-stdin writer's start() (the only stdio
+//                            start() whose failure is returned to the spawn
+//                            instead of reported through a callback) and
+//                            nothing else: the stdout/stderr readers poll for
+//                            EPOLLIN, and the shell's writers to the fixture's
+//                            own stdio sit on inherited fds.
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -58,6 +68,7 @@ const SHIM_C = /* c */ `
 static ssize_t (*real_recv)(int, void *, size_t, int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
 static int (*real_close)(int);
+static int (*real_socketpair)(int, int, int, int *);
 static int fail_recv = -1;
 static int fail_epoll = -1;
 static int fail_epoll_after = -1;
@@ -65,9 +76,11 @@ static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
 static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
 static int recv_bulk = -1;       /* 0 = off, N >= 1 = number of fabricated full-buffer recvs */
+static int fail_epoll_writable = -1;
 static unsigned char recv_count[MAX_FD];
 static unsigned char epoll_count[MAX_FD];
 static unsigned char bulk_count[MAX_FD];
+static unsigned char own_socketpair[MAX_FD];
 
 static void init_modes(void) {
   if (fail_recv < 0) fail_recv = getenv("SHELL_FAIL_RECV") != NULL;
@@ -83,6 +96,7 @@ static void init_modes(void) {
     const char *s = getenv("SHELL_RECV_BULK");
     recv_bulk = s ? atoi(s) : 0;
   }
+  if (fail_epoll_writable < 0) fail_epoll_writable = getenv("SHELL_FAIL_EPOLL_WRITABLE") != NULL;
 }
 
 static int is_unix_sock(int fd) {
@@ -98,6 +112,28 @@ static int is_pipe_like(int fd) {
   if (fstat(fd, &st) != 0) return 0;
   if (S_ISFIFO(st.st_mode)) return 1;
   return is_unix_sock(fd);
+}
+
+// Reset the per-fd state on close so a recycled fd number starts fresh. Bun
+// closes through syscall(SYS_close), so both close entry points land here.
+static void forget_fd(int fd) {
+  if (fd >= 0 && fd < MAX_FD) {
+    recv_count[fd] = 0;
+    epoll_count[fd] = 0;
+    bulk_count[fd] = 0;
+    own_socketpair[fd] = 0;
+  }
+}
+
+int socketpair(int domain, int type, int protocol, int sv[2]) {
+  if (!real_socketpair) real_socketpair = (int (*)(int, int, int, int *))dlsym(RTLD_NEXT, "socketpair");
+  int rc = real_socketpair(domain, type, protocol, sv);
+  if (rc == 0) {
+    for (int i = 0; i < 2; i++) {
+      if (sv[i] >= 0 && sv[i] < MAX_FD) own_socketpair[sv[i]] = 1;
+    }
+  }
+  return rc;
 }
 
 ssize_t recv(int fd, void *buf, size_t len, int flags) {
@@ -145,9 +181,16 @@ long syscall(long number, ...) {
     real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
     init_modes();
   }
+  if (number == SYS_close) forget_fd((int)a);
   if (number == SYS_epoll_ctl) {
     int op = (int)b;
     int target = (int)c;
+    const struct epoll_event *event = (const struct epoll_event *)d;
+    if (fail_epoll_writable && op == EPOLL_CTL_ADD && target >= 0 && target < MAX_FD && own_socketpair[target] &&
+        event && (event->events & EPOLLOUT)) {
+      errno = ENOMEM;
+      return -1;
+    }
     if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
       if (fail_epoll && is_pipe_like(target)) {
         errno = ENOMEM;
@@ -170,14 +213,9 @@ long syscall(long number, ...) {
   return real_syscall(number, a, b, c, d, e, f);
 }
 
-// Reset the per-fd counters on close so a recycled fd number starts fresh.
 int close(int fd) {
   if (!real_close) real_close = (int (*)(int))dlsym(RTLD_NEXT, "close");
-  if (fd >= 0 && fd < MAX_FD) {
-    recv_count[fd] = 0;
-    epoll_count[fd] = 0;
-    bulk_count[fd] = 0;
-  }
+  forget_fd(fd);
   return real_close(fd);
 }
 `;
@@ -234,6 +272,62 @@ const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.nothrow();
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+// Runs a command whose child the shell kills while tearing the command down
+// early, then reports every process still parented to this one. A child the
+// shell killed but never wait()ed for stays listed as a zombie (state "Z")
+// until this process exits, so the poll only drains once the shell has
+// actually reaped it. Reaping happens from the event loop, which is what the
+// sleep between polls yields to. The fault mode in the environment picks the
+// teardown:
+//
+//   SHELL_FAIL_EPOLL_WRITABLE fails the `< ${blob}` stdin writer's start()
+//     inside the spawn; the shell SIGTERMs the child and drops the subprocess
+//     before returning the error.
+//   SHELL_FAIL_EPOLL_AFTER + SHELL_RECV_ONE_CHUNK finish the command with the
+//     reader error while `sleep` is still running; the command's teardown
+//     SIGKILLs it.
+const REAP_FIXTURE = /* js */ `
+import { $ } from "bun";
+import { readdirSync, readFileSync } from "node:fs";
+
+function childrenOfThisProcess() {
+  const out = [];
+  for (const name of readdirSync("/proc")) {
+    if (!/^[0-9]+$/.test(name)) continue;
+    let stat;
+    try {
+      stat = readFileSync("/proc/" + name + "/stat", "utf8");
+    } catch {
+      continue; // exited between readdir and read
+    }
+    // "pid (comm) state ppid ..." -- comm is user controlled, so split after its closing paren.
+    const close = stat.lastIndexOf(")");
+    const [state, ppid] = stat.slice(close + 2).split(" ");
+    if (Number(ppid) !== process.pid) continue;
+    out.push({ comm: stat.slice(stat.indexOf("(") + 1, close), state });
+  }
+  return out;
+}
+
+const results = [];
+for (let i = 0; i < 3; i++) {
+  const r = process.env.SHELL_FAIL_EPOLL_WRITABLE
+    ? await $\`cat < \${new Blob(["never written"])}\`.quiet().nothrow()
+    : await $\`sleep 5\`.quiet().nothrow();
+  results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
+}
+
+// A reaped child disappears within a few loop ticks; a leaked zombie never does,
+// so give up well inside the test timeout and report it.
+let remaining = childrenOfThisProcess();
+const deadline = Date.now() + 3_000;
+while (remaining.length !== 0 && Date.now() < deadline) {
+  await Bun.sleep(5);
+  remaining = childrenOfThisProcess();
+}
+console.log(JSON.stringify({ results, remaining }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -246,6 +340,7 @@ beforeAll(async () => {
     "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
     "poll-chunk.js": POLL_CHUNK_FIXTURE,
     "tee-chunk.js": TEE_CHUNK_FIXTURE,
+    "reap.js": REAP_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -273,6 +368,7 @@ const MODES = [
   "SHELL_FAIL_EPOLL_AFTER",
   "SHELL_RECV_ONE_CHUNK",
   "SHELL_RECV_EAGAIN_FIRST",
+  "SHELL_FAIL_EPOLL_WRITABLE",
 ] as const;
 // Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
 const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK"] as const;
@@ -295,7 +391,10 @@ function shimEnv(
   return env;
 }
 
-async function expectShellFault(
+// Runs a fixture under the shim and returns its last stdout line (the JSON it
+// prints) along with stderr and the exit code, so one combined assertion can
+// surface a crash's stderr and exit code in the diff.
+async function runShellFaultFixture(
   script: string,
   modes: (typeof MODES)[number][],
   extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
@@ -319,8 +418,15 @@ async function expectShellFault(
   } catch {
     parsed = line;
   }
-  // One combined assertion so a crash surfaces stderr and the exit code in the diff.
-  expect({ parsed, stderr, exitCode }).toEqual({
+  return { parsed, stderr, exitCode };
+}
+
+async function expectShellFault(
+  script: string,
+  modes: (typeof MODES)[number][],
+  extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
+) {
+  expect(await runShellFaultFixture(script, modes, extraEnv)).toEqual({
     parsed: { exitCode: ENOMEM },
     stderr: expect.any(String),
     exitCode: 0,
@@ -463,6 +569,36 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
       readerStderr: "",
       exitCode: 0,
       readerExitCode: 0,
+    });
+  },
+);
+
+// Regression: both early teardowns below closed the Process (unregistering its
+// pidfd watch) right after signalling the still-running child, so nothing ever
+// wait()ed for it and every such command left a zombie behind for the life of
+// the bun process. The fixture reports those as `remaining` entries in state
+// "Z"; the `results` pin down that each command really did fail the intended
+// way, since a child that ran to completion is reaped regardless.
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell reaps the child it kills when the buffer stdin writer fails to start",
+  async () => {
+    const failed = { exitCode: 1, stderr: expect.stringContaining("Cannot allocate memory") };
+    expect(await runShellFaultFixture("reap.js", ["SHELL_FAIL_EPOLL_WRITABLE"])).toEqual({
+      parsed: { results: [failed, failed, failed], remaining: [] },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell reaps the child it kills when a pipe read error finishes the command first",
+  async () => {
+    const failed = { exitCode: ENOMEM, stderr: "" };
+    expect(await runShellFaultFixture("reap.js", ["SHELL_FAIL_EPOLL_AFTER", "SHELL_RECV_ONE_CHUNK"])).toEqual({
+      parsed: { results: [failed, failed, failed], remaining: [] },
+      stderr: "",
+      exitCode: 0,
     });
   },
 );

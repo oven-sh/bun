@@ -197,7 +197,7 @@ async function loadFromGitHub(tag: string): Promise<Source> {
   console.log(`Fetching release metadata: ${apiUrl}`);
   const headers: Record<string, string> = {
     "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
+    "X-GitHub-Api-Version": "2026-03-10",
   };
   // Authenticate when a token is available (e.g. the release workflow's
   // validate job) so the metadata call is not subject to the low

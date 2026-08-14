@@ -522,7 +522,7 @@ test(
   timeout,
 );
 
-// Regression: worker.terminate() never stopped a worker parked in
+// worker.terminate() never stopped a worker parked in
 // Atomics.wait() (sync-over-async worker pools park exactly there). JSC wakes
 // the parked thread when termination is requested, but the wake-up predicate
 // only looked at a flag the parked thread itself would have had to set, so it

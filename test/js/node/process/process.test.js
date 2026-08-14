@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, forEachLine, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -969,6 +969,101 @@ describe.concurrent(() => {
       expect(stdout).toBeEmpty();
       // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
       expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("fatal error while immediates are pending", () => {
+    // Node runs nothing after an uncaught exception or unhandled rejection that
+    // nothing handled: the process exits from the error itself. This immediate
+    // requeues itself forever; if the run loop keeps turning after the error it
+    // says so and exits 42 rather than spinning until the test times out.
+    const requeueingImmediate = `
+      let errored = false;
+      let runsAfterError = 0;
+      setImmediate(function again() {
+        if (errored && ++runsAfterError === 50) {
+          console.log("immediates still running after the error");
+          process.exit(42);
+        }
+        setImmediate(again);
+      });`;
+
+    it("an uncaught exception exits 1 instead of being kept alive by a requeueing setImmediate", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${requeueingImmediate}
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { errored = true; throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("an unhandled rejection exits 1 instead of being kept alive by a requeueing setImmediate", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${requeueingImmediate}
+           setTimeout(() => { errored = true; Promise.reject(new Error("boom")); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("an unhandled rejection from a beforeExit listener exits 1 instead of being kept alive by a requeueing setImmediate", async () => {
+      // Same thing for the drain that follows 'beforeExit', which is a second
+      // run loop of its own.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.once("beforeExit", () => {
+             ${requeueingImmediate}
+             errored = true;
+             Promise.reject(new Error("boom"));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it.each(["--hot", "--watch"])("%s still runs the immediates after the error", async flag => {
+      // The watcher modes print the error and keep the process alive for the
+      // next reload instead of exiting on it, so what was running keeps running.
+      using dir = tempDir("process-fatal-immediates", {
+        "index.js": `${requeueingImmediate}
+          setTimeout(() => { errored = true; throw new Error("boom"); }, 1);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "index.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stderr = proc.stderr.text();
+      const { value: firstLine } = await forEachLine(proc.stdout).next();
+      proc.kill();
+      await proc.exited;
+      expect(firstLine).toBe("immediates still running after the error");
+      expect(await stderr).toInclude("error: boom");
     });
   });
 

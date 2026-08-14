@@ -1203,6 +1203,13 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
+        // An error nothing in script handled ends the run (node exits from the
+        // error itself): pending immediates must not keep it turning any more
+        // than pending timers or I/O do. `--hot`/`--watch` count such errors too
+        // but keep running until the next reload; for them the terms below decide.
+        if self.unhandled_error_counter > 0 && !self.is_watcher_enabled() {
+            return false;
+        }
         let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()

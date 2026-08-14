@@ -669,13 +669,14 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Path to a dep's source tree. Does NOT handle in-tree sources — use
- * the per-dep `srcDir` computed in resolveDep() for that.
- * Both "github-archive" and "local" sources live here — the difference is
- * whether WE manage it (fetch + .ref stamp) or the USER manages it.
+ * Path to a dep's source tree: its `--local-deps` checkout if redirected,
+ * else vendor/<name>/. Cross-dep references (lsquic's -I into boringssl,
+ * boringssl's nasm -I) go through here so they follow a redirect too. Does
+ * NOT handle in-tree sources or WebKit's $BUN_WEBKIT_PATH — use the per-dep
+ * `srcDir` computed in resolveDep() for those.
  */
 export function depSourceDir(cfg: Config, name: string): string {
-  return resolve(cfg.vendorDir, name);
+  return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
 /**

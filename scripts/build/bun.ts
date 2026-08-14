@@ -1168,5 +1168,16 @@ export function validateBunConfig(cfg: Config): void {
       `--local-deps: ${name} is disabled for ${cfg.os}-${cfg.arch}${cfg.abi ? `-${cfg.abi}` : ""} in this configuration, so the checkout at ${path} would never be built`,
       { hint: `Drop ${name} from --local-deps, or build a target/config where its \`enabled\` predicate holds` },
     );
+    // A dep the graph fetches but never reads (no build step, no sources, no
+    // includes — lolhtml, which cargo consumes through the workspace
+    // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
+    const provides = dep.provides(cfg);
+    assert(
+      dep.build(cfg).kind !== "none" || (provides.sources ?? []).length > 0 || provides.includes.length > 0,
+      `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
+      {
+        hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,
+      },
+    );
   }
 }

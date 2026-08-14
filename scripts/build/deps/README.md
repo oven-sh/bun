@@ -58,18 +58,21 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github-archive` dep can be redirected; several at once with
-`name=path,name=path`. The checkout is compiled as-is — no fetch, no `.ref`
-stamp, and the dep's `patches` are **not** applied (they target the pinned
-tarball), so start the clone from the pinned commit if you want an identical
-baseline. Switching a dep between pinned and local moves its `-I` path, so
-the first build after the switch recompiles every TU that sees the dep's
-headers; after that, edits are picked up incrementally: `direct` deps
-through the compiler depfiles, `nested-cmake`/`cargo` deps by re-invoking
-their inner build every run. The build banner shows `local:<name>` while
-this is on.
-Don't edit `vendor/<name>/` in place instead — it is wiped whenever the pin
-or patches change. WebKit has its own switch (`--webkit=local`).
+Any `github-archive` dep the graph compiles or includes can be redirected
+(so not lolhtml, which cargo reads from `vendor/lolhtml` via the workspace
+`Cargo.toml` — point that path at your checkout instead); several at once
+with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
+lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
+as-is — no fetch, no `.ref` stamp, and the dep's `patches` are **not**
+applied (they target the pinned tarball), so start the clone from the pinned
+commit if you want an identical baseline. Switching a dep between pinned and
+local moves its `-I` path, so the first build after the switch recompiles
+every TU that sees the dep's headers; after that, edits are picked up
+incrementally: `direct` deps through the compiler depfiles,
+`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
+build banner shows `local:<name>` while this is on. Don't edit
+`vendor/<name>/` in place instead — it is wiped whenever the pin or patches
+change. WebKit has its own switch (`--webkit=local`).
 
 ## Common fields
 

@@ -4583,6 +4583,22 @@ console.log(foo, array);
       const result = await transpiler.transform(input);
       expect(result).toBe(`let list = [\"\\u2022\", \"-\", \"\\u25E6\", \"\\u25AA\", \"\\u25AB\"];\n`);
     });
+
+    // The bun target still escapes string literals (that is invisible to the
+    // program), but regex literals and tagged template raw text are observable
+    // through RegExp#source and .raw, so they are printed verbatim.
+    // https://github.com/oven-sh/bun/issues/18115
+    it("bun target keeps regex literals and raw template text verbatim", async () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "js",
+        target: "bun",
+      });
+
+      const input = 'const re = /café-中-🐰/u;\nconst raw = String.raw`é中🐰\\n`;\nconst str = "é中🐰";\n';
+      const expected = 'const re = /café-中-🐰/u, raw = String.raw`é中🐰\\n`, str = "\\xE9\\u4E2D\\uD83D\\uDC30";\n';
+      expect(transpiler.transformSync(input)).toBe(expected);
+      expect(await transpiler.transform(input)).toBe(expected);
+    });
   });
 
   describe("edge cases", () => {

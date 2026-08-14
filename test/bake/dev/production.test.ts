@@ -166,6 +166,33 @@ export default function IndexPage() {
     expect(indexHtml).toContain(`<div id="probe">© café-中-🐰|11</div>`);
   });
 
+  // Same handoff, for the text the printer used to escape: the server chunks
+  // are printed for the Bun target, so this pins that regex and raw template
+  // text reach the prerendered page as written.
+  test("non-ASCII regex and tagged template text survives prerendering", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-non-ascii-verbatim", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+const re = /café-中-🐰/u;
+const raw = String.raw\`é中🐰\\n\`;
+
+export default function IndexPage() {
+  return <div id="probe">{[re.source, re.source.length, raw, raw.length].join("|")}</div>;
+}
+`,
+    });
+
+    const build = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(build.stderr.toString()).not.toContain("error");
+    expect(build.exitCode).toBe(0);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(indexHtml).toContain(`<div id="probe">café-中-🐰|9|é中🐰\\n|6</div>`);
+  });
+
   test("import.meta properties are inlined in catch-all routes during production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
       "src/index.tsx": `export default { 

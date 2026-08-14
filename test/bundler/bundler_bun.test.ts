@@ -38,6 +38,32 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // Regex literals and tagged template raw text are printed verbatim (UTF-8), so
+  // the .jsc sidecar's SourceCodeKey has to be computed from the same decoding
+  // the loader uses; otherwise JSC silently ignores the bytecode. (ESM bytecode
+  // only exists with --compile; see bundler_compile.test.ts for both formats.)
+  itBundled("bun/BytecodeSidecarNonAsciiRegexAndRawTemplate", {
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        const r = /café-中-🐰/u;
+        const raw = String.raw\`é中🐰\`;
+        console.log(JSON.stringify([r.source, r.source.length, raw, raw.length]));
+      `,
+    },
+    run: {
+      stdout: JSON.stringify(["café-中-🐰", "café-中-🐰".length, "é中🐰", "é中🐰".length]),
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+      validate({ stderr }) {
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+      },
+    },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",
@@ -125,6 +151,71 @@ describe("bundler", () => {
 error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:6:19");
+      },
+    },
+  });
+  // The regex and raw template text make the bundle non-ASCII, so the runtime
+  // holds it as a 16-bit string: the error preview is rendered from that
+  // string and, with --sourcemap=inline, the sourceMappingURL comment is
+  // located in it. Apart from the text itself, the output below is identical
+  // to what the ASCII version of this file produces.
+  const nonAsciiThrowFixture = /* js */ `
+    // this file has comments and weird whitespace, intentionally
+    // to make it obvious if sourcemaps were generated and mapped properly
+    const marker = /café-中-🐰/u;
+    if           (marker.test("café-中-🐰")) code();
+    function code() {
+      // hello world
+      throw new class Boom extends Error {
+        constructor() {
+          super(String.raw\`Hello 🐰\`);
+        }
+      }();
+    }
+  `;
+  itBundled("bun/TargetBunNoSourcemapNonAsciiPreview", {
+    target: "bun",
+    files: { "/entry.ts": nonAsciiThrowFixture },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        // The regex text is shown as written while the string literal next to
+        // it is still escaped. Context-line labels are not asserted: they are
+        // off by one for bundled modules today, independently of this change.
+        expect(stderr).toInclude("| var marker = /café-中-🐰/u;\n");
+        expect(stderr).toInclude('| if (marker.test("caf\\xE9-\\u4E2D-\\uD83D\\uDC30"))\n');
+        expect(stderr).toInclude(
+          `7 |   throw new class Boom extends Error {
+            ^
+error: Hello 🐰
+`,
+        );
+        expect(stderr).toMatch(/at code \(.*out\.js:7:9\)\n/);
+        expect(stderr).toInclude("\nnote: missing sourcemaps for ");
+      },
+    },
+  });
+  itBundled("bun/TargetBunSourcemapInlineNonAscii", {
+    target: "bun",
+    files: { "/entry.ts": nonAsciiThrowFixture },
+    sourceMap: "inline",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toStartWith(
+          `2 | // to make it obvious if sourcemaps were generated and mapped properly
+3 | const marker = /café-中-🐰/u;
+4 | if           (marker.test("café-中-🐰")) code();
+5 | function code() {
+6 |   // hello world
+7 |   throw new class Boom extends Error {
+            ^
+error: Hello 🐰
+`,
+        );
+        expect(stderr).toInclude("entry.ts:7:9");
+        expect(stderr).toInclude("entry.ts:4:41");
+        expect(stderr).not.toInclude("missing sourcemaps");
       },
     },
   });

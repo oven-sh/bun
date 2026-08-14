@@ -228,6 +228,22 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test(".load of a file with an ill-formed byte inside a regex evaluates it with U+FFFD", async () => {
+      // Regex text now reaches the evaluator as written too (it used to be
+      // escaped to the six characters \\uFFFD), so the same decoding applies.
+      using dir = tempDir("repl-load-ill-formed-regex", {
+        "bad.js": Buffer.concat([Buffer.from("var badRegex = /a"), Buffer.from([0xe9]), Buffer.from("b/;\n")]),
+      });
+      const filePath = path.join(String(dir), "bad.js");
+      const { stdout, exitCode } = await runRepl([
+        `.load ${filePath}`,
+        "JSON.stringify([badRegex.source.length, badRegex.source.codePointAt(1)])",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("[3,65533]");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load with nonexistent file shows error", async () => {
       // Use a relative path so Windows doesn't choke on forward-slash absolute paths (EINVAL).
       const { stdout, stderr, exitCode } = await runRepl([
@@ -831,6 +847,21 @@ describe.concurrent("Bun REPL", () => {
     test("--print works like -p", async () => {
       const { stdout, exitCode } = await runReplWith(["--print", "2 * 3"]);
       expect(stdout).toBe("6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The REPL transpiles its input like the runtime does; regex literals and
+    // tagged template raw text must reach the program unescaped.
+    // https://github.com/oven-sh/bun/issues/18115
+    test("-e keeps non-ASCII regex source and raw template text", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "console.log(JSON.stringify([/é/.source, String.raw`中🐰`, String(/café/u)]))",
+      ]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify(["é", "中🐰", "/café/u"]) + "\n",
+        stderr: "",
+      });
       expect(exitCode).toBe(0);
     });
 

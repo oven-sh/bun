@@ -1202,12 +1202,14 @@ impl VirtualMachine {
                 > 0)
     }
 
+    /// An error nothing in script handled was reported and ends this run.
+    /// `--hot`/`--watch` report such errors too but run on until the next reload.
+    pub fn has_fatal_unhandled_error(&self) -> bool {
+        self.unhandled_error_counter > 0 && !self.is_watcher_enabled()
+    }
+
     pub fn is_event_loop_alive(&self) -> bool {
-        // An error nothing in script handled ends the run (node exits from the
-        // error itself): pending immediates must not keep it turning any more
-        // than pending timers or I/O do. `--hot`/`--watch` count such errors too
-        // but keep running until the next reload; for them the terms below decide.
-        if self.unhandled_error_counter > 0 && !self.is_watcher_enabled() {
+        if self.has_fatal_unhandled_error() {
             return false;
         }
         let el = self.event_loop_shared();

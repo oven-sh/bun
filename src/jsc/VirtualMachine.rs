@@ -155,6 +155,10 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
+    /// The entry point as it was launched; `main` may later be replaced by
+    /// the resolver's path for the same file (extension added, symlinks
+    /// followed). Same storage contract as `main`.
+    entry_path: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
@@ -2414,6 +2418,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).entry_path).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -2578,11 +2583,18 @@ impl VirtualMachine {
         self.main.slice()
     }
 
+    /// See the `entry_path` field.
+    #[inline]
+    pub fn entry_path(&self) -> &[u8] {
+        self.entry_path.slice()
+    }
+
     /// Set the entry-point path. Caller guarantees `path`'s storage outlives
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+        self.entry_path = self.main;
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -4479,7 +4491,7 @@ impl VirtualMachine {
         // resolver follows symlinks unless told not to), so `is_main`,
         // `Bun.main` and `import.meta.main` agree with the loaded module.
         if is_entry_point && ret.path != self.main() {
-            self.set_main(ret.path);
+            self.main = bun_ptr::RawSlice::new(ret.path);
             self.main_hash = bun_watcher::Watcher::get_hash(ret.path);
             self.main_resolved_path.deref();
             self.main_resolved_path = bun_core::String::empty();

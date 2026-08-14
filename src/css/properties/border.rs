@@ -1260,13 +1260,10 @@ mod border_handler_body {
                 }};
             }
 
-            // `border-width` / `border-style` / `border-color` set all four physical sides,
-            // so the buffered logical values of that component are dead in every writing
-            // mode, except for a target that rejects the whole declaration (same condition
-            // as the fallback flush in `flush_helper!`). They have to go before the first
-            // `property_helper!`: if the buffer holds logical values, it flushes them, and
-            // when logical properties are compiled away the inline sides come out as
-            // `:lang()` rules after this block, where they would win over the shorthand.
+            // A 4-side shorthand overrides the logical values of its component in every
+            // writing mode, so drop them before `property_helper!` flushes the buffer.
+            // A target that rejects the shorthand still applies them: keep those as
+            // fallbacks, the same way `flush_helper!` does for physical values.
             macro_rules! rect_shorthand_helper {
                 ($prop:ident, $val:expr) => {{
                     let rejected_by_a_target = match context.targets.browsers {

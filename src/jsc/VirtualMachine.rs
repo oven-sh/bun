@@ -4977,6 +4977,10 @@ impl VirtualMachine {
                 return bun_sys::Result::Err(err);
             }
         };
+        // Stored exactly as `getcwd` returned it (no trailing separator), the same
+        // shape `FileSystem::init` stores at startup. `getcwd` returns at most
+        // `MAX_PATH_BYTES - 1` bytes, so the NUL always fits; a separator plus the
+        // NUL would not.
         fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
         fs.top_level_dir_buf[into_cwd_len] = 0;
         // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
@@ -4984,14 +4988,6 @@ impl VirtualMachine {
         // backing storage.
         fs.top_level_dir =
             unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
-        let len = fs.top_level_dir.len();
-        if fs.top_level_dir_buf[len - 1] != bun_paths::SEP {
-            fs.top_level_dir_buf[len] = bun_paths::SEP;
-            fs.top_level_dir_buf[len + 1] = 0;
-            // SAFETY: see above.
-            fs.top_level_dir =
-                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
-        }
         bun_core::set_top_level_dir(fs.top_level_dir);
         Ok(())
     }

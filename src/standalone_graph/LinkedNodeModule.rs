@@ -2,7 +2,8 @@
 //! performs during `bun build --compile` on Windows. The build step adds each
 //! addon to bun.exe as an RW section rebased to bun.exe's preferred image base,
 //! and records per addon in a `.bunL` section: its span, relocation blocks,
-//! imports, `.pdata` and the export RVAs `process.dlopen` needs.
+//! imports, displaced exception handlers and the export RVAs `process.dlopen`
+//! needs.
 //!
 //! `process.dlopen("B:/~BUN/...")` looks the path up here; if the addon was
 //! merged, this module finishes the link and hands its exports to BunProcess.cpp:
@@ -14,12 +15,10 @@
 //!      `FlushInstructionCache`
 //!   4. call the addon's `DllMain(DLL_PROCESS_ATTACH)`
 //!
-//! Unwind tables need no runtime step: Windows only consults the exception
-//! directory of the image containing a pc (`RtlAddFunctionTable` tables are for
-//! code outside every image), so the build merged the addon's entries into
-//! bun.exe's directory and pointed every exception handler they name at
-//! `Bun__linkedAddonExceptionHandler`, which gives the real handler the addon's
-//! own image base and function entry, as it would have had under `LoadLibrary`.
+//! Unwinding needs no runtime step: the build merged the addon's unwind tables
+//! into bun.exe's exception directory, the only table Windows consults for a pc
+//! inside the exe image, and routed their exception handlers through
+//! `Bun__linkedAddonExceptionHandler` below.
 //!
 //! Addons with real `__declspec(thread)` storage are never merged: no userspace
 //! API hands out a loader TLS slot. Neither are addons importing
@@ -44,6 +43,7 @@ use bun_exe_format::pe::{
     Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_INDEX_ENTRY_SIZE,
     LINKED_MAGIC, LINKED_VERSION,
 };
+use bun_sys::windows::disposition::ExceptionContinueSearch;
 use bun_threading::Mutex;
 use bun_windows_sys::externs::kernel32;
 
@@ -658,7 +658,6 @@ pub struct DispatcherContext {
 type ExceptionRoutine =
     unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void, *mut DispatcherContext) -> i32;
 
-const EXCEPTION_CONTINUE_SEARCH: i32 = 1;
 /// Words in an exception-directory entry: x64 RUNTIME_FUNCTION or ARM64's begin + unwind pair.
 const FUNCTION_ENTRY_WORDS: usize = if cfg!(target_arch = "aarch64") { 2 } else { 3 };
 
@@ -708,13 +707,10 @@ fn find_redirect(unwind_info: u32) -> Option<Redirect> {
     None
 }
 
-/// Exported from bun.exe and installed by the build as the exception handler of every merged
-/// unwind info. Windows resolved this frame against bun.exe, so before forwarding to the addon's
-/// real handler, present the dispatch the way `LoadLibrary` would have: the addon's own image base
-/// and its function entry in addon-relative terms, which is what the handler's data refers to.
-///
-/// Runs during exception dispatch on any thread, possibly while `LOCK` is held by this thread, so
-/// it reads only the immutable blob.
+/// The exception handler the build installed in every merged unwind info (see `pe.rs`). Forwards to
+/// the handler it displaced, with `ImageBase` and `FunctionEntry` expressed in the addon's own
+/// terms as they would be under `LoadLibrary`: the handler's scope tables hold addon-relative RVAs.
+/// Runs during dispatch on any thread, possibly with `LOCK` held, so it reads only the blob.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
     record: *mut c_void,
@@ -722,9 +718,8 @@ pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
     context: *mut c_void,
     dispatcher: *mut DispatcherContext,
 ) -> i32 {
-    // SAFETY: Windows passes a valid DISPATCHER_CONTEXT whose FunctionEntry is the entry from the
-    // exe's exception directory (or a chained entry inside the addon) that led here; both hold
-    // FUNCTION_ENTRY_WORDS words of bun.exe RVAs.
+    // SAFETY: Windows passes a valid DISPATCHER_CONTEXT whose FunctionEntry holds
+    // FUNCTION_ENTRY_WORDS words of RVAs relative to its ImageBase.
     let (os_image_base, os_entry) =
         unsafe { ((*dispatcher).image_base, (*dispatcher).function_entry) };
     let mut entry = [0u32; FUNCTION_ENTRY_WORDS];
@@ -732,27 +727,35 @@ pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
         // SAFETY: as above.
         *word = unsafe { os_entry.add(i).read_unaligned() };
     }
-    let Some(redirect) = find_redirect(entry[FUNCTION_ENTRY_WORDS - 1]) else {
-        return EXCEPTION_CONTINUE_SEARCH;
+    // SAFETY: kernel32 call with null (self) module name.
+    let exe_base = unsafe { kernel32::GetModuleHandleW(core::ptr::null()) } as u64;
+    // ImageBase is bun.exe's on a fresh dispatch. When an unwind collides with one in progress,
+    // Windows re-dispatches with a copy of the context an earlier call here had already rewritten.
+    let unwind_info = os_image_base
+        .wrapping_add(entry[FUNCTION_ENTRY_WORDS - 1] as u64)
+        .wrapping_sub(exe_base);
+    let Some(redirect) = u32::try_from(unwind_info).ok().and_then(find_redirect) else {
+        return ExceptionContinueSearch;
     };
+    // SAFETY: the build recorded `handler` as the bun.exe RVA of the addon's original handler.
+    let handler: ExceptionRoutine =
+        unsafe { core::mem::transmute(exe_base as usize + redirect.handler as usize) };
+    let addon_base = exe_base + redirect.rva_base as u64;
+    if os_image_base == addon_base {
+        // SAFETY: the re-dispatched context is already in the addon's terms; forward it unchanged.
+        return unsafe { handler(record, frame, context, dispatcher) };
+    }
     for word in &mut entry {
         *word = word.wrapping_sub(redirect.rva_base);
     }
-    // SAFETY: the build recorded `handler` as the bun.exe RVA of the addon's original handler.
-    let handler: ExceptionRoutine =
-        unsafe { core::mem::transmute(os_image_base as usize + redirect.handler as usize) };
-    // SAFETY: `dispatcher` is valid for the duration of this call (see above); `entry` outlives the
-    // handler call and is unhooked again below unless the handler replaced the context wholesale.
+    // SAFETY: `dispatcher` is valid for the duration of this call; `entry` outlives the handler call
+    // and is unhooked again before it goes out of scope.
     unsafe {
-        (*dispatcher).image_base = os_image_base + redirect.rva_base as u64;
+        (*dispatcher).image_base = addon_base;
         (*dispatcher).function_entry = entry.as_mut_ptr();
         let disposition = handler(record, frame, context, dispatcher);
-        // ExceptionNestedException / ExceptionCollidedUnwind hand Windows a context the handler
-        // filled in itself; for the other dispositions put ours back.
-        if disposition == 0 || disposition == EXCEPTION_CONTINUE_SEARCH {
-            (*dispatcher).image_base = os_image_base;
-            (*dispatcher).function_entry = os_entry;
-        }
+        (*dispatcher).image_base = os_image_base;
+        (*dispatcher).function_entry = os_entry;
         disposition
     }
 }

@@ -1,9 +1,11 @@
 // Exercises the addon's own unwind tables. On Windows both SEH dispatch and
 // longjmp (which MSVC implements with RtlUnwindEx) need the OS to find unwind
-// info for every addon frame they cross, which is what `bun build --compile`
-// has to preserve when it statically merges this .node file into the exe
-// (see test/napi/napi-app/unwind-fixture.js). Must stay plain C: C++ addons
-// are never merged.
+// info for every addon frame they cross and to reach the __except/__finally
+// handlers it names, which is what `bun build --compile` has to preserve when
+// it statically merges this .node file into the exe (see
+// test/napi/napi-app/unwind-fixture.js). Plain C on purpose: an addon that
+// imports _CxxThrowException (any C++ throw) is left out of the merge, and the
+// --compile test needs this one merged.
 
 #include <node_api.h>
 #include <setjmp.h>
@@ -116,6 +118,51 @@ static napi_value longjmp_depth(napi_env env, napi_callback_info info) {
   return make_string(env, message);
 }
 
+#ifdef _MSC_VER
+
+static jmp_buf first_target;
+static jmp_buf second_target;
+static volatile int finally_order;
+
+// The first longjmp unwinds through both __finally blocks. The inner one
+// starts a second unwind while the first is still running this frame's
+// handler (a "collided unwind"), which Windows completes by invoking the
+// handler again, resuming after the inner block. The outer block therefore
+// only runs if that second invocation reaches the addon's handler too.
+static NOINLINE void nested_finally(void) {
+  __try {
+    __try {
+      longjmp(first_target, 1);
+    } __finally {
+      finally_order = finally_order * 10 + 1;
+      longjmp(second_target, 1);
+    }
+  } __finally {
+    finally_order = finally_order * 10 + 2;
+  }
+}
+
+#endif
+
+static napi_value collided_unwind(napi_env env, napi_callback_info info) {
+  (void)info;
+#ifdef _MSC_VER
+  char message[64];
+  finally_order = 0;
+  if (setjmp(first_target) != 0) {
+    return make_string(env, "finally: first longjmp completed");
+  }
+  if (setjmp(second_target) == 0) {
+    nested_finally();
+    return make_string(env, "finally: fell through");
+  }
+  snprintf(message, sizeof message, "finally: %d", finally_order);
+  return make_string(env, message);
+#else
+  return make_string(env, "finally: unsupported");
+#endif
+}
+
 /* napi_value */ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_value seh_catch_function;
   NODE_API_CALL(env,
@@ -130,5 +177,12 @@ static napi_value longjmp_depth(napi_env env, napi_callback_info info) {
                                           &longjmp_depth_function));
   NODE_API_CALL(env, napi_set_named_property(env, exports, "longjmp_depth",
                                              longjmp_depth_function));
+
+  napi_value collided_unwind_function;
+  NODE_API_CALL(env, napi_create_function(env, "collided_unwind",
+                                          NAPI_AUTO_LENGTH, collided_unwind,
+                                          NULL, &collided_unwind_function));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "collided_unwind",
+                                             collided_unwind_function));
   return exports;
 }

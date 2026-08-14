@@ -4,6 +4,7 @@
 use core::mem::{offset_of, size_of};
 use core::ptr;
 use core::slice;
+use std::collections::BTreeMap;
 
 // New error types for PE manipulation
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -229,8 +230,7 @@ fn function_table_entry_size(machine: u16) -> usize {
     }
 }
 
-/// Exported by bun.exe (src/symbols.def). Every exception handler named by a merged addon's
-/// unwind info is replaced with this; `LinkedNodeModule.rs` forwards to the real one.
+/// bun.exe export (src/symbols.def) that replaces every handler a merged addon's unwind infos name.
 pub const LINKED_ADDON_EXCEPTION_HANDLER: &[u8] = b"Bun__linkedAddonExceptionHandler";
 
 // Safe access helpers for unaligned views.
@@ -728,18 +728,17 @@ pub struct LinkedAddon {
     /// The addon's `IMAGE_BASE_RELOCATION` blocks, page RVAs rebased.
     pub relocs: Vec<u8>,
     pub imports: Vec<LinkedImportLib>,
-    /// The addon's exception-directory entries rebased to bun.exe RVAs; `add_linked_addon_section`
-    /// appends them to bun.exe's own directory, which is the only table Windows consults for code
-    /// inside the exe image.
+    /// The addon's exception-directory entries rebased to bun.exe RVAs.
     pub function_table: Vec<u8>,
-    /// Sorted by `unwind_info`. The unwind infos in the image now name the exported trampoline.
+    /// Sorted by `unwind_info`.
     pub handlers: Vec<HandlerRedirect>,
     /// Export RVAs, zero when the addon does not export the symbol.
     pub export_register: u32, // napi_register_module_v1
     pub export_api_version: u32, // node_api_module_get_api_version_v1
 }
 
-/// Where an unwind info's original exception handler went, both as bun.exe RVAs.
+/// The exception handler an unwind info (or the chain it starts) named before the build replaced it
+/// with the trampoline. Both are bun.exe RVAs.
 #[derive(Copy, Clone)]
 pub struct HandlerRedirect {
     pub unwind_info: u32,
@@ -937,9 +936,8 @@ fn read_u64_le(b: &[u8], off: usize) -> u64 {
 }
 
 impl PEFile {
-    /// `exception_handler` is this image's `LINKED_ADDON_EXCEPTION_HANDLER` export (0 if absent, which
-    /// rules out addons whose code has exception handlers).
-    /// `Ok(None)`: not merged (malformed, or unsupported per LinkedNodeModule.rs); tempfile fallback.
+    /// `Ok(None)`: not merged (malformed or unsupported, see LinkedNodeModule.rs); the addon then
+    /// takes the tempfile path. `exception_handler`: RVA of `LINKED_ADDON_EXCEPTION_HANDLER`, or 0.
     pub fn add_linked_addon(
         &mut self,
         addon_bytes: &[u8],
@@ -1085,9 +1083,8 @@ impl PEFile {
         found
     }
 
-    /// Appends `.bunL`: `[u64 len][blob]` (see `serialize_linked_addons`) followed by the exe's
+    /// Appends `.bunL`: `[u64 len][blob]` (see `serialize_linked_addons`), then a copy of the exe's
     /// exception directory with the addons' entries appended, which the directory is re-pointed at.
-    /// Call after the addons and before `add_bun_section`.
     pub fn add_linked_addon_section(&mut self, addons: &[LinkedAddon]) -> Result<(), Error> {
         // SAFETY: pointers from get_pe_header/get_optional_header are bounds-checked into self.data.
         let (machine, file_alignment) = unsafe {
@@ -1106,14 +1103,13 @@ impl PEFile {
         payload.extend_from_slice(&blob);
 
         let mut table = self.host_function_table(machine)?;
-        let host_entries = table.len();
+        let host_table_len = table.len();
         let entry_size = function_table_entry_size(machine);
         for a in addons {
             if a.function_table.is_empty() {
                 continue;
             }
-            // Each addon lies above everything merged before it, so appending keeps the table sorted;
-            // a table that is not would break bun.exe's own unwinding, hence the check.
+            // Windows binary-searches the directory: appending is only valid above its last entry.
             if table.len() >= entry_size
                 && read_u32_le(&a.function_table, 0)
                     <= read_u32_le(&table, table.len() - entry_size)
@@ -1123,7 +1119,7 @@ impl PEFile {
             table.extend_from_slice(&a.function_table);
         }
         let mut directory = None;
-        if table.len() > host_entries {
+        if table.len() > host_table_len {
             while payload.len() % 4 != 0 {
                 payload.push(0);
             }
@@ -1532,8 +1528,7 @@ fn scan_exports(view: &AddonView, mut f: impl FnMut(&[u8], u32)) {
 }
 
 /// Rebases the addon's exception-directory entries to bun.exe RVAs and rewrites the unwind infos
-/// they reference (chained entries rebased, exception handlers redirected to `trampoline`).
-/// `None`: malformed, or the addon needs handlers and there is no trampoline; do not merge.
+/// they name (chained entries rebased, handlers redirected to `trampoline`). `None`: do not merge.
 fn collect_function_table(
     addon: &AddonView,
     image: &mut [u8],
@@ -1554,8 +1549,7 @@ fn collect_function_table(
     let mut patcher = UnwindPatcher {
         rva_base,
         trampoline,
-        handlers: Vec::new(),
-        patched: Vec::new(),
+        visited: BTreeMap::new(),
     };
     let mut table: Vec<u8> = Vec::with_capacity(dir.size as usize);
     let mut previous_begin: Option<u32> = None;
@@ -1579,61 +1573,65 @@ fn collect_function_table(
         } else {
             let function_end = read_u32_le(image, off + 4);
             let unwind = read_u32_le(image, off + 8);
-            // Bit 0 marks an indirect entry (UnwindData names another RUNTIME_FUNCTION): unused by
-            // current toolchains, so not supported rather than reasoned about.
+            // Bit 0: indirect entry (UnwindData names a RUNTIME_FUNCTION); toolchains emit none.
             if function_end <= begin || function_end > image.len() as u32 || unwind & 1 != 0 {
                 return None;
             }
-            patcher.patch_x64(image, unwind)?;
+            patcher.patch_x64(image, unwind, 0)?;
             table.extend_from_slice(&(function_end + rva_base).to_le_bytes());
             table.extend_from_slice(&(unwind + rva_base).to_le_bytes());
         }
     }
-    patcher.handlers.sort_unstable_by_key(|h| h.unwind_info);
-    Some((table, patcher.handlers))
+    Some((table, patcher.into_redirects()))
 }
+
+/// ntdll gives up unwinding a frame after following this many chained unwind infos.
+const UNWIND_CHAIN_LIMIT: u32 = 32;
 
 struct UnwindPatcher {
     rva_base: u32,
     trampoline: u32,
-    handlers: Vec<HandlerRedirect>,
-    /// Addon RVAs of the unwind infos already rewritten (many entries share one), kept sorted.
-    patched: Vec<u32>,
+    /// Addon RVA of each unwind info rewritten so far (what a table entry, and so the trampoline's
+    /// `DISPATCHER_CONTEXT.FunctionEntry`, names it by) and the handler its chain ends in.
+    visited: BTreeMap<u32, Option<u32>>,
 }
 
 impl UnwindPatcher {
-    /// True if `unwind_rva` was already handled; otherwise records it.
-    fn seen(&mut self, unwind_rva: u32) -> bool {
-        match self.patched.binary_search(&unwind_rva) {
-            Ok(_) => true,
-            Err(i) => {
-                self.patched.insert(i, unwind_rva);
-                false
-            }
-        }
+    /// Sorted by `unwind_info`, as `LinkedNodeModule.rs` binary-searches them.
+    fn into_redirects(self) -> Vec<HandlerRedirect> {
+        self.visited
+            .into_iter()
+            .filter_map(|(unwind_info, handler)| {
+                Some(HandlerRedirect {
+                    unwind_info: unwind_info + self.rva_base,
+                    handler: handler? + self.rva_base,
+                })
+            })
+            .collect()
     }
 
-    fn redirect(&mut self, image: &mut [u8], field: usize, unwind_rva: u32) -> Option<()> {
+    /// Points the handler RVA stored at `field` at the trampoline; returns the displaced handler.
+    fn redirect(&mut self, image: &mut [u8], field: usize) -> Option<u32> {
         let handler = read_u32_le(image.get(field..field + 4)?, 0);
         if handler >= image.len() as u32 || self.trampoline == 0 {
             return None;
         }
-        self.handlers.push(HandlerRedirect {
-            unwind_info: unwind_rva + self.rva_base,
-            handler: handler + self.rva_base,
-        });
         image[field..field + 4].copy_from_slice(&self.trampoline.to_le_bytes());
-        Some(())
+        Some(handler)
     }
 
     /// x64 UNWIND_INFO: version:3/flags:5, prolog size, code count, frame register, then the codes
     /// (padded to an even count), then either the chained RUNTIME_FUNCTION or the handler RVA.
-    fn patch_x64(&mut self, image: &mut [u8], unwind_rva: u32) -> Option<()> {
+    /// Returns the handler the chain starting here ends in; `None` if the data is malformed.
+    fn patch_x64(&mut self, image: &mut [u8], unwind_rva: u32, depth: u32) -> Option<Option<u32>> {
         const UNW_FLAG_EHANDLER: u8 = 1;
         const UNW_FLAG_UHANDLER: u8 = 2;
         const UNW_FLAG_CHAININFO: u8 = 4;
-        if self.seen(unwind_rva) {
-            return Some(());
+        if let Some(&handler) = self.visited.get(&unwind_rva) {
+            return Some(handler);
+        }
+        if depth > UNWIND_CHAIN_LIMIT {
+            return None;
         }
         let at = unwind_rva as usize;
         let head = image.get(at..at + 4)?;
@@ -1642,7 +1640,7 @@ impl UnwindPatcher {
             return None;
         }
         let tail = at + 4 + (code_count + (code_count & 1)) * 2;
-        if flags & UNW_FLAG_CHAININFO != 0 {
+        let handler = if flags & UNW_FLAG_CHAININFO != 0 {
             let chained = image.get(tail..tail + 12)?;
             let (begin, end, unwind) = (
                 read_u32_le(chained, 0),
@@ -1652,21 +1650,25 @@ impl UnwindPatcher {
             if end <= begin || end > image.len() as u32 || unwind & 1 != 0 {
                 return None;
             }
-            self.patch_x64(image, unwind)?;
+            let handler = self.patch_x64(image, unwind, depth + 1)?;
             for (i, value) in [begin, end, unwind].into_iter().enumerate() {
                 let field = tail + i * 4;
                 image[field..field + 4].copy_from_slice(&(value + self.rva_base).to_le_bytes());
             }
+            handler
         } else if flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER) != 0 {
-            self.redirect(image, tail, unwind_rva)?;
-        }
-        Some(())
+            Some(self.redirect(image, tail)?)
+        } else {
+            None
+        };
+        self.visited.insert(unwind_rva, handler);
+        Some(handler)
     }
 
     /// ARM64 .xdata: header word (X at bit 20, E at bit 21, epilog count and code words above),
     /// optional extension word, epilog scopes unless E, the code words, then the handler RVA if X.
     fn patch_arm64(&mut self, image: &mut [u8], xdata_rva: u32) -> Option<()> {
-        if self.seen(xdata_rva) {
+        if self.visited.contains_key(&xdata_rva) {
             return Some(());
         }
         let at = xdata_rva as usize;
@@ -1688,9 +1690,12 @@ impl UnwindPatcher {
             pos += epilog_count as usize * 4;
         }
         pos += code_words as usize * 4;
-        if has_handler {
-            self.redirect(image, pos, xdata_rva)?;
-        }
+        let handler = if has_handler {
+            Some(self.redirect(image, pos)?)
+        } else {
+            None
+        };
+        self.visited.insert(xdata_rva, handler);
         Some(())
     }
 }

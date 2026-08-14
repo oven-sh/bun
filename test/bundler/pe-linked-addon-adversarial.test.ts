@@ -735,20 +735,90 @@ describe("pe.addLinkedAddon exception directory", () => {
     ]);
   });
 
-  test("chained unwind info is rebased and its primary's handler redirected once", () => {
+  test("chained unwind info is rebased and resolves to its primary's handler", () => {
     const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionA, functionB])), "x", TRAMPOLINE);
     expect(expectSafe(r)).toBe("merged");
     const output = Buffer.from(r.output!);
     expect(exceptionDirectory(output)!.map(e => e.begin)).toEqual([RVA_BASE + TEXT_RVA, RVA_BASE + TEXT_RVA + 8]);
-    // The RUNTIME_FUNCTION embedded in UNWIND_B was rebased in place.
+    // The RUNTIME_FUNCTION embedded in UNWIND_B was rebased in place (exactly once, although
+    // UNWIND_A is reachable from both entries).
     expect(bn0Bytes(output, TEXT_RVA + UNWIND_B + 4, 12)).toEqual(
       u32s([RVA_BASE + TEXT_RVA, RVA_BASE + TEXT_RVA + 8, RVA_BASE + TEXT_RVA + UNWIND_A]),
     );
     expect(bn0Bytes(output, TEXT_RVA + UNWIND_A + 4, 4)).toEqual(u32s([TRAMPOLINE]));
-    // UNWIND_A is reachable from both entries but is recorded exactly once.
+    // An exception in function B is dispatched with B's entry, so the trampoline has to be able to
+    // find the handler starting from UNWIND_B as well as from UNWIND_A.
     expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([
       [RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER],
+      [RVA_BASE + TEXT_RVA + UNWIND_B, RVA_BASE + TEXT_RVA + HANDLER],
     ]);
+  });
+
+  test("only the chained entry is listed; its primary's handler is still recorded for it", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionB])), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("merged");
+    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([
+      [RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER],
+      [RVA_BASE + TEXT_RVA + UNWIND_B, RVA_BASE + TEXT_RVA + HANDLER],
+    ]);
+  });
+
+  test("a chain ending in handler-free unwind info records nothing", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        withPdata([functionA, functionB])(b);
+        b[BODY + UNWIND_A] = 0x01; // version 1, no flags
+      }),
+      "x",
+    );
+    expect(expectSafe(r)).toBe("merged");
+    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([]);
+  });
+
+  // One .pdata entry whose unwind info is the head of `hops` chained records (each 16 bytes, placed
+  // in a second page of section data) ending in UNWIND_A. ntdll follows at most 32 links.
+  function withChain(hops: number): Buffer {
+    const CHAIN = 0x200; // section offset of the first record; makeAddon's own data ends before it
+    const extra = Buffer.alloc(FILE_ALIGN * 2);
+    for (let i = 0; i < hops; i++) {
+      const rec = i * 16;
+      extra[rec] = 0x01 | (4 << 3); // version 1, UNW_FLAG_CHAININFO, no codes
+      extra.writeUInt32LE(TEXT_RVA + 0, rec + 4);
+      extra.writeUInt32LE(TEXT_RVA + 8, rec + 8);
+      const next = i + 1 < hops ? CHAIN + (i + 1) * 16 : UNWIND_A;
+      extra.writeUInt32LE(TEXT_RVA + next, rec + 12);
+    }
+    const addon = Buffer.concat([makeAddon(withPdata([[TEXT_RVA + 0, TEXT_RVA + 8, TEXT_RVA + CHAIN]])), extra]);
+    addon.writeUInt32LE(CHAIN + extra.length, SHOFF + 8); // VirtualSize
+    addon.writeUInt32LE(CHAIN + extra.length, SHOFF + 16); // SizeOfRawData
+    return addon;
+  }
+
+  test("a chain of 32 links is merged and every link resolves to the handler", () => {
+    const r = peLinkAddon(makeHost(), withChain(32), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("merged");
+    const handlers = handlerIndex(Buffer.from(r.metadata!))[0].handlers;
+    expect(handlers).toHaveLength(33);
+    expect(handlers.map(h => h[0])).toEqual([...handlers.map(h => h[0])].sort((a, b) => a - b));
+    expect(new Set(handlers.map(h => h[1]))).toEqual(new Set([RVA_BASE + TEXT_RVA + HANDLER]));
+  });
+
+  test("a chain of 33 links is skipped", () => {
+    expect(expectSafe(peLinkAddon(makeHost(), withChain(33), "x", TRAMPOLINE))).toBe("skipped");
+  });
+
+  test("unwind info chained to itself is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        withPdata([functionB])(b);
+        b.writeUInt32LE(TEXT_RVA + UNWIND_B, BODY + UNWIND_B + 12);
+      }),
+      "x",
+      TRAMPOLINE,
+    );
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("an addon whose code has handlers is skipped when the host has no trampoline", () => {

@@ -279,7 +279,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   const unwindFixture = join(__dirname, "napi-app/unwind-fixture.js");
-  const unwindExpectedStdout = (isWindows ? "seh: caught" : "seh: unsupported") + "\nlongjmp: 3\n";
+  const unwindExpectedStdout = isWindows
+    ? "seh: caught\nlongjmp: 3\nfinally: 12\n"
+    : "seh: unsupported\nlongjmp: 3\nfinally: unsupported\n";
 
   // Baseline for the --compile test below: the addon loaded as a regular DLL.
   it("unwind_addon: SEH and longjmp across addon frames work when loaded normally", async () => {
@@ -296,10 +298,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   // A merged addon's code lives inside bun.exe's own image instead of a module
   // of its own, so the OS only finds its unwind info if the merge makes it
   // reachable. `__except` dispatch and longjmp (RtlUnwindEx on MSVC) both walk
-  // addon frames and crash the process without it. The second run forces the
+  // addon frames and crash the process without it, and the __finally case
+  // additionally needs bun's handler trampoline to cope with Windows invoking
+  // it a second time for the same frame. The second run forces the
   // extract-to-tempfile + LoadLibrary path on the same exe as a control.
   it.skipIf(!isWindows)(
-    "unwind_addon: SEH and longjmp work inside a statically merged --compile exe",
+    "unwind_addon: SEH, longjmp and collided unwinds work inside a statically merged --compile exe",
     async () => {
       await using dir = tempDir("napi-unwind-compile", {});
       const exe = join(dir, "unwind.exe");
@@ -327,7 +331,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           stderr: "inherit",
           stdout: "pipe",
         });
-        expect(result.stdout.toString(), mode).toBe("seh: caught\nlongjmp: 3\n");
+        expect(result.stdout.toString(), mode).toBe(unwindExpectedStdout);
         expect(result.success, mode).toBeTrue();
       }
     },

@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isAndroid,
   isLinux,
   isWindows,
   joinP,
@@ -10298,11 +10299,11 @@ it.each([
   });
 });
 
-// `--cwd` is staged in a PATH_MAX-sized buffer (4096 bytes on Linux, 1024 on the other POSIX
-// targets) before chdir. Values that did not leave room for the NUL terminator used to abort the
+// `--cwd` is staged in a PATH_MAX-sized buffer (4096 bytes on Linux and Android, 1024 on macOS and
+// the BSDs) before chdir. Values that did not leave room for the NUL terminator used to abort the
 // process; the buffer on Windows (~96 KiB) is larger than any command line, so only POSIX is affected.
 describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer", () => {
-  const PATH_MAX = isLinux ? 4096 : 1024;
+  const PATH_MAX = isLinux || isAndroid ? 4096 : 1024;
   const name = (length: number) => Buffer.alloc(length, "a").toString();
 
   it.each([

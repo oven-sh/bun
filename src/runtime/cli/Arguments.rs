@@ -921,8 +921,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         load_config_with_cmd_args(cmd, &args, ctx)?;
     }
 
-    // The caller stores the returned `opts` as `ctx.args`; anything written to
-    // `ctx.args` below this line is discarded.
     let mut opts: api::TransformOptions = ctx.args.clone();
 
     let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;

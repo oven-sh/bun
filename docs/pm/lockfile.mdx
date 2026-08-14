@@ -17,7 +17,7 @@ To generate a lockfile without installing to `node_modules`, use the `--lockfile
 bun install --lockfile-only
 ```
 
-The flag is also accepted by `bun add`, `bun remove` and `bun update`, which still edit `package.json` and write `bun.lock` but leave `node_modules` untouched.
+`bun add`, `bun remove`, and `bun update` also accept `--lockfile-only`.
 
 <Note>
   `--lockfile-only` still populates the global install cache with registry metadata and git/tarball dependencies.
@@ -62,6 +62,6 @@ When running `bun install` in a project without a `bun.lock`, Bun automatically 
 - `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
 - `pnpm-lock.yaml` (pnpm)
 
-A `package-lock.json` written by npm 6 or older (`lockfileVersion` 1) is not migrated; Bun prints a warning and resolves from `package.json` instead. The migrated lockfile also carries over the `overrides` from `package.json`, so `bun install --frozen-lockfile` works immediately after `bun pm migrate`.
+A `package-lock.json` from npm 6 or older (`lockfileVersion` 1) is not migrated; Bun prints a warning and resolves from `package.json` instead.
 
 The original lockfile is preserved and can be removed manually after verification.

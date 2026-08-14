@@ -582,4 +582,174 @@ describe("bundler files option", () => {
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
   });
+
+  test("in-memory imports are parsed with the build's jsx options", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: {
+        "/app/entry.js": `import "./child.jsx";`,
+        "/app/child.jsx": `console.log(<div>child</div>);`,
+      },
+      jsx: { runtime: "classic", factory: "myFactory", fragment: "MyFragment" },
+    });
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain(`myFactory("div", null, "child")`);
+    // In-memory files are labelled by their key, not by a path relative to cwd.
+    expect(output).toContain("// /app/child.jsx");
+  });
+
+  describe("HTML imports", () => {
+    type Manifest = {
+      index: string;
+      files: Array<{ input: string; path: string; loader: string; isEntry: boolean; headers: Record<string, string> }>;
+    };
+
+    // Importing an .html file into a server build replaces the import with a
+    // `__jsonParse("<manifest json>")` module describing the browser build of that page.
+    function manifestsIn(serverCode: string): Manifest[] {
+      return [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(m => JSON.parse(JSON.parse(`"${m[1]}"`)));
+    }
+
+    const basename = (path: string) => path.split(/[\\/]/).pop()!;
+
+    function outputText(result: Awaited<ReturnType<typeof Bun.build>>, path: string) {
+      const output = result.outputs.find(o => basename(o.path) === basename(path));
+      if (!output) throw new Error(`no output named ${basename(path)} in ${result.outputs.map(o => o.path)}`);
+      return output.text();
+    }
+
+    const pageHtml = `<!DOCTYPE html><html><head><link rel="stylesheet" href="./page.css"></head><body><script src="./client.js"></script></body></html>`;
+    const pageCss = `body { color: red }`;
+    const clientJs = `document.title = "client";`;
+
+    test("server build importing an in-memory .html file gets a manifest and a browser bundle", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/server.js"],
+        target: "bun",
+        files: {
+          "/app/server.js": `import page from "./page.html"; export default page;`,
+          "/app/page.html": pageHtml,
+          "/app/page.css": pageCss,
+          "/app/client.js": clientJs,
+        },
+      });
+
+      const server = await outputText(result, "server.js");
+      expect(server).toStartWith("// @bun\n");
+      expect(server).not.toMatch(/from "[^"]*page\.html"/);
+
+      const [manifest, ...extra] = manifestsIn(server);
+      expect(extra).toBeEmpty();
+      expect(manifest.index).toMatch(/page\.html$/);
+      expect(manifest.files.toSorted((a, b) => a.loader.localeCompare(b.loader))).toEqual([
+        {
+          input: expect.stringContaining("page.html"),
+          path: expect.stringMatching(/\.css$/),
+          loader: "css",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/css;charset=utf-8" },
+        },
+        {
+          input: expect.stringContaining("page.html"),
+          path: manifest.index,
+          loader: "html",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/html;charset=utf-8" },
+        },
+        {
+          input: expect.stringContaining("page.html"),
+          path: expect.stringMatching(/\.js$/),
+          loader: "js",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/javascript;charset=utf-8" },
+        },
+      ]);
+
+      const { path: cssPath } = manifest.files.find(f => f.loader === "css")!;
+      const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+      const html = await outputText(result, manifest.index);
+      expect(html).toContain(basename(cssPath));
+      expect(html).toContain(basename(jsPath));
+
+      // The page's script is bundled for the browser even though the build targets bun.
+      const client = await outputText(result, jsPath);
+      expect(client).toContain(clientJs);
+      expect(client).not.toContain("// @bun");
+      expect(await outputText(result, cssPath)).toContain("color: red");
+    });
+
+    test("file on disk importing an in-memory .html file", async () => {
+      using dir = tempDir("bundler-files-html-import", {
+        "server.js": `import page from "./page.html"; export default page;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/server.js`],
+        target: "bun",
+        files: {
+          [`${dir}/page.html`]: pageHtml,
+          [`${dir}/page.css`]: pageCss,
+          [`${dir}/client.js`]: clientJs,
+        },
+      });
+
+      const [manifest, ...extra] = manifestsIn(await outputText(result, "server.js"));
+      expect(extra).toBeEmpty();
+      expect(manifest.index).toMatch(/page\.html$/);
+      expect(manifest.files.map(f => f.loader).toSorted()).toEqual(["css", "html", "js"]);
+      const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+      expect(await outputText(result, manifest.index)).toContain(basename(jsPath));
+      expect(await outputText(result, jsPath)).toContain(clientJs);
+    });
+
+    test("each in-memory .html file gets one manifest, however often it is imported", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/server.js"],
+        target: "bun",
+        files: {
+          "/app/server.js": `
+            import home from "./home.html";
+            import about from "./about.html";
+            import { home as homeAgain } from "./routes.js";
+            export default { home, about, homeAgain };
+          `,
+          "/app/routes.js": `export { default as home } from "./home.html";`,
+          "/app/home.html": `<!DOCTYPE html><script src="./home.js"></script>`,
+          "/app/about.html": `<!DOCTYPE html><script src="./about.js"></script>`,
+          "/app/home.js": `console.log("home");`,
+          "/app/about.js": `console.log("about");`,
+        },
+      });
+
+      const server = await outputText(result, "server.js");
+      expect(server).not.toMatch(/from "[^"]*\.html"/);
+
+      const manifests = manifestsIn(server).toSorted((a, b) => a.index.localeCompare(b.index));
+      expect(manifests.map(m => basename(m.index))).toEqual(["about.html", "home.html"]);
+      for (const manifest of manifests) {
+        expect(manifest.files.map(f => f.loader).toSorted()).toEqual(["html", "js"]);
+        const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+        const pageName = basename(manifest.index).replace(".html", "");
+        expect(await outputText(result, jsPath)).toContain(`console.log("${pageName}")`);
+      }
+    });
+
+    test("assets referenced by an in-memory .html file are copied to the output", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/index.html"],
+        files: {
+          "/app/index.html": `<!DOCTYPE html><link rel="manifest" href="./manifest.json">`,
+          "/app/manifest.json": `{"name":"app"}`,
+        },
+      });
+
+      const html = await outputText(result, "index.html");
+      expect(html).toMatch(/href="[^"]*manifest-[a-zA-Z0-9]+\.json"/);
+
+      const asset = result.outputs.find(o => o.kind === "asset");
+      expect(asset?.path).toMatch(/manifest-[a-zA-Z0-9]+\.json$/);
+      expect(await asset!.text()).toBe(`{"name":"app"}`);
+    });
+  });
 });

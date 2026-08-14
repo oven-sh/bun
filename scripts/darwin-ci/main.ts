@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { installBareAgent, installTartAgent } from "./lib/agent";
+import { drainTartAgent, installBareAgent, installTartAgent } from "./lib/agent";
 import { bake } from "./lib/bake";
 import { ciUserExists, enableAutoLogin, ensureCiUser } from "./lib/ci-user";
 import { config } from "./lib/config";
@@ -111,6 +111,7 @@ async function provisionTart(): Promise<void> {
   }
 
   step(`bake ${config.tart.image} as ${user}`);
+  await drainTartAgent();
   await $`sudo -u ${user} -H /usr/local/bin/bun ${main} bake --base ${values.base!} --ref ${values.ref!}`;
 
   step("agent");

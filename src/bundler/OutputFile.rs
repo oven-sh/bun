@@ -149,20 +149,18 @@ impl Value {
         }
     }
 
-    /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
-    /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
-    /// callback (zero-copy). Caller guarantees `self` outlives every use of the
-    /// returned string.
-    ///
-    /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
-    /// phase. The consuming [`Self::to_bun_string`] cannot be used there
-    /// because the `Vec<OutputFile>` is only borrowed.
+    /// ASCII output aliases `bytes` (an external string with a no-op free;
+    /// `self` must outlive it), non-ASCII output is transcoded. Both return
+    /// one owned reference: release it with `transferToWTFString()`.
     pub fn to_bun_string_ref(&self) -> BunString {
         match self {
             Value::Noop => BunString::EMPTY,
             Value::Buffer { bytes } => {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
+                }
+                if !bun_core::strings::is_all_ascii(bytes) {
+                    return BunString::clone_utf8(bytes);
                 }
                 extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
                 // latin1 = true.

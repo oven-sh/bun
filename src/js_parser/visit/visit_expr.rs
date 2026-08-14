@@ -274,7 +274,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Substituting a constant into an assignment target is a syntax error
                     if matches!(
                         newvalue.data.tag(),
-                        Tag::EIdentifier | Tag::EDot | Tag::EImportIdentifier
+                        Tag::EIdentifier
+                            | Tag::EDot
+                            | Tag::EImportIdentifier
+                            | Tag::ECommonjsExportIdentifier
                     ) || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);

@@ -3263,8 +3263,9 @@ describe("bundler", () => {
     run: { stdout: "esm esm true cjs" },
   });
   // Assigning through a define is assigning to its value, with the same rules
-  // as writing the value out: import bindings and namespace members are
-  // rejected, a property of an imported object is fine.
+  // and rewrites as writing the value out: import bindings and namespace
+  // members are rejected, a property of an imported object is fine, and a
+  // CommonJS export is converted like any other `exports.x = ...`.
   itBundled("edgecase/DefineValueImportBindingCannotBeAssigned", {
     files: {
       "/entry.js": /* js */ `
@@ -3302,6 +3303,21 @@ describe("bundler", () => {
     },
     define: { X: "box.prop" },
     run: { stdout: "stored" },
+  });
+  itBundled("edgecase/DefineValueCommonJSExportCanBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from "./lib.cjs";
+        console.log(lib.foo);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.bar = 1;
+        X = 2;
+      `,
+    },
+    define: { X: "exports.foo" },
+    cjs2esm: true,
+    run: { stdout: "2" },
   });
 });
 

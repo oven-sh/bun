@@ -1035,6 +1035,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         next = route.parent;
         file_count = 1;
         let mut css_file_count: u32 = 0;
+        // The page and every layout are separate entry points; all must be static.
+        let mut fully_static = pt
+            .output_file(main_file_route_index)
+            .bake_extra
+            .route
+            .is_fully_static();
         file_list
             .put_index(
                 global,
@@ -1058,6 +1064,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             css_file_count += 1;
         }
         if let Some(file) = route.file_layout {
+            fully_static &= pt.output_file(file).bake_extra.route.is_fully_static();
             file_list
                 .put_index(
                     global,
@@ -1081,6 +1088,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
+                fully_static &= pt.output_file(file).bake_extra.route.is_fully_static();
                 file_list
                     .put_index(
                         global,
@@ -1137,14 +1145,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 global,
                 u32::try_from(nav_index).expect("int cast"),
                 JSValue::js_number_from_int32(
-                    TypeAndFlags::new(
-                        route.r#type.get(),
-                        pt.output_file(main_file_route_index)
-                            .bake_extra
-                            .route
-                            .is_fully_static(),
-                    )
-                    .bits(),
+                    TypeAndFlags::new(route.r#type.get(), fully_static).bits(),
                 ),
             )
             .map_err(js_err)?;

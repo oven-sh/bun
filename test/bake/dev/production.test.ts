@@ -594,4 +594,110 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test.concurrent("prerenders routes that have layouts", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-layouts", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/_layout.tsx": `export default function RootLayout({ children }) {
+  return <main id="root-layout">{children}</main>;
+}`,
+      "pages/index.tsx": `export default function IndexPage() {
+  return <p>index page</p>;
+}`,
+      "pages/docs/_layout.tsx": `export default function DocsLayout({ children }) {
+  return <section id="docs-layout">{children}</section>;
+}`,
+      "pages/docs/index.tsx": `export default function DocsPage() {
+  return <p>docs page</p>;
+}`,
+      "pages/docs/intro.tsx": `export default function IntroPage() {
+  return <p>intro page</p>;
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode, stderr.toString()).toBe(0);
+
+    // The prerendered <body> up to the inline RSC payload script.
+    const bodyOf = async (...route: string[]) => {
+      const html = await Bun.file(path.join(dir, "dist", ...route, "index.html")).text();
+      return html.slice(html.indexOf("<body>") + "<body>".length, html.indexOf("<script>"));
+    };
+
+    expect({
+      "/": await bodyOf(),
+      "/docs": await bodyOf("docs"),
+      "/docs/intro": await bodyOf("docs", "intro"),
+    }).toEqual({
+      "/": '<main id="root-layout"><p>index page</p></main>',
+      "/docs": '<main id="root-layout"><section id="docs-layout"><p>docs page</p></section></main>',
+      "/docs/intro": '<main id="root-layout"><section id="docs-layout"><p>intro page</p></section></main>',
+    });
+  });
+
+  test.concurrent("a route is only fully static when its page and every layout are", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-layout-client", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Client.tsx": `"use client";
+
+export default function Client() {
+  return <button>client</button>;
+}`,
+      "pages/_layout.tsx": `export default function RootLayout({ children }) {
+  return <main>{children}</main>;
+}`,
+      "pages/index.tsx": `export default function IndexPage() {
+  return <p>index page</p>;
+}`,
+      "pages/about.tsx": `import Client from "../components/Client";
+
+export default function AboutPage() {
+  return <p>about page<Client /></p>;
+}`,
+      "pages/docs/_layout.tsx": `import Client from "../../components/Client";
+
+export default function DocsLayout({ children }) {
+  return <section><Client />{children}</section>;
+}`,
+      "pages/docs/index.tsx": `export default function DocsPage() {
+  return <p>docs page</p>;
+}`,
+      "pages/docs/intro.tsx": `export default function IntroPage() {
+  return <p>intro page</p>;
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode, stderr.toString()).toBe(0);
+
+    const inspectRoute = async (...route: string[]) => {
+      const html = await Bun.file(path.join(dir, "dist", ...route, "index.html")).text();
+      return {
+        rendersClientComponent: html.includes("<button>client</button>"),
+        loadsClientEntry: html.includes('<script type="module"'),
+      };
+    };
+
+    expect({
+      // static page inside a static layout
+      "/": await inspectRoute(),
+      // the page itself renders a client component
+      "/about": await inspectRoute("about"),
+      // only the route's own layout renders a client component
+      "/docs": await inspectRoute("docs"),
+      // only a parent route's layout renders a client component
+      "/docs/intro": await inspectRoute("docs", "intro"),
+    }).toEqual({
+      "/": { rendersClientComponent: false, loadsClientEntry: false },
+      "/about": { rendersClientComponent: true, loadsClientEntry: true },
+      "/docs": { rendersClientComponent: true, loadsClientEntry: true },
+      "/docs/intro": { rendersClientComponent: true, loadsClientEntry: true },
+    });
+  });
 });

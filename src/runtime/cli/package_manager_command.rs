@@ -374,9 +374,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+                let opened =
+                    fetch_cache_directory_path(&mut process_env, None).and_then(|cache_dir| {
+                        Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                    });
                 let mut rm_buf = PathBuffer::uninit();
-                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+                let rm_dir = match opened {
                     Ok(d) => d,
                     Err(err) => {
                         bun_core::pretty_errorln!(

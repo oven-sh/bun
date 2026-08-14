@@ -125,11 +125,12 @@ describe("Intl.Collator", () => {
       env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
       stdout: "pipe",
     });
-    const [locale, order, grouped] = JSON.parse(await proc.stdout.text());
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [locale, order, grouped] = JSON.parse(stdout);
     expect(locale).not.toContain("posix");
     expect(order).toBe(-1);
     expect(grouped).toContain(",");
-    expect(await proc.exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   // Same path with the C locale spelled "C.UTF-8" (glibc/musl name for it, and
@@ -148,14 +149,15 @@ describe("Intl.Collator", () => {
       env: bunEnv,
       stdout: "pipe",
     });
-    const [set, locale, order, grouped] = JSON.parse(await proc.stdout.text());
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [set, locale, order, grouped] = JSON.parse(stdout);
     // a libc without a C.UTF-8 locale keeps "C", which is the case above
     if (set === "C.UTF-8") {
       expect(locale).toBe("en-US");
       expect(order).toBe(-1);
       expect(grouped).toBe("1,234.5");
     }
-    expect(await proc.exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   snapshotIf("sort order across locales", () => {

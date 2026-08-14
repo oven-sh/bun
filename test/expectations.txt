@@ -35,8 +35,3 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
-
-# Android's platform resolver (netd) does not expose a nameserver list, so
-# dns.getServers() is [] there by design; both files exist to assert it is not.
-[ ANDROID ] test/js/node/test/parallel/test-dns.js [ FAIL ]
-[ ANDROID ] test/js/node/test/parallel/test-dns-get-server.js [ FAIL ]

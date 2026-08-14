@@ -309,6 +309,104 @@ describe("Script", () => {
     });
   });
 
+  describe("timeout is a run option, not a constructor option", () => {
+    // Node's Script constructor (lib/vm.js) never looks at options.timeout; the
+    // runIn*Context methods validate it. The vm.runIn*Context() wrappers hand the
+    // same options object to both, so a bad timeout still surfaces there, but
+    // only after the constructor's own checks.
+    const invalidTimeouts: [timeout: unknown, code: string][] = [
+      ["x", "ERR_INVALID_ARG_TYPE"],
+      [null, "ERR_INVALID_ARG_TYPE"],
+      [{}, "ERR_INVALID_ARG_TYPE"],
+      [0, "ERR_OUT_OF_RANGE"],
+      [-1, "ERR_OUT_OF_RANGE"],
+      [NaN, "ERR_OUT_OF_RANGE"],
+    ];
+    // "<code> <option>" for a node-style error, the error name otherwise.
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+        return "no error";
+      } catch (e: any) {
+        return e.code ? `${e.code} ${e.message.match(/"(options\.\w+)"/)?.[1] ?? e.message}` : e.name;
+      }
+    };
+
+    test("new Script() accepts an invalid timeout and the script runs without one", () => {
+      const context = createContext({});
+      for (const [timeout] of invalidTimeouts) {
+        const script = new Script("1", { timeout } as any);
+        expect(script.runInThisContext()).toBe(1);
+        expect(script.runInContext(context)).toBe(1);
+        expect(script.runInNewContext({})).toBe(1);
+      }
+    });
+
+    test("new Script() does not read options.timeout, runInThisContext() does", () => {
+      let reads = 0;
+      const options = {
+        get timeout() {
+          reads++;
+          return 10_000;
+        },
+      };
+      const script = new Script("1", options);
+      expect(reads).toBe(0);
+      expect(script.runInThisContext(options)).toBe(1);
+      expect(reads).toBe(1);
+    });
+
+    test("every run entry point still rejects an invalid timeout", () => {
+      const script = new Script("1");
+      const context = createContext({});
+      const entryPoints: Record<string, (options: any) => unknown> = {
+        "script.runInThisContext": options => script.runInThisContext(options),
+        "script.runInContext": options => script.runInContext(context, options),
+        "script.runInNewContext": options => script.runInNewContext({}, options),
+        "vm.runInThisContext": options => runInThisContext("1", options),
+        "vm.runInContext": options => runInContext("1", context, options),
+        "vm.runInNewContext": options => runInNewContext("1", {}, options),
+      };
+      const actual: Record<string, Record<string, string>> = {};
+      const expected: Record<string, Record<string, string>> = {};
+      for (const [timeout, code] of invalidTimeouts) {
+        const key = `timeout: ${Bun.inspect(timeout)}`;
+        actual[key] = {};
+        expected[key] = {};
+        for (const [name, run] of Object.entries(entryPoints)) {
+          actual[key][name] = thrown(() => run({ timeout }));
+          expected[key][name] = `${code} options.timeout`;
+        }
+      }
+      expect(actual).toEqual(expected);
+    });
+
+    test("vm.runIn*Context() report constructor problems before an invalid timeout, like Node", () => {
+      const context = createContext({});
+      const options = (o: Record<string, unknown>) => o as any;
+      expect({
+        syntaxError: thrown(() => runInThisContext("%%", options({ timeout: "x" }))),
+        produceCachedData: thrown(() => runInThisContext("1", options({ timeout: "x", produceCachedData: "y" }))),
+        cachedData: thrown(() => runInNewContext("1", {}, options({ timeout: "x", cachedData: 1 }))),
+        importModuleDynamically: thrown(() =>
+          runInContext("1", context, options({ timeout: "x", importModuleDynamically: 1 })),
+        ),
+        // Among the run options, Node's getRunInContextArgs checks timeout first.
+        displayErrors: thrown(() => runInThisContext("1", options({ timeout: "x", displayErrors: 1 }))),
+        displayErrorsOnScript: thrown(() =>
+          new Script("1").runInThisContext(options({ timeout: "x", displayErrors: 1, breakOnSigint: 1 })),
+        ),
+      }).toEqual({
+        syntaxError: "SyntaxError",
+        produceCachedData: "ERR_INVALID_ARG_TYPE options.produceCachedData",
+        cachedData: "ERR_INVALID_ARG_TYPE options.cachedData",
+        importModuleDynamically: "ERR_INVALID_ARG_TYPE options.importModuleDynamically",
+        displayErrors: "ERR_INVALID_ARG_TYPE options.timeout",
+        displayErrorsOnScript: "ERR_INVALID_ARG_TYPE options.timeout",
+      });
+    });
+  });
+
   test("can specify displayErrors", () => {
     const src = 'throw new Error("boom")';
     // displayErrors: false — no source-line/caret decoration on the stack.

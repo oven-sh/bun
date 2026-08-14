@@ -262,6 +262,86 @@ console.log(JSON.stringify(html.files.map(f => [f.input, f.loader, f.path])));
     },
   });
 
+  // Each page's manifest lists the assets referenced by that page's own
+  // documents: a stylesheet shared by both pages attributes its asset to both,
+  // while the stylesheet and the <img> only the second page has stay out of
+  // the first page's manifest. With code splitting, an asset shared by two
+  // pages used to additionally produce an empty JS chunk, which showed up in
+  // both manifests as a chunk entry without an input.
+  for (const splitting of [false, true]) {
+    itBundled(`html-import/per-page-document-assets${splitting ? "-with-splitting" : ""}`, {
+      outdir: "out/",
+      splitting,
+      files: {
+        "/server.js": `
+import a from "./a.html";
+import b from "./b.html";
+const project = html => html.files.map(f => [f.input ?? null, f.loader]).sort();
+console.log(JSON.stringify({ a: project(a), b: project(b) }));
+`,
+        "/a.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css" />
+  </head>
+  <body>
+    <img src="./shared-logo.png" />
+    <script type="module" src="./a.ts"></script>
+  </body>
+</html>`,
+        "/b.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css" />
+    <link rel="stylesheet" href="./b.css" />
+  </head>
+  <body>
+    <img src="./shared-logo.png" />
+    <img src="./b-only.png" />
+    <script type="module" src="./b.ts"></script>
+  </body>
+</html>`,
+        "/a.ts": `console.log("a");`,
+        "/b.ts": `console.log("b");`,
+        "/shared.css": `body { background: url(./shared-bg.png); }`,
+        "/b.css": `h1 { background: url(./b-bg.png); }`,
+        // The url() assets are >= 128 KiB so that the CSS bundler copies them
+        // instead of inlining them; assets referenced from HTML are always copied.
+        "/shared-bg.png": Buffer.alloc(128 * 1024, "s"),
+        "/b-bg.png": Buffer.alloc(128 * 1024, "b"),
+        "/shared-logo.png": "shared logo",
+        "/b-only.png": "b only",
+      },
+      entryPoints: ["/server.js"],
+      target: "bun",
+
+      run: {
+        validate({ stdout }) {
+          expect(JSON.parse(stdout)).toEqual({
+            a: [
+              ["a.html", "css"],
+              ["a.html", "html"],
+              ["a.html", "js"],
+              ["shared-bg.png", "file"],
+              ["shared-logo.png", "file"],
+            ],
+            b: [
+              ["b-bg.png", "file"],
+              ["b-only.png", "file"],
+              ["b.html", "css"],
+              ["b.html", "html"],
+              ["b.html", "js"],
+              ["shared-bg.png", "file"],
+              ["shared-logo.png", "file"],
+            ],
+          });
+        },
+      },
+    });
+  }
+
   // Test manifest with multiple HTML imports
   itBundled("html-import/multiple-manifests", {
     outdir: "out/",

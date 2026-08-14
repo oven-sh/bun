@@ -221,9 +221,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
     // defer seen_sources.deinit() — handled by Drop
 
-    // Mark all files that appear in chunks. The assets referenced by the
-    // documents (HTML files, stylesheets) among them belong to no chunk (see
-    // `is_document`) but are written as those documents' imports below, so
+    // Mark all files that appear in chunks. `compute_chunks` files documents
+    // too (an HTML entry point into its JS chunk, an imported stylesheet into
+    // its CSS chunk), but the assets they reference belong to no chunk (see
+    // `is_document`). Those are written as the documents' imports below, so
     // they are listed as inputs as well.
     let css_asts = parse_graph.ast.items_css();
     for chunk in chunks.iter() {

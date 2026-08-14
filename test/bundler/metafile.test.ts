@@ -521,6 +521,48 @@ describe("bundler metafile", () => {
     expect(Object.keys(cssOutput.inputs)).toEqual([styleKey]);
   });
 
+  test("metafile lists the assets an HTML page and its stylesheet reference as inputs but not as part of the JS output", async () => {
+    using dir = tempDir("metafile-html-assets", {
+      "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><img src="./logo.png"><script type="module" src="./app.ts"></script></body></html>`,
+      "style.css": `.foo { background: url(./bg.png); }`,
+      "app.ts": `console.log("app");`,
+      "logo.png": "not really a png",
+      "bg.png": "not really a png either",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const basename = (key: string) => key.split(/[\\/]/).pop()!;
+    expect(Object.keys(metafile.inputs).map(basename).sort()).toEqual([
+      "app.ts",
+      "bg.png",
+      "index.html",
+      "logo.png",
+      "style.css",
+    ]);
+
+    // Every import edge written for the two documents resolves to an input.
+    for (const name of ["index.html", "style.css"]) {
+      const key = Object.keys(metafile.inputs).find(k => basename(k) === name)!;
+      expect(metafile.inputs[key].imports.length).toBeGreaterThan(0);
+      for (const imp of metafile.inputs[key].imports) {
+        expect(imp.path in metafile.inputs).toBe(true);
+      }
+    }
+
+    // The assets are emitted through the HTML and CSS outputs; the page's JS
+    // output is made of its script only.
+    const [, jsOutput] = Object.entries(metafile.outputs).find(([path]) => path.endsWith(".js"))!;
+    const jsInputs = Object.keys(jsOutput.inputs).map(basename);
+    expect(jsInputs).toContain("app.ts");
+    expect(jsInputs.filter(name => name.endsWith(".png"))).toEqual([]);
+  });
+
   test("metafile import paths match input keys for all importers of a shared module", async () => {
     // When the same module is imported from many files, every import record must emit the
     // resolved pretty path (matching the "inputs" key), not the raw "./b/shared.js" specifier.

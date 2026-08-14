@@ -2592,15 +2592,16 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
 /// Whether `source_index` is a stylesheet or an HTML document rather than a
 /// JS module.
 ///
-/// A document takes part in linking only through the modules it references
-/// (see [`document_links_to`]). The assets it references (`url()`, `<img
-/// src>`, ...) are resolved when the document itself is printed and are
-/// copied to the output by `process_files_to_copy`; the lazy-export JS stub
-/// such an asset parses to is only a module when JS imports it. Marking it
-/// live with the document's entry bits would make `compute_chunks` treat the
-/// stub as JS reached by the document's entry point and emit a JS chunk for
-/// it. `HTMLImportManifest` and `MetafileBuilder` attribute these assets to
-/// the documents that reference them instead.
+/// Tree shaking and code splitting follow a document's import records only
+/// into the modules it links (see [`document_links_to`]). The assets it
+/// references (`url()`, `<img src>`, ...) are resolved when the document
+/// itself is printed and are copied to the output by `process_files_to_copy`;
+/// the lazy-export JS stub such an asset parses to is only a module when JS
+/// imports it. Marking it live with the document's entry bits would make
+/// `compute_chunks` treat the stub as JS reached by the document's entry
+/// point and emit a JS chunk for it. Consequently such assets carry entry
+/// bits only from their JS importers; `HTMLImportManifest` and
+/// `MetafileBuilder` attribute them to the documents that reference them.
 pub(crate) fn is_document(
     css_reprs: &[crate::bundled_ast::CssCol],
     loaders: &[Loader],
@@ -2773,7 +2774,21 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        if is_document(ctx.css_reprs, ctx.loaders, source_index as usize) {
+        if ctx.css_reprs[source_index as usize].is_some() {
+            for record in ctx.import_records[source_index as usize].iter() {
+                if record.source_index.is_valid() {
+                    let other = record.source_index.get();
+                    if document_links_to(ctx.css_reprs, ctx.loaders, other as usize)
+                        && !self.graph.files_live.is_set(other as usize)
+                    {
+                        ctx.worklist.push(TreeShakeWork::File(other));
+                    }
+                }
+            }
+            return;
+        }
+
+        if ctx.loaders[source_index as usize] == Loader::Html {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();

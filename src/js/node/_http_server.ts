@@ -824,10 +824,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
         // Like Node's connectionListener -> parserOnBody: body bytes flow into
         // the IncomingMessage as they arrive, and the push callback readStop()s
-        // the socket (which emits 'pause' on it) once the buffer fills. The
-        // callback stays armed until the body's fin chunk even if the response
-        // is ended first (native keeps delivering), so req 'end'/'close' and
-        // req.complete track the body actually being received, like Node.
+        // the socket once the buffer fills. The callback stays armed past
+        // res.end(), so req.complete tracks the body actually being received.
         if (hasBody) {
           handle.ondata = onDataIncomingMessage.bind(http_req);
         }
@@ -1349,10 +1347,9 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
-// Set while onResponseFinishHandleSocket ends a connection that must close
-// after its response (Node's resOnFinish -> destroySoon), so _final can tell
-// that end() from one issued by user code: for it, native lets a request body
-// that is still being parsed out of the current read reach the request first.
+// Distinguishes the end() from onResponseFinishHandleSocket (Node's
+// destroySoon) from a user-issued one: for it, native lets a body still being
+// parsed reach the request before the shutdown.
 const kEndAfterResponse = Symbol("kEndAfterResponse");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
@@ -2396,9 +2393,7 @@ function stopServerResponsePerf(this: any) {
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
   const req = this.req;
-  // If the user never called req.read(), and didn't pipe() or
-  // .resume() or .on('data'), then we call req._dump() so that the
-  // bytes will be pulled off the wire.
+  // Dump the body if the user never consumed or resumed it (Node's resOnFinish).
   if (req && !req._consuming && !req._readableState?.resumeScheduled) {
     req._dump();
   }
@@ -3190,9 +3185,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  // The unread-body dump decision is made on 'finish' (emitResponseFinish),
-  // like Node.js's resOnFinish: a consumer attached in the same tick as
-  // res.end() still gets the body.
+  // The unread-body dump happens on 'finish' (emitResponseFinish), like
+  // Node's resOnFinish, so a same-tick consumer still gets the body.
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'

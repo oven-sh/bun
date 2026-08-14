@@ -245,22 +245,16 @@ bool JSNodeHTTPServerSocket::isClosed() const
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool afterResponseFinished)
 {
-    /* The 'finish' listener ending the connection of a handler that answered
-     * before its request body was read: the body is still being parsed out of
-     * the read that carried the request, and Node parses everything it has
-     * read before resOnFinish's destroySoon() runs. */
+    /* The 'finish' end() of a handler that answered before reading its body:
+     * Node parses everything already read before destroySoon() runs. */
     bool bodyStillParsing = afterResponseFinished && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
     if (!bodyStillParsing && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* HttpContext<SSL>'s close gates (after the current parse, or from
-     * onWritable once the buffered response data has flushed) shut the socket
-     * down when HTTP_CONNECTION_CLOSE is set, so the FIN is sequenced after the
-     * response bytes and after the body bytes already read (like Node's
-     * destroySoon). Until then the parser may still run over bytes that were
-     * read together with the current message; a further request in there must
-     * not be dispatched (it would start a new response on this ended
-     * connection, and starting one clears HTTP_CONNECTION_CLOSE again). */
+    /* uWS shuts down after the current parse and flush, sequencing the FIN
+     * after the response and the body bytes already read (Node's destroySoon).
+     * Dispatching another request meanwhile would start a new response and
+     * clear HTTP_CONNECTION_CLOSE, so stop dispatching too. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     httpResponseData->nodeHttpStopDispatchingAfterCurrentMessage();

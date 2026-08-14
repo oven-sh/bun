@@ -614,19 +614,16 @@ impl NodeHTTPResponse {
         true
     }
 
-    /// Is a JS `ondata` callback armed on the wrapper that set it (the
-    /// IncomingMessage is still wired up to receive this request's body)?
+    /// An IncomingMessage is still wired up (via `ondata`) to receive this
+    /// request's body.
     fn has_body_reader(&self) -> bool {
         let armed = self.armed_this_value.get();
         !armed.is_empty() && js::on_data_get_cached(armed).is_some_and(|cb| cb.is_cell())
     }
 
-    /// The connection's parser is still inside this request's body and its
-    /// bytes are being routed to this response (uws `inStream` belongs to it).
-    /// False once the fin chunk arrived, including a fin that was parked in
-    /// `buffered_request_body_data_during_pause`: from then on the parser may
-    /// already be on the next pipelined request, whose response owns the
-    /// shared per-connection callback slots.
+    /// The parser is still inside this request's body. False once the fin
+    /// arrived (even parked in the pause buffer): the parser may then be on
+    /// the next pipelined request, which owns the shared callback slots.
     fn body_still_arriving(&self) -> bool {
         self.body_read_state.get() == BodyReadState::Pending
             && !self
@@ -635,18 +632,16 @@ impl NodeHTTPResponse {
                 .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
     }
 
-    /// Called once the handler is done with the response. A body that is still
-    /// unread is only discarded here when nothing on the JS side is wired to
-    /// receive it. With an IncomingMessage armed it keeps flowing after
-    /// `res.end()`, like Node's parser does: consumed by the handler, or
-    /// discarded by `req._dump()`, with the request completing ('end' /
-    /// 'close', `req.complete`) only once its fin chunk is actually received.
+    /// Called once the handler is done with the response. An unread body is
+    /// discarded only when no reader is wired to receive it; otherwise it
+    /// keeps flowing after `res.end()` (like Node's parser) and the request
+    /// completes at its fin.
     pub(crate) fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine) {
         self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
 
         let flags = self.flags.get();
-        // Upgraded / closed: uws delivers nothing further on this response, so
-        // the read state must be released no matter what JS still has armed.
+        // Upgraded / closed: uws delivers nothing further, so release the
+        // read state regardless of what JS has armed.
         let transport_gone =
             flags.contains(Flags::UPGRADED) || flags.contains(Flags::SOCKET_CLOSED);
         let discard = transport_gone || (flags.contains(Flags::ENDED) && !self.has_body_reader());
@@ -756,9 +751,8 @@ impl NodeHTTPResponse {
             .with_mut(|b| b.clear_and_free());
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
-        // Still held when the connection dies while the body was being received
-        // after the response had already ended (the only abort path that does
-        // not go through on_data_or_aborted).
+        // Still held if the connection died mid-body after the response ended
+        // (the one abort path that skips on_data_or_aborted).
         self.body_read_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 
@@ -1370,8 +1364,8 @@ impl NodeHTTPResponse {
             return Ok(JSValue::FALSE);
         }
         let body_still_arriving = self.body_still_arriving();
-        // Once the response is over, request-body flow control only has
-        // something to act on while that body is still coming in.
+        // After the response, flow control only matters while the body is
+        // still arriving.
         if flags.is_requested_completed_or_ended() && !body_still_arriving {
             return Ok(JSValue::FALSE);
         }
@@ -1460,10 +1454,8 @@ impl NodeHTTPResponse {
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         if response_over {
-            // The response has been detached from the connection socket, so the
-            // socket-level resume (NodeHTTPServerSocket#resumeSocket) no longer
-            // knows which request a drained buffer belongs to; leave it for the
-            // request's own _read() -> drainRequestBody(), which does.
+            // The socket-level resume can no longer attribute a drained buffer
+            // to a request; leave it for the request's own drainRequestBody().
             return Ok(JSValue::TRUE);
         }
         Ok(self
@@ -1694,9 +1686,8 @@ impl NodeHTTPResponse {
         let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
         if !on_data_armed && body_was_pending && event == AbortEvent::None {
             // No reader armed yet: pipelined request whose body arrived in the same parse burst
-            // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
-            // the reader-arm drain picks it up. (A dumped request keeps its reader armed and takes
-            // the branch below, which discards the chunk in JS and still sees the fin.)
+            // as its headers. Park it where pause parks; the reader-arm drain picks it up.
+            // (A dumped request keeps its reader armed and takes the branch below.)
             self.buffered_request_body_data_during_pause
                 .with_mut(|b| b.append_slice(chunk));
             self.update_flags(|f| {
@@ -1729,11 +1720,9 @@ impl NodeHTTPResponse {
         // Deferred tail:
         if last {
             self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-            // Not gated on the ref still being held: when the response had already ended, the
-            // fin callback above ran the request's 'end' -> autoDestroy -> `ondata = undefined`
-            // (set_on_data) via the nextTick drain, which released the ref first. The body was
-            // the only thing keeping such a request pending, so it has to be re-evaluated here;
-            // a request whose response is still in flight stays pending either way.
+            // Not gated on the ref: the fin callback above may have already released it
+            // ('end' -> autoDestroy -> set_on_data(undefined)), and the body was the only
+            // thing keeping such a request pending.
             self.mark_request_as_done_if_necessary();
         }
     }
@@ -2059,11 +2048,9 @@ impl NodeHTTPResponse {
         self.spill_pending_pinned_write(global_object);
 
         if IS_END {
-            // Like Node, a request body that is still arriving when the response
-            // goes out keeps being parsed and delivered to the IncomingMessage
-            // (which consumes it, or discards it once req._dump() ran); the
-            // request completes at the body's fin, not here. Only a body nobody
-            // is wired to receive is dropped at this point.
+            // Like Node, a body with a reader wired keeps being delivered after
+            // the response ends and the request completes at its fin; only a
+            // body nobody receives is dropped here.
             let keep_reading_body = self.body_still_arriving() && self.has_body_reader();
             if !keep_reading_body
                 && self.body_read_ref.get().has
@@ -2089,12 +2076,9 @@ impl NodeHTTPResponse {
                 raw_response.end_stream(state.is_http_connection_close());
             }
             if keep_reading_body {
-                // uws's end() (markDone) dropped the connection's body data
-                // handler; put it back, in whichever mode the reader left it.
-                // A Connection: close response may have closed the socket
-                // synchronously inside end() (set_closed ran), in which case
-                // there is nothing left to read from and the close path
-                // releases the read state.
+                // uws's end() (markDone) dropped the body data handler; re-arm
+                // it in whichever mode the reader left it, unless end() closed
+                // the socket itself (the close path releases the read state).
                 let flags = self.flags.get();
                 if !flags.contains(Flags::SOCKET_CLOSED) {
                     if let Some(raw_response) = self.raw_response.get() {
@@ -2297,10 +2281,9 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) {
-        // A callback is only accepted while this request's body is still arriving (whether or not
-        // the response has ended). `.done` / a parked fin means either uSockets delivered last=true
-        // or JS previously cleared `ondata` (which already called clearOnData()); either way, there
-        // is no more body to read, so don't re-register with uSockets or churn refs.
+        // A callback is only accepted while the body is still arriving (whether or not the
+        // response has ended); past that there is no more body to read, so don't re-register
+        // with uSockets or churn refs.
         let flags = self.flags.get();
         let body_still_arriving = self.body_still_arriving();
         if value.is_undefined_or_null()
@@ -2313,9 +2296,9 @@ impl NodeHTTPResponse {
             let mut stopped_reading_body = false;
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
-                    // Once the response has completed, the connection's data handler is only
-                    // still this request's while its body is the one being parsed (write_or_end
-                    // re-armed it); afterwards it may already belong to the next request.
+                    // After the response completed, the connection's data handler is only this
+                    // request's while its body is still being parsed; afterwards it may belong
+                    // to the next pipelined request.
                     if (body_still_arriving || !flags.contains(Flags::REQUEST_HAS_COMPLETED))
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
@@ -2335,9 +2318,8 @@ impl NodeHTTPResponse {
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
             if stopped_reading_body {
-                // The reader was torn down (req.destroy()) mid-body and uws will not call back
-                // into this response for it anymore; when the response is over as well, that body
-                // was all that still kept the request pending.
+                // Reader torn down (req.destroy()) mid-body: uws won't call back for it,
+                // and the body may have been all that kept the request pending.
                 self.mark_request_as_done_if_necessary();
             }
             return;

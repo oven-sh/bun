@@ -667,6 +667,7 @@ struct Redirect {
 }
 
 /// Finds the handler the build displaced from the unwind info at `unwind_info` (a bun.exe RVA).
+/// Like every other RVA read from the blob, the handler must lie inside its addon's span.
 fn find_redirect(unwind_info: u32) -> Option<Redirect> {
     let blob = blob()?;
     let mut r = Reader {
@@ -682,7 +683,8 @@ fn find_redirect(unwind_info: u32) -> Option<Redirect> {
         let image_size = r.u32_().ok()?;
         let handlers_pos = r.u32_().ok()? as usize;
         let handler_count = r.u32_().ok()? as usize;
-        if unwind_info < rva_base || unwind_info - rva_base >= image_size {
+        let in_span = |rva: u32| rva >= rva_base && rva - rva_base < image_size;
+        if !in_span(unwind_info) {
             continue;
         }
         let pair_at = |index: usize| -> Option<(u32, u32)> {
@@ -697,7 +699,9 @@ fn find_redirect(unwind_info: u32) -> Option<Redirect> {
             let mid = lo + (hi - lo) / 2;
             let (key, handler) = pair_at(mid)?;
             match key.cmp(&unwind_info) {
-                core::cmp::Ordering::Equal => return Some(Redirect { rva_base, handler }),
+                core::cmp::Ordering::Equal => {
+                    return in_span(handler).then_some(Redirect { rva_base, handler });
+                }
                 core::cmp::Ordering::Less => lo = mid + 1,
                 core::cmp::Ordering::Greater => hi = mid,
             }
@@ -737,7 +741,8 @@ pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
     let Some(redirect) = u32::try_from(unwind_info).ok().and_then(find_redirect) else {
         return ExceptionContinueSearch;
     };
-    // SAFETY: the build recorded `handler` as the bun.exe RVA of the addon's original handler.
+    // SAFETY: `handler` lies inside the merged addon's span (checked by find_redirect), where the
+    // build recorded the addon's original handler and bind() has since restored the protections.
     let handler: ExceptionRoutine =
         unsafe { core::mem::transmute(exe_base as usize + redirect.handler as usize) };
     let addon_base = exe_base + redirect.rva_base as u64;

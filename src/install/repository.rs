@@ -468,9 +468,7 @@ impl CacheStaging {
             self.tmp_name(),
             self.cache_dir,
             folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
+            bun_sys::RenameatConcurrentlyOptions::default(),
         );
         // After an exchange the temporary name holds the folder that was replaced.
         self.discard();

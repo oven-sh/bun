@@ -534,10 +534,8 @@ impl NewBuilder<'_, VLQSourceMap> {
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
-        // Same decoder as `LineOffsetTable::generate` and `LineColumnOffset::advance`:
-        // a lead byte whose continuation bytes are missing (a Latin-1 byte in a legal
-        // comment) is one U+FFFD, one byte wide, so a line terminator right after it is
-        // still seen below instead of being skipped with the width the lead byte declared.
+        // An ill-formed sequence decodes as one U+FFFD one byte wide, so a line
+        // terminator right after a bad lead byte still reaches the match below.
         let iter = strings::CodepointIterator::init(slice);
         while i < n {
             let mut cursor = strings::Cursor {

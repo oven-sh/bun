@@ -186,12 +186,8 @@ impl LineOffsetTable {
         // Hoist the base pointer so per-iteration offset math is a single sub + truncate.
         let base = contents.as_ptr() as usize;
 
-        // `CodepointIterator` is also what `LineColumnOffset::advance` and the
-        // generated-side walk in `Chunk.rs` use, so all three agree on what a byte
-        // sequence is: a lead byte whose continuation bytes are missing (Latin-1 text)
-        // is one U+FFFD, one byte wide, and the bytes after it (a line terminator, say)
-        // are looked at on their own rather than skipped as part of the width the lead
-        // byte declared.
+        // Same decoder as the generated-side walk in `Chunk.rs`: an ill-formed sequence
+        // is one U+FFFD one byte wide, so a line terminator right after it is not skipped.
         let iter = strings::CodepointIterator::init(contents);
         let mut remaining = contents;
         while !remaining.is_empty() {

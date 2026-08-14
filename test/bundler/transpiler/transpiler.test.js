@@ -2048,12 +2048,21 @@ export default class {
       // String values are the only replacement values that are heap-allocated
       // AST nodes. They used to be allocated in the thread-local AST store,
       // which every synchronous parse on the main thread (a require() of a
-      // CommonJS file, an import of a JSON file, ...) resets, so a transform
-      // after such a parse printed the replacement from freed memory. Debug
-      // builds poison the store on reset, which makes the stale read a crash
-      // of the child process; release builds silently reuse the memory.
+      // CommonJS file, an import of a JSON file, ...) resets and then refills
+      // with that module's own nodes, so a later transform printed the
+      // replacement out of memory that by then held some other node. Debug
+      // builds poison the store on reset, so any reset exposes the stale read;
+      // release builds only misbehave once the slot has been reused, which is
+      // why the required module declares a few hundred strings (a few dozen
+      // are enough to reach the slot).
+      const resetLines = [];
+      for (let i = 0; i < 300; i++) {
+        resetLines.push(`const s${i} = "other string ${i}";`);
+      }
+      resetLines.push("module.exports = { s0, s299 };");
+
       using dir = tempDir("transpiler-replace-string-values", {
-        "reset.cjs": `module.exports = {};`,
+        "reset.cjs": resetLines.join("\n"),
         "reset.json": `{}`,
         "entry.mjs": `
           const transpiler = new Bun.Transpiler({

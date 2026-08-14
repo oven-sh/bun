@@ -197,13 +197,18 @@ pub fn stop_all_for_exit() {
     STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
     let list = ACTIVE_WATCHERS.lock();
     for &addr in list.iter() {
+        let ptr = addr as *mut Watcher;
         // SAFETY: entries are live `Box<Watcher>` allocations; they are removed
-        // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed.
-        let w = unsafe { &mut *(addr as *mut Watcher) };
-        w.mutex.lock();
-        w.running.store(false);
-        w.platform.stop();
-        w.mutex.unlock();
+        // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed. No
+        // `&mut Watcher` is formed (the watcher thread holds one in
+        // `thread_body`); these are raw-place projections, and every `platform`
+        // mutator takes `mutex` first, so the two `stop()`s cannot race.
+        unsafe {
+            (*ptr).mutex.lock();
+            (*ptr).running.store(false);
+            (*ptr).platform.stop();
+            (*ptr).mutex.unlock();
+        }
     }
 }
 
@@ -401,15 +406,17 @@ impl Watcher {
 
         Output::flush();
 
-        unregister_active(this);
-
         // Stopped for process exit: the main thread is tearing the heap down,
         // so don't race it by freeing the Box here — the process reclaims it.
+        // Stay registered so the abandoned Box remains reachable from
+        // `ACTIVE_WATCHERS` (keeps LeakSanitizer from reporting it).
         if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
             || bun_core::Global::is_exiting()
         {
             return Ok(());
         }
+
+        unregister_active(this);
 
         if !owner_still_alive {
             // SAFETY: `this` is the heap allocation from init(); the watcher thread

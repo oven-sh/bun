@@ -240,11 +240,12 @@ describe("printing the frames parsed back out of error.stack", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Printed once by console.error(e) and once as an unhandled rejection.
     const expected = ["at inner", "at async outer", "at async <anonymous>"];
     expect(printedFrames(stderr).map(withoutLocation)).toEqual([...expected, ...expected]);
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 });

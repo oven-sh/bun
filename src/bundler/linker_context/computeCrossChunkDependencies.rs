@@ -145,8 +145,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             return;
         };
 
-        // `compute_chunks` gives CSS files no chunk of their own; `find_imported_parts_in_js_order`
-        // copies their live JS parts into every chunk importing them instead.
+        // CSS files get no chunk; their live JS parts are copied into each chunk that imports them.
         let css_asts = deps.css_asts;
         let copied_css_files = js
             .files_in_chunk_order

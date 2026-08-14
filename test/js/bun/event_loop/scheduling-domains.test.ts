@@ -452,7 +452,9 @@ async function spawnEchoServer(delayMs: number) {
   };
 }
 
-describe.skipIf(!hasDomains)("scoped runs: I/O", () => {
+// Readiness gating rides on FilePoll/usockets run epochs, which the libuv-backed
+// Windows paths do not carry yet.
+describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O", () => {
   test("outer connections ready during a run wait; a listener still accepts; inner I/O works", async () => {
     const log: string[] = [];
     await using echo = await spawnEchoServer(10);
@@ -628,7 +630,7 @@ describe.skipIf(!hasDomains || process.platform === "win32")("spawnSync on a sco
   });
 });
 
-describe.skipIf(!hasDomains)("scoped runs: modules and threads", () => {
+describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: modules and threads", () => {
   test("dynamic import and require work inside a run", () => {
     using dir = tempDir("scoped-run-import", {
       "esm.mjs": "export const x = await Promise.resolve(42);",

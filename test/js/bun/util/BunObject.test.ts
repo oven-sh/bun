@@ -36,8 +36,8 @@ test("await import('bun')", async () => {
 });
 
 test("a lazy property whose builtin fails to load throws from the read", async () => {
-  // bun:sql's module body calls Symbol(), so clobbering it makes the require inside the
-  // $, sql, SQL and postgres builders throw. The read must throw that error and the slot
+  // The shell builtin ($) and bun:sql's module body (sql, SQL, postgres) call Symbol(), so
+  // clobbering it makes each builder throw. The read must throw that error and the slot
   // must stay unreified so a later read runs the builder again.
   await using proc = Bun.spawn({
     cmd: [

@@ -13,10 +13,10 @@
 //! `#[no_mangle]` so the linker resolves the call directly — no runtime
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
-//! **Adding a task variant** (do all four):
-//!   1. tag constant in `bun_event_loop::task_tag`;
+//! **Adding a variant** (do all four):
+//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
-//!   3. a row in `for_each_task!` and an `impl RunTask for YourType` here;
+//!   3. a `run_task` arm and a `release_task_unrun` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 // Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
@@ -26,7 +26,7 @@
 pub mod js2native;
 
 use bun_event_loop::ManagedTask::ManagedTask;
-use bun_event_loop::{Task, Taskable, task_tag};
+use bun_event_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
@@ -42,6 +42,25 @@ use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsResult};
+
+/// X-macro: the `node:fs` ops that are libuv requests on Windows
+/// (`UVFSRequest`); they complete on the JS thread and re-enter through the
+/// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
+/// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
+#[cfg(windows)]
+macro_rules! for_each_fs_uv_op {
+    ($m:ident) => {
+        $m! {
+            Open Open; Close Close; Read Read; Write Write; Readv Readv;
+            Writev Writev; StatFS Statfs;
+        }
+    };
+}
+/// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
+#[cfg(windows)]
+macro_rules! __fs_pat {
+    ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
+}
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
@@ -128,191 +147,465 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 // Task dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// What the tick loop hands a running task.
-pub(crate) struct Tick<'a> {
-    pub el: &'a mut EventLoop,
-    pub vm: &'a mut VirtualMachine,
-    pub global: &'a JSGlobalObject,
+/// Per-arm result for [`run_task`]: `Continue` means proceed to drain
+/// microtasks and the next item; `EarlyReturn` is the HotReloadTask special
+/// case — microtasks must NOT drain.
+pub(crate) enum RunTaskResult {
+    Continue,
+    EarlyReturn,
 }
 
-/// How a queued task runs. This is the only shape a task's JS-thread entry
-/// takes: it returns the exception it left pending as `Err`, and never reports
-/// it itself — [`tick_queue_with_count`] folds every task's result in one
-/// place (`report_error_or_terminate`: report as uncaught, or stand the loop
-/// down if it is the VM's termination).
+/// Dispatch a single `Task` to its variant's `run`-style entry point.
 ///
-/// Implemented (below, in `run_impls`) for every type that has a
-/// [`task_tag`]; the tag→type table [`for_each_task!`] generates both the run
-/// and the release dispatch from it, so a tag cannot be dispatched any other
-/// way.
-pub(crate) trait RunTask: Taskable {
-    /// The HotReload tasks: return from the drain loop without draining
-    /// microtasks after this task.
-    const EARLY_RETURN: bool = false;
-
-    /// # Safety
-    /// `this` came off the queue under `Self::TAG` (for the tags whose `ptr`
-    /// packs an integer, that value) and is not used by the caller afterwards.
-    unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()>;
-}
-
-/// The tag → type table. One row per `task_tag`; `[cold]` rows are the
-/// shell/bake tasks kept off the hot dispatcher's pages (see `run_task`).
-macro_rules! for_each_task {
-    ($m:ident) => {
-        $m! {
-            [hot] AnyTaskJob => AnyJob;
-            [hot] SendQueueDeferred => crate::ipc::SendQueue;
-            [hot] AsyncModule => bun_jsc::async_module::AsyncModule;
-            [hot] BundleV2PluginResolve => bun_bundler::bundle_v2::api::JSBundler::Resolve;
-            [hot] BundleV2PluginLoad => bun_bundler::bundle_v2::api::JSBundler::Load;
-            [hot] JSBundleCompletionTask => crate::api::js_bundle_completion_task::JSBundleCompletionTask;
-            [hot] FetchTaskletPromiseSettle => crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle;
-            [hot] FileResponseStreamEof => crate::server::FileResponseStream;
-            [hot] DuplexUpgradeContext => crate::socket::DuplexUpgradeContext;
-            #[cfg(windows)] [hot] WindowsNamedPipeContext => crate::socket::WindowsNamedPipeContext;
-            #[cfg(windows)] [hot] GetAddrInfoLibuvComplete => crate::dns_jsc::LibuvCompleteHolder;
-            [hot] ValkeyDeferredClose => crate::valkey_jsc::js_valkey::ValkeyDeferredClose;
-            [hot] StatWatcherTimerUpdate => crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate;
-            [hot] AsyncCpTask => crate::node::fs::AsyncCpTask;
-            [hot] ShellAsyncCpTask => crate::node::fs::ShellAsyncCpTask;
-            [hot] StatWatcherHop => crate::node::node_fs_stat_watcher::StatWatcher;
-            [hot] ManagedTask => ManagedTask;
-            [hot] CppTask => CppTask;
-            [cold] ShellAsync => crate::shell::dispatch_tasks::ShellAsyncTask;
-            [cold] ShellCondExprStatTask => ShellCondExprStatTask;
-            [cold] ShellCpTask => ShellCpTask;
-            [cold] ShellTouchTask => ShellTouchTask;
-            [cold] ShellMkdirTask => ShellMkdirTask;
-            [cold] ShellLsTask => ShellLsTask;
-            [cold] ShellMvBatchedTask => ShellMvBatchedTask;
-            [cold] ShellMvCheckTargetTask => ShellMvCheckTargetTask;
-            [cold] ShellRmTask => ShellRmTask;
-            [cold] ShellRmDirTask => ShellRmDirTask;
-            [cold] ShellGlobTask => ShellGlobTask;
-            [cold] ShellYesTask => ShellYesTask;
-            [hot] FetchTasklet => FetchTasklet;
-            [hot] FetchTaskletDeinit => crate::webcore::fetch::FetchTaskletDeinitHop;
-            [hot] S3HttpSimpleTask => S3HttpSimpleTask;
-            [hot] S3HttpDownloadStreamingTask => S3HttpDownloadStreamingTask;
-            [hot] NapiAsyncWork => napi_async_work;
-            [hot] ThreadSafeFunction => ThreadSafeFunction;
-            [hot] NapiFinalizerTask => NapiFinalizerTask;
-            [hot] JSCDeferredWorkTask => JSCDeferredWorkTask;
-            [hot] PollPendingModulesTask => bun_jsc::async_module::Queue;
-            [hot] RuntimeTranspilerStore => RuntimeTranspilerStore;
-            [hot] HotReloadTask => hot_reloader::HotReloadTask;
-            [hot] WatchReloadTask => hot_reloader::WatchReloadTask;
-            [cold] BakeHotReloadEvent => BakeHotReloadEvent;
-            [hot] FSWatchTask => FSWatchTask;
-            #[cfg(windows)] [hot] Open => fs_async::Open;
-            #[cfg(windows)] [hot] Close => fs_async::Close;
-            #[cfg(windows)] [hot] Read => fs_async::Read;
-            #[cfg(windows)] [hot] Write => fs_async::Write;
-            #[cfg(windows)] [hot] Readv => fs_async::Readv;
-            #[cfg(windows)] [hot] Writev => fs_async::Writev;
-            #[cfg(windows)] [hot] StatFS => fs_async::Statfs;
-            [hot] NativeZlib => NativeZlib;
-            [hot] NativeBrotli => NativeBrotli;
-            [hot] NativeZstd => NativeZstd;
-            #[cfg(not(windows))] [hot] ProcessWaiterThreadTask => ProcessWaiterThreadTask<Process>;
-            [hot] PosixSignalTask => PosixSignalTask;
-            [hot] MemoryPressureTask => crate::node::memory_pressure::MemoryPressureTask;
-            [hot] NativePromiseContextDeferredDerefTask => NativePromiseContextDeferredDerefTask;
-            [hot] ServerAllConnectionsClosedTask => ServerAllConnectionsClosedTask;
-            [hot] BundleV2DeferredBatchTask => BundleV2DeferredBatchTask;
-            [hot] FlushPendingFileSinkTask => FlushPendingFileSinkTask;
-            [hot] StreamPending => StreamPending;
+/// Every arm hands back what the task's JS left pending as `Err` and never
+/// reports it itself: the surrounding drain loop ([`tick_queue_with_count`])
+/// folds each task's result in one place, then flushes microtasks.
+// PERF(startup/dot): `#[inline(never)]` is deliberate. `#[inline]` here
+// bloated `tick_queue_with_count` to ~14 KB of `.text` interleaved with cold
+// shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
+// Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
+// drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
+// Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
+// hot dispatcher stays off their pages.
+#[inline(never)]
+pub(crate) fn run_task(
+    task: Task,
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    global: &JSGlobalObject,
+) -> JsResult<RunTaskResult> {
+    /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
+    macro_rules! cast {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
+            // by `Taskable::into_task`/`Task::new`; tag uniquely identifies
+            // the pointee type and the pointer is live for this dispatch.
+            unsafe { &mut *task.ptr.cast::<$ty>() }
+        }};
+    }
+    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
+    macro_rules! cast_ptr {
+        ($ty:ty) => {
+            task.ptr.cast::<$ty>()
+        };
+    }
+    /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
+    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
+    macro_rules! compression_arm {
+        ($T:ty) => {{
+            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
+            unsafe {
+                node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
+            };
+        }};
+    }
+    // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
+    // eligible, so const patterns work directly.
+    match task.tag {
+        // ── erased-callback tasks (low-tier types — real) ────────────────
+        task_tag::AnyTaskJob => {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
+            // its `Completion`; the erased entry runs `then` and frees it.
+            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
         }
-    };
+        task_tag::SendQueueDeferred => {
+            // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
+            // the task owns a ref for its duration; `run_deferred` releases it.
+            unsafe { crate::ipc::SendQueue::run_deferred(cast_ptr!(crate::ipc::SendQueue)) };
+        }
+        task_tag::AsyncModule => {
+            // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
+            bun_jsc::async_module::AsyncModule::on_done(unsafe {
+                bun_core::heap::take(cast_ptr!(bun_jsc::async_module::AsyncModule))
+            })?;
+        }
+        task_tag::BundleV2PluginResolve => {
+            // `bun_bundler` is JSC-free; the C++ hop it calls answers the request
+            // itself when the plugin throws, but can return early with an
+            // exception pending (argument conversion), so check the scope here.
+            bun_jsc::call_check_slow(global, || {
+                // SAFETY: tag identifies pointee — a live `Resolve` owned by the
+                // plugin dispatch chain.
+                unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
+                    .run_on_js_thread()
+            })?;
+        }
+        task_tag::BundleV2PluginLoad => {
+            // As `BundleV2PluginResolve`.
+            bun_jsc::call_check_slow(global, || {
+                // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
+                // dispatch chain.
+                unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
+                    .run_on_js_thread()
+            })?;
+        }
+        task_tag::JSBundleCompletionTask => {
+            crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
+                cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
+            )?;
+        }
+        task_tag::FetchTaskletPromiseSettle => {
+            // SAFETY: boxed at the fetch completion site; the arm consumes it.
+            let holder = unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
+                ))
+            };
+            holder.run()?;
+        }
+        task_tag::FileResponseStreamEof => {
+            let stream = cast_ptr!(crate::server::FileResponseStream);
+            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
+            // this task at enqueue time which this guard adopts.
+            let _pin =
+                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
+            // SAFETY: `stream` is live for this call (pinned above).
+            unsafe { (*stream).on_reader_done() };
+        }
+        task_tag::DuplexUpgradeContext => {
+            // SAFETY: tag identifies pointee; `run_event` may free the context,
+            // so it takes the raw pointer (no `&mut` at this boundary).
+            unsafe {
+                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
+                    crate::socket::DuplexUpgradeContext
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::WindowsNamedPipeContext => {
+            // Same shape as `DuplexUpgradeContext`: may free the context.
+            // SAFETY: tag identifies the pointee; the queue owns it until here.
+            unsafe {
+                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
+                    crate::socket::WindowsNamedPipeContext
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::GetAddrInfoLibuvComplete => {
+            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+        }
+        task_tag::ValkeyDeferredClose => {
+            // SAFETY: boxed at the enqueue site; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose))
+            }
+            .run();
+        }
+        task_tag::StatWatcherTimerUpdate => {
+            // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate
+                ))
+            }
+            .run();
+        }
+        task_tag::AsyncCpTask => {
+            // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
+            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread()? };
+        }
+        task_tag::ShellAsyncCpTask => {
+            // SAFETY: as above.
+            unsafe {
+                (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()?
+            };
+        }
+        task_tag::StatWatcherHop => {
+            // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
+            unsafe {
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(cast_ptr!(
+                    crate::node::node_fs_stat_watcher::StatWatcher
+                ))
+            }?;
+        }
+        task_tag::ManagedTask => {
+            // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
+            // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
+            unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) }?;
+        }
+        task_tag::CppTask => {
+            cast!(CppTask).run(global)?;
+        }
+
+        // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
+        task_tag::ShellAsync
+        | task_tag::ShellCondExprStatTask
+        | task_tag::ShellCpTask
+        | task_tag::ShellTouchTask
+        | task_tag::ShellMkdirTask
+        | task_tag::ShellLsTask
+        | task_tag::ShellMvBatchedTask
+        | task_tag::ShellMvCheckTargetTask
+        | task_tag::ShellRmTask
+        | task_tag::ShellRmDirTask
+        | task_tag::ShellGlobTask
+        | task_tag::ShellYesTask => run_task_cold(task),
+
+        // ── fetch / S3 ───────────────────────────────────────────────────
+        task_tag::FetchTasklet => {
+            cast!(FetchTasklet).on_progress_update()?;
+        }
+        task_tag::FetchTaskletDeinit => {
+            // SAFETY: posted by `deref_from_thread` with the last ref.
+            unsafe {
+                crate::webcore::fetch::FetchTaskletDeinitHop::run(cast_ptr!(
+                    crate::webcore::fetch::FetchTaskletDeinitHop
+                ))
+            };
+        }
+        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
+        // is the sole owner here.
+        task_tag::S3HttpSimpleTask => {
+            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
+        }
+        task_tag::S3HttpDownloadStreamingTask => {
+            S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
+        }
+
+        // ── napi ─────────────────────────────────────────────────────────
+        task_tag::NapiAsyncWork => {
+            cast!(napi_async_work).run_from_js(global)?;
+        }
+        task_tag::ThreadSafeFunction => {
+            ThreadSafeFunction::on_dispatch(cast_ptr!(ThreadSafeFunction));
+        }
+        task_tag::NapiFinalizerTask => {
+            NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask))?;
+        }
+
+        // ── JSC scheduler / module loader ────────────────────────────────
+        task_tag::JSCDeferredWorkTask => {
+            bun_jsc::mark_binding();
+            cast!(JSCDeferredWorkTask).run(global)?;
+        }
+        task_tag::PollPendingModulesTask => {
+            vm.modules.on_poll();
+        }
+        task_tag::RuntimeTranspilerStore => {
+            let store = cast!(RuntimeTranspilerStore);
+            store.run_from_js_thread(el.into(), global, vm.into());
+        }
+
+        // ── hot-reload (early-returns from the drain loop) ───────────────
+        task_tag::HotReloadTask => {
+            let t = cast_ptr!(hot_reloader::HotReloadTask);
+            // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
+            // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with heap::alloc in `Task::enqueue`.
+            unsafe { hot_reloader::HotReloadTask::deinit(t) };
+            return Ok(RunTaskResult::EarlyReturn);
+        }
+        task_tag::WatchReloadTask => {
+            let t = cast_ptr!(hot_reloader::WatchReloadTask);
+            // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with heap::alloc in `Task::enqueue`.
+            unsafe { hot_reloader::WatchReloadTask::deinit(t) };
+            return Ok(RunTaskResult::EarlyReturn);
+        }
+        // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
+        task_tag::BakeHotReloadEvent => run_task_cold(task),
+        task_tag::FSWatchTask => {
+            // The task is heap-allocated
+            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
+            // explicit (not `Drop`) so the embedded `current_task` field never
+            // runs it.
+            let t = cast_ptr!(FSWatchTask);
+            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
+            let ran = unsafe { (*t).run() };
+            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
+            unsafe { FSWatchTask::deinit(t) };
+            ran?;
+        }
+
+        // ── node:fs libuv-request ops (Windows) ──────────────────────────
+        #[cfg(windows)]
+        for_each_fs_uv_op!(__fs_pat) => {
+            macro_rules! __fs_run {
+                ($($tag:ident $ty:ident;)*) => { match task.tag {
+                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: outer arm guard proves one of the table tags matched.
+                    _ => unsafe { core::hint::unreachable_unchecked() },
+                }};
+            }
+            for_each_fs_uv_op!(__fs_run);
+        }
+
+        // ── compression streams ──────────────────────────────────────────
+        task_tag::NativeZlib => compression_arm!(NativeZlib),
+        task_tag::NativeBrotli => compression_arm!(NativeBrotli),
+        task_tag::NativeZstd => compression_arm!(NativeZstd),
+
+        // ── process / signals ────────────────────────────────────────────
+        task_tag::ProcessWaiterThreadTask => {
+            #[cfg(not(windows))]
+            {
+                // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
+                let t =
+                    unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
+                t.run_from_js_thread();
+            }
+            #[cfg(windows)]
+            unreachable!("posix-only");
+        }
+        task_tag::PosixSignalTask => {
+            // `ptr` here is *not* a pointer but a packed signal number.
+            let _ = core::marker::PhantomData::<PosixSignalTask>;
+            bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread(
+                task.ptr as usize as u8,
+                global,
+            );
+        }
+        task_tag::MemoryPressureTask => {
+            // `ptr` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
+            crate::node::memory_pressure::emit(global, task.ptr as usize as i32);
+        }
+        task_tag::NativePromiseContextDeferredDerefTask => {
+            // `ptr` packs an int, not a pointer.
+            NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
+        }
+
+        // ── server / bundler / streams ───────────────────────────────────
+        task_tag::ServerAllConnectionsClosedTask => {
+            ServerAllConnectionsClosedTask::run_from_js_thread(cast_ptr!(
+                ServerAllConnectionsClosedTask
+            ))?;
+        }
+        task_tag::BundleV2DeferredBatchTask => {
+            // `bun_bundler` is JSC-free so the exception-scope check is hoisted
+            // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
+            // THROW_SCOPE is left unchecked and trips JSC exception validation
+            // at the next `drainMicrotasks` scope.
+            bun_jsc::call_check_slow(global, || {
+                cast!(BundleV2DeferredBatchTask).run_on_js_thread();
+            })?;
+        }
+        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::FlushPendingFileSinkTask => unsafe {
+            FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
+        },
+        // `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::StreamPending => {
+            StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
+        }
+
+        _ => {
+            // A value outside `task_tag::COUNT` is a producer bug, but it's
+            // treated as a recoverable crash, not UB.
+            panic!("Unexpected Task tag: {}", task.tag.0);
+        }
+    }
+    Ok(RunTaskResult::Continue)
 }
 
-/// Compile-time guard that the table tracks `bun_event_loop::task_tag::COUNT`.
-/// Bump when adding a tag — and give it a row in `for_each_task!` and a
-/// `RunTask` impl.
+/// Cold-path arms hoisted out of [`run_task`].
+///
+/// Shell* / Bake* (and, when they land, Install*) tags are never seen during
+/// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
+/// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
+/// the hot arms. The `#[cold]` boundary lets lld place this whole cluster after the
+/// front-clustered startup window (see `src/startup.order`).
+///
+/// Returns `()` — none of the cold arms can fail or early-return; the caller
+/// falls through to `Ok(RunTaskResult::Continue)`.
+#[cold]
+#[inline(never)]
+fn run_task_cold(task: Task) {
+    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
+    macro_rules! cast_ptr {
+        ($ty:ty) => {
+            task.ptr.cast::<$ty>()
+        };
+    }
+    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
+    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
+    /// the per-builtin body runs.
+    /// The wrapper recovers `&mut Interpreter` from the embedded
+    /// `ShellTask.interp` back-ref.
+    macro_rules! shell_dispatch {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
+            // `interp` was set at schedule time and outlives the task.
+            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
+        }};
+        // Cond-expr wraps an inner `task: ShellTask`-embedding struct one
+        // level deeper. The type *does* implement `ShellTaskCtx`
+        // (with a two-hop `TASK_OFFSET`, needed for `ShellTask::schedule`),
+        // so this arm is behaviorally identical to the plain arm; the unref +
+        // interp-recovery are inlined here only to keep the `.task.task`
+        // shape explicit at the dispatch site.
+        (nested $ty:ty) => {{
+            let t = cast_ptr!($ty);
+            // SAFETY: see above; `task.task` is the embedded ShellTask.
+            unsafe {
+                let st = &raw mut (*t).task.task;
+                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
+                let interp = &*(*st).interp;
+                <$ty>::run_from_main_thread(t, interp);
+            }
+        }};
+    }
+
+    match task.tag {
+        // ── shell interpreter ────────────────────────────────────────────
+        task_tag::ShellAsync => {
+            // SAFETY: §Dispatch — tag identifies pointee.
+            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
+            // SAFETY: `interp` set at enqueue; outlives task.
+            let interp = unsafe { &*t.interp };
+            ShellAsync::run_from_main_thread(interp, t.node);
+        }
+        task_tag::ShellCondExprStatTask => {
+            shell_dispatch!(nested ShellCondExprStatTask);
+        }
+        task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
+        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
+        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
+        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
+        task_tag::ShellRmDirTask => {
+            let t = cast_ptr!(ShellRmDirTask);
+            ShellRmDirTask::run_from_main_thread(t);
+        }
+        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellYesTask => {
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
+            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
+            // interpreter arena and is stable until the builtin deinits.
+            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+        }
+
+        // ── bake dev-server ──────────────────────────────────────────────
+        task_tag::BakeHotReloadEvent => {
+            // SAFETY: §Dispatch — tag identifies pointee; the event lives in a
+            // heap `WatcherAtomics` that can outlive its `DevServer`. `run`
+            // either re-derives `&mut DevServer` from the BACKREF or (when the
+            // owner has been dropped) only reclaims the heap `WatcherAtomics`,
+            // so pass the raw pointer to avoid materialising an aliasing
+            // `&mut` here.
+            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+        }
+
+        // Any tag the hot path mis-routed: producer bug.
+        _ => panic!("Unexpected Task tag: {}", task.tag.0),
+    }
+}
+
+/// Compile-time guard that the arm counts in `run_task` and
+/// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
+/// adding a variant — and give it an arm in both.
 const _: () = assert!(
     task_tag::COUNT == 62,
-    "dispatch::for_each_task! out of sync with bun_event_loop::task_tag",
+    "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
-/// One arm of the tag switch. `hot` rows run inline in `run_task`; `cold`
-/// rows all route to the single out-of-line `run_task_cold`, whose own switch
-/// runs them, so lld places the shell/bake clusters after the front-clustered
-/// startup window (see `src/startup.order`).
-macro_rules! __run_arm {
-    (hot in hot, $ty:ty, $task:ident, $tick:ident) => {{
-        // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr` by
-        // `Taskable`; the tag identifies the pointee type, and the task just came
-        // off the queue and is not used afterwards.
-        unsafe { <$ty as RunTask>::run($task.ptr.cast::<$ty>(), $tick) }?;
-        Ok(<$ty as RunTask>::EARLY_RETURN)
-    }};
-    (cold in hot, $ty:ty, $task:ident, $tick:ident) => {
-        run_task_cold($task, $tick)
-    };
-    (cold in cold, $ty:ty, $task:ident, $tick:ident) => {{
-        // SAFETY: as the `hot` arm.
-        unsafe { <$ty as RunTask>::run($task.ptr.cast::<$ty>(), $tick) }?;
-        Ok(<$ty as RunTask>::EARLY_RETURN)
-    }};
-    (hot in cold, $ty:ty, $task:ident, $tick:ident) => {
-        unreachable!()
-    };
-}
-
-macro_rules! __gen_run_task {
-    ($( $(#[$attr:meta])* [$temp:ident] $tag:ident => $ty:ty; )*) => {
-        /// Dispatch a single `Task` to `<T as RunTask>::run`. `Ok(true)` is the
-        /// HotReload early return (see [`RunTask::EARLY_RETURN`]).
-        // PERF(startup/dot): `#[inline(never)]` is deliberate. `#[inline]` here
-        // bloated `tick_queue_with_count` to ~14 KB of `.text` interleaved with
-        // cold shell/bake code, blowing the iTLB fault-around window for
-        // `bun <file>`. Keeping `run_task` out-of-line lets
-        // `tick_queue_with_count` stay a tight drain-loop wrapper
-        // (front-clustered via `src/startup.order`); the `[cold]` rows are
-        // further hoisted into `run_task_cold` so this hot dispatcher stays off
-        // their pages.
-        #[inline(never)]
-        pub(crate) fn run_task(task: Task, tick: &mut Tick<'_>) -> JsResult<bool> {
-            match task.tag {
-                $( $(#[$attr])* task_tag::$tag => __run_arm!($temp in hot, $ty, task, tick), )*
-                // A tag with no row on this platform, or a value outside
-                // `task_tag::COUNT`: a producer bug, treated as a crash, not UB.
-                _ => panic!("Unexpected Task tag: {}", task.tag.0),
-            }
-        }
-
-        #[cold]
-        #[inline(never)]
-        fn run_task_cold(task: Task, tick: &mut Tick<'_>) -> JsResult<bool> {
-            match task.tag {
-                $( $(#[$attr])* task_tag::$tag => __run_arm!($temp in cold, $ty, task, tick), )*
-                _ => unreachable!(),
-            }
-        }
-
-        /// `__bun_release_task_unrun` — declared `extern "Rust"` in
-        /// `bun_jsc::event_loop`. A queued task that will never be dispatched
-        /// (its VM is tearing down: script is forbidden and the loop no longer
-        /// ticks) is freed through its type's [`Taskable::release_unrun`].
-        /// Generated from the same table as `run_task`: a tag cannot run
-        /// without its type having decided how it is released.
-        #[unsafe(no_mangle)]
-        fn __bun_release_task_unrun(task: Task) {
-            match task.tag {
-                // SAFETY: as `__run_arm!`.
-                $( $(#[$attr])* task_tag::$tag => unsafe {
-                    <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>())
-                }, )*
-                _ => unreachable!("task tag out of range: {}", task.tag.0),
-            }
-        }
-    };
-}
-for_each_task!(__gen_run_task);
-
 // ────────────────────────────────────────────────────────────────────────────
-// `tick_queue_with_count` — the full drain loop, and the one fold.
+// `tick_queue_with_count` — the full drain loop.
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn tick_queue_with_count(
@@ -325,544 +618,28 @@ pub(crate) fn tick_queue_with_count(
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
-    let mut tick = Tick { el, vm, global };
-    while let Some(task) = tick.el.tasks.read_item() {
+    while let Some(task) = el.tasks.read_item() {
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        match run_task(task, &mut tick) {
-            Ok(false) => {}
-            Ok(true) => {
+        match run_task(task, el, vm, global) {
+            Ok(RunTaskResult::Continue) => {}
+            Ok(RunTaskResult::EarlyReturn) => {
                 // Caller is `while tickWithCount(ctx) > 0` — must keep
                 // draining after a hot-reload task, so report exactly one
                 // task processed. Do NOT set 0 here.
                 *counter = 1;
                 return Ok(());
             }
+            // The one fold for every queued task: report what it left as
+            // uncaught, or stand the loop down if it is the VM's termination.
             Err(err) => report_error_or_terminate(global, err)?,
         }
-        tick.el.drain_microtasks_with_global(global, global_vm)?;
+        el.drain_microtasks_with_global(global, global_vm)?;
     }
-    tick.el.tasks.reset_head_if_empty();
+    el.tasks.reset_head_if_empty();
     Ok(())
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// `RunTask` impls — one per row of `for_each_task!`. Each is the type's
-// existing JS-thread entry with its result surfaced; none reports.
-// ────────────────────────────────────────────────────────────────────────────
-
-mod run_impls {
-    use super::*;
-
-    /// The erased `bun_jsc::Job<C>` payloads all queue under `AnyTaskJob` and
-    /// are reached through their common header.
-    pub(crate) enum AnyJob {}
-    impl Taskable for AnyJob {
-        const TAG: bun_event_loop::TaskTag = task_tag::AnyTaskJob;
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: forwarded caller contract; every payload is a `Job<C>`.
-            unsafe { bun_jsc::job::release_unrun_erased(this.cast()) }
-        }
-    }
-    impl RunTask for AnyJob {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: `this` is a live heap `Job<C>` posted by its `Completion`;
-            // the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(this.cast(), &tick.global.js_thread()) }
-        }
-    }
-
-    impl RunTask for crate::ipc::SendQueue {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: the queued pointer is the SendQueue root and the task owns
-            // a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(this) };
-            Ok(())
-        }
-    }
-
-    impl RunTask for bun_jsc::async_module::AsyncModule {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
-            bun_jsc::async_module::AsyncModule::on_done(unsafe { bun_core::heap::take(this) })
-        }
-    }
-
-    impl RunTask for bun_bundler::bundle_v2::api::JSBundler::Resolve {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // `bun_bundler` is JSC-free; the C++ hop it calls answers the request
-            // itself when the plugin throws, but can return early with an
-            // exception pending (argument conversion), so check the scope here.
-            // SAFETY: a live `Resolve` owned by the plugin dispatch chain.
-            bun_jsc::call_check_slow(tick.global, || unsafe { &mut *this }.run_on_js_thread())
-        }
-    }
-
-    impl RunTask for bun_bundler::bundle_v2::api::JSBundler::Load {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // As `Resolve`.
-            // SAFETY: a live `Load` owned by the plugin dispatch chain.
-            bun_jsc::call_check_slow(tick.global, || unsafe { &mut *this }.run_on_js_thread())
-        }
-    }
-
-    impl RunTask for crate::api::js_bundle_completion_task::JSBundleCompletionTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_complete_anytask(this)
-        }
-    }
-
-    impl RunTask for crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: boxed at the fetch completion site; the arm consumes it.
-            unsafe { bun_core::heap::take(this) }.run()
-        }
-    }
-
-    impl RunTask for crate::server::FileResponseStream {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: `on_read_chunk` took a ref for this task at enqueue time,
-            // which this guard adopts; `this` is live for the call.
-            let _pin = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
-            // SAFETY: pinned above.
-            unsafe { (*this).on_reader_done() };
-            Ok(())
-        }
-    }
-
-    impl RunTask for crate::socket::DuplexUpgradeContext {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: `run_event` may free the context, so it takes the raw
-            // pointer (no `&mut` at this boundary).
-            unsafe { Self::run_event(this) };
-            Ok(())
-        }
-    }
-
-    #[cfg(windows)]
-    impl RunTask for crate::socket::WindowsNamedPipeContext {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: as `DuplexUpgradeContext`.
-            unsafe { Self::run_event(this) };
-            Ok(())
-        }
-    }
-
-    #[cfg(windows)]
-    impl RunTask for crate::dns_jsc::LibuvCompleteHolder {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
-            unsafe { bun_core::heap::take(this) }.run();
-            Ok(())
-        }
-    }
-
-    impl RunTask for crate::valkey_jsc::js_valkey::ValkeyDeferredClose {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: boxed at the enqueue site; the arm consumes it.
-            unsafe { bun_core::heap::take(this) }.run();
-            Ok(())
-        }
-    }
-
-    impl RunTask for crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
-            unsafe { bun_core::heap::take(this) }.run();
-            Ok(())
-        }
-    }
-
-    impl RunTask for crate::node::fs::AsyncCpTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-            unsafe { (*this).run_from_js_thread() }
-        }
-    }
-
-    impl RunTask for crate::node::fs::ShellAsyncCpTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: as `AsyncCpTask`.
-            unsafe { (*this).run_from_js_thread() }
-        }
-    }
-
-    impl RunTask for crate::node::node_fs_stat_watcher::StatWatcher {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-            unsafe { Self::run_hop(this) }
-        }
-    }
-
-    impl RunTask for ManagedTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: produced by `heap::alloc` in `ManagedTask::new`; `run`
-            // consumes/frees it.
-            unsafe { ManagedTask::run(this) }
-        }
-    }
-
-    impl RunTask for CppTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: a live C++ `EventLoopTask`; `run` consumes it.
-            unsafe { &mut *this }.run(tick.global)
-        }
-    }
-
-    // ── shell interpreter ────────────────────────────────────────────────
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs; the wrapper recovers `&mut Interpreter` from
-    /// the embedded `ShellTask.interp` back-ref.
-    macro_rules! shell_run_task {
-        ($($ty:ty),* $(,)?) => {$(
-            impl RunTask for $ty {
-                #[inline]
-                unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-                    // SAFETY: a live heap-allocated shell task; `interp` was
-                    // set at schedule time and outlives the task.
-                    unsafe { ShellTask::run_from_main_thread::<$ty>(this) };
-                    Ok(())
-                }
-            }
-        )*};
-    }
-    shell_run_task!(
-        ShellCpTask,
-        ShellTouchTask,
-        ShellMkdirTask,
-        ShellLsTask,
-        ShellMvBatchedTask,
-        ShellMvCheckTargetTask,
-        ShellRmTask,
-        ShellGlobTask,
-    );
-
-    impl RunTask for crate::shell::dispatch_tasks::ShellAsyncTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: tag identifies pointee; `interp` set at enqueue and the
-            // interpreter outlives its queued async tasks.
-            let (interp, node) = unsafe { (&*(*this).interp, (*this).node) };
-            ShellAsync::run_from_main_thread(interp, node);
-            Ok(())
-        }
-    }
-
-    impl RunTask for ShellCondExprStatTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // Cond-expr wraps an inner `task: ShellTask`-embedding struct one
-            // level deeper (two-hop `TASK_OFFSET`), so the unref +
-            // interp-recovery are inlined here to keep the `.task.task` shape
-            // explicit.
-            // SAFETY: as `shell_run_task!`; `task.task` is the embedded ShellTask.
-            unsafe {
-                let st = &raw mut (*this).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &*(*st).interp;
-                Self::run_from_main_thread(this, interp);
-            }
-            Ok(())
-        }
-    }
-
-    impl RunTask for ShellRmDirTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::run_from_main_thread(this);
-            Ok(())
-        }
-    }
-
-    impl RunTask for ShellYesTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: enqueued by `YesTask::enqueue`; storage lives inside
-            // `Box<Yes>` in the interpreter arena and is stable until the
-            // builtin deinits.
-            Self::run_from_main_thread(unsafe { &*this });
-            Ok(())
-        }
-    }
-
-    // ── fetch / S3 ───────────────────────────────────────────────────────
-    impl RunTask for FetchTasklet {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: a live tasklet; the HTTP thread's ref keeps it until deinit.
-            unsafe { &mut *this }.on_progress_update()
-        }
-    }
-
-    impl RunTask for crate::webcore::fetch::FetchTaskletDeinitHop {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: posted by `deref_from_thread` with the last ref.
-            unsafe { Self::run(this) };
-            Ok(())
-        }
-    }
-
-    impl RunTask for S3HttpSimpleTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // JS-thread dispatch is the sole owner of the heap task here.
-            Self::on_response(this)
-        }
-    }
-
-    impl RunTask for S3HttpDownloadStreamingTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_response(this);
-            Ok(())
-        }
-    }
-
-    // ── napi ─────────────────────────────────────────────────────────────
-    impl RunTask for napi_async_work {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: a live `napi_async_work` posted from its pool completion.
-            unsafe { &mut *this }.run_from_js(tick.global)
-        }
-    }
-
-    impl RunTask for ThreadSafeFunction {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_dispatch(this);
-            Ok(())
-        }
-    }
-
-    impl RunTask for NapiFinalizerTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::run_on_js_thread(this)
-        }
-    }
-
-    // ── JSC scheduler / module loader ────────────────────────────────────
-    impl RunTask for JSCDeferredWorkTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            bun_jsc::mark_binding();
-            // SAFETY: a live JSC deferred-work ticket.
-            unsafe { &mut *this }.run(tick.global)
-        }
-    }
-
-    impl RunTask for bun_jsc::async_module::Queue {
-        #[inline]
-        unsafe fn run(_: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            tick.vm.modules.on_poll();
-            Ok(())
-        }
-    }
-
-    impl RunTask for RuntimeTranspilerStore {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: the VM's transpiler store, live for the VM.
-            unsafe { &mut *this }.run_from_js_thread(
-                (&mut *tick.el).into(),
-                tick.global,
-                (&mut *tick.vm).into(),
-            );
-            Ok(())
-        }
-    }
-
-    // ── hot-reload (early-returns from the drain loop) ───────────────────
-    impl RunTask for hot_reloader::HotReloadTask {
-        const EARLY_RETURN: bool = true;
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: heap-allocated in `Task::enqueue`; `deinit` frees it.
-            unsafe {
-                (*this).run();
-                Self::deinit(this);
-            }
-            Ok(())
-        }
-    }
-
-    impl RunTask for hot_reloader::WatchReloadTask {
-        const EARLY_RETURN: bool = true;
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: as `HotReloadTask`.
-            unsafe {
-                (*this).run();
-                Self::deinit(this);
-            }
-            Ok(())
-        }
-    }
-
-    // ── bake dev-server ──────────────────────────────────────────────────
-    impl RunTask for BakeHotReloadEvent {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // The event lives in a heap `WatcherAtomics` that can outlive its
-            // `DevServer`. `run` either re-derives `&mut DevServer` from the
-            // BACKREF or (when the owner has been dropped) only reclaims the
-            // heap `WatcherAtomics`, so pass the raw pointer to avoid
-            // materialising an aliasing `&mut` here.
-            // SAFETY: tag identifies pointee.
-            unsafe { Self::run(this) };
-            Ok(())
-        }
-    }
-
-    impl RunTask for FSWatchTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // Heap-allocated (cloned from `FSWatcher.current_task` at enqueue);
-            // `deinit` is explicit (not `Drop`) so the embedded `current_task`
-            // field never runs it.
-            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            let emitted = unsafe { (*this).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { Self::deinit(this) };
-            emitted
-        }
-    }
-
-    // ── node:fs libuv-request ops (Windows) ──────────────────────────────
-    #[cfg(windows)]
-    macro_rules! fs_uv_run_task {
-        ($($tag:ident $ty:ident;)*) => {$(
-            impl RunTask for fs_async::$ty {
-                #[inline]
-                unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-                    // SAFETY: a live libuv request completed on the JS thread.
-                    unsafe { &mut *this }.run_from_js_thread()
-                }
-            }
-        )*};
-    }
-    #[cfg(windows)]
-    fs_uv_run_task! {
-        Open Open; Close Close; Read Read; Write Write; Readv Readv;
-        Writev Writev; StatFS Statfs;
-    }
-
-    // ── compression streams ──────────────────────────────────────────────
-    /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
-    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
-    macro_rules! compression_run_task {
-        ($($T:ty),*) => {$(
-            impl RunTask for $T {
-                #[inline]
-                unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-                    // SAFETY: tag identifies pointee; live m_ctx payload.
-                    unsafe { node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(this) };
-                    Ok(())
-                }
-            }
-        )*};
-    }
-    compression_run_task!(NativeZlib, NativeBrotli, NativeZstd);
-
-    // ── process / signals ────────────────────────────────────────────────
-    #[cfg(not(windows))]
-    impl RunTask for ProcessWaiterThreadTask<Process> {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: heap-allocated in WaiterThread; the arm consumes it.
-            unsafe { bun_core::heap::take(this) }.run_from_js_thread();
-            Ok(())
-        }
-    }
-
-    impl RunTask for PosixSignalTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // `this` here is *not* a pointer but a packed signal number.
-            Self::run_from_js_thread(this as usize as u8, tick.global);
-            Ok(())
-        }
-    }
-
-    impl RunTask for crate::node::memory_pressure::MemoryPressureTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // `this` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
-            crate::node::memory_pressure::emit(tick.global, this as usize as i32);
-            Ok(())
-        }
-    }
-
-    impl RunTask for NativePromiseContextDeferredDerefTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // `this` packs an int, not a pointer.
-            Self::run_from_js_thread(this as usize);
-            Ok(())
-        }
-    }
-
-    // ── server / bundler / streams ───────────────────────────────────────
-    impl RunTask for ServerAllConnectionsClosedTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::run_from_js_thread(this)
-        }
-    }
-
-    impl RunTask for BundleV2DeferredBatchTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, tick: &mut Tick<'_>) -> JsResult<()> {
-            // `bun_bundler` is JSC-free so the exception-scope check is hoisted
-            // here; without it, `JSBundlerPlugin__drainDeferred`'s THROW_SCOPE
-            // is left unchecked and trips JSC exception validation at the next
-            // `drainMicrotasks` scope.
-            // SAFETY: an intrusive field of a live `BundleV2`.
-            bun_jsc::call_check_slow(tick.global, || unsafe { &mut *this }.run_on_js_thread())
-        }
-    }
-
-    impl RunTask for FlushPendingFileSinkTask {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: the heap-allocated task; sole owner.
-            unsafe { Self::run_from_js_thread(this) };
-            Ok(())
-        }
-    }
-
-    impl RunTask for StreamPending {
-        #[inline]
-        unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // The heap-allocated task; sole owner.
-            Self::run_from_js_thread(this);
-            Ok(())
-        }
-    }
-}
-use run_impls::AnyJob;
 
 // ════════════════════════════════════════════════════════════════════════════
 // FilePoll dispatch
@@ -1433,3 +1210,136 @@ unsafe fn __bun_tick_queue_with_count(
 
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
+
+/// `__bun_release_task_unrun` — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. A queued task that will never be dispatched (its VM
+/// is tearing down: script is forbidden and the loop no longer ticks) is freed
+/// through its type's [`Taskable::release_unrun`](bun_event_loop::Taskable).
+/// One arm per tag, no fallthrough: a tag cannot exist without its type
+/// having decided how it is released. JS thread, JSC heap alive.
+#[unsafe(no_mangle)]
+fn __bun_release_task_unrun(task: bun_event_loop::Task) {
+    use bun_event_loop::{Taskable, task_tag};
+    /// `<T as Taskable>::release_unrun(task.ptr as *mut T)`, SAFETY spelled once.
+    macro_rules! release {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
+            // through `Taskable`; the tag identifies the pointee type, and the
+            // task just came off the queue and is not used afterwards.
+            unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
+        }};
+    }
+    match task.tag {
+        task_tag::AnyTaskJob => {
+            // The one erased tag: every payload is a `Job<C>` reached through its header.
+            // SAFETY: as `release!`.
+            unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
+        }
+        task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
+        task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
+        task_tag::BundleV2DeferredBatchTask => release!(BundleV2DeferredBatchTask),
+        task_tag::BundleV2PluginResolve => {
+            release!(bun_bundler::bundle_v2::api::JSBundler::Resolve)
+        }
+        task_tag::BundleV2PluginLoad => release!(bun_bundler::bundle_v2::api::JSBundler::Load),
+        task_tag::ShellYesTask => release!(ShellYesTask),
+        task_tag::CppTask => release!(CppTask),
+        task_tag::DuplexUpgradeContext => release!(crate::socket::DuplexUpgradeContext),
+        task_tag::FetchTasklet => release!(FetchTasklet),
+        task_tag::FetchTaskletDeinit => release!(crate::webcore::fetch::FetchTaskletDeinitHop),
+        task_tag::FetchTaskletPromiseSettle => {
+            release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
+        }
+        task_tag::FileResponseStreamEof => release!(crate::server::FileResponseStream),
+        task_tag::FSWatchTask => release!(FSWatchTask),
+        task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
+        task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),
+        task_tag::JSBundleCompletionTask => {
+            release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
+        }
+        task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
+        task_tag::ManagedTask => release!(ManagedTask),
+        task_tag::NapiAsyncWork => release!(napi_async_work),
+        task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),
+        task_tag::NativePromiseContextDeferredDerefTask => {
+            release!(NativePromiseContextDeferredDerefTask)
+        }
+        task_tag::NativeBrotli => release!(NativeBrotli),
+        task_tag::NativeZlib => release!(NativeZlib),
+        task_tag::NativeZstd => release!(NativeZstd),
+        task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
+        task_tag::PosixSignalTask => release!(PosixSignalTask),
+        task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
+        task_tag::ProcessWaiterThreadTask => {
+            #[cfg(not(windows))]
+            release!(ProcessWaiterThreadTask<Process>);
+            #[cfg(windows)]
+            unreachable!("posix-only tag");
+        }
+        task_tag::FlushPendingFileSinkTask => release!(FlushPendingFileSinkTask),
+        task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
+        task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
+        task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
+        task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
+        task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),
+        task_tag::ShellCondExprStatTask => release!(ShellCondExprStatTask),
+        task_tag::ShellCpTask => release!(ShellCpTask),
+        task_tag::ShellGlobTask => release!(ShellGlobTask),
+        task_tag::ShellLsTask => release!(ShellLsTask),
+        task_tag::ShellMkdirTask => release!(ShellMkdirTask),
+        task_tag::ShellMvBatchedTask => release!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => release!(ShellMvCheckTargetTask),
+        task_tag::ShellRmDirTask => release!(ShellRmDirTask),
+        task_tag::ShellRmTask => release!(ShellRmTask),
+        task_tag::ShellTouchTask => release!(ShellTouchTask),
+        task_tag::StatWatcherTimerUpdate => {
+            release!(crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate)
+        }
+        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcher),
+        task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
+        task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
+        task_tag::StreamPending => release!(StreamPending),
+        task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
+        task_tag::ValkeyDeferredClose => {
+            release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+        }
+        // ── Windows-only producers ───────────────────────────────────────
+        task_tag::GetAddrInfoLibuvComplete => {
+            #[cfg(windows)]
+            release!(crate::dns_jsc::LibuvCompleteHolder);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::WindowsNamedPipeContext => {
+            #[cfg(windows)]
+            release!(crate::socket::WindowsNamedPipeContext);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::Open
+        | task_tag::Close
+        | task_tag::Read
+        | task_tag::Readv
+        | task_tag::Write
+        | task_tag::Writev
+        | task_tag::StatFS => {
+            #[cfg(windows)]
+            {
+                macro_rules! __fs_release {
+                    ($($tag:ident $ty:ident;)*) => { match task.tag {
+                        $(task_tag::$tag => release!(fs_async::$ty),)*
+                        // SAFETY: the outer arm proves one of the table tags matched.
+                        _ => unsafe { core::hint::unreachable_unchecked() },
+                    }};
+                }
+                for_each_fs_uv_op!(__fs_release);
+            }
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag (libuv fs request)");
+        }
+        // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
+        // outside the range is a producer bug.
+        _ => unreachable!("task tag out of range: {}", task.tag.0),
+    }
+}

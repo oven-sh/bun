@@ -1724,11 +1724,19 @@ fn spawn_maybe_sync(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+    let stdin_start_err = match subprocess.stdin.get() {
+        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        _ => None,
+    };
+    if let Some(err) = stdin_start_err {
+        // On POSIX the writer holds nothing after a failed start(), so closing
+        // it at exit will not report on_close_io; retire the slot here or the
+        // Buffer counts as pending activity and pins the wrapper for good.
+        // (Windows adopts the pipe before start(), which cannot fail there.)
+        #[cfg(not(windows))]
+        subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+        let _ = subprocess.try_kill(subprocess.kill_signal);
+        return Err(global_this.throw_value(err.to_js(global_this)));
     }
 
     **should_close_memfd = false;

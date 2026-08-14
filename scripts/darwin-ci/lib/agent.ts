@@ -127,3 +127,10 @@ export async function drainTartAgent(): Promise<void> {
     await $`sudo -u ${user} -H ${config.tart.bin} delete ${guest}`.quiet().nothrow();
   }
 }
+
+// after a failed bake the previous image and config are still in place, so the old agent can simply come back
+export async function resumeTartAgent(): Promise<void> {
+  const plist = `/Library/LaunchAgents/${agentLabel}.plist`;
+  if (!(await Bun.file(plist).exists())) return;
+  await $`sudo launchctl bootstrap gui/${await ciUserId()} ${plist}`.quiet().nothrow();
+}

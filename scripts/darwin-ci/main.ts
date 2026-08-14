@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { drainTartAgent, installBareAgent, installTartAgent } from "./lib/agent";
+import { drainTartAgent, installBareAgent, installTartAgent, resumeTartAgent } from "./lib/agent";
 import { bake } from "./lib/bake";
 import { ciUserExists, enableAutoLogin, ensureCiUser } from "./lib/ci-user";
 import { config } from "./lib/config";
@@ -112,7 +112,12 @@ async function provisionTart(): Promise<void> {
 
   step(`bake ${config.tart.image} as ${user}`);
   await drainTartAgent();
-  await $`sudo -u ${user} -H /usr/local/bin/bun ${main} bake --base ${values.base!} --ref ${values.ref!}`;
+  const baked =
+    await $`sudo -u ${user} -H /usr/local/bin/bun ${main} bake --base ${values.base!} --ref ${values.ref!}`.nothrow();
+  if (baked.exitCode !== 0) {
+    await resumeTartAgent();
+    fail("bake failed; previous image and agent left in service");
+  }
 
   step("agent");
   await installTartAgent(agentOptions);

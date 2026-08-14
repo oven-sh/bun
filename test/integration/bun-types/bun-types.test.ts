@@ -1,4 +1,4 @@
-import { $ as Shell, fileURLToPath } from "bun";
+import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";

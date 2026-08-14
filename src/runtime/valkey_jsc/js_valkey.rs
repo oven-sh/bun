@@ -1902,7 +1902,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     // handshake.
                     this.global_object.clear_exception();
                     this.client_mut().flags.is_manually_closed = true;
-                    this.client_mut().close();
+                    this.client_mut().close(uws::CloseCode::Failure);
                     return Ok(());
                 }
             };
@@ -2100,7 +2100,7 @@ impl ValkeyDeferredClose {
         // SAFETY: live per the ref above; tasks run on the JS thread.
         let this = unsafe { &*self.ctx };
         match self.what {
-            DeferredClose::Socket => this.client_mut().close(),
+            DeferredClose::Socket => this.client_mut().close(uws::CloseCode::FastShutdown),
             DeferredClose::WithoutSocket => {
                 // `on_close()` ends in `on_valkey_close`/`on_valkey_reconnect`,
                 // which release the ref the socket would have held.

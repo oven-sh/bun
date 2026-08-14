@@ -2032,10 +2032,12 @@ describe("streamed input pacing", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The whole document arrives in the first read: it finishes inside
-  // `transform()` however large its output, so the body is already materialized
-  // for consumers that need that (Content-Length, static routes).
-  it("a document that arrives in one chunk finishes inside transform()", async () => {
+  // The whole document arrives in the first read: it finishes with that read
+  // however large its output — inside `transform()` where regular-file reads
+  // are synchronous (POSIX), on the read's completion otherwise — so the body
+  // is already materialized for consumers that need that (Content-Length,
+  // static routes) without anything reading it.
+  it("a document that arrives in one chunk finishes with that chunk", async () => {
     const small = path.join(dir, "small.html");
     await Bun.write(small, Buffer.alloc(12 * 4000, "<p>hello</p>").toString());
     let ended = false;
@@ -2043,7 +2045,8 @@ describe("streamed input pacing", () => {
       .on("p", { element: e => void e.setAttribute("x", "1") })
       .onDocument({ end: () => void (ended = true) })
       .transform(new Response(Bun.file(small)));
-    expect(ended).toBe(true);
+    if (!isWindows) expect(ended).toBe(true);
+    while (!ended) await setImmediatePromise();
     await using server = Bun.serve({ port: 0, fetch: () => res });
     const served = await fetch(server.url);
     expect(served.headers.get("content-length")).toBe(String(18 * 4000));

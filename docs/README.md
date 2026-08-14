@@ -26,3 +26,5 @@ The site is served at `http://localhost:3000`.
 ## Contributing
 
 Contributions are welcome. Open an issue or submit a pull request.
+
+Before writing or editing a page, read the [voice guidelines](https://bun.com/docs/project/contributing#voice) (source: `project/contributing.mdx`): short sentences, active voice, present tense, second person, and no "easy", "simple", or "just".

@@ -1559,10 +1559,16 @@ impl Value {
             global_this,
         );
 
-        if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
-            let Some(stream) = locked.readable.try_get(global_this)? else {
-                unreachable!("`readable` was set just above");
+        if locked.on_readable_stream_available.is_some() {
+            let stream = match locked.readable.try_get(global_this) {
+                Ok(Some(stream)) => stream,
+                Ok(None) => unreachable!("`readable` was set just above"),
+                Err(err) => {
+                    locked.detach_producer();
+                    return Err(err);
+                }
             };
+            let on_readable_stream_available = locked.on_readable_stream_available.take().unwrap();
             on_readable_stream_available(locked.task.unwrap(), global_this, stream);
         }
         locked.detach_producer();

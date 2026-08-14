@@ -920,6 +920,11 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
+    !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2217,6 +2222,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_used: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -3030,10 +3036,8 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

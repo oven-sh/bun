@@ -462,6 +462,43 @@ describe("fs.watch", () => {
     });
   });
 
+  test("an abort with no 'error' listener only closes; an 'error' listener that throws is an uncaught exception", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        process.on("uncaughtException", err => console.log("uncaught:", err.message));
+        {
+          const ac = new AbortController();
+          const watcher = fs.watch(${JSON.stringify(import.meta.path)}, { signal: ac.signal });
+          watcher.on("close", () => console.log("closed 1"));
+          ac.abort();
+        }
+        {
+          const ac = new AbortController();
+          const watcher = fs.watch(${JSON.stringify(import.meta.path)}, { signal: ac.signal });
+          watcher.on("error", err => { throw new Error("listener threw on " + err.name); });
+          watcher.on("close", () => console.log("closed 2"));
+          ac.abort();
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n").filter(Boolean).sort()).toEqual([
+      "closed 1",
+      "closed 2",
+      "uncaught: listener threw on AbortError",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink2.txt");
     await fs.promises.symlink(path.join(testDir, "sym-sync.txt"), filepath);

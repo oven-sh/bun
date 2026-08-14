@@ -690,7 +690,7 @@ impl AsyncModule {
         clippy::boxed_local,
         reason = "reclaim point for the box `done()` handed to the task queue"
     )]
-    pub fn on_done(mut this: Box<AsyncModule>) {
+    pub fn on_done(mut this: Box<AsyncModule>) -> JsResult<()> {
         jsc::mark_binding();
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
@@ -741,7 +741,7 @@ impl AsyncModule {
 
         let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
         let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        let _ = jsc::from_js_host_call_generic(global_this, || {
+        jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
@@ -749,7 +749,7 @@ impl AsyncModule {
                 &mut spec,
                 &mut ref_,
             )
-        });
+        })
     }
 
     // Never returns Err: the `write!`s below go into a `Vec<u8>` and their

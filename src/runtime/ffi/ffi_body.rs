@@ -1198,7 +1198,6 @@ impl FFI {
                 }
                 crate::Error::JSError => return Err(JsError::Thrown),
                 crate::Error::Alloc(_) => return Err(JsError::OutOfMemory),
-                crate::Error::JSTerminated => return Err(JsError::Terminated),
                 other => {
                     return Err(global_this.throw(format_args!("compile failed: {}", other.name())));
                 }

@@ -270,9 +270,9 @@ impl JobContext for WalkTask {
         }
         let js_strings = match glob_walk_result_to_js(&mut this.walker, global) {
             Ok(v) => v,
-            Err(e) => return Ok(promise.reject(global, Err(e))?),
+            Err(e) => return promise.reject(global, Err(e)),
         };
-        Ok(promise.resolve(global, js_strings)?)
+        promise.resolve(global, js_strings)
     }
 }
 

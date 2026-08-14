@@ -1205,21 +1205,38 @@ impl Interpreter {
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
-                        resolve
-                            .call(
-                                global_this,
-                                JSValue::UNDEFINED,
-                                &[
-                                    JSValue::js_number_from_int32(i32::from(exit_code)),
-                                    buffered_stdout,
-                                    buffered_stderr,
-                                ],
-                            )
-                            .map(|_| ())
-                    });
-                    if let Err(err) = called {
-                        global_this.report_active_exception_as_unhandled(err);
+                    // The shell state machine (`Yield`) has no exception channel,
+                    // so the promise is settled by a top-level call of its own:
+                    // what it throws is reported there, and the interpreter
+                    // finishes. If the output buffers could not be built
+                    // (allocation failure), the promise is rejected with that
+                    // instead; a terminating VM settles nothing.
+                    let event_loop = global_this.bun_vm().event_loop_mut();
+                    match buffers {
+                        Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            resolve,
+                            global_this,
+                            JSValue::UNDEFINED,
+                            &[
+                                JSValue::js_number_from_int32(i32::from(exit_code)),
+                                buffered_stdout,
+                                buffered_stderr,
+                            ],
+                        ),
+                        Err(err) if !global_this.has_pending_termination_exception() => {
+                            let error = global_this.take_exception(err);
+                            if let Some(reject) =
+                                JSShellInterpreter::reject_get_cached(this_jsvalue)
+                            {
+                                event_loop.run_callback(
+                                    reject,
+                                    global_this,
+                                    JSValue::UNDEFINED,
+                                    &[error],
+                                );
+                            }
+                        }
+                        Err(_) => {}
                     }
                     JSShellInterpreter::resolve_set_cached(
                         this_jsvalue,

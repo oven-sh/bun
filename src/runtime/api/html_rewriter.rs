@@ -1238,7 +1238,7 @@ impl RewriterPipe {
                 .is_none_or(|v| v.is_empty_or_undefined_or_null())
         {
             if let Some(out) = this.output.get() {
-                let _ = out.on_data(StreamResult::Done);
+                out.on_data(StreamResult::Done);
             }
             this.detach_output();
         }
@@ -1406,7 +1406,7 @@ impl RewriterPipe {
         debug_assert!(!self.is_suspended());
         self.rewriter.set(None);
         if let Some(out) = self.output.get() {
-            let _ = out.on_data(StreamResult::Done);
+            out.on_data(StreamResult::Done);
             self.detach_output();
             return;
         }
@@ -1584,7 +1584,7 @@ impl RewriterPipe {
 
         if let Some(out) = self.output.get() {
             let mut err = err;
-            let _ = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
             return;
         }
@@ -1618,7 +1618,7 @@ impl lol_html::OutputSink for PipeOutput {
         }
         let pipe = &*self.0;
         if let Some(out) = pipe.output.get() {
-            let _ = out.on_data(StreamResult::Temporary(RawSlice::new(chunk)));
+            out.on_data(StreamResult::Temporary(RawSlice::new(chunk)));
         } else {
             pipe.output_buffer.with_mut(|v| v.extend_from_slice(chunk));
         }

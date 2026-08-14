@@ -458,6 +458,77 @@ describe("bundler metafile", () => {
     expect(outputPaths).toContain(dynamicImport!.path);
   });
 
+  // A dynamic import that splitting turned into a chunk of its own is reported in "inputs"
+  // by the chunk's output path, which is relative to the outdir like every "outputs" key.
+  // Both layouts below used to produce a path that matched no "outputs" key: the first
+  // because the paths were made relative to the directory of the first chunk, the second
+  // because they were run through the import specifier normalizer ("./pages/b.js" for an
+  // output keyed "pages/b.js").
+  describe("chunk references in inputs are keyed like outputs", () => {
+    function chunkReference(metafile: Metafile, importer: string, imported: string) {
+      const inputKeys = Object.keys(metafile.inputs);
+      const importerKey = inputKeys.find(k => k.replaceAll("\\", "/").endsWith(importer))!;
+      const importedKey = inputKeys.find(k => k.replaceAll("\\", "/").endsWith(imported))!;
+      // The "outputs" key of the chunk each entry point was written to.
+      const [importedChunk, importerChunk] = [importedKey, importerKey].map(
+        entryPoint => Object.entries(metafile.outputs).find(([, output]) => output.entryPoint === entryPoint)![0],
+      );
+      return {
+        importedChunk,
+        inputImports: metafile.inputs[importerKey].imports.map(imp => ({ path: imp.path, kind: imp.kind })),
+        outputImports: metafile.outputs[importerChunk].imports.filter(imp => imp.kind === "dynamic-import"),
+      };
+    }
+
+    test("entry point in a subdirectory of the outdir", async () => {
+      using dir = tempDir("metafile-nested-entry-chunk-ref", {
+        "src/pages/entry.js": `import("../dyn.js").then(m => console.log(m.v));`,
+        "src/dyn.js": `export const v = 1;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/src/pages/entry.js`],
+        root: `${dir}/src`,
+        outdir: `${dir}/out`,
+        splitting: true,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+
+      const { importedChunk, inputImports, outputImports } = chunkReference(
+        result.metafile as Metafile,
+        "src/pages/entry.js",
+        "src/dyn.js",
+      );
+      expect(inputImports).toEqual([{ path: importedChunk, kind: "dynamic-import" }]);
+      expect(outputImports).toEqual([{ path: importedChunk, kind: "dynamic-import" }]);
+    });
+
+    test("imported entry point in a subdirectory of the outdir", async () => {
+      using dir = tempDir("metafile-nested-target-chunk-ref", {
+        "src/entry.js": `import("./pages/b.js").then(m => console.log(m.v));`,
+        "src/pages/b.js": `export const v = 2;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/src/entry.js`, `${dir}/src/pages/b.js`],
+        root: `${dir}/src`,
+        outdir: `${dir}/out`,
+        splitting: true,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+
+      const { importedChunk, inputImports, outputImports } = chunkReference(
+        result.metafile as Metafile,
+        "src/entry.js",
+        "src/pages/b.js",
+      );
+      expect(inputImports).toEqual([{ path: importedChunk, kind: "dynamic-import" }]);
+      expect(outputImports).toEqual([{ path: importedChunk, kind: "dynamic-import" }]);
+    });
+  });
+
   test("metafile includes cssBundle for CSS outputs", async () => {
     using dir = tempDir("metafile-css-bundle-test", {
       "entry.js": `import "./styles.css"; console.log("styled");`,

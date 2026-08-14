@@ -202,8 +202,7 @@ pub(crate) fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
-    // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
+pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
 
@@ -220,12 +219,18 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
     // defer seen_sources.deinit() — handled by Drop
 
+    // compute_cross_chunk_dependencies points a split dynamic import at its chunk by unique key.
+    let mut chunk_index_by_unique_key: StringHashMap<usize> = StringHashMap::default();
+
     // Mark all files that appear in chunks
-    for chunk in chunks.iter() {
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
+        }
+        if !chunk.unique_key.is_empty() {
+            chunk_index_by_unique_key.put_static_key(chunk.unique_key, chunk_index)?;
         }
     }
 
@@ -295,7 +300,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 j.push_static(b"\n        {\n          \"path\": ");
                 // Bundled imports use the target source's pretty path (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
-                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                // `source_index` without rewriting the path. Chunk refs use the "outputs" key.
                 let import_path: &[u8] = 'path: {
                     if record.source_index.is_valid()
                         && record.source_index.get() != Index::RUNTIME.get()
@@ -307,6 +312,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                                 break 'path pretty;
                             }
                         }
+                    }
+                    if let Some(&chunk_index) = chunk_index_by_unique_key.get(record.path.text) {
+                        break 'path &chunks[chunk_index].final_rel_path;
                     }
                     record.path.text
                 };
@@ -418,40 +426,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     j.push_static(b"\n  }\n}\n");
 
-    // If no chunks, there are no chunk references to resolve, so just return the joined string
-    if chunks.is_empty() {
-        return Ok(j.done()?);
-    }
-
-    // Break output into pieces and resolve chunk references to final paths
-    let alloc = c.arena();
-    // SAFETY: every borrowed node in `j` points into `chunk.metafile_chunk_json`,
-    // parse-graph data (import-record kind labels), or `'static` literals, all of
-    // which outlive `intermediate` — it is consumed by `code()` below while `chunks`
-    // and `c` are still alive.
-    let mut j = unsafe { j.detach_lifetime() };
-    let mut intermediate = c.break_output_into_pieces(
-        alloc,
-        &mut j,
-        u32::try_from(chunks.len()).expect("int cast"),
-    )?;
-
-    // Get final output with all chunk references resolved.
-    // `code()` takes the dummy chunk and the full slice as `&`, so pass
-    // `&chunks[0]` directly — overlapping shared borrows are fine.
-    let code_result = intermediate.code(
-        None,
-        parse_graph,
-        &c.graph,
-        b"", // no import prefix for metafile
-        &chunks[0],
-        chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
-    )?;
-
-    Ok(code_result.buffer)
+    Ok(j.done()?)
 }
 
 fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()> {

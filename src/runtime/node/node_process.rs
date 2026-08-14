@@ -315,8 +315,7 @@ mod _impl {
             },
         );
 
-        // Options whose value is the next argv token (`-e code`). `OneOptional` ones
-        // (`-c`, `--inspect`) only take `=value`, so they are not in here.
+        // OneOptional params (-c, --inspect) never take the next token, so they are left out.
         static CONSUMES_NEXT_ARG: std::sync::LazyLock<bun_collections::StringSet> =
             std::sync::LazyLock::new(|| {
                 let mut set = bun_collections::StringSet::new();
@@ -362,8 +361,7 @@ mod _impl {
                 continue;
             }
 
-            // Not flags: `-` is the script positional (stdin) and `--` ends the options,
-            // so both stop the scan like a script name does.
+            // `-` (the stdin script) and `--` are positionals, so they end execArgv too.
             if arg == b"-" || arg == b"--" {
                 break;
             }

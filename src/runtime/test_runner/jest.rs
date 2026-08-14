@@ -145,6 +145,9 @@ pub struct TestRunner<'a> {
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
 
+    /// Set when `node:test` is evaluated; gates `process.on('exit')` dispatch at the end of the run.
+    pub(crate) node_test_loaded: bool,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
@@ -525,6 +528,15 @@ pub(crate) fn js_file_generation(
     let generation =
         Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
     Ok(JSValue::from(generation))
+}
+
+/// `$rust()` call evaluated by `node:test`'s module body; a no-op outside `bun test`.
+pub(crate) fn js_node_test_loaded(_global: &JSGlobalObject) -> JsResult<JSValue> {
+    if let Some(p) = Jest::runner_ptr() {
+        // SAFETY: same invariant as `js_file_generation` — RUNNER is only touched on the JS thread.
+        unsafe { (*p.as_ptr()).node_test_loaded = true };
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

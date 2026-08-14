@@ -1570,49 +1570,92 @@ describe("bun test", () => {
     expect(output).toContain("app message");
   });
 
-  test("runs process.on('exit') handlers", async () => {
-    using dir = tempDir("bun-test-exit-handler", {
-      "exit.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => console.log("exit handler ran"));
-        test("a test", () => {});
-      `,
+  // jest and vitest never run a test file's process.on('exit') listeners; node's test harness asserts from them.
+  describe.concurrent("process.on('exit') listeners", () => {
+    async function runFile(name: string, contents: string) {
+      using dir = tempDir("bun-test-exit-listener", { [name]: contents });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", name],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("are not run for a bun:test file", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "exit.test.ts",
+        `
+          import { test } from "bun:test";
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("are not run for a file that registers globals-style tests", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "globals.test.ts",
+        `
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("exit handler ran");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
-  });
-
-  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
-    using dir = tempDir("bun-test-exit-handler-code", {
-      "exit-code.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => process.exit(1));
-        test("a passing test", () => {});
-      `,
+    test("still run when the file itself calls process.exit()", async () => {
+      const { stdout, exitCode } = await runFile(
+        "explicit-exit.test.ts",
+        `
+          import { test } from "bun:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("exits", () => process.exit(3));
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 3");
+      expect(exitCode).toBe(3);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit-code.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("run once node:test is loaded", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 0");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
-    expect(stdout).not.toContain("pass");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(1);
+    test("can fail the run once node:test is loaded, like node's common.mustCall()", async () => {
+      const { stderr, exitCode } = await runFile(
+        "node-exit-code.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", () => process.exit(1));
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
   });
 });
 

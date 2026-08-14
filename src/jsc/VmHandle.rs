@@ -383,8 +383,7 @@ impl VmHandle {
 
     /// [`stop`](Self::stop), raise a JSC `TerminationException` in the VM at
     /// its next safepoint, and wake its loop. Any thread (a parent's
-    /// `worker.terminate()`, the worker's own `process.exit()` / uncaught
-    /// error); no-op once the VM is closed.
+    /// `worker.terminate()`); no-op once the VM is closed.
     pub fn request_termination(&self) {
         self.stop();
         if let Some(_a) = self.enter() {

@@ -1093,9 +1093,7 @@ impl WebWorker {
         // process.exit() from an exit handler does not re-arm the trap.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
-            // The wake is needed even on the loop's own thread: from an
-            // immediate this runs ahead of the turn's poll, which `spin()`
-            // waits out before it re-reads `requested_terminate`.
+            // From an immediate this runs before the turn's poll; the wake is what ends it.
             // SAFETY: this thread's live VM.
             unsafe { (*vm_ptr).handle_ref().request_termination() };
         }
@@ -1249,8 +1247,7 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, request the stop as `exit()` does and unwind back to `spin()`,
-    // which reaches the single `shutdown()` call with no live JSC frames above it.
+    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
     vm.handle_ref().request_termination();
 }
 

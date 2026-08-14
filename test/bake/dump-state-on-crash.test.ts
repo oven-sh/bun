@@ -48,6 +48,10 @@ const fixture = {
         Bun.gc(true);
         await Bun.sleep(10);
       }
+    } else if (mode === "two-servers") {
+      // A second DevServer that never bundled anything, so its dump is
+      // distinguishable from the first one's.
+      Bun.serve({ port: 0, development: true, routes: { "/": html } });
     }
 
     if (mode === "rust-panic") {
@@ -59,9 +63,13 @@ const fixture = {
   `,
 };
 
-const dumpFileName = /^incremental-graph-crash-dump\.\d+\.html$/;
+// The second and later dumps written in the same second get a counter suffix.
+const dumpFileName = /^incremental-graph-crash-dump\.\d+(\.\d+)?\.html$/;
 
-async function crash(mode: "crash-handler" | "rust-panic" | "after-deinit", dumpStateOnCrash: "0" | "1") {
+async function crash(
+  mode: "crash-handler" | "rust-panic" | "after-deinit" | "two-servers",
+  dumpStateOnCrash: "0" | "1",
+) {
   using dir = tempDir("dump-state-on-crash", fixture);
   await using proc = Bun.spawn({
     // The flag makes debug builds print the trace string instead of spawning a symbolizer.
@@ -184,8 +192,8 @@ function expectDumpToDescribeTheFixture(html: string) {
 }
 
 // Not concurrent: in debug builds each child spends about two seconds just
-// loading bun:internal-for-testing, and running the four side by side made
-// each of them take over four seconds, close to the default per-test timeout.
+// loading bun:internal-for-testing, and running these side by side made each
+// of them take over four seconds, close to the default per-test timeout.
 describe.skipIf(!hasBakeDebuggingFeatures)("BUN_DUMP_STATE_ON_CRASH", () => {
   test("dumps the incremental graph when the crash goes through the crash handler", async () => {
     const { stderr, dumps, contents } = await crash("crash-handler", "1");
@@ -199,6 +207,19 @@ describe.skipIf(!hasBakeDebuggingFeatures)("BUN_DUMP_STATE_ON_CRASH", () => {
     expect(dumps).toHaveLength(1);
     expect(stderr).toContain(`Dumped incremental bundler graph to "${dumps[0]}"`);
     expectDumpToDescribeTheFixture(contents[0]);
+  });
+
+  test("every DevServer in the process gets its own dump", async () => {
+    const { stderr, dumps, contents } = await crash("two-servers", "1");
+    expect(dumps).toHaveLength(2);
+    for (const dump of dumps) {
+      expect(stderr).toContain(`Dumped incremental bundler graph to "${dump}"`);
+    }
+    const [bundled, untouched] = contents.sort(
+      (a, b) => decodeDump(b).client.files.length - decodeDump(a).client.files.length,
+    );
+    expectDumpToDescribeTheFixture(bundled);
+    expect(decodeDump(untouched)).toEqual({ client: { files: [], edges: [] }, server: { files: [], edges: [] } });
   });
 
   test("does nothing unless the variable is set", async () => {

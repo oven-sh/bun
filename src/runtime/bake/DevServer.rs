@@ -5608,11 +5608,7 @@ impl DevServer {
             + b"<script>".len();
         let (head, script) = VISUALIZER.split_at(script_start);
 
-        let file_name = format!(
-            "incremental-graph-crash-dump.{}.html",
-            bun_core::time::timestamp()
-        );
-        let file = sys::File::create(sys::Fd::cwd(), file_name.as_bytes(), true)?;
+        let (file, file_name) = create_crash_dump_file()?;
 
         let mut payload: Vec<u8> = Vec::new();
         self.write_visualizer_message(&mut payload);
@@ -5634,6 +5630,35 @@ impl DevServer {
             bun_core::fmt::quote(file_name.as_bytes())
         );
         Ok(())
+    }
+}
+
+/// Creates `incremental-graph-crash-dump.<unix seconds>.html` in the working
+/// directory, or the first of `.1.html`, `.2.html`, ... that does not exist
+/// yet: every DevServer in the process dumps during the same crash, and a
+/// process that restarts on crash may crash again within the second.
+fn create_crash_dump_file() -> sys::Maybe<(sys::File, String)> {
+    const MAX_DUMPS_PER_SECOND: u32 = 100;
+    let timestamp = bun_core::time::timestamp();
+    let mut attempt = 0u32;
+    loop {
+        let file_name = if attempt == 0 {
+            format!("incremental-graph-crash-dump.{timestamp}.html")
+        } else {
+            format!("incremental-graph-crash-dump.{timestamp}.{attempt}.html")
+        };
+        match sys::File::openat(
+            sys::Fd::cwd(),
+            file_name.as_bytes(),
+            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
+            0o666,
+        ) {
+            Ok(file) => return Ok((file, file_name)),
+            Err(err) if err.get_errno() == sys::E::EEXIST && attempt < MAX_DUMPS_PER_SECOND => {
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
     }
 }
 

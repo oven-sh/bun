@@ -867,56 +867,6 @@ fn lowbox_dos_name_fallback(
     Ok(&mut out_buffer[..total])
 }
 
-/// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
-/// (returns the length, or 0 with the thread's last error set) plus, inside an
-/// AppContainer, the same lowbox fallback as [`GetFinalPathNameByHandle`]. The
-/// fallback output keeps the `\\?\` prefix the raw API produces for
-/// `VOLUME_NAME_DOS`; the unwrapped extern stays reachable as
-/// `externs::GetFinalPathNameByHandleW` for the fallback machinery only.
-///
-/// # Safety
-/// `buf` must be valid for writes of `len` u16s.
-pub unsafe fn GetFinalPathNameByHandleW(
-    hFile: HANDLE,
-    buf: *mut u16,
-    len: u32,
-    flags: DWORD,
-) -> u32 {
-    // SAFETY: caller contract.
-    let n = unsafe { externs::GetFinalPathNameByHandleW(hFile, buf, len, flags) };
-    let volume_kind =
-        flags & (win32::VOLUME_NAME_GUID | win32::VOLUME_NAME_NT | win32::VOLUME_NAME_NONE);
-    if n != 0
-        || volume_kind != win32::VOLUME_NAME_DOS
-        || GetLastError() != u32::from(Win32Error::ACCESS_DENIED.0)
-    {
-        return n;
-    }
-    if !is_app_container() {
-        // The token probe can clobber last-error; callers of this raw shape
-        // read it after a 0 return.
-        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-        return 0;
-    }
-    // SAFETY: caller contract.
-    let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
-    const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-    if out.len() <= PFX.len() {
-        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-        return 0;
-    }
-    let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
-        Ok(rest) => rest.len(),
-        Err(_) => {
-            // The fallback's queries clobbered the thread error.
-            kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-            return 0;
-        }
-    };
-    out[..PFX.len()].copy_from_slice(&PFX);
-    (PFX.len() + rest_len) as u32
-}
-
 pub(crate) fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,

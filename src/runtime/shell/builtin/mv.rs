@@ -535,6 +535,8 @@ impl ShellMvBatchedTask {
             }
         }
 
+        // Windows `lstatat` never reports S_IFLNK.
+        #[cfg(not(windows))]
         if S::ISLNK(mode) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let n = bun_sys::readlinkat(src_dir, src, &mut buf[..])?;
@@ -547,7 +549,7 @@ impl ShellMvBatchedTask {
             return bun_sys::unlinkat(src_dir, src);
         }
 
-        // Windows `lstatat` never reports S_IFLNK; follow there so a reparse-point source fails the dev/ino compare.
+        // Follow on Windows so a reparse-point source fails the dev/ino compare.
         let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
 
         if S::ISDIR(mode) {

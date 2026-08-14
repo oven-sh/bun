@@ -1286,14 +1286,12 @@ impl FdOptional {
     }
 }
 
-/// Best-effort fd → path. Returns bytes written (>0), 0 on misc failure,
-/// -1 on EBADF/ENOENT (caller may render `[BADF]`). Body is libc-only
-/// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
-/// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
-/// `bun_sys::fd` per PORTING.md (no cross-crate extern).
+/// Debug `Display for Fd` helper: best-effort fd → path for log lines.
+/// Returns bytes written (>0), 0 on failure, -1 on EBADF/ENOENT.
 ///
 /// SAFETY: `buf` must be valid for `cap` writable bytes.
-pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+#[cfg(all(debug_assertions, not(windows)))]
+unsafe fn fd_path_debug(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
@@ -1368,81 +1366,6 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
 }
 
-/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
-/// units written (>0), -1 on lookup failure,
-/// -2 when the buffer is too small, 0 on
-/// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
-/// down from `bun_sys` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable `u16` units.
-pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetFinalPathNameByHandleW(
-                hFile: *mut core::ffi::c_void,
-                lpszFilePath: *mut u16,
-                cchFilePath: u32,
-                dwFlags: u32,
-            ) -> u32;
-        }
-        // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
-        // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
-        // The size check below is `>=` because a return
-        // value equal to `cap` is the buffer-too-small sentinel (required size
-        // including NUL), not a successful write of `cap` chars.
-        if n == 0 {
-            // Lookup failure.
-            return -1;
-        }
-        if n >= cap {
-            // Buffer too small.
-            return -2;
-        }
-        // Strip the `\\?\` prefix if present so callers see a plain DOS path
-        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
-        let bs = b'\\' as u16;
-        let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
-                if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
-                {
-                    // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
-                    6
-                } else {
-                    // `\\?\C:\...` → `C:\...`
-                    4
-                }
-            } else {
-                0
-            };
-        let out_len = n - off;
-        if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
-        }
-        return out_len as isize;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (fd, buf, cap);
-        0
-    }
-}
 
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1457,7 +1380,7 @@ impl core::fmt::Display for Fd {
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
                 // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = unsafe { fd_path_debug(fd, buf.as_mut_ptr(), buf.len()) };
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {

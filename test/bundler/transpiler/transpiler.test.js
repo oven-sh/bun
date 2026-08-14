@@ -2100,9 +2100,7 @@ export default class {
         'export default "dflt";\n',
       ]);
       expect(exitCode).toBe(0);
-      // Only the failing case is slow: symbolizing the sanitizer report of the
-      // crashed child takes longer than the default timeout.
-    }, 60_000);
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

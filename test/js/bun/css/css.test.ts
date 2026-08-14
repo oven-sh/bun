@@ -2436,6 +2436,207 @@ describe("css tests", () => {
     );
   });
 
+  describe("inset", () => {
+    // The `inset` shorthand is gated on the same compat data as the logical inset properties
+    // (LogicalInset: Chrome 87, Firefox 63, Safari 14.1). For older targets the four physical
+    // longhands are emitted instead of it.
+    const withoutInset = { chrome: 60 << 16, firefox: 50 << 16, safari: 10 << 16 };
+
+    minify_test(".foo{top:0;right:0;bottom:0;left:0}", ".foo{inset:0}");
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 1px 2px 3px 4px;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 1px;
+        bottom: 3px;
+        left: 4px;
+        right: 2px;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0 !important;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+      }
+    `,
+      withoutInset,
+    );
+
+    // Both lowerings compose: the shorthand becomes longhands, and the logical pair shorthand
+    // after it is lowered to left/right as before, keeping source order.
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+        inset-inline: 3px;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        left: 3px;
+        right: 3px;
+      }
+    `,
+      withoutInset,
+    );
+
+    // A value with var() cannot be lowered, so it is kept as written; the parsed
+    // declaration before it is still lowered.
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+        inset: var(--x);
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        inset: var(--x);
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      {
+        chrome: 86 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        inset: 0;
+      }
+    `,
+      {
+        chrome: 87 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        inset: 0;
+      }
+    `,
+      {
+        chrome: 87 << 16,
+        firefox: 63 << 16,
+        safari: (14 << 16) | (1 << 8),
+      },
+    );
+
+    // Only `inset` is gated on the targets; the other 4-side shorthands are always emitted.
+    prefix_test(
+      `
+      .foo {
+        margin: 0;
+        padding: 0;
+        scroll-margin: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        margin: 0;
+        padding: 0;
+        scroll-margin: 0;
+      }
+    `,
+      withoutInset,
+    );
+  });
+
   describe("scroll-paddding", () => {
     prefix_test(
       `

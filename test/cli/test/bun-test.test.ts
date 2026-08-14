@@ -1726,13 +1726,15 @@ describe("bun test", () => {
         "a.test.ts",
         "b.test.ts",
       );
-      expect(stdout).not.toContain("exit listener");
+      // Worker output is relayed on the coordinator's stderr.
+      expect(stdout + stderr).not.toContain("exit listener");
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });
 
-    test("--parallel workers exit cleanly after node:test files", async () => {
-      const { stderr } = await runFiles(
+    // --parallel implies --isolate, and a file's listeners are torn down with its global before the worker exits.
+    test("--parallel workers exit cleanly after node:test files; listeners do not reach the run's exit code", async () => {
+      const { stderr, exitCode } = await runFiles(
         { "a.test.ts": nodeTestFile(1), "b.test.ts": nodeTestFile(2) },
         "--parallel=2",
         "a.test.ts",
@@ -1740,6 +1742,7 @@ describe("bun test", () => {
       );
       expect(stderr).not.toContain("worker crashed");
       expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
     });
   });
 });

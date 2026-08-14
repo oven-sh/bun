@@ -160,10 +160,10 @@ describe("own properties of a printed error are comma-separated, with no comma a
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(linesBetweenMessageAndStack(stderr, "error: uncaught")).toEqual(["   extra: 42,", " rethrow: true", ""]);
-    expect(exitCode).toBe(1);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 });
 

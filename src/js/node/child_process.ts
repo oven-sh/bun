@@ -236,8 +236,6 @@ function execFile(file, args, options, callback) {
   const child = spawn(file, args, {
     cwd: options.cwd,
     env: options.env,
-    timeout: options.timeout,
-    killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
     cgroup: options.cgroup,

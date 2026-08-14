@@ -913,7 +913,7 @@ describe("code frame of an error thrown from a source compiled with columnOffset
     expect({ text, caret }).toEqual({ text: plain.text, caret: plain.caret });
   });
 
-  test("uncaught error output", async () => {
+  test.concurrent("uncaught error output", async () => {
     const code = 'throw new Error("x")';
     async function uncaught(columnOffset: number) {
       const options = { filename, columnOffset, displayErrors: false };
@@ -927,8 +927,9 @@ describe("code frame of an error thrown from a source compiled with columnOffset
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const frame = parseCodeFrame(stderr);
+      expect(stdout).toBe("");
       expect(exitCode).toBe(1);
       return frame;
     }

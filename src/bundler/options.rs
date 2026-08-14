@@ -2181,6 +2181,70 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     }
 }
 
+/// Drops every `.` segment after the first one, in place: `././a.js` becomes
+/// `./a.js` and `./static/./a.js` becomes `./static/a.js`. The first segment is
+/// kept because a leading `./` is the shape every default template renders to
+/// (`[dir]` renders as `.` at the root so that `[dir]/[name].[ext]` yields
+/// `./a.js`, not `/a.js`).
+fn remove_redundant_dot_segments(path: &mut Vec<u8>) {
+    // `write_replacing_slashes_on_windows` emits native separators; on POSIX a
+    // `\` is an ordinary file name byte.
+    const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let mut read = 0;
+    let mut write = 0;
+    let mut is_first_segment = true;
+    while read < path.len() {
+        // `next` is the start of the following segment, so `read..next` is this
+        // segment plus the separator that ends it (if any).
+        let (segment_end, next) = match strings::index_of_any(&path[read..], SEPARATORS) {
+            Some(i) => (read + i, read + i + 1),
+            None => (path.len(), path.len()),
+        };
+        if is_first_segment || &path[read..segment_end] != b"." {
+            if write != read {
+                path.copy_within(read..next, write);
+            }
+            write += next - read;
+        }
+        is_first_segment = false;
+        read = next;
+    }
+    path.truncate(write);
+}
+
+#[cfg(test)]
+#[test]
+fn remove_redundant_dot_segments_keeps_only_the_leading_one() {
+    fn run(path: &[u8]) -> Vec<u8> {
+        let mut out = path.to_vec();
+        remove_redundant_dot_segments(&mut out);
+        out
+    }
+    // A user `[dir]/[name].[ext]` gets a `./` prefix from the CLI / `Bun.build`
+    // and `[dir]` renders as `.` at the root.
+    assert_eq!(run(b"././a.js"), b"./a.js");
+    assert_eq!(run(b"./static/./a.js"), b"./static/a.js");
+    assert_eq!(run(b"static/./a.js"), b"static/a.js");
+    assert_eq!(run(b"./././a.js"), b"./a.js");
+    // Everything the default templates render is already in canonical form.
+    assert_eq!(run(b"./a.js"), b"./a.js");
+    assert_eq!(run(b"./chunk-abc123.js"), b"./chunk-abc123.js");
+    assert_eq!(run(b"pages/a.html"), b"pages/a.html");
+    assert_eq!(run(b"./pages/a.html"), b"./pages/a.html");
+    assert_eq!(run(b"a.js"), b"a.js");
+    assert_eq!(run(b""), b"");
+    // `..`, `_.._` and dotfiles are real segments.
+    assert_eq!(run(b"../a.js"), b"../a.js");
+    assert_eq!(run(b"./../a.js"), b"./../a.js");
+    assert_eq!(run(b"./_.._/a.js"), b"./_.._/a.js");
+    assert_eq!(run(b"././.env"), b"./.env");
+    assert_eq!(run(b"./.well-known/./a.txt"), b"./.well-known/a.txt");
+    #[cfg(windows)]
+    assert_eq!(run(br".\.\a.js"), br".\a.js");
+    #[cfg(not(windows))]
+    assert_eq!(run(br"./.\a.js"), br"./.\a.js");
+}
+
 #[cfg(test)]
 #[test]
 fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
@@ -2320,7 +2384,7 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub(crate) fn print<W: bun_io::Write>(
+    fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
@@ -2335,6 +2399,25 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Renders the outdir-relative output path of a chunk or asset.
+    ///
+    /// Works on raw bytes rather than `Display`, which would go through
+    /// `from_utf8_lossy` and corrupt non-UTF-8 directory names.
+    ///
+    /// The CLI and `Bun.build` prefix user templates with `./`, and `[dir]` is
+    /// `.` for a source at the root, so a user `[dir]/[name].[ext]` prints as
+    /// `././a.js` (and `static/[dir]/...` as `./static/./a.js`). The redundant
+    /// segments are removed here, before the path reaches the HTML import
+    /// manifest, the metafile, public path joins and standalone executable
+    /// keys, so those all see the `./a.js` the default templates produce.
+    pub(crate) fn render(&self, sanitize_parent_dirs: bool) -> Vec<u8> {
+        let mut path = Vec::new();
+        self.print(&mut path, sanitize_parent_dirs)
+            .expect("writing to a Vec<u8> cannot fail");
+        remove_redundant_dot_segments(&mut path);
+        path
     }
 }
 
@@ -2417,9 +2500,7 @@ impl core::fmt::Display for PathTemplateConst {
 
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut buf = Vec::<u8>::new();
-        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
-        write!(f, "{}", bstr::BStr::new(&buf))
+        write!(f, "{}", bstr::BStr::new(&self.render(true)))
     }
 }
 

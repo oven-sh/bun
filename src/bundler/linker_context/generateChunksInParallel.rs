@@ -388,17 +388,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let chunk = &mut chunks[index];
             chunk.template.placeholder.hash = Some(hash.digest());
 
-            let mut rel_path: Vec<u8> = Vec::new();
-            // Use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path.
             // Disk output sanitizes leading `..`; `--compile` keeps it so
             // runtime bunfs references to out-of-root entrypoints resolve.
-            chunk
+            let mut rel_path: Vec<u8> = chunk
                 .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
-                .expect("write to Vec<u8>");
+                .render(!c.options.compile_mode.is_executable());
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {
@@ -408,18 +402,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     *dup.value_ptr = DuplicateEntry::default();
                 }
                 dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
-                continue;
-            }
-
-            // resolve any /./ and /../ occurrences
-            // use resolvePosix since we asserted above all seps are '/'
-            #[cfg(windows)]
-            if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
-                    path::platform::Posix,
-                >(&rel_path, &mut buf));
-                chunk.final_rel_path = rel_path_fixed;
                 continue;
             }
 

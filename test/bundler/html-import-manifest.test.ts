@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -357,6 +357,107 @@ console.log("About manifest:", aboutHtml);
           },
         ]
       `);
+    },
+  });
+
+  // Both `bun build --*-naming` and `Bun.build({ naming })` prefix the template
+  // with "./", and `[dir]` is "." for a file at the root, so a template starting
+  // with `[dir]` used to produce "././index.html" (and "static/[dir]/..." used to
+  // produce "./static/./favicon.svg") in `index` and `files[].path`. The default
+  // templates produce "./index.html"; custom ones must match.
+  const dirTemplateFiles = {
+    "/server.js": `
+import index from "./index.html";
+import about from "./pages/about.html";
+export { index, about };
+`,
+    "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="icon" href="./favicon.svg">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body></body>
+</html>`,
+    "/styles.css": `body { margin: 0; }`,
+    "/favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+    "/app.js": `console.log("app");`,
+    "/pages/about.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="icon" href="./logo.svg">
+    <script type="module" src="./about-page.js"></script>
+  </head>
+  <body></body>
+</html>`,
+    "/pages/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"><g></g></svg>`,
+    "/pages/about-page.js": `console.log("about");`,
+  };
+
+  function readManifestPaths(serverCode: string) {
+    const manifests = [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(
+      match => JSON.parse(JSON.parse('"' + match[1] + '"')) as { index: string; files: Array<{ path: string }> },
+    );
+    expect(manifests).toHaveLength(2);
+    const normalize = (p: string) =>
+      p
+        // Asset paths are still printed with the native separator on Windows;
+        // this test is only about the "." segments.
+        .replaceAll("\\", "/")
+        .replace(/-[a-z0-9]{8}\./, "-HASH.");
+    return manifests.map(manifest => ({
+      index: normalize(manifest.index),
+      files: manifest.files.map(file => normalize(file.path)),
+    }));
+  }
+
+  // `Bun.build` (itBundled's api backend passes naming.entry = "[dir]/[name].[ext]" itself).
+  itBundled("html-import/manifest-paths-with-dir-template-api", {
+    outdir: "out/",
+    backend: "api",
+    files: dirTemplateFiles,
+    entryPoints: ["/server.js"],
+    target: "bun",
+    chunkNaming: "[dir]/[name]-[hash].[ext]",
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      expect(readManifestPaths(api.readFile("out/server.js"))).toEqual([
+        {
+          index: "./index.html",
+          files: ["./index-HASH.js", "./index.html", "./index-HASH.css", "./favicon-HASH.svg"],
+        },
+        {
+          index: "./pages/about.html",
+          files: ["./pages/about-HASH.js", "./pages/about.html", "./pages/logo-HASH.svg"],
+        },
+      ]);
+    },
+  });
+
+  // `bun build --entry-naming/--chunk-naming/--asset-naming`.
+  itBundled("html-import/manifest-paths-with-dir-template-cli", {
+    outdir: "out/",
+    backend: "cli",
+    files: dirTemplateFiles,
+    entryPoints: ["/server.js"],
+    target: "bun",
+    entryNaming: "[dir]/[name]-[hash].[ext]",
+    chunkNaming: "[dir]/[name]-[hash].[ext]",
+    assetNaming: "static/[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      const serverFile = readdirSync(api.join("out")).find(name => /^server-[a-z0-9]{8}\.js$/.test(name));
+      expect(serverFile).toBeDefined();
+      expect(readManifestPaths(api.readFile(join("out", serverFile!)))).toEqual([
+        {
+          index: "./index-HASH.html",
+          files: ["./index-HASH.js", "./index-HASH.html", "./index-HASH.css", "./static/favicon-HASH.svg"],
+        },
+        {
+          index: "./pages/about-HASH.html",
+          files: ["./pages/about-HASH.js", "./pages/about-HASH.html", "./static/pages/logo-HASH.svg"],
+        },
+      ]);
     },
   });
 

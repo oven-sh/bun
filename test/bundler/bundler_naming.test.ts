@@ -303,6 +303,42 @@ describe("bundler", () => {
       },
     ],
   });
+  // The naming option gets a "./" prefix and `[dir]` renders as "." for a file at
+  // the root, so templates starting with `[dir]` used to render "././a.js". That
+  // string is what the metafile reports and what gets appended to publicPath.
+  itBundled("naming/DirTemplateAtRoot", {
+    backend: "api",
+    files: {
+      "/a.js": /* js */ `
+        import { shared } from "./shared.js";
+        console.log("a", shared);
+      `,
+      "/sub/c.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("c", shared);
+      `,
+      "/shared.js": /* js */ `
+        export const shared = 1;
+      `,
+    },
+    entryPoints: ["/a.js", "/sub/c.js"],
+    outputPaths: ["/out/a.js", "/out/sub/c.js"],
+    splitting: true,
+    chunkNaming: "[dir]/[name]-[hash].[ext]",
+    publicPath: "https://cdn.example/",
+    metafile: true,
+    onAfterBundle(api) {
+      const outputs = Object.keys(JSON.parse(api.readFile("metafile.json")).outputs);
+      expect(outputs).toHaveLength(3);
+      expect(outputs).toContain("./a.js");
+      expect(outputs).toContain("./sub/c.js");
+      const chunk = outputs.find(key => key !== "./a.js" && key !== "./sub/c.js")!;
+      expect(chunk).toMatch(/^\.\/[^./][^/]*\.js$/);
+
+      const specifier = api.readFile("out/a.js").match(/from "(https:\/\/cdn\.example\/[^"]*)"/)![1];
+      expect(specifier).toBe("https://cdn.example/" + chunk.slice("./".length));
+    },
+  });
   // A non-ASCII ID_Continue basename char is preserved in the generated
   // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,
   // which once regressed to `require_caf__utils`).

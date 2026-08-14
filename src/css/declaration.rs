@@ -311,10 +311,10 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// Composes handling dispatches through the `ComposesCtx`
-// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the no-tracking fast-path collapses into the match's
-// no-op arm.
+// Composes handling dispatches through the `ComposesCtx` trait (defined in
+// `css_parser.rs`); `NoComposesCtx` returns `DisallowEntirely` for the
+// declaration blocks that are not style rules (@keyframes, @page, ...), where
+// `composes` has no meaning.
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -350,12 +350,20 @@ where
     if input.flags.css_modules() {
         if let css::Property::Composes(composes) = &mut property {
             // A rejected `composes` is warned about and dropped, as in esbuild, so
-            // a style rule only ever holds accepted ones, which the printer omits
-            // (see `StyleRule::to_css_base`).
+            // the only ones left in the AST are the accepted ones in style rules,
+            // which the printer omits (see `StyleRule::to_css_base`).
             match composes_ctx.composes_state() {
-                css::ComposesState::DisallowEntirely => {}
                 css::ComposesState::Allow(_) => {
                     composes_ctx.record_composes(composes);
+                }
+                css::ComposesState::DisallowEntirely => {
+                    options.warn_fmt(
+                        format_args!("\"composes\" is not valid here"),
+                        source_location.line,
+                        source_location.column,
+                    );
+                    composes.discard(input);
+                    return Ok(());
                 }
                 css::ComposesState::DisallowNested(info) => {
                     options.warn_fmt(

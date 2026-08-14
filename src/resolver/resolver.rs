@@ -102,6 +102,18 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
+    /// Like `join_abs_string_buf`, but returns `None` when the normalized
+    /// result does not fit in `buf`. Use it when `parts` may be arbitrarily long.
+    pub(super) fn join_abs_string_buf_checked<'b>(
+        cwd: &'b [u8],
+        buf: &'b mut [u8],
+        parts: &[&[u8]],
+        platform: Platform,
+    ) -> Option<&'b [u8]> {
+        dispatch_platform!(platform, |P| {
+            ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
+        })
+    }
     pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
         // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
         // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
@@ -1318,7 +1330,9 @@ impl<'a> Resolver<'a> {
                 ) {
                     if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
                         let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
+                        // `import_path` comes from user code (`import()` / `require()`),
+                        // so it may not fit; a path that long is never in the graph.
+                        let joined = bun_paths::join_abs_string_buf_checked(
                             source_dir,
                             buf,
                             &[import_path],
@@ -1326,7 +1340,9 @@ impl<'a> Resolver<'a> {
                         );
 
                         // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
+                        if let Some(file_name) =
+                            joined.and_then(|joined| graph.find_assume_standalone_path(joined))
+                        {
                             // Intern: trait borrows into the graph; `Path::init`
                             // needs `'static` (DirnameStore-backed).
                             let file_name = Fs::file_system::DirnameStore::instance()

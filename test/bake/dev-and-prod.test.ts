@@ -1,6 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -200,6 +200,71 @@ devTest("using runtime import", {
           ]
         : []),
     );
+  },
+});
+// Standard (TC39) decorators, `accessor` fields, and the `#private` members of a
+// decorated class are lowered into calls to helpers imported from "bun:wrap"
+// (__decoratorStart, __decorateElement, __runInitializers, __decoratorMetadata,
+// __privateAdd, __privateGet, __privateSet, __privateIn, __privateMethod). The
+// dev server does not bundle runtime.js; its HMR runtime provides "bun:wrap"
+// itself, so it has to export everything the production runtime does. This
+// class imports all nine helpers.
+const standardDecoratorsSource = `
+  const applied: string[] = [];
+  function dec(_value: unknown, ctx: DecoratorContext) {
+    applied.push(ctx.kind + ":" + String(ctx.name));
+  }
+  @dec
+  class Foo {
+    @dec static s = 1;
+    @dec #p = 2;
+    @dec accessor x = 3;
+    @dec m() {}
+    @dec get g() { return this.#p; }
+    @dec #pm() { return 5; }
+    accessor y = 4;
+    has(o: object) { return #p in o; }
+    pm() { return this.#pm(); }
+  }
+  const foo = new Foo();
+  foo.x += 10;
+  foo.y += 10;
+  export const decorated = applied.sort().join(",");
+  export const values = [Foo.s, foo.x, foo.y, foo.g, foo.pm(), foo.has(foo), foo.has({})].join(",");
+`;
+const expectedDecorated = "accessor:x,class:Foo,field:#p,field:s,getter:g,method:#pm,method:m";
+const expectedValues = "1,13,14,2,5,true,false";
+devAndProductionTest("standard decorators runtime import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { decorated, values } from "./decorated";
+      console.log(decorated);
+      console.log(values);
+    `,
+    "decorated.ts": standardDecoratorsSource,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(expectedDecorated, expectedValues);
+  },
+});
+devTest("standard decorators runtime import on the server", {
+  framework: minimalFramework,
+  files: {
+    "decorated.ts": standardDecoratorsSource,
+    "routes/index.ts": `
+      import { decorated, values } from "../decorated";
+      export default function (req, meta) {
+        return new Response(decorated + "\\n" + values);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(expectedDecorated + "\n" + expectedValues);
   },
 });
 devTest("hmr handles rapid consecutive edits", {

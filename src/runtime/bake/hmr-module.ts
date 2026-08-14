@@ -6,16 +6,7 @@
 // Some build failures from the bundler surface as runtime errors here, such as
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
-import {
-  __callDispose,
-  __EARLY_RETURN_SENTINEL,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __MEMO_CACHE_SENTINEL,
-  __name,
-  __using,
-} from "../../runtime.bun";
+import * as runtimeHelpers from "../../runtime.bun";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
 import { type SourceMapURL, derefMapping } from "#stack-trace";
@@ -945,17 +936,13 @@ declare global {
 }
 
 // bun:bake/server, bun:bake/client, and bun:wrap are
-// provided by this file instead of the bundler
-registerSynthetic("bun:wrap", {
-  __name,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __using,
-  __callDispose,
-  __MEMO_CACHE_SENTINEL,
-  __EARLY_RETURN_SENTINEL,
-});
+// provided by this file instead of the bundler.
+//
+// Transpiled modules import the helpers their lowered syntax needs (legacy and
+// standard decorators, `using`, React Compiler sentinels, ...) from "bun:wrap",
+// which `bun build` resolves to runtime.js. Exposing that module as a whole
+// keeps this copy complete when helpers are added, instead of listing them here.
+registerSynthetic("bun:wrap", runtimeHelpers);
 
 if (side === "server") {
   registerSynthetic("bun:bake/server", {

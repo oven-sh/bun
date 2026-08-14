@@ -134,6 +134,13 @@ describe("own properties of a printed error are comma-separated, with no comma a
     return lines.slice(message + 1, firstFrame);
   }
 
+  function expectPropertyLines(err: Error, expected: string[]) {
+    expect(linesBetweenMessageAndStack(Bun.inspect(err), "error: own properties")).toEqual(expected);
+    expect(
+      linesBetweenMessageAndStack(Bun.stripANSI(Bun.inspect(err, { colors: true })), "error: own properties"),
+    ).toEqual(expected);
+  }
+
   test.each([
     ["one property", { rethrow: true }, [" rethrow: true", ""]],
     ["two properties", { extra: 42, rethrow: true }, ["   extra: 42,", " rethrow: true", ""]],
@@ -145,12 +152,21 @@ describe("own properties of a printed error are comma-separated, with no comma a
     ["only a string code", { code: "E_X" }, [' code: "E_X"', ""]],
     ["a non-string code", { code: 42 }, [" code: 42", ""]],
     ["no properties", {}, []],
+    // Error-valued properties are not part of the list: they are printed in full after the stack trace.
+    [
+      "a property followed by an Error-valued property",
+      { status: 500, cause: new Error("inner") },
+      [" status: 500", ""],
+    ],
+    ["only an Error-valued property", { cause: new Error("inner") }, []],
   ])("%s", (_, properties, expected) => {
-    const err = Object.assign(new Error("own properties"), properties);
-    expect(linesBetweenMessageAndStack(Bun.inspect(err), "error: own properties")).toEqual(expected);
-    expect(
-      linesBetweenMessageAndStack(Bun.stripANSI(Bun.inspect(err, { colors: true })), "error: own properties"),
-    ).toEqual(expected);
+    expectPropertyLines(Object.assign(new Error("own properties"), properties), expected);
+  });
+
+  test("a property followed by an enumerable accessor (accessors are not printed)", () => {
+    const err = Object.assign(new Error("own properties"), { a: 1 });
+    Object.defineProperty(err, "b", { get: () => "not printed", enumerable: true });
+    expectPropertyLines(err, [" a: 1", ""]);
   });
 
   test("uncaught error", async () => {

@@ -188,8 +188,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // JSC counts the wrapper in line 1's columns and cannot start a source at a negative column: the part of
-    // columnOffset beyond the wrapper is applied here, the rest is taken off again when positions are reported.
+    // JSC counts the wrapper in line 1's columns and cannot start a source at a negative column: apply what exceeds the wrapper here, take the rest off when positions are reported.
     int columnOffset = position.m_column.zeroBasedInt();
     int appliedColumnOffset = columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0;
     unsigned wrapperColumns = static_cast<unsigned>(static_cast<int64_t>(wrapperPrefixLength) + appliedColumnOffset - columnOffset);

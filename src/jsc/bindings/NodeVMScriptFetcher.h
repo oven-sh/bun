@@ -42,25 +42,22 @@ public:
         });
     }
 
-    // compileFunction's program has its `(function (<params>) {` wrapper on the body's first line (see
-    // stringifyAnonymousFunction): `textLength` is that text, `columns` is what JSC's columns on that line
-    // exceed Node's by (the wrapper net of columnOffset). Keyed by provider because eval() and
-    // new Function() code inherits this fetcher without the wrapper.
-    void setWrapper(JSC::SourceProvider& program, unsigned textLength, unsigned columns)
+    // The compileFunction wrapper (see stringifyAnonymousFunction) shares the program's first line with the body.
+    void setWrapper(JSC::SourceProvider& program, unsigned textLength, unsigned columnsBeyondNode)
     {
         m_wrapperSourceID = program.asID();
         m_wrapperTextLength = textLength;
-        m_wrapperColumns = columns;
+        m_wrapperColumns = columnsBeyondNode;
     }
 
-    // 0 unless `provider` is a compileFunction program.
+    // Wrapper text starting the first line; 0 unless `provider` is a compileFunction program.
     static unsigned wrapperTextLength(JSC::SourceProvider& provider)
     {
         auto* fetcher = wrapperFetcherFor(provider);
         return fetcher ? fetcher->m_wrapperTextLength : 0;
     }
 
-    // 0 unless `lineZeroBased` is the first line of a compileFunction program.
+    // By how much JSC's columns exceed Node's on this line; 0 unless it is a compileFunction program's first line.
     static unsigned wrapperColumnsOnLine(JSC::SourceProvider& provider, int lineZeroBased)
     {
         auto* fetcher = wrapperFetcherFor(provider);
@@ -72,6 +69,7 @@ public:
     }
 
 private:
+    // Matched by provider: eval() and new Function() code inside the body inherits this fetcher without the wrapper.
     static NodeVMScriptFetcher* wrapperFetcherFor(JSC::SourceProvider& provider)
     {
         auto* fetcher = provider.sourceOrigin().fetcher();

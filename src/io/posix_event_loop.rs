@@ -953,7 +953,11 @@ impl FilePoll {
         {
             #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
             sys::close_ledger::record_registration_event(
-                if force_unregister { "DEL skipped(force): no poll flags" } else { "DEL skipped: no poll flags" },
+                if force_unregister {
+                    "DEL skipped(force): no poll flags"
+                } else {
+                    "DEL skipped: no poll flags"
+                },
                 fd.native(),
             );
             // no-op
@@ -1025,13 +1029,20 @@ impl FilePoll {
                 e if deregistration_already_gone(e) => {
                     #[cfg(debug_assertions)]
                     sys::close_ledger::record_registration_event(
-                        if e == sys::E::EBADF { "DEL -> EBADF (fd already closed)" } else { "DEL -> ENOENT (not registered)" },
+                        if e == sys::E::EBADF {
+                            "DEL -> EBADF (fd already closed)"
+                        } else {
+                            "DEL -> ENOENT (not registered)"
+                        },
                         fd.native(),
                     );
                 }
                 e => {
                     #[cfg(debug_assertions)]
-                    sys::close_ledger::record_registration_event("DEL failed (other errno)", fd.native());
+                    sys::close_ledger::record_registration_event(
+                        "DEL failed (other errno)",
+                        fd.native(),
+                    );
                     return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl));
                 }
             }

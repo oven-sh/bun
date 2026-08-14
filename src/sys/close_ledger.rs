@@ -211,7 +211,11 @@ fn dump_registration_events(fd: i32) {
         return;
     }
     for slot in history.iter().filter(|s| s.seq != 0) {
-        let len = slot.kind.iter().position(|&b| b == 0).unwrap_or(slot.kind.len());
+        let len = slot
+            .kind
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(slot.kind.len());
         eprintln!(
             "fd {fd} registration event #{}: {} (fd was \"{}\") on tid {} at:",
             slot.seq,

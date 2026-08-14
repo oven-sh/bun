@@ -56,7 +56,8 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage || (i === 0 && typeof array[0] === "symbol" && typeof array[1] === "number"),
+      array[i] instanceof AsyncLocalStorage ||
+        (i === 0 && typeof array[0] === "symbol" && typeof array[1] === "number"),
       `Even indexes in AsyncContextData should be AsyncLocalStorage (or the domain sentinel at 0)\nIndex %s was %s`,
       i,
       array[i],

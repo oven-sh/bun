@@ -13,9 +13,9 @@
 //
 // Driven through bun:jsc testing hooks; skipped on builds whose JSC lacks
 // domain drains.
-import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -63,7 +63,9 @@ describe.skipIf(!hasDomains)("microtask domains", () => {
         // Pass-through hops (no handler on the fired side) must not stall the chain.
         await Promise.resolve(1).catch(() => {});
         log.push("await3");
-        await Promise.reject(new Error("x")).then(() => {}).catch(() => {});
+        await Promise.reject(new Error("x"))
+          .then(() => {})
+          .catch(() => {});
         log.push("await4");
         // Combinators resolve through context-less internal jobs.
         await Promise.all([Promise.resolve(1), (async () => 2)()]);

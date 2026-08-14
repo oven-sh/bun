@@ -303,7 +303,9 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
         });
       `,
       ],
-      env: bunEnv,
+      // The gate env also brings the debug build's outstanding-ticket report
+      // forward (2s instead of 10s).
+      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

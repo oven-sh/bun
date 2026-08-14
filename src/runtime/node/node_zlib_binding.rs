@@ -467,8 +467,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
-        // The task is a field of this JS-owned stream; the VM waits for the
-        // ticket before that can go.
         this.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(this.task().as_ptr());
 

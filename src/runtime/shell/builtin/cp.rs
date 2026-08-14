@@ -534,7 +534,11 @@ impl ShellCpTask {
             );
             // Moved out first: on success the copy is handed to a
             // `ShellAsyncCpTask` whose completion may free `*this` at once.
-            let poster = (*this).task.poster.take().expect("armed in schedule");
+            let poster = (*this)
+                .task
+                .poster
+                .take()
+                .expect("shell cp task on the pool is armed");
             if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
                 (*this).err = Some(e);
                 (*this).task.poster = Some(poster);

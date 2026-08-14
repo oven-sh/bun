@@ -279,20 +279,13 @@ impl S3HttpDownloadStreamingTask {
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
         let is_done = !result.has_more;
-        // The final callback is where the HTTP thread hands the request back:
-        // move the ticket out (the JS thread may free `this` the moment that
-        // task is queued). Before that `this` — and the ticket inside it —
-        // stays alive across the post.
-        // SAFETY: `this` is live for the duration of the request; HTTP-thread field.
-        let done_ticket = if is_done {
-            Some(
-                // SAFETY: as above.
-                unsafe { (*this).http_ticket.take() }
-                    .expect("S3 download on the HTTP thread holds a ticket"),
-            )
-        } else {
-            None
-        };
+        // No refcount here: on the final callback `on_response` may free `this`
+        // as soon as the task is queued, so the ticket has to be out first.
+        let done_ticket = is_done.then(|| {
+            // SAFETY: as above; HTTP-thread field.
+            unsafe { (*this).http_ticket.take() }
+                .expect("S3 download on the HTTP thread holds a ticket")
+        });
         let ticket: &bun_jsc::Ticket = match &done_ticket {
             Some(t) => t,
             // SAFETY: as above.

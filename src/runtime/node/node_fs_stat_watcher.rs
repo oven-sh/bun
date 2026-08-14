@@ -233,7 +233,7 @@ impl StatWatcherScheduler {
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
             // we are not running or the new watcher has a smaller interval
-            Self::set_interval(this, w.interval, None);
+            Self::set_interval(this, w.interval);
         }
     }
 
@@ -241,21 +241,14 @@ impl StatWatcherScheduler {
         self.current_interval.load(Ordering::Relaxed)
     }
 
-    /// Update the current interval and set the timer: directly on the JS
-    /// thread, or — from the pool pass, which passes its ticket — by posting.
-    fn set_interval(this: *mut Self, interval: i32, from_pool: Option<&bun_jsc::Ticket>) {
+    /// JS thread: update the current interval and set the timer.
+    fn set_interval(this: *mut Self, interval: i32) {
         // BACKREF — `this` is live (caller holds a ref); `ParentRef` Deref
         // gives safe `&Self` for the atomic store / thread-id check below.
         let this_ref = ParentRef::from(NonNull::new(this).expect("set_interval: scheduler"));
+        debug_assert!(this_ref.main_thread == thread::current().id());
         this_ref.current_interval.store(interval, Ordering::Relaxed);
-
-        match from_pool {
-            None => {
-                debug_assert!(this_ref.main_thread == thread::current().id());
-                Self::set_timer(this, interval);
-            }
-            Some(ticket) => Self::schedule_timer_update(this, ticket),
-        }
+        Self::set_timer(this, interval);
     }
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
@@ -347,8 +340,6 @@ impl StatWatcherScheduler {
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
         Self::ref_(core::ptr::from_mut(self));
-        // The task is a field of this per-VM scheduler; the VM waits for the
-        // ticket before that can go.
         self.in_flight.set(Some(self.vm().ticket()));
         WorkPool::schedule(&raw mut self.task);
     }
@@ -423,11 +414,9 @@ impl StatWatcherScheduler {
             this_ref.current_interval.store(0, Ordering::Relaxed);
         } else if contain_watchers {
             // choose the smallest interval or the closest time to the next check
-            Self::set_interval(
-                this,
-                min_interval.min(i32::try_from(closest_next_check).expect("int cast")),
-                Some(&ticket),
-            );
+            let interval = min_interval.min(i32::try_from(closest_next_check).expect("int cast"));
+            this_ref.current_interval.store(interval, Ordering::Relaxed);
+            Self::schedule_timer_update(this, &ticket);
         } else {
             // we do not have watchers, we can stop the timer
             this_ref.current_interval.store(0, Ordering::Relaxed);

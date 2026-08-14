@@ -423,6 +423,17 @@ impl FetchTasklet {
         )));
     }
 
+    /// HTTP thread, final callback: the fetch is back. Move the ticket out
+    /// (nothing here touches the tasklet after the ref drop) and drop this
+    /// thread's ref through it.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn hand_back(this: *mut FetchTasklet) {
+        // SAFETY: caller contract; the field is HTTP-thread-only.
+        let ticket = unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET);
+        Self::deref_from_thread(this, &ticket);
+    }
+    const HOLDS_TICKET: &'static str = "fetch on the HTTP thread holds a ticket";
+
     fn clear_sink(&mut self) {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: FetchTasklet owns the heap allocation from
@@ -560,7 +571,7 @@ impl FetchTasklet {
             (*this).scheduled_response_buffer = MutableString::default();
             (*this).http_ticket.take()
         }
-        .expect("fetch on the HTTP thread holds a ticket");
+        .expect(Self::HOLDS_TICKET);
         FetchTasklet::deref_from_thread(this, &ticket);
         if !queued_progress_update {
             FetchTasklet::deref_from_thread(this, &ticket);
@@ -2159,7 +2170,7 @@ impl FetchTasklet {
         this_ref
             .http_ticket
             .as_ref()
-            .expect("fetch on the HTTP thread holds a ticket")
+            .expect(Self::HOLDS_TICKET)
             .post(task);
     }
 
@@ -2401,25 +2412,6 @@ impl FetchTasklet {
     ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
-        // The final callback is where the HTTP thread hands the fetch back:
-        // move the ticket out (our deref below may free the tasklet the moment
-        // its deinit hop is queued). Before that, this thread's ref keeps the
-        // tasklet — and the ticket inside it — alive across the post.
-        let done_ticket = if is_done {
-            Some(
-                // SAFETY: `task` is live (fn contract); the field is HTTP-thread-only.
-                unsafe { (*task).http_ticket.take() }
-                    .expect("fetch on the HTTP thread holds a ticket"),
-            )
-        } else {
-            None
-        };
-        let ticket: &jsc::Ticket = match &done_ticket {
-            Some(t) => t,
-            // SAFETY: as above.
-            None => unsafe { (*task).http_ticket.as_ref() }
-                .expect("fetch on the HTTP thread holds a ticket"),
-        };
         let task_ref = Self::from_raw_mut(task);
 
         task_ref.mutex.lock();
@@ -2491,9 +2483,6 @@ impl FetchTasklet {
             if success && task_ref.result.has_more {
                 // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                 task_ref.mutex.unlock();
-                if is_done {
-                    FetchTasklet::deref_from_thread(task, ticket);
-                }
                 return;
             }
         } else if success {
@@ -2543,7 +2532,7 @@ impl FetchTasklet {
             if has_schedule_callback {
                 task_ref.mutex.unlock();
                 if is_done {
-                    FetchTasklet::deref_from_thread(task, ticket);
+                    FetchTasklet::hand_back(task);
                 }
                 return;
             }
@@ -2555,14 +2544,19 @@ impl FetchTasklet {
                 .from(task, AutoDeinit::ManualDeinit),
         );
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
-        // queue takes ownership of its `next` link.
-        ticket.post(ct);
+        // queue takes ownership of its `next` link. This thread's ref keeps the
+        // tasklet (and the ticket in it) alive across the post.
+        task_ref
+            .http_ticket
+            .as_ref()
+            .expect(Self::HOLDS_TICKET)
+            .post(ct);
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         if is_done {
-            FetchTasklet::deref_from_thread(task, ticket);
+            FetchTasklet::hand_back(task);
         }
     }
 }

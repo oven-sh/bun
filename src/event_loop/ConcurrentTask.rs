@@ -312,6 +312,22 @@ impl ConcurrentTask {
         self
     }
 
+    /// Consuming thread: unwrap the payload, freeing the carrier if it was
+    /// heap-allocated (`create*`); an intrusive carrier stays with its container.
+    ///
+    /// # Safety
+    /// `this` came off a queue (or was never queued) and is not used afterwards.
+    pub unsafe fn into_task(this: core::ptr::NonNull<ConcurrentTask>) -> Task {
+        // SAFETY: fn contract.
+        unsafe {
+            let (task, auto_delete) = (this.as_ref().task, this.as_ref().auto_delete());
+            if auto_delete {
+                drop(bun_core::heap::take(this.as_ptr()));
+            }
+            task
+        }
+    }
+
     /// A weak poster got `task` back because the target VM has closed: free
     /// it if it is a heap task (`create*`); an intrusive one belongs to its
     /// container.

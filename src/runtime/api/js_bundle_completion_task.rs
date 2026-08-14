@@ -605,12 +605,11 @@ impl JSBundleCompletionTask {
                     Plugin::destroy(plugin.as_ptr());
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
-                let ticket = (*this).bundle_ticket.take();
+                (*this).bundle_ticket = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
                     .stage
                     .store(Stage::ReleasedUnstarted as u8, Ordering::Release);
-                drop(ticket);
                 return;
             }
             if let Some(plugins) = (*this).plugins {

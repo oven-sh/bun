@@ -114,6 +114,6 @@ describe("VM thread door", () => {
   test("VirtualMachine stays !Send + !Sync", async () => {
     const vm = await file(path.join(root, "src/jsc/VirtualMachine.rs")).text();
     expect(vm).not.toMatch(/unsafe\s+impl\s+(?:Send|Sync)\s+for\s+VirtualMachine\b/);
-    expect(vm).toContain("assert_not_send_sync::<VirtualMachine>()");
+    expect(vm).toContain("<VirtualMachine as AmbiguousIfImpl<_>>::some_item");
   });
 });

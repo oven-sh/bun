@@ -64,8 +64,7 @@ pub struct ConcurrentCppTask {
 bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
 
 impl ConcurrentCppTask {
-    // `owned_task!` requires `fn run_owned(self: Box<Self>)`.
-    #[allow(clippy::boxed_local)]
+    #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
     fn run_owned(self: Box<Self>) {
         let ConcurrentCppTask {
             cpp_task, ticket, ..
@@ -84,8 +83,9 @@ extern "C" fn ConcurrentCppTask__createAndRun(
     cpp_task: *mut EventLoopTaskNoContext,
 ) {
     crate::mark_binding!();
-    let ticket = global.bun_vm().ticket();
-    ticket.ref_keep_alive();
+    let vm = global.bun_vm();
+    vm.event_loop_shared().ref_keep_alive();
+    let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         ticket,

@@ -744,15 +744,10 @@ impl EventLoop {
                 break;
             }
             // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning, so reading then
-            // freeing here is sound.
-            let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
+            // iterator advanced past it before returning.
+            let task =
+                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
             let _ = self.tasks.write_item(task);
-            if auto_delete {
-                // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
-                // freed, and the iterator no longer references it.
-                drop(unsafe { bun_core::heap::take(node) });
-            }
         }
     }
 
@@ -824,14 +819,8 @@ impl EventLoop {
     ) {
         if self.closed_for_tasks {
             // As `enqueue_task`: the loop never ticks again; release now.
-            // SAFETY: JS thread, heap alive; `task` was handed over unqueued.
-            unsafe {
-                let (inner, auto_delete) = (task.as_ref().task, task.as_ref().auto_delete());
-                if auto_delete {
-                    drop(bun_core::heap::take(task.as_ptr()));
-                }
-                __bun_release_task_unrun(inner);
-            }
+            // SAFETY: JS thread, heap alive; handed over unqueued.
+            unsafe { __bun_release_task_unrun(ConcurrentTask::ConcurrentTask::into_task(task)) };
             return;
         }
         self.concurrent_tasks.push(task);

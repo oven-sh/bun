@@ -574,7 +574,6 @@ mod _async_tasks {
             pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
             /// Memory is not owned by this struct
             pub path: *const [u8], // BORROW: not owned
-            /// `completion_ctx` is a JS-owned operation; its VM waits for this.
             pub(crate) ticket: bun_jsc::Ticket,
             pub task: WorkPoolTask,
         }

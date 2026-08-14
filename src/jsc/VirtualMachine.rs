@@ -690,24 +690,16 @@ impl Drop for MacroModeGuard {
 // carried to another thread. Other threads hold a `bun_jsc::Ticket` /
 // `VmHandle` and reach the VM only by posting to it. Fields mutated post-init
 // are wrapped in [`JsCell`] for same-thread interior mutability.
+// Fails to compile ("multiple applicable items") if `VirtualMachine` is
+// `Send` or `Sync`.
 const _: () = {
-    const fn assert_not_send_sync<T: ?Sized>() {}
     trait AmbiguousIfImpl<A> {
         fn some_item() {}
     }
     impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
-    struct IfSend;
-    impl<T: ?Sized + Send> AmbiguousIfImpl<IfSend> for T {}
-    struct IfSync;
-    impl<T: ?Sized + Sync> AmbiguousIfImpl<IfSync> for T {}
-    // Fails to compile ("multiple applicable items") if `VirtualMachine` is
-    // `Send` or `Sync`.
+    impl<T: ?Sized + Send> AmbiguousIfImpl<u8> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<u16> for T {}
     let _ = <VirtualMachine as AmbiguousIfImpl<_>>::some_item;
-    let _ = (
-        core::mem::size_of::<IfSend>(),
-        core::mem::size_of::<IfSync>(),
-    );
-    assert_not_send_sync::<VirtualMachine>();
 };
 
 impl VirtualMachine {
@@ -1743,7 +1735,7 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// `this` is this thread's VM and no other thread can reach it any more
-    /// (worker: unpublished under `vm_lock`); `is_shutting_down` is set and
+    /// (worker: its handle unpublished); `is_shutting_down` is set and
     /// the exit handlers have run.
     pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
         // SAFETY: per fn contract — sole owner on the owning thread. Shared
@@ -3958,16 +3950,9 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        // First-level workers only: a nested worker parked on a post to its
-        // (worker) parent would keep that parent from ever reaching its wait.
-        #[cfg(debug_assertions)]
-        if worker.parent_is_main_thread()
-            && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
-                .unwrap_or(false)
-        {
+        if worker.arm_test_gate() {
             vm_ref.handle.arm_test_gate();
         }
-        vm_ref.standalone_module_graph = opts.graph;
         // The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled

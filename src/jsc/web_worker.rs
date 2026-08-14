@@ -62,17 +62,13 @@ pub struct WebWorker {
     /// **Parent thread only** (`child_workers`, `parent_poll_ref`); the worker
     /// thread never dereferences it — what it needs was copied below.
     parent: *mut VirtualMachine,
-    /// Copied from the parent in `create()` (parent thread), consumed by
-    /// `start_vm()` (worker thread).
-    transform_options: JsCell<Option<bun_options_types::schema::api::TransformOptions>>,
-    /// The parent's env at construction time (Node: the worker's `process.env`
-    /// is a copy taken when the `Worker` is constructed).
-    env_snapshot: JsCell<Option<(bun_dotenv::Map, jsc::rare_data::ProxyEnvSlots)>>,
     standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     hot_reload: u8,
-    /// Debug builds: whether the test gate may be armed (first-level workers only).
-    #[cfg(debug_assertions)]
-    parent_is_main_thread: bool,
+    /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
+    /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
+    /// a nested worker parked on a post to its worker parent would keep that
+    /// parent from ever reaching its own wait).
+    arm_test_gate: bool,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -123,6 +119,14 @@ pub struct WebWorker {
     /// parent) while its VM was live — as opposed to the thread stopping itself,
     /// or being stopped before it started. Written under the `vm_handle` lock.
     terminated_by_parent: AtomicBool,
+}
+
+/// Copied from the parent VM on its thread at `new Worker()`; consumed by
+/// `start_vm()` on the worker thread.
+struct WorkerVmInit {
+    transform_options: bun_options_types::schema::api::TransformOptions,
+    env_map: bun_dotenv::Map,
+    proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
 enum EntryOutcome {
@@ -336,65 +340,60 @@ impl WebWorker {
             }
         }
 
-        // SAFETY: `parent` is live (see above); borrow ends at `;`.
-        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
-
-        // Everything the worker thread needs from this VM, copied here on its
-        // own thread; the worker never dereferences `parent`.
+        // Everything the worker thread needs from this VM is copied here, on
+        // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
-        let (
-            transform_options,
-            env_snapshot,
-            standalone_module_graph,
-            hot_reload,
-            _parent_is_main_thread,
-        ) = unsafe {
-            let parent = &*parent;
-            let mut transform_options = (*parent.transpiler.options.transform_options).clone();
-            if !inherit_exec_argv {
-                let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-                // Only honours `--no-addons` today; `None` on parse failure
-                // (the parent's setting is kept).
-                let exec_argv = bun_core::ffi::slice(exec_argv_ptr, exec_argv_len);
-                if let Some(allow_addons) = (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) {
-                    let parent_allows = transform_options.allow_addons.unwrap_or(true);
-                    transform_options.allow_addons = Some(parent_allows && allow_addons);
+        let parent_ref = unsafe { &*parent };
+        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        if !inherit_exec_argv {
+            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
+            // the hook only reads the slice. Only honours `--no-addons` today;
+            // `None` on parse failure keeps the parent's setting.
+            let parsed = unsafe {
+                (hooks.parse_worker_exec_argv_allow_addons)(bun_core::ffi::slice(
+                    exec_argv_ptr,
+                    exec_argv_len,
+                ))
+            };
+            if let Some(allow) = parsed {
+                let parent_allows = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows && allow);
+            }
+        }
+        // The worker's `process.env` starts as a copy of the parent's now (as in
+        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
+        // parent's proxy_env_storage: snapshot slots + map under its lock so
+        // every slice copied is backed by a ref the snapshot holds.
+        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
+        let mut env_map = {
+            let parent_slots = parent_ref.proxy_env_storage.lock();
+            proxy_env_slots.clone_from(&parent_slots);
+            match parent_ref.env_loader().map.clone_with_allocator() {
+                Ok(m) => m,
+                Err(_) => {
+                    *error_message = BunString::static_(b"Out of memory");
+                    return core::ptr::null_mut();
                 }
             }
-            // Proxy-env values may be RefCountedEnvValue bytes owned by the
-            // parent's proxy_env_storage: snapshot (slots + map) under its lock
-            // so every slice copied is backed by a ref the snapshot holds.
-            let mut slots = jsc::rare_data::ProxyEnvSlots::default();
-            let mut map = {
-                let parent_slots = parent.proxy_env_storage.lock();
-                slots.clone_from(&parent_slots);
-                match parent.env_loader().map.clone_with_allocator() {
-                    Ok(m) => m,
-                    Err(_) => {
-                        *error_message = BunString::static_(b"Out of memory");
-                        return core::ptr::null_mut();
-                    }
-                }
-            };
-            slots.sync_into(&mut map);
-            (
-                transform_options,
-                (map, slots),
-                parent.standalone_module_graph,
-                parent.hot_reload,
-                parent.is_main_thread(),
-            )
+        };
+        proxy_env_slots.sync_into(&mut env_map);
+        let init = WorkerVmInit {
+            transform_options,
+            env_map,
+            proxy_env_slots,
         };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             messaging_proxy: proxy,
             parent,
-            transform_options: JsCell::new(Some(transform_options)),
-            env_snapshot: JsCell::new(Some(env_snapshot)),
-            standalone_module_graph,
-            hot_reload,
-            #[cfg(debug_assertions)]
-            parent_is_main_thread: _parent_is_main_thread,
+            standalone_module_graph: parent_ref.standalone_module_graph,
+            hot_reload: parent_ref.hot_reload,
+            arm_test_gate: cfg!(debug_assertions)
+                && parent_ref.is_main_thread()
+                && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
+                    .unwrap_or(false),
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -444,17 +443,21 @@ impl WebWorker {
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ticket = unsafe { (*parent).ticket() };
         /// What the worker thread is handed: its refcounted `WebWorker` (the ref
-        /// taken above is the thread's) and a ticket on the parent VM.
+        /// taken above is the thread's), the parent's snapshot, and a ticket on
+        /// the parent VM.
         struct ThreadStart {
             worker: *mut WebWorker,
+            init: WorkerVmInit,
             _parent_ticket: crate::Ticket,
         }
         // SAFETY: `WebWorker` is shared across threads by design (atomics,
         // `Guarded`, thread-confined cells — see the struct doc) and holds no
-        // parent-VM state; the parent VM itself is kept by `_parent_ticket`.
+        // parent-VM state; `init` is an owned copy; the parent VM itself is
+        // kept by `_parent_ticket`.
         unsafe impl Send for ThreadStart {}
         let start = ThreadStart {
             worker,
+            init,
             _parent_ticket: parent_ticket,
         };
         let spawn = std::thread::Builder::new()
@@ -462,7 +465,7 @@ impl WebWorker {
             .spawn(move || {
                 let start = start;
                 // SAFETY: `worker` is live (the thread's ref); `&WebWorker`, never `&mut`.
-                unsafe { (*start.worker).thread_main() };
+                unsafe { (*start.worker).thread_main(start.init) };
                 // SAFETY: dropping the thread's ref; nothing below touches `worker`.
                 unsafe { WebWorker::deref(start.worker) };
             });
@@ -580,9 +583,9 @@ impl WebWorker {
         self.hot_reload
     }
 
-    #[cfg(debug_assertions)]
-    pub(crate) fn parent_is_main_thread(&self) -> bool {
-        self.parent_is_main_thread
+    #[inline]
+    pub(crate) fn arm_test_gate(&self) -> bool {
+        self.arm_test_gate
     }
 
     #[inline]
@@ -611,7 +614,7 @@ impl WebWorker {
     // an exiting ancestor), so materialising `&mut WebWorker` here would
     // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
     // `Cell` / `UnsafeCell` instead.
-    fn thread_main(&self) {
+    fn thread_main(&self, init: WorkerVmInit) {
         bun_analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
 
         if !self.name.is_empty() {
@@ -629,7 +632,7 @@ impl WebWorker {
             return;
         }
 
-        let vm_ptr = match self.start_vm() {
+        let vm_ptr = match self.start_vm(init) {
             Ok(vm) => vm,
             Err(err) => {
                 bun_core::output::panic(format_args!(
@@ -660,18 +663,16 @@ impl WebWorker {
     ///
     /// Returns the published VM pointer; `Ok(null)` means the early-terminate
     /// checkpoint already ran `shutdown()`.
-    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::CrateError> {
+    fn start_vm(&self, init: WorkerVmInit) -> Result<*mut VirtualMachine, crate::CrateError> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-
-        // Copied from the parent on its thread in `create()`.
-        let transform_options = self
-            .transform_options
-            .replace(None)
-            .expect("set in create()");
-        let (map, mut temp_proxy_slots) = self.env_snapshot.replace(None).expect("set in create()");
+        let WorkerVmInit {
+            transform_options,
+            env_map: map,
+            proxy_env_slots: mut temp_proxy_slots,
+        } = init;
 
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
@@ -1280,7 +1281,7 @@ fn on_unhandled_rejection(
     // (VMTraps). The gate closes with it, as for exit()/terminate(): the
     // native→JS entries still reached this tick refuse rather than run into
     // the pending termination.
-    vm.handle().stop();
+    vm.handle_ref().stop();
     vm.jsc_vm().notify_need_termination();
 }
 

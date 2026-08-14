@@ -190,14 +190,17 @@ pub trait JobContext: Sized + 'static {
     type OffThread: Send;
     type Js: JsAffine;
 
-    /// Pool thread. Return `done` to complete now; keep it (e.g. across async
-    /// I/O that finishes on another thread) and call [`Completion::finish`]
-    /// later to complete then. `vm` is the job's ticket: proof the VM is alive
-    /// (for [`JsPtr::under_ticket`]) and `vm.script_allowed()` says whether the
-    /// result still has a consumer. `off` and `vm` borrow the job, which the JS
-    /// thread may free the moment [`Completion::finish`] queues it: touch
-    /// neither after finishing (work that continues past `run` reaches its
-    /// state through [`Completion::off_thread`]).
+    /// Pool thread, VM still running script when the pool reached the job (a
+    /// job reached later is handed back unrun, as Node's environment cleanup
+    /// `uv_cancel`s queued work). Return `done` to complete now; keep it (e.g.
+    /// across async I/O that finishes on another thread) and call
+    /// [`Completion::finish`] later to complete then. `vm` is the job's ticket:
+    /// proof the VM is alive (for [`JsPtr::under_ticket`]) and
+    /// `vm.script_allowed()` says whether the result still has a consumer.
+    /// `off` and `vm` borrow the job, which the JS thread may free the moment
+    /// [`Completion::finish`] queues it: touch neither after finishing (work
+    /// that continues past `run` reaches its state through
+    /// [`Completion::off_thread`]).
     fn run(
         off: &mut Self::OffThread,
         vm: &Ticket,
@@ -213,13 +216,14 @@ pub trait JobContext: Sized + 'static {
 #[repr(C)]
 pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
-    release_unrun: unsafe fn(*mut JobHeader, &JsThread<'_>),
+    release_unrun: unsafe fn(*mut JobHeader),
 }
 
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: JobContext> {
+    /// Must stay first: erased dispatch casts `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
     /// Moved out by [`Completion::finish`] to post through (the JS thread may
     /// free the job the moment it is queued); never touched on the JS side.
@@ -233,9 +237,8 @@ pub struct Job<C: JobContext> {
 impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
     unsafe fn release_unrun(this: *mut Self) {
-        let vm = VirtualMachine::get();
         // SAFETY: fn contract; JS thread with the heap alive.
-        unsafe { Self::release_unrun_on(this, &vm.global().js_thread()) }
+        drop(unsafe { Self::take(this) })
     }
 }
 
@@ -251,7 +254,7 @@ impl<C: JobContext> Job<C> {
                 // only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
-                release_unrun: |p, cx| unsafe { Self::release_unrun_on(p.cast::<Self>(), cx) },
+                release_unrun: |p| drop(unsafe { Self::take(p.cast::<Self>()) }),
             },
             ticket: ManuallyDrop::new(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -274,16 +277,20 @@ impl<C: JobContext> Job<C> {
         // SAFETY: live job, exclusively the pool's for this callback; `ticket`
         // and `off` are disjoint fields.
         let (off, ticket) = unsafe { (&mut (*this).off, &*(*this).ticket) };
+        if !ticket.script_allowed() {
+            return done.finish();
+        }
         if let Some(done) = C::run(off, ticket, done) {
             done.finish();
         }
     }
 
-    /// JS thread dispatch: run the completion and free the job.
+    /// JS thread: reclaim a posted job and drop its keep-alive; the two halves
+    /// are the caller's to complete or drop.
     ///
     /// # Safety
     /// `this` is the job its `Completion` posted; called once.
-    unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
+    unsafe fn take(this: *mut Self) -> (C::OffThread, C::Js) {
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,
@@ -292,19 +299,17 @@ impl<C: JobContext> Job<C> {
             ..
         } = unsafe { *Box::from_raw(this) };
         keep_alive.unref(bun_io::js_vm_ctx());
-        C::then(off, js, cx)
+        (off, js)
     }
 
-    /// JS thread, VM stopping with the heap alive: a completion that was
-    /// posted but will not run. Everything is dropped normally.
+    /// JS thread dispatch: run the completion and free the job.
     ///
     /// # Safety
-    /// As [`complete`](Self::complete).
-    unsafe fn release_unrun_on(this: *mut Self, _cx: &JsThread<'_>) {
+    /// As [`take`](Self::take).
+    unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
         // SAFETY: fn contract.
-        let mut job = unsafe { Box::from_raw(this) };
-        job.keep_alive.unref(bun_io::js_vm_ctx());
-        drop(job);
+        let (off, js) = unsafe { Self::take(this) };
+        C::then(off, js, cx)
     }
 }
 
@@ -357,34 +362,20 @@ pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     // on `!can_call_into_js()`.
     if !cx.vm().script_allowed() {
         // SAFETY: as below; released exactly once, here.
-        unsafe { ((*header).release_unrun)(header, cx) };
+        unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
     unsafe { ((*header).complete)(header, cx) }
 }
 
-/// Teardown's release for a queued, never-dispatched `Job<C>` completion.
+/// Teardown's release for a queued, never-dispatched `Job<C>` completion
+/// (JS thread, heap alive).
 ///
 /// # Safety
 /// As [`complete_erased`].
-pub unsafe fn release_unrun_erased(ptr: *mut (), cx: &JsThread<'_>) {
+pub unsafe fn release_unrun_erased(ptr: *mut ()) {
     let header = ptr.cast::<JobHeader>();
     // SAFETY: as above.
-    unsafe { ((*header).release_unrun)(header, cx) }
-}
-
-const _: () = assert!(core::mem::offset_of!(Job<Never>, header) == 0);
-
-#[doc(hidden)]
-pub enum Never {}
-impl JobContext for Never {
-    type OffThread = ();
-    type Js = ();
-    fn run(_: &mut (), _: &Ticket, done: Completion<Self>) -> Option<Completion<Self>> {
-        Some(done)
-    }
-    fn then(_: (), _: (), _: &JsThread<'_>) -> JsResult<()> {
-        Ok(())
-    }
+    unsafe { ((*header).release_unrun)(header) }
 }

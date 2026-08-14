@@ -81,6 +81,18 @@ function buildReleaseUrl(owner: string, repo: string, tag: string): string {
   return new URL(path, "https://api.github.com").toString();
 }
 
+/**
+ * Normalize a tag the way the release jobs do: bare versions like
+ * "1.0.2" (or "v1.0.2") refer to the GitHub tag "bun-v1.0.2", while
+ * "canary" and already-prefixed tags pass through unchanged. Keeps
+ * this script accepting the same inputs as the sign job it verifies
+ * (release.yml documents the bare form for workflow_dispatch).
+ */
+function normalizeTag(tag: string): string {
+  const m = tag.match(/^v?(\d+\.\d+\.\d+.*)$/);
+  return m ? `bun-v${m[1]}` : tag;
+}
+
 /** Extract the clearsigned body from a PGP clearsign envelope. */
 function extractSignedBody(ascContent: string): string {
   const parts = ascContent.split("-----BEGIN PGP SIGNATURE-----");
@@ -193,7 +205,7 @@ interface Source {
 }
 
 async function loadFromGitHub(tag: string): Promise<Source> {
-  const apiUrl = buildReleaseUrl("oven-sh", "bun", tag);
+  const apiUrl = buildReleaseUrl("oven-sh", "bun", normalizeTag(tag));
   console.log(`Fetching release metadata: ${apiUrl}`);
   const headers: Record<string, string> = {
     "Accept": "application/vnd.github+json",

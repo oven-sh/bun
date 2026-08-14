@@ -227,6 +227,8 @@ export interface CompileOpts {
   orderOnlyInputs?: string[];
   /** Job pool override. */
   pool?: string;
+  /** Scheduling hint — see `BuildNode.priority`. */
+  priority?: number;
 }
 
 /**
@@ -314,6 +316,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
   };
   if (implicitInputs.length > 0) node.implicitInputs = implicitInputs;
   if (opts.pool !== undefined) node.pool = opts.pool;
+  if (opts.priority !== undefined) node.priority = opts.priority;
   n.build(node);
 
   // Record for compile_commands.json

@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
-import type { Ninja } from "./ninja.ts";
+import { SchedulePriority, type Ninja } from "./ninja.ts";
 import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
@@ -821,6 +821,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // shimDest: rebuilt when a sibling build dir (other arch/profile)
       // overwrote the shared exe.
       implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
+      // Gates the main cargo build below, so it inherits its urgency.
+      priority: SchedulePriority.cargo,
       vars: {
         cwd: cfg.cwd,
         args: quoteArgs(shimArgs, hostWin),
@@ -859,6 +861,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // lol-html source fetch before cargo resolves the path dep.
     implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
     orderOnlyInputs: inputs.codegenOrderOnly,
+    // The longest edge of the graph in every profile (a clean cargo build
+    // measured 283s release / 68s debug on 12 cores, vs 3-90s for the largest
+    // C++ TUs), so it must start the moment codegen is done — not after ninja
+    // has worked through the ~1100 dep objects emitted ahead of it.
+    priority: SchedulePriority.cargo,
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),

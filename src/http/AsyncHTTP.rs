@@ -388,7 +388,9 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         ));
         async_http.client.flags.is_preconnect_only = true;
 
-        crate::HTTPThread::schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
+        let mut batch = Batch::default();
+        async_http.schedule(&mut batch);
+        crate::HTTPThread::schedule(batch);
     }
 }
 
@@ -527,7 +529,10 @@ impl<'a> AsyncHTTP<'a> {
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(core::ptr::addr_of_mut!(self.task)));
+        let this = core::ptr::from_mut(self);
+        // SAFETY: field projection of `self`; `HTTPThread::schedule` recovers
+        // the whole `AsyncHTTP` from this pointer.
+        batch.push(Batch::from(unsafe { &raw mut (*this).task }));
     }
 }
 

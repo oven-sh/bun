@@ -554,10 +554,11 @@ impl ThreadPool {
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
-        // Push to the Vec first (no realloc: capacity reserved), then take
-        // stable addresses.
-        for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
+        let runner_tasks = tasks.as_mut_ptr();
+        for i in 0..tasks.len() {
+            // SAFETY: `i < tasks.len()`; `call` recovers the whole `RunnerTask`
+            // from this element pointer.
+            batch.push(Batch::from(unsafe { &raw mut (*runner_tasks.add(i)).task }));
         }
         self.schedule(batch);
         self.wait_for_all();

@@ -707,8 +707,12 @@ impl PatchTask {
         Some(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
     }
 
-    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(&raw mut self.task));
+    /// # Safety
+    /// `this` must be the live heap `PatchTask` handed out by `enqueue_patch_task`.
+    pub(crate) unsafe fn schedule(this: *mut Self, batch: &mut Batch) {
+        // SAFETY: field projection of the live task; `run_from_thread_pool`
+        // recovers the whole task from this pointer.
+        batch.push(Batch::from(unsafe { &raw mut (*this).task }));
     }
 
     pub(crate) fn new_calc_patch_hash(

@@ -586,8 +586,16 @@ impl<'a> LinkerContext<'a> {
                     callback: SourceMapDataTask::run_quoted_source_contents,
                 },
             };
-            batch.push(ThreadPoolLib::Batch::from(&raw mut line_offset.thread_task));
-            second_batch.push(ThreadPoolLib::Batch::from(&raw mut quoted.thread_task));
+            let line_offset = std::ptr::from_mut(line_offset);
+            let quoted = std::ptr::from_mut(quoted);
+            // SAFETY: field projections of the two live elements; the callbacks
+            // recover the whole `SourceMapDataTask` from these pointers.
+            unsafe {
+                batch.push(ThreadPoolLib::Batch::from(
+                    &raw mut (*line_offset).thread_task,
+                ));
+                second_batch.push(ThreadPoolLib::Batch::from(&raw mut (*quoted).thread_task));
+            }
         }
 
         // line offsets block sooner and are faster to compute, so we should schedule those first

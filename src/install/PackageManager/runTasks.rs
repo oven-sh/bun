@@ -1612,12 +1612,14 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
     while let Some(patch_task) = this.patch_task_fifo.read_item() {
         // SAFETY: fifo stores live `*mut PatchTask` pushed by
         // `enqueue_patch_task`; exclusive ownership transferred here.
-        let pt = unsafe { &mut *patch_task };
-        pt.schedule(if matches!(pt.callback, PatchTaskCallback::Apply(_)) {
+        let is_apply = unsafe { (*patch_task).callback.is_apply() };
+        let batch = if is_apply {
             &mut this.patch_apply_batch
         } else {
             &mut this.patch_calc_hash_batch
-        });
+        };
+        // SAFETY: as above.
+        unsafe { PatchTask::schedule(patch_task, batch) };
     }
 }
 

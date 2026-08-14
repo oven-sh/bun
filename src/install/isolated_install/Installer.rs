@@ -163,9 +163,12 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
+        let task = std::ptr::from_mut(task);
+        // SAFETY: field projection of the live `tasks[entry_id]` slot;
+        // `Task::callback` recovers the whole `Task` from this pointer.
         manager
             .thread_pool
-            .schedule(thread_pool::Batch::from(&raw mut task.task));
+            .schedule(thread_pool::Batch::from(unsafe { &raw mut (*task).task }));
     }
 
     pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {

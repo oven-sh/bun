@@ -98,7 +98,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             debug!(" START {} prepare CSS ast (total count)", total_count);
 
-            let mut batch = ThreadPoolLib::Batch::default();
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
@@ -112,12 +111,18 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
                     });
-                    // Capacity pre-reserved → push never reallocates → ptr stays stable.
-                    let task = tasks.last_mut().unwrap();
-                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task));
                 }
             }
             debug_assert_eq!(tasks.len(), total_count);
+            let tasks_ptr = tasks.as_mut_ptr();
+            let mut batch = ThreadPoolLib::Batch::default();
+            for i in 0..tasks.len() {
+                // SAFETY: `i < tasks.len()`; the callback recovers the whole
+                // `PrepareCssAstTask` from this element pointer.
+                batch.push(ThreadPoolLib::Batch::from(unsafe {
+                    &raw mut (*tasks_ptr.add(i)).task
+                }));
+            }
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();
@@ -176,10 +181,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
-            // Pre-reserved to `total_count` so pushes never reallocate; the
-            // batch holds raw pointers into this buffer.
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
@@ -200,9 +202,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task,
-                            ));
                         }
                     }
                     crate::chunk::Content::Css(css) => {
@@ -223,9 +222,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task,
-                            ));
                         }
                     }
                     crate::chunk::Content::Html => {
@@ -245,13 +241,19 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
                         });
-                        batch.push(ThreadPoolLib::Batch::from(
-                            &raw mut combined_part_ranges.last_mut().unwrap().task,
-                        ));
                     }
                 }
             }
             debug_assert_eq!(combined_part_ranges.len(), total_count);
+            let part_ranges_ptr = combined_part_ranges.as_mut_ptr();
+            let mut batch = ThreadPoolLib::Batch::default();
+            for i in 0..combined_part_ranges.len() {
+                // SAFETY: `i < combined_part_ranges.len()`; the callbacks recover
+                // the whole `PendingPartRange` from this element pointer.
+                batch.push(ThreadPoolLib::Batch::from(unsafe {
+                    &raw mut (*part_ranges_ptr.add(i)).task
+                }));
+            }
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();

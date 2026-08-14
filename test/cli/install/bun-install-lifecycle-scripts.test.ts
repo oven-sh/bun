@@ -299,6 +299,34 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
+// The environment `bun install` built is all a lifecycle script gets. On
+// Windows (and on POSIX without a shell) the script runs through `bun exec`,
+// which used to load the .env* files of the script's own directory on top of
+// that, so a workspace package's .env reached its scripts there and nowhere else.
+test.concurrent("lifecycle scripts do not get the .env files of the package directory", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  const pkgDir = join(packageDir, "packages", "pkg1");
+
+  await mkdir(pkgDir, { recursive: true });
+  await Promise.all([
+    writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", workspaces: ["packages/*"] })),
+    writeFile(
+      join(pkgDir, "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        scripts: { postinstall: "echo PKG_DOTENV=$PKG_DOTENV INHERITED=$LIFECYCLE_INHERITED > seen.txt" },
+      }),
+    ),
+    writeFile(join(pkgDir, ".env"), "PKG_DOTENV=leaked"),
+  ]);
+
+  await runBunInstall({ ...env, PKG_DOTENV: undefined, LIFECYCLE_INHERITED: "from-install" }, packageDir);
+
+  expect((await file(join(pkgDir, "seen.txt")).text()).trim()).toBe("PKG_DOTENV= INHERITED=from-install");
+});
+
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

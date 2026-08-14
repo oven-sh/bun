@@ -7787,6 +7787,11 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         // SAFETY: kernel wrote a NUL-terminated path into kf_path.
         let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
         let len = unsafe { libc::strlen(path_ptr.cast()) };
+        // The kernel fills kf_path from the namecache and leaves it empty when it
+        // has no name for the vnode (seen for a just-created file on UFS).
+        if len == 0 {
+            return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
+        }
         // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
         out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
         return Ok(&mut out.0[..len]);

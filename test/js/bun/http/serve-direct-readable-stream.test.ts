@@ -290,6 +290,102 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+// The third way a parked pull() can end: the client goes away first. The
+// sink's abort fires the stream's cancel() and marks the sink aborted; the
+// rejection that follows still reaches handle_reject_stream, which must see
+// the sink as aborted (not merely done) and drop the request silently. The
+// first request is the control: with the client still connected, the same
+// rejection is reported and the connection is force-closed.
+test.concurrent(
+  "pull() rejecting after the client aborted releases the request without reporting the error",
+  async () => {
+    const fixture = `
+    const net = require("node:net");
+
+    let gate, cancelled;
+
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      // handle_reject_stream only reports the rejection in development mode.
+      development: true,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("partial");
+              controller.flush();
+              await gate.promise;
+              throw new Error("PULL-REJECTED-" + new URL(req.url).pathname.slice(1));
+            },
+            cancel() {
+              cancelled.resolve();
+            },
+          }),
+        );
+      },
+    });
+
+    function request(path) {
+      gate = Promise.withResolvers();
+      cancelled = Promise.withResolvers();
+      const socket = net.connect(server.port, "127.0.0.1", () => {
+        socket.write("GET /" + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      });
+      // The control request ends in a server-side RST (ECONNRESET here).
+      socket.on("error", () => {});
+      return socket;
+    }
+    const waitFor = (socket, event) => new Promise(resolve => socket.once(event, resolve));
+
+    // Control: "partial" on the wire means the status is committed and pull()
+    // is parked. Rejecting now force-closes the connection.
+    {
+      const socket = request("connected");
+      await waitFor(socket, "data");
+      gate.resolve();
+      await waitFor(socket, "close");
+    }
+
+    let pendingAfterAbort;
+    {
+      const socket = request("aborted");
+      await waitFor(socket, "data");
+      socket.resetAndDestroy();
+      // cancel() is fired by the sink's abort, so once it has run the sink is
+      // aborted and the rejection below lands on an aborted sink. The parked
+      // pull() still holds the request at this point; the rejection is what
+      // releases it.
+      await cancelled.promise;
+      pendingAfterAbort = server.pendingRequests;
+      gate.resolve();
+      while (server.pendingRequests > 0) await Bun.sleep(0);
+    }
+
+    const probe = await (await fetch(new URL("/probe", server.url))).text();
+    server.stop(true);
+    console.log(JSON.stringify({ pendingAfterAbort, probe }));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("PULL-REJECTED-connected");
+    expect(stderr).not.toContain("PULL-REJECTED-aborted");
+    expect(JSON.parse(stdout)).toEqual({ pendingAfterAbort: 1, probe: "probe" });
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
+
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.
 // Http3Response::markDone() deliberately leaves onAborted armed (unlike
 // HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the

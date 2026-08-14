@@ -335,6 +335,8 @@ const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 // each stream has its own port (node multiplexes one env port), the payload is
 // the bare chunk array, EOF is null, and any other message is the ack.
 
+const kFlushSync = Symbol("kFlushSync");
+
 // Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
 // process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
 function makePortReadable(port, incrementsPortRef) {
@@ -408,7 +410,7 @@ function makePortWritable(port) {
   }
   port.on("message", onAck);
   port.unref();
-  return new Writable({
+  const stream = new Writable({
     decodeStrings: false,
     writev(chunks, cb) {
       const payload = new Array(chunks.length);
@@ -446,26 +448,30 @@ function makePortWritable(port) {
       cb(err);
     },
   });
+  // On a synchronous exit no ack can arrive; completing the parked writev lets
+  // the Writable clear its buffer through writev, which now completes
+  // synchronously because process._exiting is set (node's flushSync).
+  stream[kFlushSync] = onAck;
+  return stream;
 }
 
+// The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
-  if (stdout) {
-    Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdout),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
-  if (stderr) {
-    Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stderr),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
+  const stdoutStream = makePortWritable(stdout);
+  const stderrStream = makePortWritable(stderr);
+  Object.defineProperty(process, "stdout", {
+    value: stdoutStream,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(process, "stderr", {
+    value: stderrStream,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
@@ -482,11 +488,13 @@ function setupWorkerStdio(stdio) {
     enumerable: true,
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
-  // writes the fd directly, so rebind it to the captured streams when present.
-  if (stdout || stderr) {
-    const { Console } = require("node:console");
-    globalThis.console = new Console(process.stdout, process.stderr);
-  }
+  // writes the fd directly, so rebind it to the port-backed streams.
+  const { Console } = require("node:console");
+  globalThis.console = new Console(stdoutStream, stderrStream);
+  process.on("exit", () => {
+    stdoutStream[kFlushSync]();
+    stderrStream[kFlushSync]();
+  });
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for

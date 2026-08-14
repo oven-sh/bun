@@ -857,8 +857,6 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                // No server-provided message: `mysql_error_to_js` supplies the
-                // per-variant default.
                 self.fail(None::<&[u8]>, err);
             }
         }

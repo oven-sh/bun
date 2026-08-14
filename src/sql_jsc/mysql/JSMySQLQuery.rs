@@ -317,9 +317,6 @@ impl JSMySQLQuery {
         if let Some(err_) = self.global_object().try_take_exception() {
             self.reject_with_js_value(queries_array, err_);
         } else {
-            // Per-variant default message: the errors that reach here
-            // (binding, encoding, protocol limits) each have a more specific
-            // default than a blanket "Failed to bind query".
             let instance = mysql_error_to_js(self.global_object(), None::<&[u8]>, err);
             instance.ensure_still_alive();
             self.reject_with_js_value(queries_array, instance);

@@ -314,6 +314,26 @@ impl History {
         None
     }
 
+    fn first(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        if self.position == self.entries.len() {
+            self.temp_line = Some(Box::<[u8]>::from(current_line));
+        }
+        self.position = 0;
+        Some(&self.entries[0])
+    }
+
+    /// `None` when already on the line being entered (nothing to restore).
+    fn last(&mut self) -> Option<&[u8]> {
+        if self.position == self.entries.len() {
+            return None;
+        }
+        self.position = self.entries.len();
+        Some(self.temp_line.as_deref().unwrap_or(b""))
+    }
+
     fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
@@ -2143,6 +2163,21 @@ impl<'a> Repl<'a> {
                     }
                     self.refresh_line();
                 }
+                Key::PageUp => {
+                    let cur = self.line_editor.get_line().to_vec();
+                    if let Some(first_line) = self.history.first(&cur) {
+                        let first_line = first_line.to_vec();
+                        let _ = self.line_editor.set(&first_line);
+                        self.refresh_line();
+                    }
+                }
+                Key::PageDown => {
+                    if let Some(line) = self.history.last() {
+                        let line = line.to_vec();
+                        let _ = self.line_editor.set(&line);
+                        self.refresh_line();
+                    }
+                }
                 Key::Tab => self.handle_tab(),
                 Key::Home => {
                     self.line_editor.move_to_start();
@@ -2160,7 +2195,8 @@ impl<'a> Repl<'a> {
                     let _ = self.line_editor.insert_slice(&bytes[..len]);
                     self.refresh_line();
                 }
-                _ => {}
+                // Recognised but deliberately unbound (Ctrl+R reverse search is not implemented).
+                Key::CtrlR | Key::Escape | Key::Unknown => {}
             }
         }
 

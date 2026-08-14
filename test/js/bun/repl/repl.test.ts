@@ -46,6 +46,7 @@ async function withTerminalRepl(
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
   }) => Promise<void>,
+  env: Record<string, string> = {},
 ) {
   const received: string[] = [];
   let cursor = 0;
@@ -70,6 +71,7 @@ async function withTerminalRepl(
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
+      ...env,
     },
   });
 
@@ -1045,6 +1047,26 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       send("1 + 1\n");
       await waitFor("2");
     });
+  });
+
+  test("page up jumps to oldest history entry, page down returns to the line being typed", async () => {
+    using dir = tempDir("repl-page-keys", {
+      ".bun_repl_history": "123456 + 1\n800 + 2\n",
+    });
+    const isolatedHome = { HOME: String(dir) };
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("partial");
+      await waitFor("partial");
+      send("\x1b[5~"); // PageUp — oldest entry, skipping "800 + 2"
+      await waitFor("123456");
+      send("\x1b[6~"); // PageDown — back to the in-progress line
+      await waitFor("partial");
+
+      send("\x03");
+      await waitFor(/\u276f|> /);
+      send("\x1b[5~\n"); // PageUp then Enter evaluates the oldest entry
+      await waitFor("123457");
+    }, isolatedHome);
   });
 
   test("tab completes REPL commands", async () => {

@@ -23,6 +23,7 @@
     macro(SHA512) \
     macro(SHA512_256) \
     macro(TOML) \
+    macro(XML) \
     macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
@@ -92,16 +93,28 @@ FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
+// PropertyCallbacks are reified by JSC::reifyStaticProperty, which hands the
+// result straight to putDirect without checking for an exception, so a getter
+// that threw has its exception folded here: report it, then reify the slot as
+// undefined rather than an empty JSValue.
+static JSC::JSValue bunObjectLazyPropertyResult(JSC::ThrowScope& scope, JSC::JSObject* object, JSC::JSValue result)
+{
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        auto* globalObject = defaultGlobalObject(object->globalObject());
+        (void)scope.tryClearException();
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        (void)scope.tryClearException();
+        return JSC::jsUndefined();
+    }
+    return result ? result : JSC::jsUndefined();
+}
+
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM& vm, JSC::JSObject* object) \
     {                                                                                                                                        \
         auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                \
         JSC::JSValue result = JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object));                            \
-        if (scope.exception()) [[unlikely]] {                                                                                                \
-            (void)scope.tryClearException();                                                                                                \
-            return JSC::jsUndefined();                                                                                                       \
-        }                                                                                                                                    \
-        return result ? result : JSC::jsUndefined();                                                                                        \
+        return bunObjectLazyPropertyResult(scope, object, result);                                                                          \
     }
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

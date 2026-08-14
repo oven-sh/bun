@@ -653,6 +653,7 @@ describe("Bun.Archive", () => {
       // iterations would leak ~190MB. A 64MB threshold comfortably separates
       // "fixed" (stable RSS) from "leaking".
       const code = /* ts */ `
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           function ustarHeader(name, size) {
             const h = Buffer.alloc(512);
             h.write(name, 0, 100, "utf8");
@@ -691,10 +692,10 @@ describe("Bun.Archive", () => {
 
           for (let i = 0; i < 100; i++) await once();
           Bun.gc(true);
-          const before = process.memoryUsage.rss();
+          const before = rss();
           for (let i = 0; i < 1500; i++) await once();
           Bun.gc(true);
-          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          const growthMB = (rss() - before) / 1024 / 1024;
           console.log("RSS growth: " + growthMB.toFixed(1) + " MB");
           if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(1) + " MB");
         `;
@@ -1747,6 +1748,24 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "src/index.test.ts")).exists()).toBe(false);
       expect(await Bun.file(join(String(dir), "lib/helper.test.ts")).exists()).toBe(false);
       expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
+    });
+
+    test("negative patterns apply to entries stored with a leading ./ or repeated separators", async () => {
+      const tar = buildTarball([
+        { name: "./node_modules/pkg/index.js", data: "module" },
+        { name: "src//utils.test.ts", data: "test()" },
+        { name: "src/index.ts", data: "export {}" },
+      ]);
+
+      using dir = tempDir("archive-glob-normalized-entry-paths", {});
+      const count = await new Bun.Archive(tar).extract(String(dir), {
+        glob: ["**", "!node_modules/**", "!**/*.test.ts"],
+      });
+
+      expect(count).toBe(1);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "node_modules/pkg/index.js")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "src/utils.test.ts")).exists()).toBe(false);
     });
 
     test("extracts all files when no patterns are provided", async () => {

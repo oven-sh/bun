@@ -1,10 +1,10 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
-pub mod kind_enum {
-    pub(crate) const EXACT: &[u8] = b"exact";
-    pub(crate) const CATCH_ALL: &[u8] = b"catch-all";
-    pub(crate) const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
-    pub(crate) const DYNAMIC: &[u8] = b"dynamic";
+pub(crate) mod kind_enum {
+    const EXACT: &[u8] = b"exact";
+    const CATCH_ALL: &[u8] = b"catch-all";
+    const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
+    const DYNAMIC: &[u8] = b"dynamic";
 
     pub(crate) fn classify(name: &[u8]) -> &'static [u8] {
         if bun_core::strings::contains(name, b"[[...") {
@@ -31,7 +31,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -42,7 +42,6 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::webcore::{Request, Response};
-use bun_bundler as Transpiler;
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
@@ -51,7 +50,7 @@ use bun_bundler as Transpiler;
 // real type so the codegen-generated thunks resolve without a stub.
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
-pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
+const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 // ── local shims ───────────────────────────────────────────────────────────
 // `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
@@ -100,15 +99,14 @@ bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 pub struct FileSystemRouter {
     // BACKREF — interned `RefString`s live in the VM cache and outlive this
     // router (we hold +1 via `claim` in `constructor`, released in `finalize`).
-    pub origin: Option<BackRef<RefString>>,
-    pub base_dir: Option<BackRef<RefString>>,
-    // Note: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
-    pub router: JsCell<Router::Router<'static>>,
+    pub(crate) origin: Option<BackRef<RefString>>,
+    pub(crate) base_dir: Option<BackRef<RefString>>,
+    pub(crate) router: JsCell<Router::Router>,
     // Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
     // the runtime-wide arena type, so allocations here are individually freeable too.
-    pub arena: JsCell<Box<ArenaAllocator>>,
-    pub asset_prefix: Option<BackRef<RefString>>,
+    pub(crate) arena: JsCell<Box<ArenaAllocator>>,
+    pub(crate) asset_prefix: Option<BackRef<RefString>>,
 }
 
 impl FileSystemRouter {
@@ -118,16 +116,15 @@ impl FileSystemRouter {
     // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<FileSystemRouter>> {
-        let argument_ = callframe.arguments_old::<1>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -261,23 +258,19 @@ impl FileSystemRouter {
             }
         };
 
-        let mut router = Router::Router::init(
-            // Note: `vm.transpiler.fs` — the resolver's `FileSystem` singleton.
-            Fs::FileSystem::instance(),
-            RouteConfig {
-                dir: Box::from(&path_to_use[..]),
-                extensions: if !extensions.is_empty() {
-                    extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-                } else {
-                    DEFAULT_EXTENSIONS
-                        .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
-                        .collect()
-                },
-                asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-                ..Default::default()
+        let mut router = Router::Router::init(RouteConfig {
+            dir: Box::from(&path_to_use[..]),
+            extensions: if !extensions.is_empty() {
+                extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+            } else {
+                DEFAULT_EXTENSIONS
+                    .iter()
+                    .map(|s| Box::<[u8]>::from(*s))
+                    .collect()
             },
-        )
+            asset_prefix_path: Box::from(asset_prefix_slice.slice()),
+            ..Default::default()
+        })
         .expect("unreachable");
 
         {
@@ -360,7 +353,7 @@ impl FileSystemRouter {
         Ok(fs_router)
     }
 
-    pub fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
+    pub(crate) fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
@@ -441,7 +434,7 @@ impl FileSystemRouter {
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
 
-    pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
+    pub(crate) fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
         let dir =
             strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
         // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
@@ -452,7 +445,7 @@ impl FileSystemRouter {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn reload(
+    pub(crate) fn reload(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -503,15 +496,12 @@ impl FileSystemRouter {
             }
         };
 
-        let mut router = Router::Router::init(
-            Fs::FileSystem::instance(),
-            RouteConfig {
-                dir: cfg_dir,
-                extensions: cfg_extensions,
-                asset_prefix_path: cfg_asset_prefix_path,
-                ..Default::default()
-            },
-        )
+        let mut router = Router::Router::init(RouteConfig {
+            dir: cfg_dir,
+            extensions: cfg_extensions,
+            asset_prefix_path: cfg_asset_prefix_path,
+            ..Default::default()
+        })
         .expect("unreachable");
         {
             let config_dir = router.config.dir.clone();
@@ -545,13 +535,12 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let argument_ = callframe.arguments_old::<2>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
@@ -595,6 +584,13 @@ impl FileSystemRouter {
                 Ok(p) => p,
                 Err(_) => return Err(global_this.throw_out_of_memory()),
             };
+        }
+
+        // URLPath::parse strips byte 0 and the route table is keyed without the
+        // leading slash, so "Xtop" would match "/top". The URL branch above and
+        // the empty-input normalisation both yield '/'-prefixed paths already.
+        if path.slice().first() != Some(&b'/') {
+            return Ok(JSValue::NULL);
         }
 
         // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
@@ -663,7 +659,7 @@ impl FileSystemRouter {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(ref origin) = this.origin {
             return Ok(zs_to_js(origin.leak(), global_this));
         }
@@ -672,7 +668,7 @@ impl FileSystemRouter {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
@@ -692,17 +688,8 @@ impl FileSystemRouter {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_core::String::static_("nextjs").to_js(global_this)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(ref asset_prefix) = this.asset_prefix {
-            return Ok(zs_to_js(asset_prefix.leak(), global_this));
-        }
-
-        Ok(JSValue::NULL)
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
@@ -731,26 +718,26 @@ pub struct MatchedRoute {
     // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
     // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
     // the stored `'static` is the standard self-referential erasure — see `init`.
-    pub route: *const RouterMatch<'static>,
+    pub(crate) route: *const RouterMatch<'static>,
     // Note: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
     // `route` (above) and `route_holder.params` hold raw self-referential pointers into
     // them. Without `UnsafeCell`, taking `&mut MatchedRoute` (as `get_params`/`get_query`
     // do) would assert unique access to these fields under Stacked Borrows and invalidate
     // the stored pointers — UB on next deref.
-    pub route_holder: UnsafeCell<RouterMatch<'static>>,
+    pub(crate) route_holder: UnsafeCell<RouterMatch<'static>>,
     // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
-    pub query_string_map: JsCell<Option<QueryStringMap>>,
-    pub param_map: JsCell<Option<QueryStringMap>>,
-    pub params_list_holder: UnsafeCell<route_param::List<'static>>,
+    pub(crate) query_string_map: JsCell<Option<QueryStringMap>>,
+    pub(crate) param_map: JsCell<Option<QueryStringMap>>,
+    pub(crate) params_list_holder: UnsafeCell<route_param::List<'static>>,
     /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
     /// `params_list_holder` borrow. Freed by Drop on finalize.
-    pub pathname_backing: ZigStringSlice,
+    pub(crate) pathname_backing: ZigStringSlice,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
     // `deinit`). The interned allocation outlives every `MatchedRoute`.
-    pub origin: Option<BackRef<RefString>>,
-    pub asset_prefix: Option<BackRef<RefString>>,
-    pub needs_deinit: bool,
-    pub base_dir: Option<BackRef<RefString>>,
+    pub(crate) origin: Option<BackRef<RefString>>,
+    pub(crate) asset_prefix: Option<BackRef<RefString>>,
+    pub(crate) needs_deinit: bool,
+    pub(crate) base_dir: Option<BackRef<RefString>>,
 }
 
 impl MatchedRoute {
@@ -773,11 +760,11 @@ impl MatchedRoute {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(zs_to_js(this.route().name, global_this))
     }
 
-    pub fn init(
+    pub(crate) fn init(
         match_: RouterMatch<'_>,
         pathname_backing: ZigStringSlice,
         origin: Option<BackRef<RefString>>,
@@ -845,63 +832,55 @@ impl MatchedRoute {
 
     // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
     // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    fn deinit(this: *mut MatchedRoute) {
-        // SAFETY: called from finalize on mutator thread.
-        let this_ref = unsafe { &mut *this };
-        this_ref.query_string_map.set(None);
-        this_ref.param_map.set(None);
-        if this_ref.needs_deinit {
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the allocation `finalize` owns"
+    )]
+    fn deinit(mut this: Box<MatchedRoute>) {
+        this.query_string_map.set(None);
+        this.param_map.set(None);
+        if this.needs_deinit {
             // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this_ref.pathname_backing = ZigStringSlice::EMPTY;
-            *this_ref.params_list_holder.get_mut() = route_param::List::default();
+            this.pathname_backing = ZigStringSlice::EMPTY;
+            *this.params_list_holder.get_mut() = route_param::List::default();
         }
 
-        if let Some(p) = this_ref.origin.take() {
+        if let Some(p) = this.origin.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.asset_prefix.take() {
+        if let Some(p) = this.asset_prefix.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.base_dir.take() {
+        if let Some(p) = this.base_dir.take() {
             p.get().deref();
         }
-
-        // SAFETY: `this` was heap-allocated by codegen at construction.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(zs_to_js(this.route().file_path, global_this))
     }
 
     pub fn finalize(self: Box<Self>) {
-        // `deinit` frees the allocation itself; hand ownership back so its
-        // existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        Self::deinit(self);
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(zs_to_js(this.route().pathname, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_route(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().name, global_this))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(zs_to_js(
             kind_enum::classify(this.route().name),
             global_this,
         ))
     }
 
-    pub fn create_query_object(
+    pub(crate) fn create_query_object(
         ctx: &JSGlobalObject,
         map: &mut QueryStringMap,
     ) -> JsResult<JSValue> {
@@ -950,37 +929,8 @@ impl MatchedRoute {
         Ok(value)
     }
 
-    pub fn get_script_src_string(
-        origin: &URL,
-        // `bun_object::get_public_path` takes `core::fmt::Write`.
-        writer: &mut impl core::fmt::Write,
-        file_path: &[u8],
-        client_framework_enabled: bool,
-    ) {
-        let mut entry_point_tempbuf = PathBuffer::uninit();
-        // We don't store the framework config including the client parts in the server
-        // instead, we just store a boolean saying whether we should generate this whenever the script is requested
-        // this is kind of bad. we should consider instead a way to inline the contents of the script.
-        if client_framework_enabled {
-            // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
-            // `bun_paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
-            // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
-            let path_name = bun_paths::fs::PathName::init(file_path);
-            bun_object::get_public_path(
-                Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
-                    &mut entry_point_tempbuf,
-                    &path_name,
-                ),
-                origin,
-                writer,
-            );
-        } else {
-            bun_object::get_public_path(file_path, origin, writer);
-        }
-    }
-
     #[bun_jsc::host_fn(getter)]
-    pub fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
         // into a `String` (path components are UTF-8 in practice).
         let mut writer = String::with_capacity(MAX_PATH_BYTES);
@@ -1009,7 +959,7 @@ impl MatchedRoute {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_params(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_params(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
         }
@@ -1033,7 +983,7 @@ impl MatchedRoute {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_query(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_query(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let route = this.route();
         if route.query_string.is_empty() && this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));

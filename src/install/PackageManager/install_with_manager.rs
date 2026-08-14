@@ -36,8 +36,8 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -527,6 +527,34 @@ pub fn install_with_manager(
                         }
                     }
 
+                    // `bun update <name>`: drop and re-enqueue every `<name>` slot, not just root-level.
+                    if manager.to_update && !manager.update_requests.is_empty() {
+                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+                        for dependency_i in 0..dependencies_len {
+                            let dependency =
+                                manager.lockfile.buffers.dependencies[dependency_i].clone();
+                            if UpdateRequest::contains_name(
+                                &manager.update_requests,
+                                dependency.name_hash,
+                                dependency
+                                    .name
+                                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+                            ) {
+                                manager.lockfile.buffers.resolutions[dependency_i] =
+                                    invalid_package_id;
+                                if let Err(err) = enqueue_dependency_with_main(
+                                    manager,
+                                    dependency_i as u32,
+                                    &dependency,
+                                    invalid_package_id,
+                                    false,
+                                ) {
+                                    add_dependency_error(manager, &dependency, err);
+                                }
+                            }
+                        }
+                    }
+
                     // Split this into two passes because the below may allocate memory or invalidate pointers
                     if manager.summary.add > 0 || manager.summary.update > 0 {
                         let changes = mapping.len() as PackageID;
@@ -578,8 +606,7 @@ pub fn install_with_manager(
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             for key in keys {
                 let task = PatchTask::new_calc_patch_hash(manager, key, None);
-                // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
-                unsafe { enqueue_patch_task_pre(manager, task) };
+                enqueue_patch_task_pre(manager, task);
             }
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
@@ -682,9 +709,7 @@ pub fn install_with_manager(
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
-            if cfg!(debug_assertions) {
-                debug_assert!(first_index != -1);
-            }
+            debug_assert!(first_index != -1);
 
             // In the `add_node_gyp` arm the assert already guarantees
             // `first_index != -1`, so a single guarded loop covers
@@ -1233,12 +1258,10 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
         scripts_count += *count;
     }
 
-    if cfg!(debug_assertions) {
-        // if packages_count is greater than 0, scripts_count must also be greater than 0.
-        debug_assert!(packages_count == 0 || scripts_count > 0);
-        // if scripts_count is 1, it's only possible for packages_count to be 1.
-        debug_assert!(scripts_count != 1 || packages_count == 1);
-    }
+    // if packages_count is greater than 0, scripts_count must also be greater than 0.
+    debug_assert!(packages_count == 0 || scripts_count > 0);
+    // if scripts_count is 1, it's only possible for packages_count to be 1.
+    debug_assert!(scripts_count != 1 || packages_count == 1);
 
     if packages_count > 0 {
         bun_core::prettyln!(
@@ -1305,18 +1328,13 @@ pub(crate) fn get_workspace_filters(
                 }
             };
 
-            match glob::r#match(pattern, path_or_name) {
-                glob::MatchResult::Match | glob::MatchResult::NegateMatch => {
-                    install_root_dependencies = true;
-                }
-
-                glob::MatchResult::NegateNoMatch => {
-                    // always skip if a pattern specifically says "!<name>"
-                    install_root_dependencies = false;
-                    break;
-                }
-
-                glob::MatchResult::NoMatch => {}
+            let result = glob::r#match(pattern, path_or_name);
+            if result.matches() {
+                install_root_dependencies = true;
+            } else if result.is_negated() {
+                // always skip if a pattern specifically says "!<name>"
+                install_root_dependencies = false;
+                break;
             }
         }
     }
@@ -1591,8 +1609,7 @@ fn create_new_lockfile_and_enqueue(
         let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
         for key in keys {
             let task = PatchTask::new_calc_patch_hash(manager, key, None);
-            // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
-            unsafe { enqueue_patch_task_pre(manager, task) };
+            enqueue_patch_task_pre(manager, task);
         }
     }
     enqueue_dependency_list(manager, root.dependencies);
@@ -1822,9 +1839,7 @@ fn run_root_lifecycle_scripts(
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
-        if cfg!(debug_assertions) {
-            debug_assert!(scripts.total > 0);
-        }
+        debug_assert!(scripts.total > 0);
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
@@ -40,7 +42,7 @@ pub mod ssl_wrapper {
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
+    pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
@@ -78,6 +80,7 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tl
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
+pub(crate) use socket_body::DuplexUpgradeContext;
 pub use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
 };
@@ -117,24 +120,34 @@ pub mod socket {
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`). The
+// handlers take `ThisPtr<Self>` rather than `&mut self`:
 // a JS callback can close the socket and drop its last ref mid-dispatch, and a
 // `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 
     #[inline]
-    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_open(this, s);
+    fn on_open(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_open(this, s)
     }
     #[inline]
-    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
-        NewSocket::on_data(this, s, data);
+    fn on_data(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_data(this, s, data)
     }
     #[inline]
-    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_writable(this, s);
+    fn on_writable(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_writable(this, s)
     }
     #[inline]
     fn on_close(
@@ -142,29 +155,35 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
         reason: *mut core::ffi::c_void,
-    ) {
-        let _ = NewSocket::on_close(
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_close(
             this,
             s,
             code,
             if reason.is_null() { None } else { Some(reason) },
-        );
+        )
     }
     #[inline]
-    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_timeout(this, s);
+    fn on_timeout(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_timeout(this, s)
     }
     #[inline]
-    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_end(this, s);
+    fn on_end(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_end(this, s)
     }
     #[inline]
     fn on_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
-    ) {
-        let _ = NewSocket::on_connect_error(this, s, code);
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_connect_error(this, s, code)
     }
     #[inline]
     fn on_handshake(
@@ -172,7 +191,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
-    ) {
-        let _ = NewSocket::on_handshake(this, s, ok, err);
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_handshake(this, s, ok, err)
     }
 }

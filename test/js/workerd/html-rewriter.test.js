@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -22,16 +22,18 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
   });
 
-  it("error inside element handler", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(element) {
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>")),
-    ).toThrow("test");
+  // Which channel a handler error takes is decided by the overload, not by
+  // whether the input body happened to be buffered: every `Response` input
+  // rejects its output body.
+  it("error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    await expect(res.text()).rejects.toThrow("test");
   });
 
   it("error inside element handler (string)", () => {
@@ -46,44 +48,46 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  it("fast async error inside element handler", () => {
-    let caught = false;
-    try {
-      new HTMLRewriter()
-        .on("div", {
-          async element(element) {
-            await setImmediatePromise();
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>"));
-      expect.unreachable();
-    } catch (e) {
-      caught = true;
-      expect(e.message).toBe("test");
-    } finally {
-      expect(caught).toBeTrue();
-    }
+  it("async error without a real await inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    await expect(res.text()).rejects.toThrow("test");
   });
 
-  it("slow async error inside element handler", () => {
-    let caught = false;
-    try {
-      new HTMLRewriter()
-        .on("div", {
-          async element(element) {
-            await Bun.sleep(1);
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>"));
-      expect.unreachable();
-    } catch (e) {
-      caught = true;
-      expect(e.message).toBe("test");
-    } finally {
-      expect(caught).toBeTrue();
-    }
+  // A handler that only settles once the event loop turns (setImmediate /
+  // setTimeout / I/O) suspends the rewrite: `transform()` returns the
+  // Response immediately and the failure surfaces on its body, exactly like
+  // Cloudflare's HTMLRewriter. It can no longer throw synchronously, because
+  // HTMLRewriter no longer nests the event loop inside `transform()`.
+  it("fast async error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await setImmediatePromise();
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    expect(res).toBeInstanceOf(Response);
+    await expect(res.text()).rejects.toThrow("test");
+  });
+
+  it("slow async error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await Bun.sleep(1);
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    expect(res).toBeInstanceOf(Response);
+    await expect(res.text()).rejects.toThrow("test");
   });
 
   it("HTMLRewriter: async replacement", async () => {
@@ -100,6 +104,751 @@ describe("HTMLRewriter", () => {
     await gcTick();
     expect(await res.text()).toBe("<div><span>replace</span></div>");
     await gcTick();
+  });
+
+  // Async content handlers suspend the lol-html rewrite until their promise
+  // settles, instead of spinning a nested event loop inside `transform()`.
+  // The rewritable unit is moved onto the heap for the duration of the
+  // `await`, so post-`await` mutations still land on the element that gets
+  // serialized, and handlers stay strictly one-at-a-time.
+  describe("async handlers suspend the rewrite", () => {
+    it("runs async element handlers strictly in document order", async () => {
+      const count = 8;
+      const order = [];
+      const html = Array.from({ length: count }, (_, i) => `<i id="${i}"></i>`).join("");
+      const res = new HTMLRewriter()
+        .on("i", {
+          async element(element) {
+            const id = element.getAttribute("id");
+            await setImmediatePromise();
+            order.push(id);
+            element.setInnerContent(id);
+          },
+        })
+        .transform(new Response(html));
+      expect(await res.text()).toBe(Array.from({ length: count }, (_, i) => `<i id="${i}">${i}</i>`).join(""));
+      // Each handler must finish (including its awaited half) before the
+      // parser reaches the next element.
+      expect(order).toEqual(Array.from({ length: count }, (_, i) => String(i)));
+    });
+
+    it("mutations made before and after the await both land", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            element.setAttribute("before", "1");
+            await setImmediatePromise();
+            element.setAttribute("after", "2");
+            element.setAttribute("id", "x");
+          },
+        })
+        .transform(new Response('<div id="a">inner</div>'));
+      expect(await res.text()).toBe('<div id="x" before="1" after="2">inner</div>');
+    });
+
+    it("an attribute iterator from before the await keeps working", async () => {
+      // The suspension deep-copies the element (and its attribute buffer) onto
+      // the heap. The iterator reads attributes back through the element on
+      // every next(), so it follows the copy and resumes at the same index
+      // instead of silently reporting done.
+      let partial, rest, fresh;
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            const it = element.attributes;
+            partial = it.next().value;
+            await setImmediatePromise();
+            rest = [...it];
+            fresh = [...element.attributes];
+            element.setAttribute("c", "3");
+          },
+        })
+        .transform(new Response('<div a="1" b="2">x</div>'));
+      expect(await res.text()).toBe('<div a="1" b="2" c="3">x</div>');
+      expect(partial).toEqual(["a", "1"]);
+      // Resumes mid-iteration against the parked copy.
+      expect(rest).toEqual([["b", "2"]]);
+      expect(fresh).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+    });
+
+    it("a for..of over attributes with an await in the body visits all of them", async () => {
+      const seen = [];
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            for (const [name, value] of element.attributes) {
+              await setImmediatePromise();
+              seen.push(`${name}=${value}`);
+            }
+          },
+        })
+        .transform(new Response('<div a="1" b="2" c="3">x</div>'));
+      expect(await res.text()).toBe('<div a="1" b="2" c="3">x</div>');
+      expect(seen).toEqual(["a=1", "b=2", "c=3"]);
+    });
+
+    it("runs the next handler for the same element after the previous one's await", async () => {
+      const order = [];
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            order.push("a");
+            element.setAttribute("a", "");
+          },
+        })
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            order.push("b");
+            element.setAttribute("b", "");
+          },
+        })
+        .transform(new Response("<div></div>"));
+      expect(await res.text()).toBe('<div a="" b=""></div>');
+      expect(order).toEqual(["a", "b"]);
+    });
+
+    it("element removed after the await suppresses its content", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            element.remove();
+          },
+        })
+        .transform(new Response("a<div>gone<span>too</span></div>b"));
+      expect(await res.text()).toBe("ab");
+    });
+
+    it("async text handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async text(chunk) {
+            if (chunk.lastInTextNode) return;
+            const original = chunk.text;
+            await setImmediatePromise();
+            chunk.replace(original.toUpperCase());
+          },
+        })
+        .transform(new Response("<div>hello</div>world"));
+      expect(await res.text()).toBe("<div>HELLO</div>world");
+    });
+
+    // The canonical "append once the text node ends" idiom, suspended on the
+    // lastInTextNode chunk itself and mutated after the resume.
+    it("async text handler suspending on lastInTextNode and mutating it", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async text(chunk) {
+            if (!chunk.lastInTextNode) return;
+            await setImmediatePromise();
+            chunk.after("|", { html: false });
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect(await res.text()).toBe("<div>hello|</div>");
+    });
+
+    // The `is_async` arm of `on_rewriting_error`: a handler throwing while the
+    // input is still streaming must surface the real error, not lol-html's
+    // generic "The rewriter has been stopped."
+    it("a throwing handler on a streaming input surfaces the real error", async () => {
+      const encoder = new TextEncoder();
+      // The body must still be incomplete when `transform()` runs, or the
+      // rewrite finishes inline and the handler throws synchronously instead
+      // (also correct, but a different code path). Hold the tail back until
+      // `transform()` has returned rather than racing the loopback.
+      const transformCalled = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(encoder.encode("<div>"));
+                await transformCalled.promise;
+                controller.enqueue(encoder.encode("x</div>"));
+                controller.close();
+              },
+            }),
+          ),
+      });
+      const upstream = await fetch(`http://localhost:${server.port}/`);
+      const res = new HTMLRewriter()
+        .on("div", {
+          element() {
+            throw new Error("boom");
+          },
+        })
+        .transform(upstream);
+      transformCalled.resolve();
+      await expect(res.text()).rejects.toThrow("boom");
+    });
+
+    // `new Response(new ReadableStream({...}))` — the JS-source input path
+    // (#11758/#14216): the rewrite must pump the JS stream through the sink
+    // and an async handler can suspend mid-stream.
+    it("a JS ReadableStream input with an async handler", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode("<html><body>"));
+          await setImmediatePromise();
+          controller.enqueue(encoder.encode("<p>old</p>"));
+          await setImmediatePromise();
+          controller.enqueue(encoder.encode("</body></html>"));
+          controller.close();
+        },
+      });
+      const res = new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await setImmediatePromise();
+            element.setInnerContent("new");
+          },
+        })
+        .transform(new Response(stream));
+      expect(await res.text()).toBe("<html><body><p>new</p></body></html>");
+    });
+
+    // `rsisAbrupt` calls `controller.close(error)` synchronously before
+    // rejecting the pump promise, and the generated `__close` drops its error
+    // argument. The pipe must defer its terminal step to the reject reaction
+    // so the real error reaches the output body instead of resolving with
+    // truncated HTML.
+    it.each(["default", "pull"])(
+      "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
+      async kind => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream(
+          kind === "pull"
+            ? {
+                pulls: 0,
+                pull(controller) {
+                  if (this.pulls++ === 0) return controller.enqueue(encoder.encode("<p>partial"));
+                  controller.error(new Error("upstream boom"));
+                },
+              }
+            : {
+                async start(controller) {
+                  controller.enqueue(encoder.encode("<p>partial"));
+                  await setImmediatePromise();
+                  controller.error(new Error("upstream boom"));
+                },
+              },
+        );
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+        await expect(res.text()).rejects.toThrow("upstream boom");
+      },
+    );
+
+    // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
+    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
+    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // the pipe can be freed so the controller's destructor doesn't dispatch
+    // into freed memory.
+    it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {
+      for (let i = 0; i < 4; i++) {
+        const stream = new ReadableStream({
+          type: "direct",
+          pull() {
+            throw new Error("pull threw");
+          },
+        });
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+        await expect(res.text()).rejects.toThrow("pull threw");
+        Bun.gc(true);
+      }
+    });
+
+    // `fail()` must settle the `WritablePending` slot so a direct `pull()`
+    // parked on `await controller.flush(true)` resumes, letting the pump
+    // promise settle and release the input `+1` (`cancel_from_output`
+    // already did this; `fail()` didn't).
+    it("a direct ReadableStream parked on flush(true) is released when the handler rejects", async () => {
+      let afterFlush = 0;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write(encoder.encode("<p>x</p>"));
+          await controller.flush(true);
+          afterFlush++;
+          controller.close();
+        },
+      });
+      const res = new HTMLRewriter()
+        .on("p", {
+          async element() {
+            await setImmediatePromise();
+            throw new Error("handler rejected");
+          },
+        })
+        .transform(new Response(stream));
+      await expect(res.text()).rejects.toThrow("handler rejected");
+      await setImmediatePromise();
+      expect(afterFlush).toBe(1);
+    });
+
+    // Two rewriters chained, both suspending: `init()`'s own comment names
+    // "another transform()" as a supported consumer of a pending body.
+    it("chained suspending transforms", async () => {
+      const first = new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await setImmediatePromise();
+            element.setAttribute("one", "");
+          },
+        })
+        .transform(new Response("<p>x</p>"));
+      const second = new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await setImmediatePromise();
+            element.setAttribute("two", "");
+          },
+        })
+        .transform(first);
+      expect(await second.text()).toBe('<p one="" two="">x</p>');
+    });
+
+    it("a rejection in the first of two chained transforms rejects the last body", async () => {
+      const first = new HTMLRewriter()
+        .on("p", {
+          async element() {
+            await setImmediatePromise();
+            throw new Error("inner boom");
+          },
+        })
+        .transform(new Response("<p>x</p>"));
+      const second = new HTMLRewriter().on("p", { element() {} }).transform(first);
+      await expect(second.text()).rejects.toThrow("inner boom");
+    });
+
+    // The resume path's own `handler_callback` sees a Fulfilled promise only
+    // when a microtask-only handler follows a real-await one.
+    it("a microtask-only handler after a suspending one", async () => {
+      const order = [];
+      const res = new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await setImmediatePromise();
+            order.push("slow");
+            element.setAttribute("slow", "");
+          },
+        })
+        .on("p", {
+          async element(element) {
+            await Promise.resolve();
+            order.push("fast");
+            element.setAttribute("fast", "");
+          },
+        })
+        .transform(new Response("<p>x</p>"));
+      expect(await res.text()).toBe('<p slow="" fast="">x</p>');
+      expect(order).toEqual(["slow", "fast"]);
+    });
+
+    it("async comments, doctype, and document end handlers", async () => {
+      const res = new HTMLRewriter()
+        .onDocument({
+          async doctype(doctype) {
+            await setImmediatePromise();
+            doctype.remove();
+          },
+          async comments(comment) {
+            const text = comment.text;
+            await setImmediatePromise();
+            comment.text = `${text}${text}`;
+          },
+          async end(end) {
+            await setImmediatePromise();
+            end.append("<tail>", { html: true });
+          },
+        })
+        .transform(new Response("<!DOCTYPE html><p><!--x--></p>"));
+      expect(await res.text()).toBe("<p><!--xx--></p><tail>");
+    });
+
+    it("async onEndTag handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            element.onEndTag(async endTag => {
+              await setImmediatePromise();
+              endTag.before("!");
+            });
+          },
+        })
+        .transform(new Response("<div>x</div>y"));
+      expect(await res.text()).toBe("<div>x!</div>y");
+    });
+
+    it("the element survives a GC during the await", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            element.setAttribute("pre", "1");
+            await gcTick();
+            await setImmediatePromise();
+            await gcTick();
+            element.setAttribute("post", "2");
+            element.setInnerContent("<b>ok</b>", { html: true });
+          },
+        })
+        .transform(new Response("<div>old</div>"));
+      // One more collection while the transform is suspended and `transform()`
+      // has already returned.
+      await gcTick();
+      expect(await res.text()).toBe('<div pre="1" post="2"><b>ok</b></div>');
+    });
+
+    it("a nested transform inside a suspended handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            const inner = await new HTMLRewriter()
+              .on("b", {
+                async element(b) {
+                  await setImmediatePromise();
+                  b.setInnerContent("inner");
+                },
+              })
+              .transform(new Response("<b>x</b>"))
+              .text();
+            element.setInnerContent(inner, { html: true });
+          },
+        })
+        .transform(new Response("<div>outer</div>"));
+      expect(await res.text()).toBe("<div><b>inner</b></div>");
+    });
+
+    it("transform(string) throws if a handler needs the event loop to settle", () => {
+      expect(() =>
+        new HTMLRewriter()
+          .on("div", {
+            async element(element) {
+              await setImmediatePromise();
+            },
+          })
+          .transform("<div></div>"),
+      ).toThrow(
+        "HTMLRewriter.transform() cannot synchronously return a string because a content " +
+          "handler returned a Promise that did not resolve within a microtask. Pass a " +
+          "Response instead and await its body",
+      );
+    });
+
+    it("transform(string) stays synchronous for microtask-only async handlers", () => {
+      const out = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Promise.resolve();
+            await null;
+            element.setInnerContent("sync enough");
+          },
+        })
+        .transform("<div>old</div>");
+      expect(out).toBe("<div>sync enough</div>");
+    });
+
+    // The suspend decision runs one microtask checkpoint, which drains
+    // process.nextTick before the promise jobs (Node ordering), so a handler
+    // that completes via nextTick is still "synchronous enough".
+    for (const [label, schedule] of [
+      ["process.nextTick", r => process.nextTick(r)],
+      ["queueMicrotask", r => queueMicrotask(r)],
+    ]) {
+      it(`transform(string) stays synchronous for a handler awaiting ${label}`, () => {
+        const out = new HTMLRewriter()
+          .on("div", {
+            async element(element) {
+              await new Promise(schedule);
+              element.setInnerContent("ok");
+            },
+          })
+          .transform("<div>old</div>");
+        expect(out).toBe("<div>ok</div>");
+      });
+    }
+
+    // transform(string) must fail atomically: the throw means the whole
+    // rewrite failed, so no later handler may run against the orphaned output
+    // and no post-throw rejection may be swallowed.
+    it("transform(string) throwing runs no later handlers", async () => {
+      let later = 0;
+      expect(() =>
+        new HTMLRewriter()
+          .on("a", {
+            async element() {
+              await setImmediatePromise();
+            },
+          })
+          .on("b", {
+            element() {
+              later++;
+            },
+          })
+          .transform("<a></a><b></b>"),
+      ).toThrow("cannot synchronously return a string");
+      // Give the orphaned rewrite every chance to resume and run `b`.
+      await setImmediatePromise();
+      await setImmediatePromise();
+      expect(later).toBe(0);
+    });
+
+    // A suspended transform hands back a Response whose body is still pending.
+    // Every consumer of that body has to get the bytes once the rewrite
+    // finishes, not just `.text()`.
+    describe("consumers of a still-pending output body", () => {
+      const suspending = () =>
+        new HTMLRewriter()
+          .on("p", {
+            async element(element) {
+              await setImmediatePromise();
+              element.setInnerContent("new");
+            },
+          })
+          .transform(new Response("<p>old</p>"));
+
+      it(".text()", async () => {
+        expect(await suspending().text()).toBe("<p>new</p>");
+      });
+
+      it(".blob()", async () => {
+        expect(await (await suspending().blob()).text()).toBe("<p>new</p>");
+      });
+
+      it(".arrayBuffer()", async () => {
+        const buf = await suspending().arrayBuffer();
+        expect(new TextDecoder().decode(buf)).toBe("<p>new</p>");
+      });
+
+      it(".body reader drains the bytes", async () => {
+        const reader = suspending().body.getReader();
+        const chunks = [];
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        expect(new TextDecoder().decode(Buffer.concat(chunks))).toBe("<p>new</p>");
+      });
+
+      it("new Response(res.body).text()", async () => {
+        expect(await new Response(suspending().body).text()).toBe("<p>new</p>");
+      });
+
+      // `Value::tee` realises the pending body as a ByteStream via
+      // on_start_streaming/on_readable_stream_available, then tees it; the
+      // rewrite keeps feeding that ByteStream, so both branches drain.
+      it(".clone() delivers the transformed bytes to both branches", async () => {
+        const res = suspending();
+        const clone = res.clone();
+        const [cloneText, originalText] = await Promise.all([clone.text(), res.text()]);
+        expect(cloneText).toBe("<p>new</p>");
+        expect(originalText).toBe("<p>new</p>");
+      });
+
+      it("Bun.write(file, res)", async () => {
+        using dir = tempDir("hr-pending-body", {});
+        const out = path.join(String(dir), "out.html");
+        await Bun.write(out, suspending());
+        expect(await Bun.file(out).text()).toBe("<p>new</p>");
+      });
+    });
+
+    it("transform(ArrayBuffer) throws the ArrayBuffer wording", () => {
+      expect(() =>
+        new HTMLRewriter()
+          .on("div", {
+            async element() {
+              await setImmediatePromise();
+            },
+          })
+          .transform(new TextEncoder().encode("<div></div>")),
+      ).toThrow("cannot synchronously return an ArrayBuffer");
+    });
+
+    // A rejection from a Promise a handler creates but neither returns nor
+    // awaits is the user's to handle. Main's nested event loop hijacked it into
+    // `transform()`'s synchronous throw (swallowing unrelated rejections with
+    // exit 0); now it reaches the process-global unhandledRejection path.
+    //
+    // Fixture note: it has to be a real-await handler on a Response. A sync
+    // handler on a string input behaves the same pre- and post-PR, so that
+    // shape pins nothing.
+    it("a detached rejection inside a handler reaches unhandledRejection", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = new HTMLRewriter()
+             .on("p", { async element(e) {
+               (async () => { throw new Error("detached"); })();
+               await Bun.sleep(5);
+               e.setInnerContent("ok");
+             } })
+             .transform(new Response("<p>x</p>"));
+           console.log("BODY:" + (await r.text()));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The rewrite itself succeeds; the detached rejection is reported and
+      // takes the process down, rather than being captured by transform().
+      expect({ stdout: stdout.trim(), reported: stderr.includes("detached"), exitCode }).toEqual({
+        stdout: "BODY:<p>ok</p>",
+        reported: true,
+        exitCode: 1,
+      });
+    });
+
+    // The headline production shape: returning a suspended transform straight
+    // out of a Bun.serve handler, with a live client waiting.
+    it("Bun.serve delivers a suspended transform to a live client", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new HTMLRewriter()
+            .on("p", {
+              async element(element) {
+                await setImmediatePromise();
+                element.setInnerContent("served");
+              },
+            })
+            .transform(new Response("<p>x</p>")),
+      });
+      const res = await fetch(`http://localhost:${server.port}/`);
+      expect(await res.text()).toBe("<p>served</p>");
+      expect(res.status).toBe(200);
+    });
+
+    it("Bun.serve routes a rejecting async handler to the error() hook", async () => {
+      const seen = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        error(e) {
+          seen.resolve(e.message);
+          return new Response("handled", { status: 500 });
+        },
+        fetch: () =>
+          new HTMLRewriter()
+            .on("p", {
+              async element() {
+                await setImmediatePromise();
+                throw new Error("handler blew up");
+              },
+            })
+            .transform(new Response("<p>x</p>")),
+      });
+      const res = await fetch(`http://localhost:${server.port}/`);
+      expect(await seen.promise).toBe("handler blew up");
+      expect({ body: await res.text(), status: res.status }).toEqual({ body: "handled", status: 500 });
+
+      // The server keeps serving afterwards.
+      const after = await fetch(`http://localhost:${server.port}/`);
+      expect(after.status).toBe(500);
+    });
+
+    // Same shape through the two async error() arms: the original streaming
+    // Response is still protected when its producer fails before the first
+    // byte, and each arm must release it before installing the replacement.
+    it.concurrent.each(["settled", "awaiting"])(
+      "Bun.serve routes a rejecting async handler to an async error() hook (%s)",
+      async kind => {
+        const seen = Promise.withResolvers();
+        await using server = Bun.serve({
+          port: 0,
+          async error(e) {
+            seen.resolve(e.message);
+            if (kind === "awaiting") await setImmediatePromise();
+            return new Response("handled", { status: 500 });
+          },
+          fetch: () =>
+            new HTMLRewriter()
+              .on("p", {
+                async element() {
+                  await setImmediatePromise();
+                  throw new Error("handler blew up");
+                },
+              })
+              .transform(new Response("<p>x</p>")),
+        });
+        const res = await fetch(`http://localhost:${server.port}/`);
+        expect(await seen.promise).toBe("handler blew up");
+        expect({ body: await res.text(), status: res.status }).toEqual({ body: "handled", status: 500 });
+      },
+    );
+
+    // The response body is still a pending/locked value when the client goes
+    // away; the rewrite must still be allowed to finish (or fail) afterwards
+    // without corrupting the RequestContext it was registered against, and the
+    // server must keep working.
+    it.concurrent.each(["resolves", "rejects"])(
+      "client aborts while the handler is suspended, then the handler %s",
+      async settle => {
+        const suspended = Promise.withResolvers();
+        const serverSawAbort = Promise.withResolvers();
+        const gate = Promise.withResolvers();
+        const handlerDone = Promise.withResolvers();
+        let handlerFinished = 0;
+
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (new URL(req.url).pathname === "/after") return new Response("still alive");
+            req.signal.addEventListener("abort", () => serverSawAbort.resolve());
+            return new HTMLRewriter()
+              .on("p", {
+                async element(element) {
+                  suspended.resolve();
+                  await gate.promise;
+                  element.setInnerContent("too late");
+                  handlerFinished++;
+                  handlerDone.resolve();
+                },
+              })
+              .transform(new Response("<p>original</p>"));
+          },
+        });
+
+        const controller = new AbortController();
+        const clientResult = fetch(`http://localhost:${server.port}/`, {
+          signal: controller.signal,
+        }).then(
+          r => r.text(),
+          e => e,
+        );
+
+        // Only abort once the handler has actually suspended the rewrite,
+        // and only resume it once the server has observed the abort.
+        await suspended.promise;
+        controller.abort();
+        const abortError = await clientResult;
+        expect(abortError).toBeInstanceOf(DOMException);
+        expect(abortError.name).toBe("AbortError");
+        await serverSawAbort.promise;
+
+        if (settle === "resolves") {
+          gate.resolve();
+          await handlerDone.promise;
+        } else {
+          gate.reject(new Error("handler failed after the client left"));
+        }
+
+        // The aborted request is gone; the server must still answer.
+        const after = await fetch(`http://localhost:${server.port}/after`);
+        expect(await after.text()).toBe("still alive");
+        expect(handlerFinished).toBe(settle === "resolves" ? 1 : 0);
+      },
+    );
   });
 
   it("HTMLRewriter handles Symbol invalid type error", async () => {
@@ -154,12 +903,18 @@ describe("HTMLRewriter", () => {
     function settle(promise) {
       return promise.then(
         value => ({ rejected: false, value }),
-        error => ({ rejected: true, message: String(error?.message) }),
+        error => ({ rejected: true, name: error?.name, message: String(error?.message) }),
       );
     }
     const rejectedWithConnectionError = {
       rejected: true,
+      name: "TypeError",
       message: expect.stringMatching(connectionError),
+    };
+    const rejectedWithBodyAlreadyUsed = {
+      rejected: true,
+      name: "TypeError",
+      message: "Body already used",
     };
 
     it("control: .text() on the untransformed response rejects", async () => {
@@ -180,9 +935,9 @@ describe("HTMLRewriter", () => {
         // Must reject with the upstream connection error, and must never
         // resolve with the truncated document.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // The body is now in its error state. A second read must report the
-        // same failure, not resolve as an empty "successful" document.
-        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
+        // The failed read consumed the body; a second read must reject as
+        // already-used, not resolve as an empty "successful" document.
+        expect(await settle(transformed.text())).toEqual(rejectedWithBodyAlreadyUsed);
       });
     });
 
@@ -195,17 +950,20 @@ describe("HTMLRewriter", () => {
       });
     });
 
-    it(".body on the transformed response is an errored stream", async () => {
+    it(".body on the transformed response is unusable after a failed read", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
         const text = settle(transformed.text());
         release();
-        // Barrier: once this has rejected, the body is in its error state.
+        // Barrier: once this has rejected, the body has been consumed.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // Reading `.body` must reject with the same upstream error instead of
-        // closing cleanly as an empty "successful" document.
-        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithConnectionError);
+        // `.body` must surface the consumed state, not close cleanly as an
+        // empty "successful" document. The pending-reader-before-failure case
+        // is covered by the test below.
+        expect(() => transformed.body.getReader()).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+        );
       });
     });
 
@@ -213,26 +971,33 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        // Start the read BEFORE the upstream fails. This is the one shape
+        // Start reading BEFORE the upstream fails. This is the one shape
         // (readable attached, no pending promise) where the error must reach
-        // the attached stream; discarding it would strand this read forever.
-        const read = settle(transformed.body.getReader().read());
+        // the attached stream; discarding it would strand a read forever.
+        // Streaming may deliver the partial rewritten output before the
+        // upstream error arrives — drain any such chunks; the error must then
+        // reach this reader (not close cleanly, not hang).
+        const reader = transformed.body.getReader();
         release();
-        expect(await read).toEqual(rejectedWithConnectionError);
+        let result;
+        do {
+          result = await settle(reader.read());
+        } while (!result.rejected && !result.value.done);
+        expect(result).toEqual(rejectedWithConnectionError);
       });
     });
 
-    it(".clone() of a failed transformed body is also failed", async () => {
+    it(".clone() after a failed read throws", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
         const text = settle(transformed.text());
         release();
-        // Barrier: the body is now in its error state.
+        // Barrier: the body has now been consumed by the failed read.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // Cloning a failed body must produce a failed body, not an empty one
-        // that reads back as a complete (and empty) document.
-        expect(await settle(transformed.clone().text())).toEqual(rejectedWithConnectionError);
+        // A disturbed body is not clonable; it must not read back as a
+        // complete (and empty) document.
+        expect(() => transformed.clone()).toThrow("Body is disturbed or locked");
       });
     });
 
@@ -271,10 +1036,11 @@ describe("HTMLRewriter", () => {
       // not an unrelated (and usually empty) HTMLRewriter internal error.
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
-        const text = res.text();
+        // Drain via a clone so `res` itself stays undisturbed while we wait
+        // for the upstream failure to land.
+        const barrier = res.clone().arrayBuffer();
         release();
-        // Awaiting the rejection is the barrier: the body is now Value::Error.
-        await expect(text).rejects.toThrow(connectionError);
+        await expect(barrier).rejects.toThrow(connectionError);
         expect(() => rewriter().transform(res)).toThrow(connectionError);
       });
     });
@@ -286,9 +1052,9 @@ describe("HTMLRewriter", () => {
         const controller = new AbortController();
         const res = await fetch(url, { signal: controller.signal });
         // The body is mid-stream (the server is stalled until release()).
-        const text = res.text();
+        const barrier = res.clone().arrayBuffer();
         controller.abort();
-        await expect(text).rejects.toThrow(/abort/i);
+        await expect(barrier).rejects.toThrow(/abort/i);
         let thrown;
         try {
           rewriter().transform(res);
@@ -942,16 +1708,170 @@ const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/fil
   });
 });
 
+// An async handler suspends mid-input; once resumed it emits more output than
+// RewriterPipe's high-water mark (16 KiB) into the already-realised ByteStream
+// and parks on output backpressure with `input_ended` set. Wiring a native sink
+// afterwards must re-signal the rewriter once the buffered bytes are in the
+// sink so `end_rewrite` runs.
+describe("output ByteStream backpressured when a native sink is wired", () => {
+  const prefix = "<p>" + Buffer.alloc(100, "A").toString() + "</p>";
+  const suffix = "<q>" + Buffer.alloc(30_000, "B").toString() + "</q>";
+  const html = prefix + "<x></x>" + suffix;
+  const out = prefix + "<x>!</x>" + suffix;
+
+  // Return a ReadableStream whose ByteStream buffer already holds the full
+  // rewritten output while the rewriter itself is still parked on
+  // `output_backpressured()` with `input_ended = true`.
+  async function makeParked() {
+    const gate = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("x", {
+        element: e => {
+          e.setInnerContent("!");
+          return gate.promise;
+        },
+      })
+      .transform(new Response(html));
+    const body = res.body;
+    gate.resolve();
+    // Let the handler-promise reaction run so `resume_rewrite` emits `suffix`
+    // into the ByteStream buffer.
+    await 0;
+    return { body, res };
+  }
+
+  it("completes when wired to a second HTMLRewriter", async () => {
+    const { body } = await makeParked();
+    const text = await new HTMLRewriter().transform(new Response(body)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when wired to a second HTMLRewriter via the Response", async () => {
+    const { res } = await makeParked();
+    const text = await new HTMLRewriter().transform(res).text();
+    expect(text).toBe(out);
+  });
+
+  it("delivers bytes in order", async () => {
+    const { body } = await makeParked();
+    let seen = "";
+    await new HTMLRewriter()
+      .onDocument({ text: t => void (seen += t.text) })
+      .transform(new Response(body))
+      .text();
+    expect(seen).toBe(prefix.slice(3, -4) + "!" + suffix.slice(3, -4));
+  });
+
+  it("completes when returned from Bun.serve", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        const { body } = await makeParked();
+        return new Response(body);
+      },
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when the Response is returned from Bun.serve", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => (await makeParked()).res,
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when read via .arrayBuffer()", async () => {
+    const { body } = await makeParked();
+    const buf = await new Response(body).arrayBuffer();
+    expect(Buffer.from(buf).toString()).toBe(out);
+  });
+
+  it("completes when read via .text()", async () => {
+    const { body } = await makeParked();
+    expect(await new Response(body).text()).toBe(out);
+  });
+
+  it("completes when used as Bun.spawn stdin", async () => {
+    const { body } = await makeParked();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write(await Bun.stdin.text())"],
+      env: bunEnv,
+      stdin: body,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(out);
+    expect(exitCode).toBe(0);
+  });
+
+  // Streaming input, `input_ended=false`: the handler itself emits the >16 KiB
+  // output chunk, and the direct-stream's `pull()` is parked on `flush(true)`
+  // with more bytes to write. `signal_drained()` must wake the rewriter into
+  // `drain_pending_input()`'s upstream-`src.ready()` + `pending.run()` tail
+  // so the direct stream's second `c.write()` is delivered.
+  const streamed = prefix + "<x>" + suffix.slice(3, -4) + "</x>" + suffix;
+  async function makeParkedStreaming() {
+    const gate = Promise.withResolvers();
+    const input = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("<x></x>");
+        await c.flush(true);
+        c.write(suffix);
+        c.close();
+      },
+    });
+    const res = new HTMLRewriter()
+      .on("x", {
+        element: e => {
+          e.before(prefix, { html: true });
+          e.setInnerContent(suffix.slice(3, -4));
+          return gate.promise;
+        },
+      })
+      .transform(new Response(input));
+    const body = res.body;
+    gate.resolve();
+    await 0;
+    return { body };
+  }
+
+  it("completes with a streaming input (second HTMLRewriter)", async () => {
+    const { body } = await makeParkedStreaming();
+    const text = await new HTMLRewriter().transform(new Response(body)).text();
+    expect(text).toBe(streamed);
+  });
+
+  it("completes with a streaming input (Bun.serve)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => new Response((await makeParkedStreaming()).body),
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(streamed);
+  });
+
+  it("completes with a streaming input (.text())", async () => {
+    const { body } = await makeParkedStreaming();
+    expect(await new Response(body).text()).toBe(streamed);
+  });
+});
+
 const payloads = [
   {
     name: "direct",
     data: getStream("direct", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "default",
     data: getStream("default", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "file",
@@ -993,6 +1913,39 @@ payloads.forEach(type => {
     expect(trimmed).toStartWith("<!DOCTYPE html>");
     expect(calls).toBeGreaterThan(0);
   });
+});
+
+it("transform(DataView) returns an ArrayBuffer", () => {
+  // Sentinel bytes before and after the HTML so a reader that ignores
+  // byteOffset/byteLength and feeds the whole buffer would fail the match.
+  const html = new TextEncoder().encode("<p>x</p>");
+  const buf = new ArrayBuffer(4 + html.length + 4);
+  new Uint8Array(buf).fill("<".charCodeAt(0));
+  new Uint8Array(buf, 4, html.length).set(html);
+  const out = new HTMLRewriter()
+    .on("p", { element: e => e.setInnerContent("y") })
+    .transform(new DataView(buf, 4, html.length));
+  expect(out).toBeInstanceOf(ArrayBuffer);
+  expect(new TextDecoder().decode(out)).toBe("<p>y</p>");
+});
+
+it("a handler that returns (not throws) an Error rejects with that Error", async () => {
+  const err = new Error("returned, not thrown");
+  const res = new HTMLRewriter().on("p", { element: () => err }).transform(new Response("<p>x</p>"));
+  await expect(res.text()).rejects.toThrow("returned, not thrown");
+});
+
+it.each([
+  ["direct ReadableStream", () => getStream("direct", "none")],
+  ["default ReadableStream", () => getStream("default", "none")],
+  ["blob", () => new Blob([fixture_html_content])],
+])("transform() marks the input body used (%s)", async (_, data) => {
+  const res = new Response(data());
+  const rw = new HTMLRewriter().on("h1", { element() {} });
+  await rw.transform(res).text();
+  expect(res.bodyUsed).toBe(true);
+  expect(() => rw.transform(res)).toThrow("Response body already used");
+  await expect(res.text()).rejects.toThrow("Body already used");
 });
 
 // lol-html reports an absent attribute with a NULL pointer and a
@@ -1112,28 +2065,26 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
 });
 
 describe("invalid arguments throw instead of returning an error value", () => {
-  it("setAttribute with a forbidden character in the name throws", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.setAttribute("a b", "1");
-          },
-        })
-        .transform(new Response("<div>t</div>")),
-    ).toThrow("character is forbidden in the attribute name");
+  it("setAttribute with a forbidden character in the name rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("a b", "1");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    await expect(res.text()).rejects.toThrow("character is forbidden in the attribute name");
   });
 
-  it("setAttribute with an empty name throws", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.setAttribute("", "1");
-          },
-        })
-        .transform(new Response("<div>t</div>")),
-    ).toThrow("Attribute name can't be empty.");
+  it("setAttribute with an empty name rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("", "1");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    await expect(res.text()).rejects.toThrow("Attribute name can't be empty.");
   });
 
   it("setAttribute failure leaves the element unchanged", async () => {
@@ -1165,19 +2116,18 @@ describe("invalid arguments throw instead of returning an error value", () => {
     ).toThrow("character is forbidden in the attribute name");
   });
 
-  it("onEndTag with a non-function throws a TypeError", () => {
-    let err;
-    try {
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.onEndTag("nope");
-          },
-        })
-        .transform(new Response("<div>t</div>"));
-    } catch (e) {
-      err = e;
-    }
+  it("onEndTag with a non-function rejects the body with a TypeError", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag("nope");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    const err = await res.text().then(
+      () => null,
+      e => e,
+    );
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });
@@ -1259,5 +2209,111 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(savedElement.tagName).toBeUndefined();
     expect(savedEndTag.name).toBeUndefined();
     expect(savedComment.text).toBeNull();
+  });
+});
+
+// `transform(await fetch(url)).text()` never stores the output Response, and
+// the upstream ByteStream dispatches in via a SinkHandle raw pointer between
+// event-loop turns, so the input source's `sinkOwner` slot is what keeps the
+// Transform cell (and so the pipe) alive across a GC between chunks; without
+// it the pipe is freed mid-rewrite and the body promise is stranded forever.
+describe("GC pressure mid-rewrite", () => {
+  it("a native-input rewrite survives GC when nothing references the output Response", async () => {
+    const sawFirst = Promise.withResolvers();
+    const gcDone = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode("<p>one</p>"));
+              // Hold the second chunk until the test has GC'd, so the
+              // collection window between chunks is deterministic.
+              await gcDone.promise;
+              c.enqueue(new TextEncoder().encode("<p>two</p>"));
+              c.close();
+            },
+          }),
+        );
+      },
+    });
+
+    const rewritten = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          el.setInnerContent("x");
+          sawFirst.resolve();
+        },
+      })
+      .transform(await fetch(`http://localhost:${server.port}/`))
+      .text();
+
+    await sawFirst.promise;
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+    gcDone.resolve();
+
+    expect(await rewritten).toBe("<p>x</p><p>x</p>");
+  });
+
+  // Cancel while suspended, then let the never-settling handler promise be
+  // collected: the pipe is freed via plain drop (done is already true, so no
+  // abandon task runs), which must release the parked wrapper. A JS-retained
+  // Element is then detached, not left pointing into the freed rewriter.
+  it("a wrapper stashed across a cancelled suspension is detached, not dangling", async () => {
+    let stash = null;
+    let out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          stash = el;
+          return new Promise(() => {});
+        },
+      })
+      .transform(new Response("<p>x</p>"));
+    let reader = out.body.getReader();
+    let first = reader.read();
+    await reader.cancel();
+    await first.catch(() => {});
+    out = null;
+    reader = null;
+    first = null;
+
+    // The handler promise and the Transform cell are unreachable now; collect
+    // until the wrapper is detached (its tagName getter reads through the
+    // unit Cell, undefined once detached).
+    for (let i = 0; i < 100 && stash.tagName !== undefined; i++) {
+      Bun.gc(true);
+      await Bun.sleep(1);
+    }
+    expect(stash.tagName).toBeUndefined();
+  });
+
+  // Chained transform where the intermediate Response is a temporary: while
+  // the second pipe's handler is suspended, the first pipe is parked on the
+  // shared ByteStream's backpressure with its producer backref installed.
+  // GC in that window must not collect the first pipe; only the stream's GC
+  // edges keep it alive.
+  it("a chained transform survives GC when nothing references the intermediate Response", async () => {
+    const rw1 = new HTMLRewriter().on("p", {
+      async element(el) {
+        await setImmediatePromise();
+        el.setAttribute("one", "");
+      },
+    });
+    const rw2 = new HTMLRewriter().on("p", {
+      async element(el) {
+        for (let i = 0; i < 8; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+        el.setAttribute("two", "");
+      },
+    });
+    // A separate frame so the intermediate Response temporary is off the
+    // stack before the GC loop in rw2's handler runs.
+    const start = () => rw2.transform(rw1.transform(new Response("<p>x</p>"))).text();
+    expect(await start()).toBe('<p one="" two="">x</p>');
   });
 });

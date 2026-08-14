@@ -161,8 +161,6 @@ pub fn detect_and_load_other_lockfile<'a>(
                     | MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot
                     | MigratePnpmLockfileError::PnpmLockfileInvalidDependency
                     | MigratePnpmLockfileError::PnpmLockfileMissingDependencyVersion
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidOverride
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidPatchedDependency
                     | MigratePnpmLockfileError::PnpmLockfileMissingCatalogEntry
                     | MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency => {
                         // These errors are continuable - log the error but don't exit
@@ -228,7 +226,7 @@ const DEPENDENCY_KEYS: [DependencyGroup; 4] = [
     DependencyGroup::OPTIONAL,
 ];
 
-pub(crate) fn migrate_npm_lockfile<'a>(
+fn migrate_npm_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -1471,7 +1469,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
         migrated: Migrated::Npm,
-        loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
         format: LockfileFormat::Binary,
     }))

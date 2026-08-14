@@ -214,9 +214,6 @@ struct ScriptInfo {
     skip: bool,
 }
 
-// structs in impl blocks — hoisted to module level.
-pub struct TrustCommandSorter;
-
 impl TrustCommand {
     fn error_expected_args() -> ! {
         Output::err_generic("expected package names(s) or --all", ());
@@ -577,7 +574,6 @@ impl TrustCommand {
         };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
-        #[cfg(debug_assertions)]
         debug_assert!(!package_names_to_add.keys().is_empty());
 
         // could be null if these are the first packages to be trusted
@@ -679,7 +675,6 @@ impl TrustCommand {
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        #[cfg(debug_assertions)]
         debug_assert!(total_scripts_ran > 0);
 
         bun_core::pretty!(

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -20,7 +20,7 @@ describe("bundler", () => {
         console.log("Hello, world!");
       `,
     },
-    run: { stdout: "Hello, world!" },
+    run: { stdout: "Hello, world!", stderr: "" },
   });
   // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would
@@ -253,6 +253,59 @@ describe("bundler", () => {
       },
       stdout: "a b",
     },
+    {
+      // When the re-exporting file is inlined into the chunk, `export * as ns from`
+      // and `export { x } from` an external module are rewritten into imports. The
+      // chunk's module record is built by the bundler (JSC does not parse bytecode
+      // modules), so it must list these imports too; otherwise `fs` hits a TDZ
+      // ReferenceError and `rfs` is undefined.
+      name: "ReExportExternalFromInlinedModule",
+      files: {
+        "/entry.ts": `
+          import { fs, rfs } from "./reexports.ts";
+          console.log(typeof fs.readFileSync, typeof rfs);
+        `,
+        "/reexports.ts": `
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+        `,
+      },
+      stdout: "function function",
+    },
+    {
+      // Same re-exports on the entry point itself: `export * from` is printed
+      // verbatim and needs a star export entry, the other two become imports that
+      // the entry's `export { ... }` tail must resolve back to. The debug build
+      // cross-checks the record against JSC's parser and refuses to start the
+      // binary when they differ.
+      name: "ReExportExternalFromEntryPoint",
+      files: {
+        "/entry.ts": `
+          export * from "node:path";
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+          console.log("entry ran");
+        `,
+      },
+      stdout: "entry ran",
+    },
+    {
+      // A file mixing `import` with `module.exports` is wrapped in __commonJS();
+      // its external imports are hoisted out of the wrapper and still have to be
+      // in the module record, otherwise `join` is not defined at runtime.
+      name: "ExternalImportInCommonJSWrapper",
+      files: {
+        "/entry.ts": `
+          import mixed from "./mixed.js";
+          console.log(typeof mixed.join);
+        `,
+        "/mixed.js": `
+          import { join } from "node:path";
+          module.exports = { join };
+        `,
+      },
+      stdout: "function",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {
@@ -300,6 +353,40 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // A second CommonJS entry point that is only reached through a runtime
+  // require() must load from the embedded module graph (with its bytecode,
+  // when built with --bytecode) rather than the filesystem.
+  for (const bytecode of [false, true]) {
+    itBundled("compile/RuntimeRequireEmbeddedCJS" + (bytecode ? "+bytecode" : ""), {
+      backend: "cli",
+      compile: true,
+      bytecode,
+      format: "cjs",
+      files: {
+        "/entry.js": /* js */ `
+          const { rmSync } = require("fs");
+          rmSync("./second.js", { force: true });
+          const specifier = "./second" + ".js";
+          const second = require(specifier);
+          console.log(second.greeting, require(specifier) === second);
+        `,
+        "/second.js": /* js */ `
+          module.exports = { greeting: "hello from second" };
+        `,
+      },
+      entryPointsRaw: ["./entry.js", "./second.js"],
+      outfile: "dist/out",
+      run: {
+        stdout: "hello from second true",
+        stderr: bytecode
+          ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
+          : undefined,
+        env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
@@ -957,7 +1044,7 @@ error: Hello World`,
   });
 
   test("does not crash", async () => {
-    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+    await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,
       "index.html": `<!doctype html>
 <html lang="en">
@@ -1072,7 +1159,7 @@ const server = serve({
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
-    const dir = tempDirWithFiles("compile-many-entries", {
+    await using dir = tempDir("compile-many-entries", {
       "app.js": `console.log("IT WORKS");`,
       "assets/file-1": "",
       "assets/file-2": "",
@@ -1102,9 +1189,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
   const LC_SEGMENT_64 = 0x19;
 
   // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
-  // __LINKEDIT segment. `bunFileOff` is where the load commands claim the __BUN data lives.
-  function machoTemplate(bunFileOff: number): Buffer {
-    const fileSize = 0x8100; // 33 KB of actual bytes
+  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
+  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
+  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
     const segCmdSize = 72; // sizeof(segment_command_64)
     const sectSize = 80; // sizeof(section_64)
     const sizeofcmds = segCmdSize + sectSize + segCmdSize;
@@ -1125,9 +1212,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
     writeName(o + 8, "__BUN");
     buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
     buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
     buf.writeInt32LE(7, o + 56); // maxprot
     buf.writeInt32LE(3, o + 60); // initprot
     buf.writeUInt32LE(1, o + 64); // nsects
@@ -1137,7 +1224,7 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     writeName(o, "__bun");
     writeName(o + 16, "__BUN");
     buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(0x4000n, o + 40); // size
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
     buf.writeUInt32LE(bunFileOff, o + 48); // offset
     buf.writeUInt32LE(14, o + 52); // align = 2^14
 
@@ -1146,9 +1233,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     buf.writeUInt32LE(LC_SEGMENT_64, o);
     buf.writeUInt32LE(segCmdSize, o + 4);
     writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0000_8000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
     buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff + 0x4000), o + 40); // fileoff (right after __BUN)
+    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
     buf.writeBigUInt64LE(0x100n, o + 48); // filesize
     buf.writeInt32LE(1, o + 56); // maxprot
     buf.writeInt32LE(1, o + 60); // initprot
@@ -1161,11 +1248,19 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
   });
   const cwd = String(dir);
 
-  // Template whose __BUN offsets point 1 GiB past the end of the 33 KB file.
-  const badTemplate = join(cwd, "template-bad");
-  await Bun.write(badTemplate, machoTemplate(0x40000000));
-  const outBad = join(cwd, "out-bad");
-  {
+  for (const [name, bytes, wantErr] of [
+    // __BUN fileoff points 1 GiB past the end of the 33 KB file.
+    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
+    // before the growth `reserve()` (which would otherwise see a negative size_diff).
+    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
+    // write_section only grows, so a template that would require shrinking is rejected.
+    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+  ] as const) {
+    const badTemplate = join(cwd, `template-${name}`);
+    await Bun.write(badTemplate, bytes);
+    const outBad = join(cwd, `out-${name}`);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1184,8 +1279,8 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The out-of-range offsets must be reported as a clean error...
-    expect(stderr).toContain("OffsetOutOfRange");
+    // The invalid template must be reported as a clean error...
+    expect({ name, stderr }).toEqual({ name, stderr: expect.stringContaining(wantErr) });
     // ...no output executable is produced...
     expect(await Bun.file(outBad).exists()).toBe(false);
     // ...and the build exits with a normal failure code instead of crashing.
@@ -1220,5 +1315,79 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
     expect(outBytes.includes("compiled-from-template")).toBe(true);
     expect(exitCode).toBe(0);
+  }
+}, 60_000);
+
+test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
+  // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target
+  // format's fixed header (or one whose header advertises more load-command bytes than the
+  // file contains) must surface as a clean error instead of a slice-index panic.
+  using dir = tempDir("compile-template-short-header", {
+    "entry.js": `console.log(1);`,
+    // 19 bytes: shorter than mach_header_64 (32), Elf64_Ehdr (64), IMAGE_DOS_HEADER (64).
+    "tiny": "WRONG-STUB-FALLBACK",
+  });
+  const cwd = String(dir);
+
+  const machHeader = (ncmds: number, sizeofcmds: number) => {
+    const b = Buffer.alloc(32);
+    b.writeUInt32LE(0xfeedfacf, 0); // MH_MAGIC_64
+    b.writeInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
+    b.writeInt32LE(3, 8); // cpusubtype
+    b.writeUInt32LE(2, 12); // filetype = MH_EXECUTE
+    b.writeUInt32LE(ncmds, 16);
+    b.writeUInt32LE(sizeofcmds, 20);
+    return b;
+  };
+
+  // mach_header_64 with ncmds=2 sizeofcmds=10000 but only 8 trailing bytes — exercises the
+  // load-command-table bounds check in MachoFile::init (iterator() would otherwise slice OOB).
+  await Bun.write(join(cwd, "badcmds"), Buffer.concat([machHeader(2, 10000), Buffer.alloc(8)]));
+
+  // mach_header_64 + one LC_SEGMENT_64 whose cmdsize (8) is smaller than sizeof(segment_command_64)
+  // (72) — exercises the cast-site guard in write_section().
+  const lc = Buffer.alloc(8);
+  lc.writeUInt32LE(0x19, 0); // LC_SEGMENT_64
+  lc.writeUInt32LE(8, 4); // cmdsize
+  await Bun.write(join(cwd, "shortseg"), Buffer.concat([machHeader(1, 8), lc]));
+
+  const run = async (target: string, template: string) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        `--target=${target}`,
+        "--compile-executable-path",
+        join(cwd, template),
+        join(cwd, "entry.js"),
+        "--outfile",
+        join(cwd, `out-${template}`),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  for (const [target, template, wantErr, outName] of [
+    ["bun-darwin-x64", "tiny", "InvalidObject", "out-tiny"],
+    ["bun-darwin-x64", "badcmds", "InvalidObject", "out-badcmds"],
+    ["bun-darwin-x64", "shortseg", "InvalidObject", "out-shortseg"],
+    ["bun-linux-x64", "tiny", "InvalidElfFile", "out-tiny"],
+    // build_command.rs appends .exe to the outfile for Windows targets.
+    ["bun-windows-x64", "tiny", "InvalidPEFile", "out-tiny.exe"],
+  ] as const) {
+    const { stderr, exitCode } = await run(target, template);
+    expect({ target, template, stderr }).toEqual({
+      target,
+      template,
+      stderr: expect.stringContaining(wantErr),
+    });
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
+    expect(exitCode).toBe(1);
   }
 }, 60_000);

@@ -85,8 +85,18 @@ bool EventEmitter::removeAllListeners()
 
     auto& map = data->eventListenerMap;
     bool any = !map.isEmpty();
+    // Collect before clearing so per-event teardown (signal handlers, IPC
+    // refs, listener-count mirrors) observes the post-removal zero counts.
+    Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
     this->m_thisObject.clear();
+    if (any) {
+        eventListenersDidChange();
+        if (this->onDidChangeListener) {
+            for (auto& eventType : eventTypes)
+                this->onDidChangeListener(*this, eventType, false);
+        }
+    }
     return any;
 }
 
@@ -122,10 +132,6 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     return fireEventListeners(eventType, arguments);
-}
-
-void EventEmitter::uncaughtExceptionInEventHandler()
-{
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -285,10 +291,6 @@ const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& 
     auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
     static NeverDestroyed<SimpleEventListenerVector> emptyVector;
     return listenerVector ? *listenerVector : emptyVector.get();
-}
-
-void EventEmitter::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

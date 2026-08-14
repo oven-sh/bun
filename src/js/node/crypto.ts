@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -55,6 +56,7 @@ const {
   timingSafeEqual,
   randomInt,
   randomUUID,
+  randomUUIDv7,
   randomBytes,
   randomFillSync,
   randomFill,
@@ -70,6 +72,7 @@ const {
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const { validateString } = require("internal/validators");
+const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
 
@@ -101,28 +104,13 @@ var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
-  if (buffer instanceof KeyObject) {
-    if (buffer.type !== "secret") {
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    }
-    buffer = buffer.export();
-  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
     return Buffer.from(buffer, encoding);
   }
   if (!isArrayBufferView(buffer)) {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ` +
-        buffer,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
   }
   return buffer;
 }
@@ -162,9 +150,11 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 
   const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
+    // Guarded so a throw inside the callback is an uncaughtException, as in node.
+    const cb = guardCallback(callback);
     promise.then(
-      result => callback(null, result),
-      err => callback(err),
+      result => cb(null, result),
+      err => cb(err),
     );
     return;
   }
@@ -284,7 +274,7 @@ Object.assign(Hash.prototype, {
   },
 });
 
-crypto_exports.Hash = Hash;
+crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
 crypto_exports.createHash = function createHash(algorithm, options) {
   return new Hash(algorithm, options);
 };
@@ -318,7 +308,7 @@ Object.assign(Hmac.prototype, {
   },
 });
 
-crypto_exports.Hmac = Hmac;
+crypto_exports.Hmac = deprecate(Hmac, "crypto.Hmac constructor is deprecated.", "DEP0181");
 crypto_exports.createHmac = function createHmac(hmac, key, options) {
   return new Hmac(hmac, key, options);
 };
@@ -330,6 +320,17 @@ crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
 crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomUUIDv7 = randomUUIDv7;
+
+// Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
+// Argon2, so these throw the same error an unsupported Node build throws.
+// The unused parameters are declared to keep `.length` equal to Node's (3 and 2).
+crypto_exports.argon2 = function argon2(_algorithm, _parameters, _callback) {
+  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+};
+crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
+  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+};
 
 crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
@@ -348,7 +349,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: randomBytes,
+    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -364,6 +365,7 @@ crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
 
+ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);

@@ -22,6 +22,7 @@
 #include "JSMessagePort.h"
 
 #include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -154,7 +155,7 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -202,7 +203,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
+    // clears the handler and lets the loop exit again.
+    if (value.isCallable())
+        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }
@@ -231,8 +237,8 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
-
+    // node: only a 'message' handler starts the port and keeps the loop alive (setupPortReferencing);
+    // a 'messageerror' handler alone does neither.
     return true;
 }
 
@@ -447,7 +453,7 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto* jsMessagePort = uncheckedDowncast<JSMessagePort>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
-    if (wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

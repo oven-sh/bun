@@ -8,8 +8,8 @@ use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
-pub(crate) const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-pub(crate) const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -33,10 +33,10 @@ pub enum MachoError {
 bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {
-    pub header: macho::mach_header_64,
-    pub data: Vec<u8>,
-    pub segment: macho::segment_command_64,
-    pub section: macho::section_64,
+    pub(crate) header: macho::mach_header_64,
+    pub(crate) data: Vec<u8>,
+    pub(crate) segment: macho::segment_command_64,
+    pub(crate) section: macho::section_64,
 }
 
 /// Expands to one `shift_one` call per named field.
@@ -46,18 +46,34 @@ macro_rules! shift_fields {
     }};
 }
 
+/// Read and validate the `mach_header_64` at the start of `obj`.
+/// `--compile-executable-path` accepts arbitrary files, so reject inputs too
+/// short for the header or whose load-command table runs past EOF; callers
+/// slice `obj[header_size..][..header.sizeofcmds]` on the returned header.
+fn read_macho_header(obj: &[u8]) -> Result<macho::mach_header_64, MachoError> {
+    let header_size = size_of::<macho::mach_header_64>();
+    if obj.len() < header_size {
+        return Err(MachoError::InvalidObject);
+    }
+    let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
+    let cmds_end = (header.sizeofcmds as usize)
+        .checked_add(header_size)
+        .ok_or(MachoError::InvalidObject)?;
+    if cmds_end > obj.len() {
+        return Err(MachoError::InvalidObject);
+    }
+    Ok(header)
+}
+
 impl MachoFile {
     pub fn init(
         obj_file: &[u8],
         blob_to_embed_length: usize,
     ) -> Result<Box<MachoFile>, MachoError> {
+        let header = read_macho_header(obj_file)?;
+
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
-
-        // data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
-        // the slice index panics on a short input rather than reading OOB.
-        let header: macho::mach_header_64 =
-            read_struct(&data[..size_of::<macho::mach_header_64>()]);
 
         Ok(Box::new(MachoFile {
             header,
@@ -90,9 +106,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // reshaped for borrowck — capture base ptr as usize before iterating so we can
-        // compute byte offsets without holding a borrow of self.data across the mutable writes below.
-        let base_addr = self.data.as_ptr() as usize;
+        let lc_base = size_of::<macho::mach_header_64>();
         let mut iter = self.iterator();
 
         while let Some(entry) = iter.next() {
@@ -101,10 +115,10 @@ impl MachoFile {
                 macho::LC::SEGMENT_64 => {
                     let command = entry
                         .cast::<macho::segment_command_64>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
-                            let section_offset = entry.data.as_ptr() as usize - base_addr;
+                            let section_offset = lc_base + entry.offset;
                             let sections_base =
                                 section_offset + size_of::<macho::segment_command_64>();
                             let sect_sz = size_of::<macho::section_64>();
@@ -168,11 +182,11 @@ impl MachoFile {
                             }
                         }
                     } else if command.seg_name() == SEG_LINKEDIT {
-                        linkedit_seg_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                        linkedit_seg_idx = Some(lc_base + entry.offset);
                     }
                 }
                 macho::LC::CODE_SIGNATURE => {
-                    code_sign_cmd_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                    code_sign_cmd_idx = Some(lc_base + entry.offset);
                 }
                 _ => {}
             }
@@ -182,29 +196,8 @@ impl MachoFile {
             return Err(MachoError::InvalidObject);
         }
 
-        // Calculate how much larger/smaller the section will be compared to its current size
-        let size_diff: i64 = i64::try_from(aligned_size).expect("int cast")
-            - i64::try_from(original_segsize).expect("int cast");
-
-        // We assume that the section is page-aligned, so we can calculate the number of new pages
-        debug_assert!(size_diff % PAGE_SIZE as i64 == 0);
-        let num_of_new_pages = size_diff / PAGE_SIZE as i64;
-
-        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
-        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
-        // to write the complete signature, but reserving this up front avoids the
-        // common reallocation.
-        self.data.reserve(
-            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"),
-        );
-
-        let linkedit_seg_idx = match linkedit_seg_idx {
-            Some(idx) => idx,
-            None => return Err(MachoError::MissingLinkeditSegment),
-        };
-
-        let mut sig_size: usize = 0;
-
+        // Validate the template's __BUN segment lies inside the file before any
+        // growth arithmetic: these offsets came from untrusted load commands.
         let prev_len = self.data.len();
         let original_bun_end = usize::try_from(original_fileoff)
             .ok()
@@ -215,6 +208,33 @@ impl MachoFile {
         if original_bun_end > prev_len || original_data_end > original_bun_end {
             return Err(MachoError::OffsetOutOfRange);
         }
+
+        // __BUN is grown to fit the bundle; shrinking is not implemented (the
+        // offset-shift logic below only moves data forward). Real Bun templates
+        // ship a minimal placeholder so `aligned_size >= filesize` always holds.
+        let size_diff: u64 = aligned_size
+            .checked_sub(original_segsize)
+            .ok_or(MachoError::InvalidObject)?;
+
+        // We assume that the section is page-aligned, so we can calculate the number of new pages
+        debug_assert!(size_diff.is_multiple_of(PAGE_SIZE));
+        let num_of_new_pages = size_diff / PAGE_SIZE;
+
+        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
+        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
+        // to write the complete signature, but reserving this up front avoids the
+        // common reallocation.
+        self.data.reserve(
+            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as u64).expect("int cast"),
+        );
+
+        let linkedit_seg_idx = match linkedit_seg_idx {
+            Some(idx) => idx,
+            None => return Err(MachoError::MissingLinkeditSegment),
+        };
+
+        let mut sig_size: usize = 0;
+
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
         unsafe {
@@ -262,8 +282,8 @@ impl MachoFile {
             let seg_sz = size_of::<macho::segment_command_64>();
             let mut v: macho::segment_command_64 =
                 read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
-            v.fileoff += usize::try_from(size_diff).expect("int cast") as u64;
-            v.vmaddr += usize::try_from(size_diff).expect("int cast") as u64;
+            v.fileoff += size_diff;
+            v.vmaddr += size_diff;
             write_struct(&mut self.data[linkedit_seg_idx..][..seg_sz], &v);
         }
 
@@ -285,8 +305,7 @@ impl MachoFile {
                 let seg_sz = size_of::<macho::segment_command_64>();
 
                 let mut cs: macho::linkedit_data_command = read_struct(&self.data[idx..][..cs_sz]);
-                let new_sig_dataoff: u64 =
-                    cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
+                let new_sig_dataoff: u64 = cs.dataoff as u64 + size_diff;
                 let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
 
                 let mut seg: macho::segment_command_64 =
@@ -316,7 +335,7 @@ impl MachoFile {
             let (le_fileoff, le_filesize) = (seg.fileoff, seg.filesize);
             self.update_load_command_offsets(
                 original_fileoff,
-                u64::try_from(size_diff).expect("int cast"),
+                size_diff,
                 le_fileoff,
                 le_filesize,
                 sig_size,
@@ -461,14 +480,14 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn iterator(&self) -> macho::LoadCommandIterator {
+    pub(crate) fn iterator(&self) -> macho::LoadCommandIterator {
         macho::LoadCommandIterator::new(
             self.header.ncmds,
             &self.data[size_of::<macho::mach_header_64>()..][..self.header.sizeofcmds as usize],
         )
     }
 
-    pub fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub(crate) fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -482,7 +501,7 @@ impl MachoFile {
             if cmd.cmd == macho::LC::SEGMENT_64 {
                 let seg = entry
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
                 if seg.fileoff < prev_end {
                     return Err(MachoError::OverlappingSegments);
                 }
@@ -547,7 +566,7 @@ impl Shifter {
     }
 }
 
-pub(crate) struct MachoSigner {
+struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
@@ -555,9 +574,9 @@ pub(crate) struct MachoSigner {
 }
 
 impl MachoSigner {
-    pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
-        let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
+        let header = read_macho_header(obj)?;
 
         let mut sig_off: usize = 0;
         let mut sig_sz: usize = 0;
@@ -580,12 +599,12 @@ impl MachoSigner {
             if cmd.cmd() == macho::LC::SEGMENT_64 {
                 let seg = cmd
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
 
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
                     linkedit_seg = seg;
-                    linkedit_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    linkedit_off = header_size + cmd.offset;
 
                     // Validate linkedit is after text
                     if linkedit_seg.fileoff < text_seg.fileoff + text_seg.filesize {
@@ -609,10 +628,10 @@ impl MachoSigner {
                 macho::LC::CODE_SIGNATURE => {
                     let cs = cmd
                         .cast::<macho::linkedit_data_command>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
-                    cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    cs_cmd_off = header_size + cmd.offset;
                 }
                 _ => {}
             }
@@ -643,7 +662,7 @@ impl MachoSigner {
     /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
-    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
+    fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
@@ -655,7 +674,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 

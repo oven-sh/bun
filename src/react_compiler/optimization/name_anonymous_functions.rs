@@ -29,7 +29,7 @@ fn bstr(s: &[u8]) -> &BStr {
 /// Assign generated names to anonymous function expressions.
 ///
 /// Ported from TS `nameAnonymousFunctions` in `Transform/NameAnonymousFunctions.ts`.
-pub fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environment) {
     let fn_id = match func.id {
         Some(id) => id,
         None => return,

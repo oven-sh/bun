@@ -119,15 +119,15 @@ mod handler {
 
     // No-op handlers: the pointer arg is never dereferenced. Safe fn items
     // coerce to the `unsafe extern "C" fn` slots in `uws::LoopHandler` below.
-    pub(super) extern "C" fn wakeup(_loop: *mut uws::Loop) {
+    extern "C" fn wakeup(_loop: *mut uws::Loop) {
         // No-op: we don't need to wake up from another thread for spawnSync
     }
 
-    pub(super) extern "C" fn pre(_loop: *mut uws::Loop) {
+    extern "C" fn pre(_loop: *mut uws::Loop) {
         // No-op: no pre-tick work needed for spawnSync
     }
 
-    pub(super) extern "C" fn post(_loop: *mut uws::Loop) {
+    extern "C" fn post(_loop: *mut uws::Loop) {
         // No-op: no post-tick work needed for spawnSync
     }
 
@@ -173,8 +173,7 @@ impl SpawnSyncEventLoop {
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
         let this = unsafe { this.assume_init_mut() };
-        // sys-level API is `set_parent_raw(tag, ptr)`; the typed
-        // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
+        // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS, tag 2 = mini.
         // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
         // returned by `__bun_spawn_sync_create_event_loop` immediately above —
         // never null on a successful create.
@@ -196,17 +195,6 @@ impl SpawnSyncEventLoop {
     #[inline]
     pub fn event_loop_ptr(&self) -> *mut () {
         self.event_loop
-    }
-
-    /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
-    ///
-    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
-    /// erased at this layer, and the VM is mutated re-entrantly during
-    /// `tick_with_timeout` (subprocess callbacks → JS) — a `&VirtualMachine`
-    /// here would alias under Stacked Borrows.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut () {
-        self.vm
     }
 
     /// Shared borrow of the isolated `uws::Loop`.
@@ -235,7 +223,7 @@ impl SpawnSyncEventLoop {
     /// `self.uws_loop` out *before* that store and ticks via the raw pointer
     /// directly. This accessor is for non-re-entrant call sites (e.g. `init`).
     #[inline]
-    pub fn uws_loop_mut(&mut self) -> &mut uws::Loop {
+    pub(crate) fn uws_loop_mut(&mut self) -> &mut uws::Loop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
         // entire lifetime (created in `init`, freed in `Drop`). `&mut self`
         // guarantees no other safe borrow of the loop is live.
@@ -332,14 +320,6 @@ impl SpawnSyncEventLoop {
             }
         }
     }
-
-    /// Get an EventLoopHandle for this isolated loop
-    pub fn handle(&mut self) -> EventLoopHandle {
-        // `self.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // created in `init` and freed only in `Drop` — never null while `self` exists.
-        debug_assert!(!self.event_loop.is_null(), "spawn-sync event loop");
-        EventLoopHandle::init(self.event_loop)
-    }
 }
 
 #[cfg(windows)]
@@ -400,12 +380,14 @@ impl SpawnSyncEventLoop {
 
     /// Tick the isolated event loop with an optional timeout
     /// This is similar to the main event loop's tick but completely isolated
+    ///
+    /// `timeout` is an absolute deadline on the real (never mocked) clock.
     pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>) -> TickState {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
                 duration_storage =
-                    Some(ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime)));
+                    Some(ts.duration(&Timespec::now(TimespecMockMode::ForceRealTime)));
                 duration_storage.as_ref()
             }
             None => None,
@@ -452,7 +434,7 @@ impl SpawnSyncEventLoop {
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]
@@ -474,7 +456,7 @@ impl SpawnSyncEventLoop {
             #[cfg(not(windows))]
             {
                 self.did_timeout.set(
-                    Timespec::now(TimespecMockMode::AllowMockedTime).order(ts)
+                    Timespec::now(TimespecMockMode::ForceRealTime).order(ts)
                         != core::cmp::Ordering::Less,
                 );
             }
@@ -489,10 +471,5 @@ impl SpawnSyncEventLoop {
         }
 
         TickState::Completed
-    }
-
-    /// Check if the loop has any active handles
-    pub fn is_active(&self) -> bool {
-        self.uws_loop().is_active()
     }
 }

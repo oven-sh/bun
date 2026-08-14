@@ -12,12 +12,18 @@ use bun_s3_signing::error::S3Error;
 
 use crate::webcore::s3::xml_response;
 use bun_threading::Mutex;
+use bun_threading::thread_pool::Batch;
 
 bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
+    //
+    // The HTTP thread's from `schedule` until the final callback hands the task
+    // back (`update_state` overwrites it on every callback); JS-thread code
+    // reaches the in-flight request through `async_http_id` instead. Enforced by
+    // test/internal/source-lints/s3-task-http-field.test.ts.
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// How the HTTP thread reaches the VM to deliver chunks.
     pub(crate) loop_handle: bun_jsc::LoopHandle,
@@ -39,9 +45,8 @@ pub struct S3HttpDownloadStreamingTask {
 
     pub(crate) concurrent_task: ConcurrentTask,
     pub(crate) proxy_url: Box<[u8]>,
-    /// Captured once on the main thread before the request is queued so the cancel
-    /// path can call `schedule_shutdown_by_id` without dereferencing `http` (which
-    /// `update_state` overwrites on the HTTP thread under `mutex`).
+    /// Set by `schedule` before the hand-off; what the cancel and VM-teardown
+    /// paths pass to `schedule_shutdown_by_id` instead of reading `http`.
     pub(crate) async_http_id: u32,
 }
 
@@ -57,6 +62,29 @@ impl Taskable for S3HttpDownloadStreamingTask {
 impl S3HttpDownloadStreamingTask {
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
+    }
+
+    /// Stores `http` in the task and hands the request to the HTTP thread (see
+    /// the `http` field for what that gives up).
+    ///
+    /// # Safety
+    /// `this` is a live task from `Self::new` that nothing else references yet;
+    /// `http`'s callback context is `this`. JS thread.
+    pub(crate) unsafe fn schedule(this: *mut Self, mut http: AsyncHTTP<'static>) {
+        http.enable_response_body_streaming();
+        bun_http::http_thread::init(&Default::default());
+        let mut batch = Batch::default();
+        // SAFETY: fn contract; statement-scoped accesses. The `&mut AsyncHTTP`
+        // from `write` ends with the statement that queues its task node.
+        unsafe {
+            (*this).async_http_id = http.async_http_id;
+            (*this).http.write(http).schedule(&mut batch);
+            // Out on the HTTP thread until its final callback: the VM aborts it
+            // at teardown (registry) and waits for it (embedded work).
+            (*this).loop_handle.embedded_work_scheduled();
+        }
+        crate::jsc_hooks::ActiveHandle::S3Download(NonNull::new(this).expect("task")).register();
+        bun_http::HTTPThread::schedule(batch);
     }
 
     pub(crate) fn get_state(&self) -> State {
@@ -205,8 +233,8 @@ impl S3HttpDownloadStreamingTask {
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; a
             // bitwise read+write copies its current state into `self.http` without running
             // destructors (the HTTP thread retains ownership of the source until the request
-            // completes). `self.http` was previously initialised in
-            // `client::download_stream`.
+            // completes). `self.http` was initialised in `Self::schedule`, and nothing reads
+            // it on the JS thread while the request is in flight.
             unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
@@ -349,15 +377,17 @@ impl S3HttpDownloadStreamingTask {
     /// # Safety
     /// `this` is live (registered ⇒ not yet freed by `on_response`); JS thread.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `http` is initialised before the task is registered.
+        // SAFETY: fn contract. Registered ⇒ in flight ⇒ the HTTP thread may be writing
+        // `http` right now; only the atomic abort flag and the schedule-time id are read.
         unsafe {
             (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+            bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
         }
     }
 
     fn release_portable(&mut self) {
-        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
+        // SAFETY: `http` was initialised by `Self::schedule`, and a task is only dropped
+        // once the final callback has handed it back, so the HTTP thread is done with it.
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
         http.request_headers = Default::default();

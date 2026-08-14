@@ -1510,8 +1510,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handshake_callback = handlers.on_handshake();
 
         handlers.resolve_promise(this_value)?;
-        // A promise rejection that itself left an exception is surfaced last,
-        // once the socket state below is settled.
+        // What rejecting the promise / the `error` handler left pending is
+        // surfaced last, once the socket state below is settled.
         let mut opened: JsResult<()> = Ok(());
 
         if SSL {
@@ -1545,13 +1545,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                 log!("Already closed");
             }
 
-            match handlers.reject_promise(err) {
-                Ok(true) => {}
-                Ok(false) => {
-                    handlers.call_error_handler(this_value, &[this_value, err])?;
-                }
-                Err(e) => opened = Err(e),
-            }
+            opened = match handlers.reject_promise(err) {
+                Ok(true) => Ok(()),
+                Ok(false) => handlers
+                    .call_error_handler(this_value, &[this_value, err])
+                    .map(|_| ()),
+                Err(e) => Err(e),
+            };
             this.mark_inactive();
         }
         if !SSL

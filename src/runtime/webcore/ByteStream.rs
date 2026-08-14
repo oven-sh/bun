@@ -219,8 +219,7 @@ impl ByteStream {
         let settled = self.on_cancel();
         let source = self.parent_const();
         let mut p = source.producer.replace(streams::SourceHandle::None);
-        let closed = p.close(None);
-        settled.and(closed)
+        settled.and_then(|()| p.close(None))
     }
 
     #[inline]
@@ -632,12 +631,13 @@ impl ByteStream {
 
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
-            let rejected = action.reject(
-                global,
-                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
-            );
+            settled = settled.and_then(|()| {
+                action.reject(
+                    global,
+                    &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+                )
+            });
             self.buffer_action.set(None);
-            settled = settled.and(rejected);
         }
         settled
     }

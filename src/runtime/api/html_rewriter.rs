@@ -1459,8 +1459,7 @@ impl RewriterPipe {
         let mut src = self.input_source.get();
         let ready = src.ready(None, None);
         // Wake a JS pump's pending `write()`/`flush(true)` promise.
-        let settled = self.pending.with_mut(|p| p.run());
-        ready.and(settled)
+        ready.and_then(|()| self.pending.with_mut(|p| p.run()))
     }
 
     /// A content handler's promise resolved: continue the rewrite from
@@ -1598,9 +1597,10 @@ impl RewriterPipe {
 
         if let Some(out) = self.output.get() {
             let mut err = err;
-            let errored = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            let errored =
+                settled.and_then(|()| out.on_data(StreamResult::Err(err.to_stream_error(&self.global))));
             self.detach_output();
-            return settled.and(errored);
+            return errored;
         }
         let Some(response) = self.response.get() else {
             return settled;

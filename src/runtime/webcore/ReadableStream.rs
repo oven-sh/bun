@@ -1082,8 +1082,9 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         let settled = self.context.on_cancel();
         let mut p = self.producer.replace(streams::SourceHandle::None);
-        let closed = p.close(None);
-        settled.and(closed)
+        // The producer is always detached; it is only signalled if nothing is
+        // pending from the settle above.
+        settled.and_then(|()| p.close(None))
     }
 
     pub fn on_close(&mut self) {

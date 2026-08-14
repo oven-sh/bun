@@ -401,4 +401,46 @@ describe("bun <file.md>", () => {
       expect(secondExit).toBe(0);
     },
   );
+
+  // Every download reports back over a channel with 256 slots
+  // (`DoneChannel` in src/runtime/cli/run_command.rs), so more images than
+  // that is the case where the HTTP thread's publish can find the channel full
+  // and has to wait for the main thread to drain it.
+  test.skipIf(!isPosix)("prefetches more remote images than the done channel has slots", async () => {
+    const images = 300;
+    const payload = Buffer.alloc(64, "z");
+    const requested = new Set<string>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requested.add(new URL(req.url).pathname);
+        return new Response(payload, { headers: { "content-type": "image/png" } });
+      },
+    });
+    const paths = Array.from({ length: images }, (_, i) => `/${i}.png`);
+    using dir = tempDir("md-remote-img-many-", {
+      "doc.md": paths.map(p => `![](http://127.0.0.1:${server.port}${p})`).join("\n\n") + "\n",
+      "tmp/.keep": "",
+    });
+    const tmp = join(String(dir), "tmp");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: {
+        ...bunEnv,
+        FORCE_COLOR: "1",
+        TERM: "xterm-kitty",
+        KITTY_WINDOW_ID: "1",
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+      },
+      cwd: String(dir),
+      terminal: { cols: 80, rows: 24, data() {} },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+
+    expect([...requested].sort()).toEqual([...paths].sort());
+    expect(readdirSync(tmp).filter(name => name.startsWith("bun-md-")).length).toBe(images);
+    expect(exitCode).toBe(0);
+  });
 });

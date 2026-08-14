@@ -28,14 +28,20 @@ const stream = blob.stream();
 
 ---
 
-Pass a number to `.stream()` to set the chunk size.
+To control the chunk size, split the `Buffer` into chunks and enqueue each one individually.
 
 ```ts
 const buf = Buffer.from("hello world");
-const blob = new Blob([buf]);
+const chunkSize = 1024;
 
-// set chunk size of 1024 bytes
-const stream = blob.stream(1024);
+const stream = new ReadableStream({
+  start(controller) {
+    for (let i = 0; i < buf.length; i += chunkSize) {
+      controller.enqueue(buf.subarray(i, i + chunkSize));
+    }
+    controller.close();
+  },
+});
 ```
 
 ---

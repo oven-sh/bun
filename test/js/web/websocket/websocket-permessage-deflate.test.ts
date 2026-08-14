@@ -1,6 +1,5 @@
 import { serve } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { expect, test } from "bun:test";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
   let serverReceivedExtensions = "";
@@ -391,60 +390,4 @@ test("server enforces maxPayloadLength on compressed messages inflated through t
   expect(events[1]).toBe("close");
 
   expect(serverReceived).toEqual([900]);
-});
-
-// The client offers every compressed message to libdeflate before its zlib
-// stream unless BUN_FEATURE_FLAG_NO_LIBDEFLATE is set. Both decoders yield the
-// same bytes, so only the debug log (WebSocketClient scope) shows which ran.
-describe.skipIf(!isDebug)("BUN_FEATURE_FLAG_NO_LIBDEFLATE disables the client's libdeflate fast path", () => {
-  const message = Buffer.alloc(1024, "compress me ").toString();
-
-  test.concurrent.each([
-    ["0", ["[websocketclient] Decompressing N bytes with libdeflate"]],
-    ["1", []],
-  ])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async (noLibdeflate, libdeflateLines) => {
-    using server = serve({
-      port: 0,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Not found", { status: 404 });
-      },
-      websocket: {
-        perMessageDeflate: true,
-        open(ws) {
-          ws.send(message, true);
-        },
-        message() {},
-      },
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const ws = new WebSocket(process.argv[1]);
-         const { promise, resolve, reject } = Promise.withResolvers();
-         ws.onmessage = event => resolve(event.data);
-         ws.onclose = event => reject(new Error("closed before a message arrived: " + event.code + " " + event.reason));
-         const received = await promise;
-         ws.close();
-         if (received !== process.argv[2]) throw new Error("received " + received.length + " bytes, expected " + process.argv[2].length);`,
-        `ws://localhost:${server.port}`,
-        message,
-      ],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate, BUN_DEBUG_WebSocketClient: "1" },
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({
-      libdeflateLines: stdout
-        .split(/\r?\n/)
-        .filter(line => line.startsWith("[websocketclient] Decompressing "))
-        .map(line => line.replace(/\d+ bytes/, "N bytes")),
-      stderr,
-      exitCode,
-    }).toEqual({ libdeflateLines, stderr: expect.not.stringContaining("error"), exitCode: 0 });
-  });
 });

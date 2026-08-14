@@ -74,6 +74,17 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
+/// `bun:internal-for-testing`'s `isLibdeflateEnabled()`. The accessor itself is
+/// in `bun_core`, which cannot depend on `bun_jsc`, so the JS wrapper lives here.
+pub(crate) fn bun_is_libdeflate_enabled(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(
+        bun_core::feature_flags::is_libdeflate_enabled(),
+    ))
+}
+
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

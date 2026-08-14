@@ -575,6 +575,8 @@ export const decodeURIComponentSIMD = $newCppFunction(
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
+/** What fetch(), bun install and the WebSocket client consult before trying libdeflate; false under BUN_FEATURE_FLAG_NO_LIBDEFLATE. */
+export const isLibdeflateEnabled = $newRustFunction("bun.rs", "isLibdeflateEnabled", 0) as () => boolean;
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",
   "TestingAPIs.orderedRemoveProbe",

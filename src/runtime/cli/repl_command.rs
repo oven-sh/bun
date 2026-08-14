@@ -54,8 +54,7 @@ impl ReplCommand {
                 ctx,
             )?;
         }
-        // Always apply — when bunfig was preloaded earlier (e.g. via --config),
-        // ca_store may be set but Bun__Node__CAStore hasn't been touched.
+        // Outside the guard: bunfig may have been preloaded via --config.
         Arguments::apply_bunfig_ca_store(ctx);
 
         // Initialize JSC

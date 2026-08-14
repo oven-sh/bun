@@ -754,16 +754,13 @@ static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// True once the CLI flag or `NODE_USE_SYSTEM_CA` env var has pinned
-/// `Bun__Node__CAStore`. A deferred bunfig load (e.g. `Run::boot` reading the
-/// local bunfig.toml after `Arguments::parse` returned) must not override that.
+/// Set once a CLI flag or `NODE_USE_SYSTEM_CA` pins the CA store, so deferred
+/// bunfig loads can't override it.
 pub(crate) static Bun__Node__CAStore_locked: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Apply `ctx.runtime_options.ca_store` (populated by the bunfig parser) to
-/// `Bun__Node__CAStore`, unless a higher-precedence source already pinned it.
-/// Safe to call more than once — subsequent calls are no-ops once the CA
-/// store is locked or the bunfig value is already applied.
+/// Applies the bunfig `CA` value unless a CLI flag or env var locked the store.
+/// Idempotent.
 pub(crate) fn apply_bunfig_ca_store(ctx: &mut bun_options_types::context::ContextData) {
     if !Bun__Node__CAStore_locked.load(core::sync::atomic::Ordering::Relaxed) {
         if let Some(ca_store) = ctx.runtime_options.ca_store {
@@ -1488,9 +1485,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // Precedence: CLI flag > NODE_USE_SYSTEM_CA env var > bunfig.toml `CA` > bundled (default).
-        // The CLI/env branches are authoritative and pin the lock flag so a later
-        // bunfig load (e.g. the deferred one in `Run::boot`) can't override them.
+        // Precedence: CLI flag > NODE_USE_SYSTEM_CA > bunfig.toml `CA` > bundled default.
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)
         } else if use_openssl_ca {
@@ -1512,10 +1507,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // Apply any bunfig-sourced value that was already loaded during this
-        // parse (.AutoCommand, .TestCommand, etc.). For .RunCommand the local
-        // bunfig isn't loaded until `Run::boot` — `apply_bunfig_ca_store` is
-        // called again from there.
+        // .RunCommand's bunfig loads later in `Run::boot`, which applies again.
         apply_bunfig_ca_store(ctx);
     }
 

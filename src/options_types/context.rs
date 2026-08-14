@@ -537,9 +537,7 @@ pub struct DebuggerEnable {
     pub set_breakpoint_on_first_line: bool,
 }
 
-/// Which CA certificate store Bun should use for TLS verification.
-/// Surfaced via `--use-*-ca` CLI flags, the `NODE_USE_SYSTEM_CA` env var, and
-/// the top-level `CA` key in `bunfig.toml`.
+/// CA store for TLS: `--use-*-ca` flags, `NODE_USE_SYSTEM_CA`, or bunfig.toml's `CA` key.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BunCAStore {
@@ -571,8 +569,7 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
-    /// CA store selected via `bunfig.toml`'s top-level `CA` key. `None` means
-    /// unset (fall back to CLI flag, `NODE_USE_SYSTEM_CA`, then bundled).
+    /// From bunfig.toml's top-level `CA` key; `None` means unset.
     pub ca_store: Option<BunCAStore>,
 }
 

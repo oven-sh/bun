@@ -2736,6 +2736,24 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
+
+            // A dynamically imported stylesheet gets a JS chunk of its own (see
+            // `compute_chunks`) whose exports are the stylesheet's, so like any
+            // other entry point it has to keep every export alive. That is what
+            // the entry point part depends on. Stylesheets passed as entry points
+            // by the user only produce CSS, so their exports can stay dead.
+            if ctx.entry_point_kinds[source_index as usize] == EntryPoint::Kind::DynamicImport {
+                let part_index =
+                    self.graph.meta.items_entry_point_part_index()[source_index as usize];
+                if part_index.is_valid()
+                    && !ctx.parts_live[source_index as usize].is_set(part_index.get() as usize)
+                {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: part_index.get(),
+                        source_index,
+                    });
+                }
+            }
             return;
         }
 

@@ -129,6 +129,11 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
+    /// Set by `CssRuleList::to_css` right before printing each rule: whether
+    /// more output follows that rule inside the block it is printed in. A
+    /// nested declarations rule printed in place (nesting preserved) may only
+    /// drop its final `;` when nothing does.
+    pub(crate) more_rules_follow: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -306,6 +311,7 @@ impl<'a> Printer<'a> {
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
+            more_rules_follow: false,
             in_calc: false,
             css_module: None,
             ctx: None,

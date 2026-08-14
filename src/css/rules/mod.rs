@@ -36,7 +36,7 @@ pub mod viewport;
 // lifetime-free here.
 
 // ─── CssRule variant table ────────────────────────────────────────────────
-// Single source of truth for the 20 typed at-rule payloads. Adding a new
+// Single source of truth for the 21 typed rule payloads. Adding a new
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
 // their `to_css` arms are special-cased (see the note on `Custom`).
@@ -118,6 +118,8 @@ css_rule_variants! {
     MozDocument(document::MozDocumentRule<R>),
     /// A `@nest` rule.
     Nesting(nesting::NestingRule<R>),
+    /// Declarations nested after a rule; see `NestedDeclarationsRule`.
+    NestedDeclarations(nesting::NestedDeclarationsRule),
     /// A `@viewport` rule.
     Viewport(viewport::ViewportRule),
     /// A `@custom-media` rule.
@@ -421,10 +423,33 @@ impl<R> CssRule<R> {
 
 impl<R> CssRuleList<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_impl(dest, false)
+    }
+
+    /// Prints the rules straight into the block the list's owner sits in, for an owner whose
+    /// own block is elided (`@media all` when minifying). Whatever follows the owner in that
+    /// block, which `to_css_impl` recorded in `dest.more_rules_follow` just before printing
+    /// the owner, therefore also follows this list's last rule.
+    pub(crate) fn to_css_unwrapped(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let more_rules_follow = dest.more_rules_follow;
+        self.to_css_impl(dest, more_rules_follow)
+    }
+
+    fn to_css_impl(
+        &self,
+        dest: &mut Printer,
+        more_rules_follow_list: bool,
+    ) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
+        // The other rules the loop skips still count as following their predecessors; that
+        // only costs a nested declarations rule ahead of them a `;` it could have dropped.
+        let last = self
+            .v
+            .iter()
+            .rposition(|rule| !matches!(rule, CssRule::Ignored));
 
-        for rule in self.v.iter() {
+        for (i, rule) in self.v.iter().enumerate() {
             if matches!(rule, CssRule::Ignored) {
                 continue;
             }
@@ -476,6 +501,7 @@ impl<R> CssRuleList<R> {
                 }
                 dest.newline()?;
             }
+            dest.more_rules_follow = more_rules_follow_list || Some(i) != last;
             rule.to_css(dest)?;
             last_without_block = matches!(
                 rule,
@@ -564,6 +590,17 @@ impl<R> CssRuleList<R> {
                     CssRule::Style(_sty) => {
                         minify_style_arm(
                             rule,
+                            &mut rules,
+                            &mut style_rules,
+                            &mut merge_state,
+                            context,
+                            parent_is_unused,
+                        )?;
+                        break 'arm;
+                    }
+                    CssRule::NestedDeclarations(decls) => {
+                        minify_nested_declarations_arm(
+                            decls,
                             &mut rules,
                             &mut style_rules,
                             &mut merge_state,
@@ -762,12 +799,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // re-minify re-runs the staging declarations and stages their rules
     // again, and the per-merge re-minify this replaces also ran before
     // collection, so the re-staged entries belong in this rule's extras.
-    if merge_state.pending_minify
-        && !(context.handler_context.supports.is_empty()
-            && context.handler_context.ltr.is_empty()
-            && context.handler_context.rtl.is_empty()
-            && context.handler_context.dark.is_empty())
-    {
+    if merge_state.pending_minify && context.handler_context.has_fallback_rules() {
         flush_pending_style_merge(rules, merge_state, context);
     }
 
@@ -895,6 +927,44 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         rules.push(CssRule::Style(nested));
     }
 
+    Ok(())
+}
+
+fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
+    decls: &mut nesting::NestedDeclarationsRule,
+    rules: &mut Vec<CssRule<R>>,
+    style_rules: &mut StyleRuleKeyMap,
+    merge_state: &mut StyleRuleMergeState,
+    context: &mut MinifyContext<'_, '_>,
+    parent_is_unused: bool,
+) -> Result<(), MinifyErr> {
+    // These declarations are as dead as the enclosing rule's own ones, which
+    // `StyleRule::minify` dropped.
+    if parent_is_unused {
+        return Ok(());
+    }
+
+    let fallbacks = decls.minify(context)?;
+    if decls.declarations.is_empty() && fallbacks.is_empty() {
+        return Ok(());
+    }
+
+    // Same bookkeeping as for the other non-style rules in `CssRuleList::minify`.
+    flush_pending_style_merge(rules, merge_state, context);
+    merge_state.last_compat = None;
+    if !decls.declarations.is_empty() {
+        rules.push(CssRule::NestedDeclarations(
+            nesting::NestedDeclarationsRule {
+                declarations: core::mem::replace(
+                    &mut decls.declarations,
+                    dc::decl_block_empty_static(context.arena),
+                ),
+                loc: decls.loc,
+            },
+        ));
+    }
+    rules.extend(fallbacks);
+    style_rules.clear();
     Ok(())
 }
 
@@ -1247,4 +1317,36 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
+}
+
+impl MinifyContext<'_, '_> {
+    /// Charge a rule with `selectors` selectors against the selector-expansion
+    /// budget.
+    ///
+    /// Compiling the enclosing nesting away for the targets repeats the rule's
+    /// selectors once per combination of the enclosing style rules' selectors.
+    /// That expansion is multiplicative across nesting levels, so bound it;
+    /// otherwise a few hundred bytes of deeply nested multi-selector rules
+    /// expand into gigabytes of cloned rules and output. See
+    /// [`MAX_SELECTOR_EXPANSION`]. `loc` is reported if the budget is exceeded.
+    pub(crate) fn charge_selector_expansion(
+        &mut self,
+        selectors: u32,
+        loc: Location,
+    ) -> Result<(), MinifyErr> {
+        if self.selector_expansion_multiplier > 1 {
+            self.selector_expansion_total = self.selector_expansion_total.saturating_add(
+                self.selector_expansion_multiplier
+                    .saturating_mul(selectors.max(1)),
+            );
+            if self.selector_expansion_total > MAX_SELECTOR_EXPANSION {
+                self.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
+        Ok(())
+    }
 }

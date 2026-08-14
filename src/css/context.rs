@@ -80,6 +80,15 @@ impl<'a> PropertyHandlerContext<'a> {
         self.rtl.push(rtl);
     }
 
+    /// Whether the handlers staged anything that `get_supports_rules` /
+    /// `get_additional_rules` would turn into rules.
+    pub(crate) fn has_fallback_rules(&self) -> bool {
+        !(self.supports.is_empty()
+            && self.ltr.is_empty()
+            && self.rtl.is_empty()
+            && self.dark.is_empty())
+    }
+
     pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
         // Don't convert logical properties in style attributes because
         // our fallbacks rely on extra rules to define --ltr and --rtl.

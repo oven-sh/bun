@@ -3270,7 +3270,7 @@ where
             // returned slices alias the same uWS-owned header buffer, so copy
             // `host` out before borrowing again for the target.
             let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(<[u8]>::to_vec);
-            request_object.set_url_from_target(host.as_deref(), ReqLike::url(req), true);
+            request_object.set_synthesized_url(host.as_deref(), ReqLike::url(req));
             ctx.clear_req();
         }
 

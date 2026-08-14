@@ -1725,10 +1725,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let mut total: usize = cwd.len() + 2;
-    for p in parts {
-        total += p.len() + 1;
-    }
+    let total = join_abs_needed(cwd.len(), parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -2854,7 +2851,9 @@ mod tests {
         while from.len() + 2 < MAX_PATH_BYTES {
             from.extend_from_slice(b"/d");
         }
-        let rel = relative_alloc(&from, b"/t").unwrap();
+        // Two bytes, not one: the Windows arm drops a one-byte root-level
+        // target (pre-existing), which would hide what this test is about.
+        let rel = relative_alloc(&from, b"/tt").unwrap();
 
         let components = from.len() / 2;
         let mut expected = Vec::new();
@@ -2865,7 +2864,7 @@ mod tests {
             expected.extend_from_slice(b"..");
         }
         expected.push(SEP);
-        expected.push(b't');
+        expected.extend_from_slice(b"tt");
         assert_eq!(&rel[..], &expected[..]);
         assert!(rel.len() > MAX_PATH_BYTES);
     }

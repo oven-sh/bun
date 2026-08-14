@@ -7747,6 +7747,8 @@ describe("css tests", () => {
     minify_test(".foo{width:1234567px}", ".foo{width:1234567px}");
     minify_test(".foo{height:1234567%}", ".foo{height:1234567%}");
     minify_test(".foo{grid-template-columns:1234567fr}", ".foo{grid-template-columns:1234567fr}");
+    minify_test(".foo{grid-template-columns:16777217fr}", ".foo{grid-template-columns:16777217fr}");
+    minify_test(".foo{grid-template-columns:+2fr 2.0fr}", ".foo{grid-template-columns:2fr 2fr}");
     // An integer outside the i32 range saturates the token's integer. 2147483648 rounds to the
     // same f32 as i32::MAX, so the saturated integer is still what gets printed (browsers clamp
     // an <integer> to the same bound); further out it no longer matches the float, which is

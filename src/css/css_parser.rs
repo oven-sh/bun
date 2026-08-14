@@ -5784,7 +5784,27 @@ pub mod serializer {
         unit: &'static [u8],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
-        let int_value: Option<i32> = if fract(value) == 0.0 {
+        let num = Num {
+            has_sign: false,
+            value,
+            int_value: None,
+        };
+        serialize_dimension_num(&num, unit, dest)
+    }
+
+    /// Minified dimension printing: a redundant `+` and the `.0` of an integral
+    /// value are dropped. An `<integer-token>` is printed from its own integer
+    /// (`16777217fr` is stored as the f32 16777216); any other integral value
+    /// is printed from the f32.
+    pub(crate) fn serialize_dimension_num(
+        num: &Num,
+        unit: &'static [u8],
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        let value = num.value;
+        let int_value: Option<i32> = if let Some(int) = num.exact_int() {
+            Some(int)
+        } else if fract(value) == 0.0 {
             Some(value as i32) // saturating cast
         } else {
             None

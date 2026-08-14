@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { itBundled } from "./expectBundled";
 
@@ -390,6 +391,57 @@ describe("multi-line comments", () => {
       expect(entry.originalLine).toBeGreaterThanOrEqual(0);
     },
   });
+
+  // JS engines count a lone "\r" as a line terminator and "\r\n" as a single
+  // one, so the generated lines in the map have to be counted the same way for
+  // stack traces to remap. A legal comment is printed verbatim apart from its
+  // "\r\n"s becoming "\n", and an inlined enum member is followed by a comment
+  // holding its name; those are how these terminators end up in the output.
+  function lineOf(code: string, needle: string) {
+    const index = code.split(/\r\n|\r|\n/).findIndex(line => line.includes(needle));
+    expect(index).toBeGreaterThanOrEqual(0);
+    return index;
+  }
+  const terminatorCases = [
+    {
+      name: "lone CR in a legal comment starts a new generated line in the sourcemap",
+      file: "/entry.js",
+      // One character between the "\r" and the "\n" is the shape the builder used to miss.
+      entry: '/*! a\rb\nc */\nconsole.log("after comment");\nconsole.log("next line");\n',
+      printed: "/*! a\rb\nc */",
+      needles: ['"after comment"', '"next line"'],
+    },
+    {
+      name: "CRLF left in a legal comment counts as one generated line in the sourcemap",
+      file: "/entry.js",
+      entry: '/*! a\r\r\nb */\nconsole.log("after comment");\nconsole.log("next line");\n',
+      printed: "/*! a\r\nb */",
+      needles: ['"after comment"', '"next line"'],
+    },
+    {
+      name: "CRLF in an inlined enum member comment counts as one generated line in the sourcemap",
+      file: "/entry.ts",
+      entry: 'enum E { "a\\r\\nb" = 1 }\nconsole.log(E["a\\r\\nb"]);\nconsole.log("next line");\n',
+      printed: "1 /* a\r\nb */",
+      needles: ['"next line"'],
+    },
+  ];
+  for (const { name, file, entry, printed, needles } of terminatorCases) {
+    itBundled(name, {
+      files: { [file]: entry },
+      sourceMap: "external",
+      onAfterBundle(api) {
+        // api.readFile() normalizes CRLF, so read the output directly.
+        const output = readFileSync(api.outfile, "utf8");
+        expect(output).toContain(printed);
+        const map = new SourceMap(JSON.parse(readFileSync(api.outfile + ".map", "utf8")));
+        // The generated line each needle ends up on must map back to the line it is on in the entry.
+        expect(needles.map(needle => [needle, map.findEntry(lineOf(output, needle), 0).originalLine])).toEqual(
+          needles.map(needle => [needle, lineOf(entry, needle)]),
+        );
+      },
+    });
+  }
 
   // The lexer skips >=512-byte block comment bodies with SIMD; these verify
   // large comments end-to-end (legal comment preservation, ASI, output code).

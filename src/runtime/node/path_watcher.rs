@@ -437,7 +437,18 @@ pub(crate) fn watch(
 
     let manager = PathWatcherManager::get()?;
 
-    let is_file = match sys::stat(path) {
+    // inotify checks read permission itself when the watch is added; the
+    // kqueue/FSEvents backends never open the path, so do it here to report
+    // EACCES up front as Node does.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let st = sys::stat(path);
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let st = sys::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0).and_then(|fd| {
+        let st = sys::fstat(fd);
+        let _ = sys::close(fd);
+        st
+    });
+    let is_file = match st {
         Ok(st) => !sys::S::ISDIR(st.st_mode as _),
         Err(e) => return Err(e.without_path()),
     };

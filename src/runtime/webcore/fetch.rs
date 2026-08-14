@@ -55,7 +55,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{AbortSignalRef, HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -114,27 +114,6 @@ pub(crate) fn s3_credentials_from_env(
         env.session_token.clone(),
         env.insecure_http,
     )
-}
-
-/// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`,
-/// released on every exit path. `take()` disarms the guard when ownership is
-/// handed to `FetchOptions`.
-struct SignalRef(Option<NonNull<AbortSignal>>);
-impl SignalRef {
-    #[inline]
-    fn take(&mut self) -> Option<*mut AbortSignal> {
-        self.0.take().map(|p| p.as_ptr())
-    }
-}
-impl Drop for SignalRef {
-    fn drop(&mut self) {
-        if let Some(sig) = self.0.take() {
-            // `sig` was obtained from `AbortSignal::ref_()` which bumped the
-            // C++ intrusive refcount; the pointee outlives this `BackRef`
-            // until `unref()` releases that +1.
-            bun_ptr::BackRef::from(sig).unref();
-        }
-    }
 }
 
 /// RAII guard for the `+1` `FetchHeaders` ref returned by
@@ -443,10 +422,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
-    // AbortSignal is intrusive-refcounted; the +1 from `ref_()` is released by
-    // `SignalRef`'s Drop on every early-return path, and disarmed via `take()`
-    // when ownership is moved into `FetchOptions`.
-    let mut signal = SignalRef(None);
     // Custom Hostname
     let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
@@ -472,8 +447,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
     // signal/unix_socket_path/url_proxy_buffer/headers/body/hostname/range/
-    // ssl_config are all owning types whose Drop runs on early return
-    // (`signal` via `SignalRef`).
+    // ssl_config are all owning types whose Drop runs on early return.
 
     let options_object: Option<JSValue> = 'brk: {
         if let Some(options) = args.next_eat() {
@@ -1130,16 +1104,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
     // detaches (no fallback to the input Request's signal); a present non-null
     // non-AbortSignal is a TypeError.
-    signal.0 = 'extract_signal: {
+    let signal: Option<AbortSignalRef> = 'extract_signal: {
         if let Some(options) = options_object {
             if let Some(signal_) = options.get(global_this, "signal")? {
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
-                if let Some(signal__) = AbortSignal::from_js(signal_) {
-                    // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
-                    // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
-                    break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
+                if let Some(signal_ref) = AbortSignal::ref_from_js(signal_) {
+                    break 'extract_signal Some(signal_ref);
                 }
                 let err = ctx.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -1159,10 +1131,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.abort_signal() {
-                break 'extract_signal NonNull::new(signal_.ref_());
-            }
-            break 'extract_signal None;
+            break 'extract_signal req.abort_signal().cloned();
         }
 
         if let Some(options) = request_init_object {
@@ -1170,10 +1139,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
-                if let Some(signal__) = AbortSignal::from_js(signal_) {
-                    // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
-                    // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
-                    break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
+                if let Some(signal_ref) = AbortSignal::ref_from_js(signal_) {
+                    break 'extract_signal Some(signal_ref);
                 }
                 let err = ctx.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -1623,8 +1590,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
     // after body/header extraction so Request-constructor errors (GET+body,
     // already-used body) win and `request.bodyUsed` is set, matching Node.
-    if let Some(sig) = signal.0 {
-        let sig = bun_ptr::BackRef::from(sig);
+    if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
@@ -2083,7 +2049,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy: proxy_static,
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
-        signal: signal.take(),
+        signal,
         global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),

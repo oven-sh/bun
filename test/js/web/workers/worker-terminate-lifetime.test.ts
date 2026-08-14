@@ -915,21 +915,24 @@ test(
         `
         const { Worker } = require("node:worker_threads");
         const server = Bun.serve({ port: 0, fetch(req) { return new Response(req.body); } });
-        const N = 4;
+        const N = 6;
         let done = 0;
         for (let i = 0; i < N; i++) {
           const w = new Worker(\`
             const keep = [];
+            let touched = 0;
             for (let j = 0; j < 8; j++) {
               let ctrl;
               const body = new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array(1024)); } });
               const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
-                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); })
+                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); touched++; })
                 .catch(() => {});
               keep.push(p, ctrl);
               setInterval(() => { try { ctrl.enqueue(new Uint8Array(512)); } catch {} }, 5);
             }
-            setTimeout(() => process.exit(0), 150 + \${(i * 13) % 60});
+            // Exit with that state alive; exit code 3 if no fetch ever reached it (the test would
+            // then not be exercising what it claims to).
+            setTimeout(() => process.exit(touched > 0 ? 0 : 3), 150 + \${(i * 13) % 60});
           \`, { eval: true });
           w.on("error", (e) => { console.error(e); process.exit(1); });
           w.on("exit", (code) => {

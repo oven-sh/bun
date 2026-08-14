@@ -550,7 +550,7 @@ describe("decorator metadata", () => {
     const types: Record<string, unknown> = {};
     // The design:type metadata decorator is appended after the user's decorators and
     // decorators apply last to first, so the metadata is visible from inside d1. This
-    // is how reflect-metadata consumers (TypeORM, class-validator, ...) read it.
+    // is how reflect-metadata consumers (TypeORM, class-transformer, ...) read it.
     function d1(target: object, key: string) {
       types[key] = Reflect.getMetadata("design:type", target, key);
     }
@@ -575,6 +575,7 @@ describe("decorator metadata", () => {
       declare ["prop" + 6]: Known;
       @d1
       declare static prop7: symbol;
+      // The other modifier order is parsed differently; prettier would rewrite it to `declare static`.
       // prettier-ignore
       @d1
       static declare prop8: bigint;
@@ -589,7 +590,7 @@ describe("decorator metadata", () => {
       abstract abstract1: Known;
     }
 
-    expect(types).toEqual({
+    const expected = {
       prop0: String,
       prop1: Known,
       prop2: Number,
@@ -602,12 +603,17 @@ describe("decorator metadata", () => {
       prop9: String,
       abstract0: String,
       abstract1: Known,
-    });
+    };
+    expect(Object.keys(types).sort()).toEqual(Object.keys(expected).sort());
+    // Compared by identity: toEqual does not tell builtin constructors such as Array and Object apart.
+    for (const [key, type] of Object.entries(expected)) {
+      expect(types[key], key).toBe(type);
+    }
 
     // A declare field is a field, not a method: it gets design:type and nothing else.
-    expect(Reflect.getMetadataKeys(A.prototype, "prop0")).toEqual(["design:type"]);
-    expect(Reflect.getMetadataKeys(A, "prop7")).toEqual(["design:type"]);
-    expect(Reflect.getMetadataKeys(B.prototype, "abstract0")).toEqual(["design:type"]);
+    expect(Reflect.getOwnMetadataKeys(A.prototype, "prop0")).toEqual(["design:type"]);
+    expect(Reflect.getOwnMetadataKeys(A, "prop7")).toEqual(["design:type"]);
+    expect(Reflect.getOwnMetadataKeys(B.prototype, "abstract0")).toEqual(["design:type"]);
 
     // The erased fields stay erased.
     expect(Object.keys(new A())).toEqual(["prop9"]);

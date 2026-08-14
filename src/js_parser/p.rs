@@ -6547,8 +6547,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // TODO: prop.kind == .declare and prop.value == null
-
                     if prop.ts_decorators.len_u32() > 0 {
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;

@@ -145,13 +145,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         return;
 
     if (!stackFrame.hasBytecodeIndex()) {
-        if (stackFrame.hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame.computeLineAndColumn();
-            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
-        }
-
-        position.byte_position = -1;
+        position = Bun::getLineColumnForStackFrame(stackFrame);
         return;
     }
 
@@ -333,7 +327,8 @@ public:
                 auto segment1 = StringView_slice(lineInner, marker1, marker2);
                 auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
 
-                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                // Signed: a node:vm lineOffset can push positions to 0 or below.
+                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<int>(segment2)) {
                     frame.sourceURL = segment1;
                     frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
                 } else {
@@ -363,8 +358,8 @@ public:
             auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
             auto segment3 = StringView_slice(lineInner, marker3 + 1, marker4);
 
-            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
-                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<int>(segment2)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<int>(segment3)) {
                     frame.sourceURL = segment1;
                     frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
                     frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
@@ -373,7 +368,7 @@ public:
                     frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
                 }
             } else {
-                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<int>(segment3)) {
                     frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
                     frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
                 } else {

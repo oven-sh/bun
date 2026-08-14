@@ -482,15 +482,15 @@ describe("negative lineOffset and columnOffset", () => {
   // The header node:vm prepends to a thrown error (`<url>:<line>`, source line,
   // caret line, blank line) and the rest of the stack.
   function thrown(run: () => unknown) {
-    let stack: string | undefined;
+    let error: any;
     try {
       run();
-    } catch (e: any) {
-      stack = e.stack;
+    } catch (e) {
+      error = e;
     }
-    expect(typeof stack).toBe("string");
-    const lines = stack!.split("\n");
-    return { header: lines.slice(0, 4), rest: lines.slice(4).join("\n") };
+    expect(typeof error?.stack).toBe("string");
+    const lines: string[] = error.stack.split("\n");
+    return { header: lines.slice(0, 4), rest: lines.slice(4).join("\n"), error };
   }
 
   const runners: Record<string, (code: string, options: object) => unknown> = {
@@ -507,6 +507,8 @@ describe("negative lineOffset and columnOffset", () => {
       const offset = thrown(() => run(fourLines, { filename: "n.js", lineOffset: -2 }));
       expect(offset.header).toEqual(["n.js:2", "throw new Error('x')", base.header[2], ""]);
       expect(frameAt(offset.rest, "n.js")).toEqual({ ...frameAt(base.rest, "n.js"), line: 2 });
+      // JSC's own error.line property follows the top frame.
+      expect([base.error.line, offset.error.line]).toEqual([4, 2]);
     });
   }
 
@@ -550,6 +552,9 @@ describe("negative lineOffset and columnOffset", () => {
       new Script("  throw new Error('x')", { filename: "z.js", lineOffset: -1, columnOffset: -1 }).runInThisContext(),
     );
     expect(zero.header).toEqual(["z.js:0", "  throw new Error('x')", expect.stringMatching(/^ *\^$/), ""]);
+
+    // error.line is unsigned in JSC; such positions read as unset instead of wrapping around.
+    expect([far.error.line, zero.error.line]).toEqual([0, 0]);
   });
 
   const makesError = "'line 1';\nfunction f() {\n  return new Error('x');\n}\nf();";
@@ -630,9 +635,10 @@ describe("negative lineOffset and columnOffset", () => {
     // displayErrors: false leaves err.stack alone, so the error printer shows its
     // own source excerpt and frames instead of the header checked above.
     const code = "1;\n2;\nfunction f() {\n  throw new Error('x');\n}\nf();";
-    const [excerpt, belowZero] = await Promise.all([
+    const [excerpt, belowZero, belowZeroDecorated] = await Promise.all([
       run(code, { filename: "n.js", lineOffset: -2, displayErrors: false }),
-      run(fourLines, { filename: "nn.js", lineOffset: -10 }),
+      run(code, { filename: "nn.js", lineOffset: -10, displayErrors: false }),
+      run(code, { filename: "nn.js", lineOffset: -10 }),
     ]);
 
     expect(excerpt.stderr).toMatch(/^2 \| +throw new Error\('x'\);$/m);
@@ -640,9 +646,14 @@ describe("negative lineOffset and columnOffset", () => {
     expect(excerpt.stderr).toMatch(/at n\.js:4:\d+$/m);
     expect(excerpt.exitCode).toBe(1);
 
-    // Offsets that push the lines below 1 still print the error and exit normally.
-    expect(belowZero.stderr).toContain("error: x");
+    // The printer cannot show a line at or below 0, so such frames are printed
+    // without a position, whether it reads the frames directly or re-parses
+    // the `at f (nn.js:-6:9)` lines of the stack node:vm already decorated.
+    expect(belowZero.stderr).toMatch(/^\s+at f \(nn\.js\)$/m);
+    expect(belowZero.stderr).toMatch(/^\s+at nn\.js$/m);
     expect(belowZero.exitCode).toBe(1);
+    expect(belowZeroDecorated.stderr).toMatch(/^\s+at f \(nn\.js\)$/m);
+    expect(belowZeroDecorated.exitCode).toBe(1);
   });
 });
 

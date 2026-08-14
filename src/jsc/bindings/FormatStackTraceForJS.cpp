@@ -575,6 +575,12 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
+// ErrorInstance keeps error.line / error.column unsigned; a node:vm offset can put a position at or below 0, which reads as unset (0) there.
+static unsigned toUnsignedOneBased(OrdinalNumber ordinal)
+{
+    return static_cast<unsigned>(std::max(ordinal.oneBasedInt(), 0));
+}
+
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
@@ -607,8 +613,8 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
         result = WTF::emptyString();
     }
 
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
+    line_in = toUnsignedOneBased(line);
+    column_in = toUnsignedOneBased(column);
 
     return result;
 }
@@ -644,8 +650,8 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
 
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
+    line_in = toUnsignedOneBased(line);
+    column_in = toUnsignedOneBased(column);
 
     // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
     // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095

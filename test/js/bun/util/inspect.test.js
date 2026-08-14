@@ -971,6 +971,10 @@ describe.concurrent("property walk that throws part way through", () => {
     // each initializer needs, so inspect at a spread of depths above the
     // frame where the recursion overflowed (level 0).
     const result = await run(`
+      // On Windows Bun.env has an inspect.custom function. Calling one for the
+      // first time loads node:util, which is a separate crash when it happens
+      // near the stack limit, so load it up front.
+      Bun.inspect({ [Bun.inspect.custom]() { return 0; } });
       const levels = new Set([0, 64, 128, 256, 512, 1024, 2048]);
       let level = -1;
       function recurse() {

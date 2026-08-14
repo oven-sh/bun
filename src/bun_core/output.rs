@@ -1876,11 +1876,8 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G);
 impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
-/// with successive entries from `args`. `{{` / `}}` are emitted as literal
-/// braces. Every other `{...}` consumes an entry, whatever the spec says; a
-/// placeholder with no entry left renders as nothing (and fails a debug
-/// assertion, since it means the call site packed several values into one
-/// `format_args!` instead of passing a tuple).
+/// with successive entries from `args`; the spec inside the braces is ignored.
+/// `{{` / `}}` are emitted as literal braces.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -1907,7 +1904,7 @@ fn substitute_template(
                 let filled = args.write_nth(argi, f)?;
                 debug_assert!(
                     filled,
-                    "template has more placeholders than the {} arg(s) passed for it: {:?}",
+                    "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
                     args.len(),
                     bstr::BStr::new(t),
                 );

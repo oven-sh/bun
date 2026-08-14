@@ -53,20 +53,18 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         }
 
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateTimeout(globalObject, vm, scope, options, this->timeout))
             any = true;
-        }
+        // The validators return false both for "absent" and for "threw".
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
         // Handle importModuleDynamically option
         JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));

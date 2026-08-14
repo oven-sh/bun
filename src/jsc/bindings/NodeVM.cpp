@@ -2077,15 +2077,14 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
-        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData))
             any = true;
-        }
+        // The validators return false both for "absent" and for "threw".
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
         JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
         RETURN_IF_EXCEPTION(scope, {});

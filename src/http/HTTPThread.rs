@@ -1091,6 +1091,8 @@ impl HttpThread {
                     ctx.deref();
                 }
                 drop(core::mem::take(&mut client.state));
+                // After `state`: its `original_request_body` borrows this.
+                drop(core::mem::take(&mut client.buffered_sendfile_body));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);
                 }

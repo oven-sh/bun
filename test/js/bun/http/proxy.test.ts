@@ -1,10 +1,11 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
@@ -227,6 +228,65 @@ for (const proxy_tls of [false, true]) {
     }
   }
 }
+
+// fetch() uploads a Bun.file() of 32 KiB or more with sendfile(2), which needs a
+// plaintext connection, and decides that before a proxy from the environment
+// is applied. The HTTP client has to fall back to uploading the file as
+// ordinary bytes whenever the connection it ends up on is TLS (an https://
+// proxy) or a CONNECT tunnel (a redirect onto an https:// origin through a
+// proxy); it used to abort with "sendfile is only supported without SSL" in
+// the first case and send an empty body in the second.
+describe("Bun.file() body that would use sendfile, with a proxy from the environment", () => {
+  const SIZE = 64 * 1024;
+
+  // Subprocess: the proxy environment is read when the process starts.
+  async function uploadFromChild(url: string, proxyEnv: Record<string, string>) {
+    using dir = tempDir("proxy-sendfile-body", { "body.bin": Buffer.alloc(SIZE, "a") });
+    const env = { ...bunEnv };
+    for (const key of PROXY_ENV_KEYS) delete env[key];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const res = await fetch(${JSON.stringify(url)}, {
+          method: "POST",
+          body: Bun.file(${JSON.stringify(join(String(dir), "body.bin"))}),
+          tls: { rejectUnauthorized: false },
+        });
+        console.log(res.status, (await res.text()).length);`,
+      ],
+      env: { ...env, ...proxyEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("is uploaded through a TLS proxy", async () => {
+    expect(await uploadFromChild(String(httpServer.url), { http_proxy: httpsProxyServer.url })).toEqual({
+      stdout: `200 ${SIZE}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("is re-uploaded through a CONNECT tunnel when the origin redirects to https", async () => {
+    using origin = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        return new Response(null, { status: 307, headers: { Location: String(httpsServer.url) } });
+      },
+    });
+    const proxyEnv = { http_proxy: httpProxyServer.url, https_proxy: httpProxyServer.url };
+    expect(await uploadFromChild(String(origin.url), proxyEnv)).toEqual({
+      stdout: `200 ${SIZE}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
 
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {

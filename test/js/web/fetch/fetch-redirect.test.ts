@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 
 // WHATWG HTTP-redirect fetch runs on the response head (status line + Location);
 // the 3xx body is discarded, not awaited. A redirecting server that never finishes
@@ -175,6 +177,195 @@ it("fetch() preserves body on redirect", async () => {
 
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("hello");
+});
+
+// A Bun.file() body of 32 KiB or more is uploaded with sendfile(2) instead of
+// being read into memory. When following a redirect, the HTTP client only
+// re-sent in-memory bodies: the sendfile body went out on the next hop as
+// `Content-Length: 0` with no body, and the fetch still resolved with that
+// hop's 200. (Below 32 KiB the file is read into memory up front and was
+// always replayed.)
+describe("fetch() re-sends a Bun.file() body when following a redirect", () => {
+  const FILE = randomBytes(96 * 1024);
+
+  type Hop = { method: string; path: string; contentLength: string | null; bytes: number; matches: boolean };
+
+  // Records every request it receives into `hops`. Paths listed in `redirects`
+  // answer with that redirect (after reading the body); anything else is the
+  // final 200.
+  function serveHops(
+    hops: Hop[],
+    expectedBody: Uint8Array,
+    redirects: Record<string, { status: number; location: string }>,
+    tlsOptions?: typeof tls,
+  ) {
+    return Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        const body = Buffer.from(await req.arrayBuffer());
+        hops.push({
+          method: req.method,
+          path: pathname,
+          contentLength: req.headers.get("content-length"),
+          bytes: body.byteLength,
+          matches: body.equals(expectedBody),
+        });
+        const redirect = redirects[pathname];
+        if (redirect) {
+          return new Response(null, { status: redirect.status, headers: { Location: redirect.location } });
+        }
+        return new Response("final");
+      },
+    });
+  }
+
+  const received = (method: string, path: string, body: Uint8Array = FILE): Hop => ({
+    method,
+    path,
+    contentLength: String(body.byteLength),
+    bytes: body.byteLength,
+    matches: true,
+  });
+
+  it.concurrent.each([
+    [307, "POST"],
+    [308, "POST"],
+    [307, "PATCH"],
+    [301, "PUT"],
+    [302, "PUT"],
+    [302, "DELETE"],
+  ])("%d keeps the %s body", async (status, method) => {
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, FILE, { "/start": { status, location: "/final" } });
+
+    const res = await fetch(new URL("/start", server.url), { method, body: Bun.file(join(String(dir), "body.bin")) });
+
+    expect({ status: res.status, redirected: res.redirected, text: await res.text(), hops }).toEqual({
+      status: 200,
+      redirected: true,
+      text: "final",
+      hops: [received(method, "/start"), received(method, "/final")],
+    });
+  });
+
+  // https://fetch.spec.whatwg.org/#http-redirect-fetch: 303 (and 301/302 for
+  // POST) switch to GET and drop the body; the file must not be re-sent there.
+  it.concurrent.each([
+    [303, "POST"],
+    [303, "PUT"],
+    [301, "POST"],
+    [302, "POST"],
+  ])("%d drops the %s body and switches to GET", async (status, method) => {
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, FILE, { "/start": { status, location: "/final" } });
+
+    const res = await fetch(new URL("/start", server.url), { method, body: Bun.file(join(String(dir), "body.bin")) });
+
+    expect({ status: res.status, redirected: res.redirected, text: await res.text(), hops }).toEqual({
+      status: 200,
+      redirected: true,
+      text: "final",
+      hops: [
+        received(method, "/start"),
+        { method: "GET", path: "/final", contentLength: null, bytes: 0, matches: false },
+      ],
+    });
+  });
+
+  it.concurrent("re-sends the same slice of the file on every hop of a chain", async () => {
+    const SLICE_START = 4096;
+    const slice = FILE.subarray(SLICE_START, SLICE_START + 40 * 1024);
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, slice, {
+      "/start": { status: 307, location: "/second" },
+      "/second": { status: 308, location: "/final" },
+    });
+
+    const res = await fetch(new URL("/start", server.url), {
+      method: "POST",
+      body: Bun.file(join(String(dir), "body.bin")).slice(SLICE_START, SLICE_START + slice.byteLength),
+    });
+
+    expect({ status: res.status, text: await res.text(), hops }).toEqual({
+      status: 200,
+      text: "final",
+      hops: [received("POST", "/start", slice), received("POST", "/second", slice), received("POST", "/final", slice)],
+    });
+  });
+
+  // sendfile(2) needs a plaintext socket. A redirect onto https has to upload
+  // the same file bytes over TLS instead, and a further redirect from there
+  // has to send them once more.
+  it.concurrent("re-sends the body when the redirect crosses over to https", async () => {
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": FILE });
+    const secureHops: Hop[] = [];
+    using secure = serveHops(secureHops, FILE, { "/secure": { status: 308, location: "/final" } }, tls);
+    const plainHops: Hop[] = [];
+    using plain = serveHops(plainHops, FILE, {
+      "/start": { status: 307, location: `https://127.0.0.1:${secure.port}/secure` },
+    });
+
+    const res = await fetch(new URL("/start", plain.url), {
+      method: "PUT",
+      body: Bun.file(join(String(dir), "body.bin")),
+      tls: { ca: tls.cert },
+    });
+
+    expect({ status: res.status, url: res.url, text: await res.text(), plainHops, secureHops }).toEqual({
+      status: 200,
+      url: `https://127.0.0.1:${secure.port}/final`,
+      text: "final",
+      plainHops: [received("PUT", "/start")],
+      secureHops: [received("PUT", "/secure"), received("PUT", "/final")],
+    });
+  });
+
+  // A server may redirect as soon as it has seen the request head, while the
+  // file is still being uploaded to it. The next hop must get the whole file
+  // from the beginning, not the remainder of the interrupted upload.
+  it.concurrent("re-sends the whole file after a redirect that interrupted the upload", async () => {
+    const BIG = randomBytes(4 * 1024 * 1024);
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": BIG });
+    const hops: Hop[] = [];
+    using final = serveHops(hops, BIG, {});
+
+    const sockets = new Set<net.Socket>();
+    const redirector = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        // Stop reading so the upload backs up, then redirect it mid-flight.
+        socket.pause();
+        socket.write(
+          `HTTP/1.1 307 Temporary Redirect\r\nLocation: ${final.url.origin}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+        );
+      });
+    });
+    await once(redirector.listen(0, "127.0.0.1"), "listening");
+    const { port } = redirector.address() as net.AddressInfo;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/start`, {
+        method: "POST",
+        body: Bun.file(join(String(dir), "body.bin")),
+      });
+      expect({ status: res.status, text: await res.text(), hops }).toEqual({
+        status: 200,
+        text: "final",
+        hops: [received("POST", "/final", BIG)],
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      redirector.close();
+      await once(redirector, "close");
+    }
+  });
 });
 
 it.each(["file:/etc/hosts", "file:hosts"])(

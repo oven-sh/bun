@@ -2,7 +2,9 @@ use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
 
-use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
+use crate::{
+    CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata, SendFile,
+};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
@@ -35,6 +37,11 @@ pub struct InternalState<'a> {
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
+    /// Send cursor for a `Sendfile` body, the counterpart of `request_body`
+    /// for `Bytes`: `SendFile::write` advances this copy, so
+    /// `original_request_body` keeps describing the whole file range and a
+    /// redirect can hand it to `start()` again.
+    pub(crate) sendfile: Option<SendFile>,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
     pub(crate) fail: Option<Error>,
@@ -128,6 +135,7 @@ impl Default for InternalState<'_> {
             content_length: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
+            sendfile: None,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
@@ -143,9 +151,14 @@ impl Default for InternalState<'_> {
 impl<'a> InternalState<'a> {
     pub(crate) fn init(body: HTTPRequestBody<'a>) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
+        let sendfile = match &body {
+            HTTPRequestBody::Sendfile(sendfile) => Some(*sendfile),
+            _ => None,
+        };
         InternalState {
             original_request_body: body,
             request_body,
+            sendfile,
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             decoded_body: MutableString::init_empty(),

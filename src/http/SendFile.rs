@@ -5,6 +5,9 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
+/// A request body sent with `sendfile(2)`. The fd is owned by the JS-side
+/// `FetchTasklet`, which keeps it open until the request has delivered its
+/// final result, so every redirect hop can send the same range again.
 #[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
@@ -20,6 +23,24 @@ impl SendFile {
             return false;
         }
         url.is_http() && url.href.len() > 0
+    }
+
+    /// The `content_size` bytes this body advertises as its Content-Length,
+    /// read into memory for a hop that cannot `sendfile(2)` (see
+    /// `HTTPClient::buffer_sendfile_body_for_tls`). Shorter if the file
+    /// shrank since the request was built; the hop's Content-Length is the
+    /// returned length, so the request stays well-formed either way.
+    pub(crate) fn read_to_vec(&self) -> crate::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes
+            .try_reserve_exact(self.content_size)
+            .map_err(|_| bun_alloc::AllocError)?;
+        bytes.resize(self.content_size, 0);
+        let read = bun_sys::File::borrow(&self.fd)
+            .pread_all(&mut bytes, self.offset as u64)
+            .map_err(bun_errno::SystemErrno::from)?;
+        bytes.truncate(read);
+        Ok(bytes)
     }
 
     // Takes the resolved fd directly rather than the socket; callers pass

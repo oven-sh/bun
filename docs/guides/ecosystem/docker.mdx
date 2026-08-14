@@ -23,14 +23,19 @@ WORKDIR /usr/src/app
 # install dependencies into temp directory
 # this will cache them and speed up future builds
 FROM base AS install
+# keep Bun's package cache in a Docker cache mount, so that when package.json
+# or bun.lock change, bun install only downloads the packages that changed
+ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
 RUN mkdir -p /temp/dev
 COPY package.json bun.lock /temp/dev/
-RUN cd /temp/dev && bun install --frozen-lockfile
+RUN --mount=type=cache,target=${BUN_INSTALL_CACHE_DIR} \
+    cd /temp/dev && bun install --frozen-lockfile
 
 # install with --production (exclude devDependencies)
 RUN mkdir -p /temp/prod
 COPY package.json bun.lock /temp/prod/
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+RUN --mount=type=cache,target=${BUN_INSTALL_CACHE_DIR} \
+    cd /temp/prod && bun install --frozen-lockfile --production
 
 # copy node_modules from temp directory
 # then copy all (non-ignored) project files into the image
@@ -54,6 +59,10 @@ USER bun
 EXPOSE 3000/tcp
 ENTRYPOINT [ "bun", "run", "index.ts" ]
 ```
+
+---
+
+The `install` stage keeps Bun's [global cache](/pm/global-cache) in a Docker [cache mount](https://docs.docker.com/reference/dockerfile/#run---mounttypecache). Docker still re-runs `bun install` whenever `package.json` or `bun.lock` change, but packages that an earlier build already downloaded are installed from the cache instead of being downloaded again. Setting `BUN_INSTALL_CACHE_DIR` makes Bun use the mounted directory as its cache. Cache mounts require BuildKit, which is the default builder in Docker Desktop and in Docker Engine 23.0 and later.
 
 ---
 

@@ -1645,10 +1645,6 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        // isDeletable may throw an exception, and if it does, we have to assume
-        // that the object still has references. Best we can do is hope nothing
-        // catastrophic happens.
-        //
         // Once the JS wrapper has been finalized, the subscription callback map
         // (stored on the JS object) is gone. Reading it would hit `unreachable`
         // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns

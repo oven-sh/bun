@@ -27,8 +27,6 @@ use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
-// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
-// `JsResult<()>` (valkey); `LiftJsResult` turns either into the `JsResult<()>` the trampoline folds.
 use crate::dispatch::fold;
 
 #[inline(always)]

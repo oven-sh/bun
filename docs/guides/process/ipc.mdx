@@ -54,7 +54,7 @@ process.on("message", message => {
 
 ---
 
-By default, messages are serialized with the JSC `serialize` API, which supports everything [`structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm), including strings, typed arrays, and objects. This does not support transferring ownership of objects.
+By default, messages are serialized with the JSC `serialize` API, which handles the JavaScript values that [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) handles: strings, numbers, plain objects and arrays, `Date`, `RegExp`, `Map`, `Set`, `Error`, typed arrays, and `ArrayBuffer`. Platform objects such as `Blob`, `Bun.file()`, and `net.BlockList` are not sent across the process boundary: the other process receives an empty object (`{}`) in their place, as it does in Node.js. This does not support transferring ownership of objects.
 
 ```ts child.ts icon="/icons/typescript.svg"
 // send a string

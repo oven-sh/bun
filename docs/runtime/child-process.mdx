@@ -301,7 +301,7 @@ process.send({ message: "Hello from child as object" });
 
 The `serialization` option controls the underlying communication format between the two processes:
 
-- `advanced`: (default) Messages are serialized using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
+- `advanced`: (default) Messages are serialized using the JSC `serialize` API, which handles the JavaScript values that [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) handles: strings, numbers, plain objects and arrays, `Date`, `RegExp`, `Map`, `Set`, `Error`, typed arrays, and `ArrayBuffer`. Platform objects such as `Blob`, `Bun.file()`, and `net.BlockList` are not sent across the process boundary: the other process receives an empty object (`{}`) in their place, as it does in Node.js. This does not support transferring ownership of objects.
 - `json`: Messages are serialized using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
 
 To disconnect the IPC channel from the parent process, call:

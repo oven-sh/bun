@@ -2644,18 +2644,6 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // `bun feedback`.
-        // SAFETY: `cli::CMD` is written once during single-threaded CLI
-        // startup before any worker thread is spawned; read-only here.
-        let current_cmd = unsafe { cli::CMD.read() };
-        if ctx.filters.is_empty()
-            && !ctx.workspaces
-            && current_cmd == Some(CommandTag::AutoCommand)
-            && target_name == b"feedback"
-        {
-            Self::bun_feedback(ctx)?;
-        }
-
         if log_errors {
             if let Some((path, loader)) = resolved_to_unrunnable_file {
                 bun_core::pretty_error!(
@@ -3116,33 +3104,6 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
-    fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
-        // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd_or_exe_dir(unsafe {
-            &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
-        });
-        let cwd_len = cwd.as_bytes().len();
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-
-        ctx.runtime_options.eval.script =
-            bun_core::runtime_embed_file!(Codegen, "eval/feedback.ts")
-                .as_bytes()
-                .to_vec()
-                .into_boxed_slice();
-
-        Self::boot(
-            ctx,
-            entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice(),
-            None,
-        )?;
-        Global::exit(0);
-    }
-
     fn unlink_staged_path(path: &[u8]) {
         let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
         if path.len() >= zbuf.len() {

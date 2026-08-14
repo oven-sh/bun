@@ -420,15 +420,14 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
 /// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
-/// "init once in `start()`" shape as `cli::LOG_` and [`CMD`].
+/// "init once in `start()`" shape as `cli::LOG_`.
 ///
 /// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster (the same
-/// pathology documented for `OnceLock::set` on [`CMD`]). `cli_arena()` is on the
-/// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
-/// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
-/// `bun` invocation; a plain cell is the correct shape.
+/// fat-LTO parks them tens of MB away from the startup symbol cluster, so every
+/// `bun` invocation would fault a fresh cold page to initialize it. `cli_arena()`
+/// is on the hot `bun <file>` / `bun run <script>` path (via `cli_dupe` /
+/// `cli_dupe_z` / `runner_arena`), so a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -487,17 +486,6 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
 thread_local! {
     pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
 }
-
-/// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
-/// can ask "which subcommand are we in". Set once during single-threaded
-/// startup; read freely thereafter.
-///
-/// `RacyCell`, not `OnceLock`: `OnceLock::set` routes through stdlib's
-/// `#[cold] fn initialize`, which fat-LTO places ~36 MB away from the
-/// startup.order cluster and faults a fresh page on every `bun` invocation.
-/// The write happens before any
-/// thread is spawned, so a bare cell is the correct shape.
-static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -677,7 +665,6 @@ pub mod help_command {
   <b><cyan>init<r>                           Start an empty Bun project from a built-in template
   <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
   <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
-  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
 "),
@@ -1129,12 +1116,8 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
-        // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
-        unsafe { CMD.write(Some(cmd)) };
-        // The crash handler can't read `CMD` (lower-tier crate); mirror the
-        // one-byte command tag into its `cli_state` so crash-report trace
-        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
+        // Record the one-byte command tag in the crash handler's `cli_state` so
+        // crash-report trace strings encode the running subcommand.
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);

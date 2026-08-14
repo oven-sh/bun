@@ -65,7 +65,9 @@ pub fn describe_last_close(fd: i32) -> String {
             "fd {fd} was last closed successfully (close #{}) on thread {}:\n{}",
             entry.seq, entry.thread, entry.backtrace
         ),
-        None => format!("fd {fd}: no successful close recorded through bun_sys (closed by C/C++ code, or never closed)"),
+        None => format!(
+            "fd {fd}: no successful close recorded through bun_sys (closed by C/C++ code, or never closed)"
+        ),
     }
 }
 

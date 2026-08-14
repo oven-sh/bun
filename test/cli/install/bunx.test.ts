@@ -217,14 +217,17 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
     semverVersions = semverVersions.slice(0, 2);
   }
 
-  // Every version depends on the same package, so the simultaneous installs
-  // below (one shared install cache) also race to extract that one dependency,
-  // the way the real semver versions all shared lru-cache.
+  // Like the real 7.5+ versions (which share lru-cache), every version depends
+  // on one shared package, so the simultaneous installs below also race to
+  // extract the same dependency into the shared install cache. Not on Windows:
+  // two installs extracting the same package there fail with "ENOENT: failed
+  // opening cache/package/version dir" roughly half the time, and the real
+  // 7.0.0 and 7.1.0 that Windows runs have no dependencies either.
   using registry = localRegistry(
     { name: "lru-cache", version: "1.0.0", files: { "index.js": "" } },
     ...semverVersions.map(version => ({
       ...fixturePackage("semver", version, "semver"),
-      dependencies: { "lru-cache": "1.0.0" },
+      ...(!isWindows && { dependencies: { "lru-cache": "1.0.0" } }),
     })),
   );
 
@@ -253,11 +256,23 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
   });
 
   const results = await Promise.all(
-    processes.map(p => Promise.all([p.stdout.text(), p.stderr.text(), p.exited] as const)),
+    processes.map(async (subprocess, i) => {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        subprocess.stdout.text(),
+        subprocess.stderr.text(),
+        subprocess.exited,
+      ]);
+      return { version: semverVersions[i], stdout: stdout.trim(), stderr, exitCode };
+    }),
   );
-  for (const [, stderr] of results) expect(stderr).not.toContain("error:");
-  expect(results.map(([stdout]) => stdout.trim())).toEqual(semverVersions.map(v => `semver ${v} --help`));
-  expect(results.map(([, , exitCode]) => exitCode)).toEqual(semverVersions.map(() => 0));
+  expect(results).toEqual(
+    semverVersions.map(version => ({
+      version,
+      stdout: `semver ${version} --help`,
+      stderr: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    })),
+  );
 });
 
 it.concurrent("should install and run default (latest) version", async () => {

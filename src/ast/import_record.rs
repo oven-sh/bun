@@ -75,8 +75,9 @@ bitflags::bitflags! {
         /// Code splitting repointed this `import()` from the file it named at
         /// the JavaScript chunk built for that file. The options object written
         /// on the `import()` described the original file, so the printer
-        /// leaves it out.
-        const POINTS_TO_CHUNK = 1 << 10;
+        /// leaves it out. Not set when the chunk is the file's own CSS or HTML
+        /// output, which the options still describe.
+        const POINTS_TO_JS_CHUNK = 1 << 10;
 
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;

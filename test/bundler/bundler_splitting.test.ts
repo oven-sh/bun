@@ -328,9 +328,9 @@ describe("bundler", () => {
     },
   });
 
-  // A dynamic import the linker points at a chunk must not keep the import
-  // attributes the user wrote for the original file: the chunk is JavaScript,
-  // and the runtime would otherwise try to load it with the attribute's loader.
+  // A dynamic import the linker points at a JavaScript chunk must not keep the
+  // import attributes the user wrote for the original file: the runtime would
+  // otherwise try to load the chunk with the attribute's loader.
   itBundled("splitting/DynamicImportWithAttributeToChunk", {
     files: {
       "/entry.ts": `
@@ -351,17 +351,27 @@ describe("bundler", () => {
     },
   });
 
+  // The attribute is what selects the loader for these files (the extension
+  // does not), so each chunk holds the file parsed with that loader, and the
+  // attribute has nothing left to do at runtime.
   itBundled("splitting/DynamicImportAttributesToChunkAllLoaders", {
     files: {
       "/entry.ts": `
-        const json = await import("./data.json", { assert: { type: "json" } });
-        const text = await import("./note.txt", { with: { type: "text" } });
-        const toml = await import("./config.toml", { with: { type: "toml" } });
-        console.log(json.default.answer, JSON.stringify(text.default), toml.default.name);
+        const json = await import("./data.notjson", { assert: { type: "json" } });
+        const text = await import("./note.md", { with: { type: "text" } });
+        const toml = await import("./config", { with: { type: "toml" } });
+        const file = await import("./asset.bin", { with: { type: "file" } });
+        console.log(
+          json.default.answer,
+          JSON.stringify(text.default),
+          toml.default.name,
+          /^\\.\\/asset-[a-z0-9]+\\.bin$/.test(file.default),
+        );
       `,
-      "/data.json": `{ "answer": 42 }`,
-      "/note.txt": `hello`,
-      "/config.toml": `name = "from toml"`,
+      "/data.notjson": `{ "answer": 42 }`,
+      "/note.md": `# hello`,
+      "/config": `name = "from toml"`,
+      "/asset.bin": `binary`,
     },
     splitting: true,
     outdir: "/out",
@@ -370,11 +380,92 @@ describe("bundler", () => {
       expect(entry).toMatch(/import\("\.\/data-[a-z0-9]+\.js"\)/);
       expect(entry).toMatch(/import\("\.\/note-[a-z0-9]+\.js"\)/);
       expect(entry).toMatch(/import\("\.\/config-[a-z0-9]+\.js"\)/);
+      expect(entry).toMatch(/import\("\.\/asset-[a-z0-9]+\.js"\)/);
       expect(entry).not.toContain("type:");
     },
     run: {
       file: "/out/entry.js",
-      stdout: '42 "hello" from toml',
+      stdout: '42 "# hello" from toml true',
+    },
+  });
+
+  // The options do not have to be an object literal at the import() site.
+  itBundled("splitting/DynamicImportOptionsVariableToChunk", {
+    files: {
+      "/entry.ts": `
+        const options = { with: { type: "json" } };
+        const { default: data } = await import("./data.json", options);
+        console.log(data.answer);
+      `,
+      "/data.json": `{ "answer": 42 }`,
+    },
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/data-[a-z0-9]+\.js"\)/);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+
+  // The import() lives in a module shared by two entry points, so the rewrite
+  // happens in a shared chunk rather than in an entry point's chunk.
+  itBundled("splitting/DynamicImportAttributesToChunkFromSharedChunk", {
+    files: {
+      "/a.ts": `
+        import { load } from "./shared";
+        console.log("a", await load());
+      `,
+      "/b.ts": `
+        import { load } from "./shared";
+        console.log("b", await load());
+      `,
+      "/shared.ts": `
+        export async function load() {
+          const { default: data } = await import("./data.json", { with: { type: "json" } });
+          return data.answer;
+        }
+      `,
+      "/data.json": `{ "answer": 42 }`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const outputs = readdirSync(api.outdir).map(name => readFileSync(join(api.outdir, name), "utf8"));
+      expect(outputs.filter(code => /import\("\.\/data-[a-z0-9]+\.js"\)/.test(code))).toHaveLength(1);
+      expect(outputs.filter(code => code.includes("type:"))).toHaveLength(0);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a 42" },
+      { file: "/out/b.js", stdout: "b 42" },
+    ],
+  });
+
+  // One options object is shared by both arms of a conditional import(). The
+  // arm that stays external keeps it; the arm pointed at a chunk drops it.
+  itBundled("splitting/ConditionalDynamicImportExternalAndChunk", {
+    files: {
+      "/entry.ts": `
+        const useExternal = process.argv.length > 100;
+        const { default: data } = await import(useExternal ? "external-data" : "./data.json", { with: { type: "json" } });
+        console.log(data.answer);
+      `,
+      "/data.json": `{ "answer": 42 }`,
+    },
+    external: ["external-data"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(
+        /import\("external-data", \{ with: \{ type: "json" \} \}\) : import\("\.\/data-[a-z0-9]+\.js"\)/,
+      );
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
     },
   });
 
@@ -420,6 +511,25 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       stdout: "42",
+    },
+  });
+
+  // A dynamically imported stylesheet is pointed at its CSS output, not at a
+  // JavaScript chunk, so the attribute still describes what gets loaded.
+  itBundled("splitting/DynamicImportToCssChunkKeepsAttribute", {
+    files: {
+      "/entry.ts": `
+        export const sheet = import("./styles.css", { with: { type: "css" } });
+      `,
+      "/styles.css": `.a { color: red; }`,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(
+        /import\("\.\/styles-[a-z0-9]+\.css", \{ with: \{ type: "css" \} \}\)/,
+      );
     },
   });
 

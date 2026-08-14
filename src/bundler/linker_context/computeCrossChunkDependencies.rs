@@ -87,9 +87,9 @@ pub(crate) fn compute_cross_chunk_dependencies(
 struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
-    // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
-    // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
-    // (caller stack frame).
+    // the caller's sequential `walk` loop; `walk` only reads
+    // `chunks[other].{unique_key,content}` (disjoint from the per-iteration
+    // `&mut Chunk`). The slice outlives the struct (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
@@ -171,16 +171,21 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
+                        let other_chunk = &_chunks[other_chunk_index as usize];
                         // Slice copy (fat pointer):
                         // `path.text` borrows the chunk's
                         // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
                         // which outlives the link pass.
-                        import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.text = other_chunk.unique_key;
                         import_record.source_index = Index::INVALID;
-                        import_record.loader = None;
-                        import_record
-                            .flags
-                            .insert(ImportRecordFlags::POINTS_TO_CHUNK);
+                        // A CSS or HTML entry point's chunk is the .css/.html output
+                        // itself, which the import's attributes still describe.
+                        if other_chunk.content.is_javascript() {
+                            import_record.loader = None;
+                            import_record
+                                .flags
+                                .insert(ImportRecordFlags::POINTS_TO_JS_CHUNK);
+                        }
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all

@@ -2275,6 +2275,100 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/13195
+  it("should fall back to workspace for file: dependency with invalid path", async () => {
+    await withContext(defaultOpts, async ctx => {
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+      );
+      await mkdir(join(ctx.package_dir, "packages", "pkg-a"), { recursive: true });
+      await mkdir(join(ctx.package_dir, "packages", "pkg-b"), { recursive: true });
+      await writeFile(
+        join(ctx.package_dir, "packages", "pkg-a", "package.json"),
+        JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "packages", "pkg-b", "package.json"),
+        JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: {
+            "pkg-a": "file: *",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(err).toContain('warn: file dependency "pkg-a" has an invalid path');
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "2 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(ctx.requested).toBe(0);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "pkg-a", "pkg-b"]);
+      expect(ctx.package_dir).toHaveWorkspaceLink(["pkg-a", "packages/pkg-a"]);
+      expect(ctx.package_dir).toHaveWorkspaceLink(["pkg-b", "packages/pkg-b"]);
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  it("should still fail on file: dependency with invalid path when not a workspace member", async () => {
+    await withContext(defaultOpts, async ctx => {
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+      );
+      await mkdir(join(ctx.package_dir, "packages", "pkg-b"), { recursive: true });
+      await writeFile(
+        join(ctx.package_dir, "packages", "pkg-b", "package.json"),
+        JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: {
+            "not-a-workspace-pkg": "file: *",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("error:");
+      expect(err).toContain("not-a-workspace-pkg");
+      await stdout.text();
+      expect(await exited).toBe(1);
+    });
+  });
+
   it("should edit package json correctly with git dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

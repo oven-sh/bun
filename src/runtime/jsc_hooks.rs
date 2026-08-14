@@ -957,6 +957,24 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { auto_tick_impl(vm, true) }
+}
+
+/// [`auto_tick`] for a scoped run's turn (`domain_run::ScopedRun::turn`), which
+/// has already run the leading immediates pass and checked its exit condition
+/// after it: a condition satisfied by an immediate must not sit through a poll.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+pub(crate) unsafe fn auto_tick_for_domain_run(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { auto_tick_impl(vm, false) }
+}
+
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn auto_tick_impl(vm: *mut VirtualMachine, run_immediates: bool) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -968,8 +986,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
-    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-    unsafe { (*el).tick_immediate_tasks(vm) };
+    if run_immediates {
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        unsafe { (*el).tick_immediate_tasks(vm) };
+    }
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
@@ -1072,7 +1092,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1082,6 +1102,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            // A scoped run turning the loop must not sleep past its caller's deadline.
+            if let Some(deadline) = crate::domain_run::poll_deadline() {
+                let now = *now.get_or_insert_with(|| {
+                    bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                });
+                let remaining = if deadline.greater(&now) {
+                    deadline.duration(&now)
+                } else {
+                    bun_core::Timespec { sec: 0, nsec: 0 }
+                };
+                if !have_timeout || timespec.greater(&remaining) {
+                    timespec = remaining;
+                    have_timeout = true;
+                }
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {

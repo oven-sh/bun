@@ -582,6 +582,21 @@ JSC_DEFINE_HOST_FUNCTION(functionRunInDomainForTesting, (JSGlobalObject * global
     return JSValue::encode(tuple);
 }
 
+// runUntilInDomainForTesting(thunk) -> promise
+//   Enter a fresh scoped run, call thunk (which returns a promise created under
+//   that domain), turn the whole loop for the domain until the promise settles.
+extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk);
+JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thunk = callFrame->argument(0);
+    if (!thunk.isCallable())
+        return throwVMTypeError(globalObject, scope, "runUntilInDomainForTesting expects a function"_s);
+    RELEASE_AND_RETURN(scope, Bun__Domain__runUntilInDomainForTesting(globalObject, JSValue::encode(thunk)));
+}
+
 // currentDomainForTesting() -> [contextDomain, activeRunDomain]
 JSC_DECLARE_HOST_FUNCTION(functionCurrentDomainForTesting);
 JSC_DEFINE_HOST_FUNCTION(functionCurrentDomainForTesting, (JSGlobalObject * globalObject, CallFrame*))
@@ -1065,7 +1080,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 38);
+    INIT_NATIVE_MODULE(BunJSC, 39);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1101,6 +1116,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
     putNativeFn(Identifier::fromString(vm, "runInDomainForTesting"_s), functionRunInDomainForTesting);
+    putNativeFn(Identifier::fromString(vm, "runUntilInDomainForTesting"_s), functionRunUntilInDomainForTesting);
     putNativeFn(Identifier::fromString(vm, "currentDomainForTesting"_s), functionCurrentDomainForTesting);
 
     // Deprecated

@@ -622,6 +622,9 @@ pub(crate) fn tick_queue_with_count(
     let global_vm = global.vm();
 
     while let Some(task) = el.tasks.read_item() {
+        if crate::domain_run::park_task_if_foreign(task) {
+            continue;
+        }
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
@@ -852,14 +855,16 @@ unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
+    let immediate = task.cast::<crate::timer::ImmediateObject>();
+    if crate::domain_run::is_in_run()
+        // SAFETY: per fn contract — `task` is a live queued `ImmediateObject`; `vm` is live.
+        && unsafe { crate::domain_run::park_immediate_if_foreign(immediate, vm) }
+    {
+        return false;
+    }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    unsafe {
-        crate::timer::ImmediateObject::run_immediate_task(
-            task.cast::<crate::timer::ImmediateObject>(),
-            vm,
-        )
-    }
+    unsafe { crate::timer::ImmediateObject::run_immediate_task(immediate, vm) }
 }
 
 /// `__bun_cancel_pending_immediate` body — VM-teardown release of the event

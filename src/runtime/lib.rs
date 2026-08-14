@@ -38,6 +38,7 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
+pub mod domain_run;
 pub mod hw_exports;
 pub mod ipc;
 pub mod ipc_host;

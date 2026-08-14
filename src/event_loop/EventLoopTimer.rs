@@ -71,6 +71,10 @@ pub enum InHeap {
     None,
     Regular,
     Fake,
+    /// Due during a scoped event-loop run it did not belong to: held by
+    /// `bun_runtime::domain_run` (out of every heap, still `ACTIVE`) until the
+    /// run exits and reinserts it into `Regular`.
+    DeferredByRun,
 }
 
 impl EventLoopTimer {

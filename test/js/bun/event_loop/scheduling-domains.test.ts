@@ -19,10 +19,21 @@ import { bunEnv, bunExe } from "harness";
 
 const jsc = require("bun:jsc");
 const hasDomains = typeof jsc.runInDomainForTesting === "function";
-const { runInDomainForTesting, currentDomainForTesting } = jsc as {
+const { runInDomainForTesting, runUntilInDomainForTesting, currentDomainForTesting } = jsc as {
   runInDomainForTesting: <T>(thunk: () => T) => [number, T];
+  runUntilInDomainForTesting: <T>(thunk: () => Promise<T>) => Promise<T>;
   currentDomainForTesting: () => [number, number];
 };
+
+/** Turn the loop for a fresh domain until `thunk`'s promise settles; returns it settled. */
+function runUntil<T>(thunk: () => Promise<T>): Promise<T> {
+  const p = runUntilInDomainForTesting(thunk);
+  // The run only returns once the promise is no longer pending.
+  expect(Bun.peek.status(p)).not.toBe("pending");
+  return p;
+}
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+const immediate = () => new Promise<void>(r => setImmediate(r));
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
@@ -231,5 +242,173 @@ describe.skipIf(!hasDomains)("microtask domains", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("a\nuncaught:boom\nb\nafter\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!hasDomains)("scoped runs: timers and immediates", () => {
+  test("inner: the domain's timers, immediates and sleeps complete inside the run", () => {
+    const log: string[] = [];
+    const result = runUntil(async () => {
+      log.push("start");
+      await sleep(1);
+      log.push("slept");
+      await immediate();
+      log.push("immediate");
+      await Bun.sleep(1);
+      log.push("bun.sleep");
+      await new Promise<void>(r => {
+        const t = setInterval(() => {
+          log.push("interval");
+          if (log.filter(x => x === "interval").length === 2) {
+            clearInterval(t);
+            r();
+          }
+        }, 1);
+      });
+      setImmediate(() => log.push("trailing-immediate"));
+      return 42;
+    });
+    // Settled synchronously from the caller's point of view, including what the
+    // final step made ready (the trailing immediate).
+    expect(Bun.peek(result)).toBe(42);
+    expect(log).toEqual(["start", "slept", "immediate", "bun.sleep", "interval", "interval", "trailing-immediate"]);
+  });
+
+  test("outer: due timers, immediates and microtasks do not run during the run, and all run afterwards", async () => {
+    const log: string[] = [];
+    const outerTimer = new Promise<void>(r =>
+      setTimeout(() => {
+        log.push("outer-timeout");
+        r();
+      }, 0),
+    );
+    const outerImmediate = new Promise<void>(r =>
+      setImmediate(() => {
+        log.push("outer-immediate");
+        r();
+      }),
+    );
+    queueMicrotask(() => log.push("outer-microtask"));
+    process.nextTick(() => log.push("outer-nexttick"));
+
+    runUntil(async () => {
+      // Long enough for the outer 0ms timer to be well overdue.
+      await sleep(20);
+      log.push("inner-slept");
+      await immediate();
+      log.push("inner-immediate");
+    });
+    log.push("after-run");
+    expect(log).toEqual(["inner-slept", "inner-immediate", "after-run"]);
+
+    await Promise.all([outerTimer, outerImmediate]);
+    expect(log.slice(3).sort()).toEqual(["outer-immediate", "outer-microtask", "outer-nexttick", "outer-timeout"]);
+    // Ticks and microtasks queued before the run keep their usual precedence.
+    expect(log.indexOf("outer-nexttick")).toBeLessThan(log.indexOf("outer-microtask"));
+    expect(log.indexOf("outer-microtask")).toBeLessThan(log.indexOf("outer-timeout"));
+  });
+
+  test("outer timers keep their relative order and deadlines after being deferred", async () => {
+    const fired: Array<[string, number]> = [];
+    const t0 = performance.now();
+    const mk = (name: string, ms: number) =>
+      new Promise<void>(r =>
+        setTimeout(() => {
+          fired.push([name, performance.now() - t0]);
+          r();
+        }, ms),
+      );
+    // a and b become due during the run; c is due only after it.
+    const a = mk("a", 1);
+    const b = mk("b", 5);
+    const b2 = mk("b2", 5);
+    const c = mk("c", 80);
+
+    runUntil(() => sleep(30));
+    expect(fired).toEqual([]);
+
+    await Promise.all([a, b, b2, c]);
+    expect(fired.map(f => f[0])).toEqual(["a", "b", "b2", "c"]);
+    // c was not made early by the run, nor pushed late by the deferred ones.
+    expect(fired[3][1]).toBeGreaterThanOrEqual(79);
+  });
+
+  test("clearTimeout on a deferred outer timer during the run is honored", async () => {
+    const log: string[] = [];
+    const outer = setTimeout(() => log.push("outer-should-not-fire"), 1);
+    const later = new Promise<void>(r => setTimeout(r, 40));
+
+    runUntil(async () => {
+      await sleep(20); // outer is overdue → deferred by the run
+      clearTimeout(outer);
+      log.push("cleared");
+    });
+    await later;
+    expect(log).toEqual(["cleared"]);
+  });
+
+  test("nested runs: the inner run completes its own work; the middle run's timer waits for it", () => {
+    const log: string[] = [];
+    runUntil(async () => {
+      const middleTimer = sleep(5).then(() => log.push("middle-timer"));
+      await sleep(1);
+      log.push("middle-before-inner");
+      runUntil(async () => {
+        await sleep(20); // middle's 5ms timer is overdue in here, but foreign
+        log.push("inner-done");
+      });
+      log.push("middle-after-inner");
+      await middleTimer;
+      log.push("middle-done");
+    });
+    expect(log).toEqual(["middle-before-inner", "inner-done", "middle-after-inner", "middle-timer", "middle-done"]);
+  });
+
+  test("the domain's nextTicks run inside; outer nextTicks queued before wait, in order", async () => {
+    const log: string[] = [];
+    process.nextTick(() => log.push("outer-1"));
+    process.nextTick(() => {
+      log.push("outer-2");
+      process.nextTick(() => log.push("outer-2.1"));
+    });
+    runUntil(async () => {
+      process.nextTick(() => log.push("inner-tick-1"));
+      await sleep(1);
+      await new Promise<void>(r => process.nextTick(r));
+      log.push("inner-after-tick");
+      process.nextTick(() => log.push("inner-tick-2"));
+    });
+    log.push("after-run");
+    expect(log).toEqual(["inner-tick-1", "inner-after-tick", "inner-tick-2", "after-run"]);
+    await immediate();
+    expect(log.slice(4)).toEqual(["outer-1", "outer-2", "outer-2.1"]);
+  });
+
+  test("the active run domain is visible inside and cleared after", () => {
+    let inside!: [number, number];
+    let insideTimer!: [number, number];
+    runUntil(async () => {
+      inside = currentDomainForTesting();
+      await sleep(1);
+      insideTimer = currentDomainForTesting();
+    });
+    expect(inside[0]).toBeGreaterThan(0);
+    expect(inside).toEqual([inside[0], inside[0]]);
+    expect(insideTimer).toEqual(inside);
+    expect(currentDomainForTesting()).toEqual([0, 0]);
+  });
+
+  test("a run whose condition is met by an immediate does not sit through a poll", async () => {
+    // A listener keeps the loop active with nothing to wake it: if the run polled
+    // after the immediate settled its promise it would block indefinitely.
+    using server = Bun.serve({ port: 0, fetch: () => new Response("unused") });
+    const t0 = performance.now();
+    runUntil(async () => {
+      await immediate();
+      await immediate();
+    });
+    runUntil(() => new Promise<void>(r => process.nextTick(r)));
+    runUntil(() => Promise.resolve().then(() => {}));
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });

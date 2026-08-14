@@ -130,6 +130,10 @@ pub mod task_tag {
 #[derive(Copy, Clone)]
 pub struct Task {
     pub tag: TaskTag,
+    /// Scheduling domain of the scoped event-loop run that was active when the
+    /// task was enqueued on the JS thread (0 = none / posted from another
+    /// thread). Fits in the padding after `tag`. See `bun_runtime::domain_run`.
+    pub domain: u32,
     pub ptr: *mut (),
 }
 
@@ -175,7 +179,11 @@ impl TaskTag {
 impl Task {
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
-        Task { tag, ptr }
+        Task {
+            tag,
+            domain: 0,
+            ptr,
+        }
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl

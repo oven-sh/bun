@@ -718,7 +718,7 @@ impl EventLoop {
         // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
-    pub fn enqueue_task(&mut self, task: Task) {
+    pub fn enqueue_task(&mut self, mut task: Task) {
         if self.closed_for_tasks {
             // Teardown already released the queue and this loop never ticks
             // again: release the task now, as `release_queued_tasks` would have
@@ -726,6 +726,11 @@ impl EventLoop {
             // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
             unsafe { __bun_release_task_unrun(task) };
             return;
+        }
+        if task.domain == 0 {
+            // Attribute to the scoped run active right now (0 when none), so a
+            // nested run can tell an outer run's tasks from its own.
+            task.domain = bun_event_loop::active_run_domain();
         }
         let _ = self.tasks.write_item(task);
     }

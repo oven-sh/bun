@@ -26,6 +26,27 @@ pub mod SpawnSyncEventLoop;
 #[path = "AnyEventLoop.rs"]
 pub mod any_event_loop;
 
+// ─── scoped event-loop runs ──────────────────────────────────────────────────
+// The run driver lives in `bun_runtime::domain_run` (it needs the timer heap
+// and the VM); the one piece of state lower tiers need — which run is innermost
+// on this thread — is mirrored here so `Task` stamping and the gates are a
+// single TLS load with no upward call.
+thread_local! {
+    static ACTIVE_RUN_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// The innermost scoped event-loop run's domain on this thread; 0 when none.
+#[inline]
+pub fn active_run_domain() -> u32 {
+    ACTIVE_RUN_DOMAIN.get()
+}
+
+/// `bun_runtime::domain_run` only: entering/exiting a run.
+#[inline]
+pub fn set_active_run_domain(domain: u32) {
+    ACTIVE_RUN_DOMAIN.set(domain)
+}
+
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;

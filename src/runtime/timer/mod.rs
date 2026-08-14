@@ -306,7 +306,7 @@ impl TimerHeap {
     /// `v` is a valid, exclusively-owned node not currently in any heap
     /// (its `IntrusiveField` links are null).
     #[inline]
-    unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
+    pub(crate) unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.insert(v) };
     }
@@ -827,6 +827,7 @@ impl All {
             InHeap::Regular => unsafe { self.timers.remove(timer) },
             // SAFETY: timer is in `self.fake_timers.timers` per `in_heap`
             InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
+            InHeap::DeferredByRun => crate::domain_run::forget_deferred_timer(timer),
         }
         // SAFETY: `timer` is still a valid live EventLoopTimer.
         unsafe {
@@ -1038,26 +1039,43 @@ impl All {
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
-    fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
-        let timer = self.timers.peek()?;
-        if !*has_set_now {
-            // Real clock: this heap is the opt-out-of-fake-timers set.
-            *now = Timespec::now(TimespecMockMode::ForceRealTime);
-            *has_set_now = true;
+    ///
+    /// During a scoped event-loop run, a due JS timer that belongs to another
+    /// domain is handed to `domain_run` instead of being returned (see
+    /// `defer_timer_if_foreign`), and the scan continues with the next node.
+    fn next(
+        &mut self,
+        has_set_now: &mut bool,
+        now: &mut Timespec,
+        vm: *mut (), /* erased *mut VirtualMachine */
+    ) -> Option<*mut EventLoopTimer> {
+        loop {
+            let timer = self.timers.peek()?;
+            if !*has_set_now {
+                // Real clock: this heap is the opt-out-of-fake-timers set.
+                *now = Timespec::now(TimespecMockMode::ForceRealTime);
+                *has_set_now = true;
+            }
+            // SAFETY: peek returns a live heap node
+            let next = unsafe { &(*timer).next };
+            if (Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            })
+            .greater(now)
+            {
+                return None;
+            }
+            let deleted = self.timers.delete_min().expect("peek succeeded");
+            debug_assert!(core::ptr::eq(deleted, timer));
+            if crate::domain_run::is_in_run()
+                // SAFETY: `timer` was just popped and is live; `vm` per caller contract.
+                && unsafe { crate::domain_run::defer_timer_if_foreign(timer, vm.cast()) }
+            {
+                continue;
+            }
+            return Some(timer);
         }
-        // SAFETY: peek returns a live heap node
-        let next = unsafe { &(*timer).next };
-        if (Timespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        })
-        .greater(now)
-        {
-            return None;
-        }
-        let deleted = self.timers.delete_min().expect("peek succeeded");
-        debug_assert!(core::ptr::eq(deleted, timer));
-        Some(timer)
     }
 
     /// # Safety
@@ -1093,7 +1111,7 @@ impl All {
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `next()` call only — dropped before fire().
-            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
+            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now, vm) else {
                 break;
             };
             // Note: re-pack into bun_event_loop's local Timespec stub

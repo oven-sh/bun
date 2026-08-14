@@ -112,6 +112,10 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  // BUN_INSPECT_NOTIFY as read by the inspected thread at startup. It is passed
+  // in because that thread removes the launcher variables from the environment
+  // process.env is built from. Empty when unset or already delivered.
+  notifyUrl: string,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -246,11 +250,7 @@ export default function (
     }
   }
 
-  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
   if (notifyUrl) {
-    // Only send this once.
-    process.env["BUN_INSPECT_NOTIFY"] = "";
-
     if (notifyUrl.startsWith("unix://")) {
       const path = require("node:path");
       notify({

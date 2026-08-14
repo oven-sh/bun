@@ -1201,6 +1201,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     };
 
     // Initialize handles
+    // One requested script group inherits stdin like plain `bun run`.
+    let single_group = group_infos.len() == 1;
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {
         // Find which group this belongs to, for color assignment
@@ -1226,7 +1228,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
             options: SpawnOptions {
-                stdin: spawn::Stdio::Ignore,
+                stdin: if single_group {
+                    spawn::Stdio::Inherit
+                } else {
+                    spawn::Stdio::Ignore
+                },
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]

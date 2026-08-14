@@ -38,5 +38,5 @@
 
 # Android's platform resolver (netd) does not expose a nameserver list, so
 # dns.getServers() is [] there by design; both files exist to assert it is not.
-[ANDROID] test/js/node/test/parallel/test-dns.js [ FAIL ]
-[ANDROID] test/js/node/test/parallel/test-dns-get-server.js [ FAIL ]
+[ ANDROID ] test/js/node/test/parallel/test-dns.js [ FAIL ]
+[ ANDROID ] test/js/node/test/parallel/test-dns-get-server.js [ FAIL ]

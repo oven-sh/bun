@@ -2163,11 +2163,21 @@ impl<'a> PackageInstall<'a> {
             };
             let dest_dir: &Dir = owned_dest_dir.as_ref().unwrap_or(destination_dir);
 
-            let dest_dir_path = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+            // The link target is relative so a project can move as a whole, and
+            // the kernel resolves it from the directory the link really lives
+            // in. That is not `node_modules.path` when `node_modules` (or a
+            // directory above it inside the project) is itself a symlink, so
+            // ask for it: one `realpath` per linked package.
+            let mut joined_buf = path::path_buffer_pool::get();
+            let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                 &self.node_modules.path,
-                &mut dest_buf.0,
+                &mut joined_buf.0,
                 &[subdir.unwrap_or(b"")],
             );
+            let dest_dir_path = match sys::realpath(joined, &mut dest_buf) {
+                Ok(p) => p,
+                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+            };
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated

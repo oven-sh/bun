@@ -76,10 +76,18 @@ impl Mutex {
     /// `*this`, and the futex wake that may follow it goes by address only
     /// ([`Futex::wake_raw`](crate::futex::wake_raw)).
     ///
+    /// The same goes for the caller's frames: such a section has to reach the
+    /// owner through a raw pointer rather than a `&self` / `&mut self` of it
+    /// (protected until that function returns, too), and cannot be a
+    /// [`lock_guard`](Self::lock_guard) section, whose guard unlocks through
+    /// `&Mutex`. `pub` for the HTTP thread's side of `S3HttpDownloadStreamingTask`
+    /// (src/runtime/webcore/s3/download_stream.rs), whose final unlock lets the
+    /// JS thread free the task.
+    ///
     /// # Safety
     /// `this` must point to a mutex this thread holds. It stays valid until the
     /// lock is released; from then on another thread may free it.
-    pub(crate) unsafe fn unlock_raw(this: *const Self) {
+    pub unsafe fn unlock_raw(this: *const Self) {
         // SAFETY: the lock is still held, so `*this` is live (fn contract).
         unsafe { Impl::unlock_raw(&raw const (*this).impl_) }
     }

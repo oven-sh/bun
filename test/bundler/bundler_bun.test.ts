@@ -372,6 +372,33 @@ error: Hello World`,
       });
     }
 
+    // An onLoad plugin for the file takes precedence over the loader, as it
+    // does for every other loader.
+    test.concurrent("an onLoad plugin still receives the file", async () => {
+      using dir = tempDir("sqlite-loader-onload", {
+        "src/entry.ts": `import db from "./app.sqlite";\nconsole.log(db);\n`,
+        "src/app.sqlite": buildTimeCopy,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "src/entry.ts")],
+        target: "bun",
+        plugins: [
+          {
+            name: "schema",
+            setup(build) {
+              build.onLoad({ filter: /\.sqlite$/ }, () => ({
+                contents: `export default "generated from the database";`,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+      const bundle = await result.outputs[0].text();
+      expect(bundle).toContain("generated from the database");
+      expect(bundle).not.toContain('from "./app.sqlite"');
+    });
+
     test.concurrent("still requires target bun", async () => {
       using dir = tempDir("sqlite-loader-node-target", loaderMapProject);
       const { stderr, exitCode } = await bunBuild(String(dir), "--target", "node", "--loader", ".db:sqlite");

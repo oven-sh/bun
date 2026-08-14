@@ -667,6 +667,22 @@ impl FilePoll {
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
+                #[cfg(debug_assertions)]
+                {
+                    let what = std::format!(
+                        "epoll_ctl({}, fd {}, {}) failed: {} (poll flags before: {})",
+                        if op == EPOLL::CTL_MOD { "CTL_MOD" } else { "CTL_ADD" },
+                        fd.native(),
+                        <&'static str>::from(flag),
+                        errno
+                            .as_ref()
+                            .err()
+                            .and_then(|e| core::str::from_utf8(e.name()).ok())
+                            .unwrap_or("?"),
+                        FlagsFormatter(self.flags),
+                    );
+                    sys::close_ledger::report_fd_event(&what, fd.native());
+                }
                 self.deactivate(loop_);
                 return errno;
             }

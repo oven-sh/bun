@@ -2009,6 +2009,8 @@ mod posix_impl {
         // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            #[cfg(debug_assertions)]
+            let description = crate::close_ledger::FdDescription::of(fd.native());
             return match super::linux_syscall::close(fd.native()) {
                 Err(e) if e == libc::EBADF => {
                     #[cfg(debug_assertions)]
@@ -2017,7 +2019,7 @@ mod posix_impl {
                 }
                 _ => {
                     #[cfg(debug_assertions)]
-                    crate::close_ledger::record_closed(fd.native());
+                    crate::close_ledger::record_closed(fd.native(), description);
                     Ok(())
                 }
             };

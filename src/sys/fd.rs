@@ -101,6 +101,9 @@ impl FdExt for Fd {
             &fd_fmt_buf[..len]
         };
 
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        let description = sys::close_ledger::FdDescription::of(self.native());
+
         let result: Option<sys::Error> = {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -201,7 +204,7 @@ impl FdExt for Fd {
                     sys::close_ledger::report_ebadf("FdExt::close", self.native());
                 }
                 Some(_) => {}
-                None => sys::close_ledger::record_closed(self.native()),
+                None => sys::close_ledger::record_closed(self.native(), description),
             }
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {

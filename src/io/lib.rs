@@ -2238,6 +2238,10 @@ pub mod closer {
         scheduled_from: bun_core::StoredTrace,
         #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
         scheduled_on_tid: i64,
+        /// What the fd pointed at when the close was scheduled (empty if it
+        /// was already closed by then).
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_description: bun_sys::close_ledger::FdDescription,
     }
 
     #[cfg(not(windows))]
@@ -2255,6 +2259,10 @@ pub mod closer {
                         std::eprintln!(
                             "\n==================== Closer: close({}) = EBADF ====================",
                             self.fd.native()
+                        );
+                        std::eprintln!(
+                            "when this Closer was scheduled the fd was \"{}\" (empty = already closed at that point)",
+                            self.scheduled_description.as_str()
                         );
                         std::eprintln!(
                             "this Closer was scheduled on tid {} at:",
@@ -2295,6 +2303,8 @@ pub mod closer {
                 scheduled_from: bun_core::StoredTrace::capture(None),
                 #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
                 scheduled_on_tid: bun_sys::close_ledger::current_tid(),
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_description: bun_sys::close_ledger::FdDescription::of(fd.native()),
             }));
         }
     }

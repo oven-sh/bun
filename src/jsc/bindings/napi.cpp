@@ -106,16 +106,63 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
+namespace {
+
+// The exception handling behind NAPI_PREAMBLE_NO_PENDING_CHECK. An exception that is already on the
+// VM on entry (a termination an earlier call materialised while a worker is being stopped, or one a
+// JSC internal left behind) is stashed so the body runs against a clean VM, and put back on return.
+// With nothing pending the VM is left alone, so whatever the body raises stays pending, as after
+// NAPI_PREAMBLE.
+//
+// The restore must not undo a TerminationException the body raised: the body's exception checks
+// service VM traps, which is how a node:vm timeout or worker.terminate() becomes an exception, and
+// the trap fires only once. A bare JSC::SuspendExceptionScope puts the entry state back
+// unconditionally, which dropped the termination and left the calling JS running forever.
+class NapiSuspendExceptionScope {
+public:
+    explicit NapiSuspendExceptionScope(JSC::VM& vm)
+        : m_vm(vm)
+    {
+        if (vm.exceptionForInspection()) [[unlikely]] {
+            m_suspended.emplace(vm);
+        }
+    }
+
+    ~NapiSuspendExceptionScope()
+    {
+        if (!m_suspended) [[likely]] {
+            return;
+        }
+        bool bodyRaisedTermination = m_vm.hasPendingTerminationException();
+        m_suspended.reset();
+        if (bodyRaisedTermination) [[unlikely]] {
+            m_vm.throwTerminationException();
+        }
+    }
+
+    bool suspended() const { return m_suspended.has_value(); }
+
+private:
+    JSC::VM& m_vm;
+    std::optional<JSC::SuspendExceptionScope> m_suspended;
+};
+
+} // namespace
+
 // Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
 // an exception is pending (CHECK_ENV_NOT_IN_GC only) — node-addon-api relies on that to build the
-// Error it wraps a failed call in. Any exception already on the VM (a napi_throw*, or a termination
-// request that materialised in an earlier call while a worker is being stopped) is stashed for the
-// duration and restored on return; the throw scope still catches what the body itself raises.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
-    NAPI_LOG_CURRENT_FUNCTION;                                                     \
-    NAPI_CHECK_ARG(_env, _env);                                                    \
-    JSC::SuspendExceptionScope napi_preamble_suspended_exception__ { _env->vm() }; \
-    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());
+// Error it wraps a failed call in. An exception already on the VM is stashed for the duration of the
+// call and restored on return (see NapiSuspendExceptionScope). With nothing pending this behaves like
+// NAPI_PREAMBLE minus the env check: the exception check services VM traps, so a termination that
+// is waiting to be delivered is raised here and reported as napi_pending_exception.
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                      \
+    NAPI_LOG_CURRENT_FUNCTION;                                                    \
+    NAPI_CHECK_ARG(_env, _env);                                                   \
+    NapiSuspendExceptionScope napi_preamble_suspended_exception__ { _env->vm() }; \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());   \
+    if (!napi_preamble_suspended_exception__.suspended()) {                       \
+        NAPI_RETURN_IF_VM_EXCEPTION(_env);                                        \
+    }
 
 // Return an error code if arg is null. Only use for input validation.
 #define NAPI_CHECK_ARG(_env, arg)                               \
@@ -2891,9 +2938,10 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here and it's okay to assert at the end
+    // The value is a bigint so the conversion itself cannot throw, but its exception check services
+    // VM traps, so a termination can become pending here.
     *result = jsValue.toBigInt64(toJS(env));
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
     auto length = bigint->length();
@@ -2925,8 +2973,8 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here and it's okay to assert at the end
+    // As in napi_get_value_bigint_int64: the conversion cannot throw for a bigint, but its exception
+    // check services VM traps.
     *result = jsValue.toBigUInt64(toJS(env));
     NAPI_RETURN_IF_VM_EXCEPTION(env);
 

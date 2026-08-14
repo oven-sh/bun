@@ -2920,6 +2920,174 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// The ungated functions (see test_pending_exception_gate) whose bodies contain
+// an exception check: a bigint, a string and a symbol round trip. Statuses are
+// ignored on purpose.
+static void ungated_calls_round(napi_env env, napi_value bigint,
+                                napi_value string) {
+  int64_t i64 = 0;
+  uint64_t u64 = 0;
+  bool lossless = false;
+  napi_get_value_bigint_int64(env, bigint, &i64, &lossless);
+  napi_get_value_bigint_uint64(env, bigint, &u64, &lossless);
+
+  char utf8[16];
+  char16_t utf16[16];
+  size_t written = 0;
+  napi_get_value_string_utf8(env, string, utf8, sizeof utf8, &written);
+  napi_get_value_string_utf16(env, string, utf16, 16, &written);
+
+  napi_value out = nullptr;
+  napi_create_bigint_int64(env, i64, &out);
+  napi_create_bigint_uint64(env, u64, &out);
+  napi_create_symbol(env, string, &out);
+}
+
+// spin(bigint, string): a callback that does nothing but ungated calls, for a
+// script or worker to loop on while it gets terminated (node:vm `timeout`,
+// worker.terminate()). The termination is delivered at whichever exception
+// check comes first; several rounds per call keep that inside one of these
+// calls nearly every time, and it has to come back out of the call for the
+// loop to end. A plain napi_callback rather than a Napi::Function, because
+// node-addon-api aborts the process if one of its own calls fails once the
+// termination is pending.
+static napi_value ungated_calls_spin(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok) {
+    return nullptr;
+  }
+  for (int i = 0; i < 32; i++) {
+    ungated_calls_round(env, argv[0], argv[1]);
+  }
+  return nullptr;
+}
+
+static napi_value make_ungated_calls_spinner(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value spin;
+  NODE_API_CALL(env, napi_create_function(env, "spin", NAPI_AUTO_LENGTH,
+                                          ungated_calls_spin, nullptr, &spin));
+  return spin;
+}
+
+// Leaves an exception pending on the engine itself, not just recorded by
+// napi_throw_error: Bun's napi_call_function raises the recorded exception
+// before refusing the call. Returns false if the setup failed (an error has
+// been thrown in that case).
+static bool arm_engine_exception(napi_env env) {
+  napi_value global, noop;
+  NODE_API_CALL_CUSTOM_RETURN(env, false, napi_get_global(env, &global));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, false,
+      napi_create_function(
+          env, "noop", NAPI_AUTO_LENGTH,
+          [](napi_env, napi_callback_info) -> napi_value { return nullptr; },
+          nullptr, &noop));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, false, napi_throw_error(env, "EPENDING", "still pending"));
+  printf("napi_call_function: status=%d\n",
+         (int)napi_call_function(env, global, noop, 0, nullptr, nullptr));
+  return true;
+}
+
+// The ungated calls while an engine exception is pending must succeed
+// (test_pending_exception_gate checks the recorded case) and that exception
+// must still be the one pending afterwards.
+static napi_value
+test_ungated_calls_with_engine_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value bigint, string;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, -7, &bigint));
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "ungated", NAPI_AUTO_LENGTH, &string));
+  if (!arm_engine_exception(env)) {
+    return nullptr;
+  }
+
+  int64_t i64 = 0;
+  uint64_t u64 = 0;
+  bool lossless = false;
+  char utf8[16] = {0};
+  size_t written = 0;
+  napi_value out;
+  napi_status st;
+  st = napi_get_value_bigint_int64(env, bigint, &i64, &lossless);
+  printf("napi_get_value_bigint_int64: status=%d value=%" PRId64 "\n", (int)st,
+         i64);
+  st = napi_get_value_bigint_uint64(env, bigint, &u64, &lossless);
+  printf("napi_get_value_bigint_uint64: status=%d lossless=%d\n", (int)st,
+         (int)lossless);
+  st = napi_get_value_string_utf8(env, string, utf8, sizeof utf8, &written);
+  printf("napi_get_value_string_utf8: status=%d value=%s\n", (int)st, utf8);
+  st = napi_create_bigint_int64(env, i64, &out);
+  printf("napi_create_bigint_int64: status=%d\n", (int)st);
+  st = napi_create_bigint_uint64(env, u64, &out);
+  printf("napi_create_bigint_uint64: status=%d\n", (int)st);
+  st = napi_create_symbol(env, string, &out);
+  printf("napi_create_symbol: status=%d\n", (int)st);
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf("exception pending after: %s\n", pending ? "true" : "false");
+
+  napi_value exception, code;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+  NODE_API_CALL(env, napi_get_named_property(env, exception, "code", &code));
+  char code_buf[32] = {0};
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, code, code_buf,
+                                                sizeof code_buf, nullptr));
+  printf("pending exception code: %s\n", code_buf);
+
+  return ok(env);
+}
+
+// Bun-only. Run from a node:vm script with a `timeout`: with an engine
+// exception pending, keeps making an ungated call until the timeout's
+// termination is delivered inside one of them, which the call reports. The
+// termination must then be what is left pending (it is the one exception
+// napi_get_and_clear_last_exception cannot clear), not the exception the
+// call found pending when it was entered. Bounded so that a runtime that
+// never reports the termination fails instead of hanging.
+static napi_value
+ungated_calls_until_terminated(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value bigint;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, -7, &bigint));
+  if (!arm_engine_exception(env)) {
+    return nullptr;
+  }
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  napi_status st;
+  do {
+    int64_t value;
+    bool lossless;
+    st = napi_get_value_bigint_int64(env, bigint, &value, &lossless);
+  } while (st == napi_ok && std::chrono::steady_clock::now() < deadline);
+  printf("napi_get_value_bigint_int64 eventually returned: status=%d\n",
+         (int)st);
+
+  napi_value exception;
+  napi_get_and_clear_last_exception(env, &exception);
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf("pending after napi_get_and_clear_last_exception: %s\n",
+         pending ? "true" : "false");
+  return nullptr;
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -4197,6 +4365,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
+  REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
+  REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);
+  REGISTER_FUNCTION(env, exports, ungated_calls_until_terminated);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

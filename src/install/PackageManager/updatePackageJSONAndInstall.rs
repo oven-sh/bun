@@ -351,21 +351,12 @@ fn update_package_json_and_install_with_manager_with_updates(
                             if changed {
                                 e_object.properties.truncate(new_len);
 
-                                // If the dependencies list is now empty, remove it from the package.json
-                                // since we're swapRemove, we have to re-sort it
                                 if e_object.properties.len_u32() == 0 {
-                                    // TODO: Theoretically we could change these two lines to
-                                    // `.orderedRemove(query.i)`, but would that change user-facing
-                                    // behavior?
                                     let _ = current_package_json_root
                                         .data
                                         .as_e_object_mut()
                                         .properties
-                                        .swap_remove(query.i as usize);
-                                    current_package_json_root
-                                        .data
-                                        .as_e_object_mut()
-                                        .package_json_sort();
+                                        .remove(query.i as usize);
                                 } else {
                                     e_object.alphabetize_properties();
                                 }

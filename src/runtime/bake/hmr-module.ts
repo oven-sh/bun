@@ -935,13 +935,9 @@ declare global {
   }
 }
 
-// bun:bake/server, bun:bake/client, and bun:wrap are
-// provided by this file instead of the bundler.
-//
-// Transpiled modules import the helpers their lowered syntax needs (legacy and
-// standard decorators, `using`, React Compiler sentinels, ...) from "bun:wrap",
-// which `bun build` resolves to runtime.js. Exposing that module as a whole
-// keeps this copy complete when helpers are added, instead of listing them here.
+// bun:bake/server, bun:bake/client, and bun:wrap are provided by this file
+// instead of the bundler. Transpiled output imports whichever lowering helpers
+// it uses from bun:wrap, so it gets all of runtime.bun.js, like `bun run`.
 registerSynthetic("bun:wrap", runtimeHelpers);
 
 if (side === "server") {

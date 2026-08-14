@@ -107,27 +107,18 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 const LIGHT_VAR: &[u8] = b"--buncss-light";
 const DARK_VAR: &[u8] = b"--buncss-dark";
 
-/// Emits the `--buncss-light` / `--buncss-dark` fallback variables for
-/// `color-scheme` when the targets lack `light-dark()`.
-///
-/// Merging adjacent rules (same-query `@media`, same-selector style rules)
-/// re-runs the handlers over the merged block, so a block that already went
-/// through this handler comes back with the variables it emitted as plain
-/// custom properties, followed by the `color-scheme` declaration that emits
-/// them again. The handler therefore owns both variable names and keeps a
-/// block down to one declaration of each, so re-minifying its output
-/// reproduces it instead of growing it.
+/// Compiles `color-scheme` to the `--buncss-light` / `--buncss-dark` variables
+/// when the targets lack `light-dark()`. Merged blocks are minified again, which
+/// feeds those variables back in, so each is kept to one declaration per block.
 #[derive(Default)]
 pub struct ColorSchemeHandler {
     /// Index in `dest` of the declaration currently holding each variable.
     light: Option<usize>,
     dark: Option<usize>,
-    /// `dest.len()` right after the last `color-scheme` declaration pushed in
-    /// this block. A variable declared before it cannot be updated in place
-    /// with a value declared after it: re-minifying the block emits the
-    /// `color-scheme`'s variables again at its position, which would override
-    /// the later value.
-    after_color_scheme: usize,
+    /// Declarations below this index are not updated in place: a `color-scheme`
+    /// declaration emits its variables again when the block is minified again,
+    /// so a value set after it has to stay after it.
+    in_place_from: usize,
 }
 
 // `define_var` needs no arena because `TokenList.v` is a std `Vec<TokenOrValue>`.
@@ -168,7 +159,7 @@ impl ColorSchemeHandler {
                 }
                 // ColorScheme is `Copy` (bitflags u8), so reconstruct the variant directly.
                 dest.push(Property::ColorScheme(color_scheme));
-                self.after_color_scheme = dest.len();
+                self.in_place_from = dest.len();
                 true
             }
             Property::Custom(CustomProperty {
@@ -181,7 +172,7 @@ impl ColorSchemeHandler {
                     _ => return false,
                 };
                 let declaration = property.deep_clone(dest.bump());
-                set_var(slot, self.after_color_scheme, dest, declaration);
+                set_var(slot, self.in_place_from, dest, declaration);
                 true
             }
             _ => false,
@@ -196,13 +187,13 @@ impl ColorSchemeHandler {
     ) {
         set_var(
             &mut self.light,
-            self.after_color_scheme,
+            self.in_place_from,
             dest,
             define_var(LIGHT_VAR, light),
         );
         set_var(
             &mut self.dark,
-            self.after_color_scheme,
+            self.in_place_from,
             dest,
             define_var(DARK_VAR, dark),
         );
@@ -215,21 +206,19 @@ impl ColorSchemeHandler {
     ) {
         self.light = None;
         self.dark = None;
-        self.after_color_scheme = 0;
+        self.in_place_from = 0;
     }
 }
 
-/// Replace the variable's existing declaration in place when it was pushed
-/// after the block's last `color-scheme` declaration (`dest` only grows while a
-/// block is handled, so indices stay valid); otherwise append a new one.
+/// `dest` only grows while a block is handled, so `slot` stays valid.
 fn set_var(
     slot: &mut Option<usize>,
-    after_color_scheme: usize,
+    in_place_from: usize,
     dest: &mut css::DeclarationList,
     declaration: Property,
 ) {
     match *slot {
-        Some(index) if index >= after_color_scheme => dest[index] = declaration,
+        Some(index) if index >= in_place_from => dest[index] = declaration,
         _ => {
             *slot = Some(dest.len());
             dest.push(declaration);

@@ -1174,6 +1174,63 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // Like named properties, a non-function indexed property gets a getter/setter spy.
+    // This used to store the mock itself flagged as an accessor, and the next write to
+    // the index crashed the process.
+    test("spyOn works with indexed properties that are not functions", () => {
+      const arr = [42];
+
+      const fn = spyOn(arr, 0);
+      expect(fn).not.toHaveBeenCalled();
+      expect(arr[0]).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      arr[0] = 7;
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(fn.mock.calls[1]).toEqual([7]);
+      expect(arr[0]).toBe(42);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]).toBe(42);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with indexed properties on plain objects", () => {
+      const obj = {};
+      obj[213] = obj;
+
+      const fn = spyOn(obj, 213);
+      obj[213] = 1;
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(obj[213]).toBe(obj);
+      expect(fn).toHaveBeenCalledTimes(2);
+
+      fn.mockRestore();
+      expect(obj[213]).toBe(obj);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with missing indexed properties", () => {
+      const arr = [];
+
+      const fn = spyOn(arr, 3);
+      expect(arr[3]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+      arr[3] = "x";
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(arr[3]).toBeUndefined();
+
+      fn.mockRestore();
+      expect(arr[3]).toBeUndefined();
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

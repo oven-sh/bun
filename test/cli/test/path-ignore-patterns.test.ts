@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("pathIgnorePatterns", () => {
   test("bunfig - single pattern string", () => {
@@ -346,7 +346,7 @@ test("deeper ignored test", () => {
       ["build nested", "packages/sub/build/src/duplicate.test.ts"],
       ["dist nested", "packages/sub/dist/duplicate.test.ts"],
     ])("skips %s by default", (_label, duplicatePath) => {
-      const dir = tempDirWithFiles("path-ignore-default", {
+      using dir = tempDir("path-ignore-default", {
         "src/only.test.ts": `
 import { test, expect } from "bun:test";
 test("original test", () => {
@@ -378,7 +378,7 @@ test("duplicate test", () => {
       // When the user opts into a custom list, they take responsibility
       // for the entire list — the defaults no longer apply, matching
       // Vitest's replace semantics.
-      const dir = tempDirWithFiles("path-ignore-override", {
+      using dir = tempDir("path-ignore-override", {
         "bunfig.toml": `
 [test]
 pathIgnorePatterns = ["fixtures/**"]
@@ -421,7 +421,7 @@ test("should be ignored", () => {
       // If the user names a file directly on the CLI, they clearly want
       // to run it — even if it sits under `build/`. The built-in defaults
       // must not silently filter it out.
-      const dir = tempDirWithFiles("path-ignore-explicit-file", {
+      using dir = tempDir("path-ignore-explicit-file", {
         "build/explicit.test.ts": `
 import { test, expect } from "bun:test";
 test("explicit test", () => {
@@ -443,7 +443,7 @@ test("explicit test", () => {
     });
 
     test("explicit directory path bypasses the defaults", () => {
-      const dir = tempDirWithFiles("path-ignore-explicit-dir", {
+      using dir = tempDir("path-ignore-explicit-dir", {
         "build/nested/explicit.test.ts": `
 import { test, expect } from "bun:test";
 test("explicit test", () => {
@@ -469,7 +469,7 @@ test("explicit test", () => {
       // own pattern meant it. Use a directory name that has no overlap
       // with the defaults so a buggy implementation can't pass this just
       // because the defaults happened to match the same path.
-      const dir = tempDirWithFiles("path-ignore-explicit-honors-user", {
+      using dir = tempDir("path-ignore-explicit-honors-user", {
         "bunfig.toml": `
 [test]
 pathIgnorePatterns = ["**/user-ignored/**"]
@@ -500,7 +500,7 @@ test("explicit test", () => {
       // other defaults keep pruning nested `dist/`/`build/`, so a duplicate
       // `packages/foo/dist/foo.test.ts` is NOT discovered alongside the
       // original in `packages/foo/src/`.
-      const dir = tempDirWithFiles("path-ignore-narrow-nested", {
+      using dir = tempDir("path-ignore-narrow-nested", {
         "packages/foo/src/foo.test.ts": `
 import { test, expect } from "bun:test";
 test("original test", () => {
@@ -536,7 +536,7 @@ test("duplicate test", () => {
       // Docker `WORKDIR /build`). Passing the absolute cwd (`bun test "$PWD"`)
       // must behave like `bun test`: matching the raw absolute path instead of
       // the empty relative path would wrongly drop `**/build/**` here.
-      const dir = tempDirWithFiles("path-ignore-build-ancestor", {
+      using dir = tempDir("path-ignore-build-ancestor", {
         "build/app/src/only.test.ts": `
 import { test, expect } from "bun:test";
 test("original test", () => {

@@ -230,10 +230,12 @@ export class ClassDefinition {
    *
    * Report `size_of::<Self>()` as well as any external allocations.
    *
-   * The generated constructor and `${name}__create` also pass this value to
-   * `Heap::reportExtraMemoryAllocated` when the wrapper is created, and
-   * `visitChildren` re-reports it to `reportExtraMemoryVisited` on every GC.
-   * See `newlyAllocatedSize` when those two numbers differ.
+   * Also generates `JS${name}::reportExtraMemoryAllocated(vm)`, which every
+   * site creating a wrapper (the generated constructor and `${name}__create`,
+   * or hand-written C++) calls once to pass this value to
+   * `Heap::reportExtraMemoryAllocated`; `visitChildren` re-reports it to
+   * `reportExtraMemoryVisited` on every GC. See `newlyAllocatedSize` when
+   * those two numbers differ.
    */
   estimatedSize?: boolean;
   /**
@@ -242,7 +244,8 @@ export class ClassDefinition {
    * sharing its store with the blob it was sliced from), `estimated_size()`
    * is still what each GC visit re-reports as retained, but reporting it as
    * freshly allocated for every new wrapper would schedule a collection per
-   * wrapper. With this set, wrapper creation reports this method instead:
+   * wrapper. With this set, `JS${name}::reportExtraMemoryAllocated(vm)`
+   * reports this method instead:
    * ```rust
    * pub fn newly_allocated_size(&self) -> usize;
    * ```

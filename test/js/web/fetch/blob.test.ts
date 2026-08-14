@@ -626,7 +626,8 @@ describe("a Blob sharing another Blob's bytes does not report them to the GC as 
     ["new Blob([blob])", () => new Blob([source])],
     ["formData.get()", () => formData.get("f")],
     ["new Response(blob).blob()", () => new Response(source).blob()],
-    // Wrapped by the hand-written constructor in JSDOMFile.cpp, not the generated one.
+    // The one Blob creation site outside the generated ones (JSDOMFile.cpp). It
+    // reports nothing today; whatever it reports must follow the same rule.
     ["new File([blob], name)", () => new File([source], "f.bin")],
   ])("%s", async (_, make) => {
     expect(await blobsSurviving(make)).toBe(VIEWS);

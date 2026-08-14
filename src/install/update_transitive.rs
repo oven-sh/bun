@@ -341,7 +341,10 @@ impl TransitiveUpdate {
         named: &[(DependencyID, PackageID)],
     ) {
         let options = &manager.options;
-        if !(options.dry_run || options.lockfile_only) || !options.do_.summary() {
+        if manager.subcommand != crate::Subcommand::Update
+            || !(options.dry_run || options.lockfile_only)
+            || !options.do_.summary()
+        {
             return;
         }
         let dry_run = options.dry_run;

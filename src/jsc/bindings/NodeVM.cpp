@@ -1595,7 +1595,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     // globalScope() is the global lexical environment (script-level let/const/
     // class bindings), which precedes the global object in every ordinary scope
-    // chain; a chain starting at the global object itself cannot see them.
+    // chain; a chain starting at the global object itself cannot see them. The
+    // chain is given to the compiled function only: setGlobalScopeExtension()
+    // would expose it to every unresolved lookup in the realm.
     JSScope* functionScope = options.parsingContext->globalScope();
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
@@ -1619,8 +1621,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
             functionScope = currentScope;
         }
     }
-
-    options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);

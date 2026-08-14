@@ -305,10 +305,11 @@ describe("vm", () => {
         expect(fn()).toEqual(["var", "let", "const", "function"]);
       });
 
-      test("are visible when declared after the function was compiled", () => {
+      test("are visible once declared, even after the function was compiled and called", () => {
         const { run, options } = setup();
         const [name] = randomProps(1);
         const fn = compileFunction(`return ${name};`, [], options);
+        expect(fn).toThrow(`${name} is not defined`);
         run(`let ${name} = "declared later";`);
         expect(fn()).toBe("declared later");
       });
@@ -322,7 +323,7 @@ describe("vm", () => {
         expect(Object.hasOwn(globalObject, name)).toBe(false);
       });
 
-      test("are shadowed by contextExtensions", () => {
+      test("are shadowed by contextExtensions, which only the compiled function sees", () => {
         const { run, options } = setup();
         const [shadowed, visible, extensionOnly] = randomProps(3);
         run(`let ${shadowed} = "lexical"; let ${visible} = "lexical";`);
@@ -331,6 +332,9 @@ describe("vm", () => {
           contextExtensions: [{ [shadowed]: "extension", [extensionOnly]: "extension" }],
         });
         expect(fn()).toEqual(["extension", "lexical", "extension"]);
+        // The scope chain built for fn must not be installed on the context itself.
+        expect(run(`[${shadowed}, typeof ${extensionOnly}]`)).toEqual(["lexical", "undefined"]);
+        expect(compileFunction(`return typeof ${extensionOnly};`, [], options)()).toBe("undefined");
       });
     });
   });

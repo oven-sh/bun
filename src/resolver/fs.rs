@@ -251,13 +251,13 @@ impl Entry {
         if !self.need_stat.load(Ordering::Relaxed) {
             return;
         }
+        let mut c = self.cache.get();
+        // A re-stat (the entry went stale) must not keep a previous target.
+        c.symlink = Interned::EMPTY;
         // Errors (e.g. the file was deleted between the directory scan and
         // now) are deliberately swallowed: the placeholder kind stays.
         // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
         // only does syscalls, so the short `&mut` cannot alias.
-        let mut c = self.cache.get();
-        // A re-stat (the entry went stale) must not keep a previous target.
-        c.symlink = Interned::EMPTY;
         if let Ok(r) = unsafe { &mut *fs }.resolve_kind(self.dir, self.base()) {
             c.kind = r.kind;
             c.is_symlink = r.is_symlink;

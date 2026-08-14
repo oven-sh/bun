@@ -48,8 +48,7 @@ impl Composes {
         })
     }
 
-    /// Releases the import record of a `from "<file>"` specifier when the parser
-    /// drops the declaration.
+    /// For a declaration the parser drops: releases the `from "<file>"` import record.
     pub(crate) fn discard(&self, input: &mut Parser) {
         if let Some(Specifier::ImportRecordIndex(import_record_idx)) = self.from {
             input.mark_import_record_unused(import_record_idx);

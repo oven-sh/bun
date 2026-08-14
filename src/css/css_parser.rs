@@ -3134,8 +3134,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// For a record whose declaration is dropped after parsing; the bundler
-    /// neither resolves nor bundles unused records.
     pub(crate) fn mark_import_record_unused(&mut self, import_record_idx: u32) {
         let ptr = self
             .import_records

@@ -311,8 +311,6 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// `NoComposesCtx` (declaration blocks that are not style rules, e.g. @page)
-// reports `DisallowEntirely`.
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -347,8 +345,7 @@ where
 
     if input.flags.css_modules() {
         if let css::Property::Composes(composes) = &mut property {
-            // Rejected declarations are dropped, as in esbuild; `StyleRule::to_css_base`
-            // relies on only accepted ones surviving.
+            // `StyleRule::to_css_base` relies on rejected declarations being dropped here.
             match composes_ctx.composes_state() {
                 css::ComposesState::Allow(_) => {
                     composes_ctx.record_composes(composes);

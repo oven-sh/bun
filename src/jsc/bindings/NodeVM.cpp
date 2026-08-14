@@ -1648,8 +1648,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    NodeVMContextOptions contextOptions {};
-
     JSValue contextArg = callFrame->argument(0);
     bool notContextified = getContextArg(globalObject, contextArg);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1658,22 +1656,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
-    JSValue optionsArg = callFrame->argument(1);
-
-    // Validate options argument
-    if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
-    }
-
-    JSValue importer;
-
-    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration", &importer);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    contextOptions.notContextified = notContextified;
-
     JSObject* sandbox = asObject(contextArg);
 
+    // Node returns an existing context before it reads or validates `options`.
     if (isContext(globalObject, sandbox)) {
         if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(sandbox)) {
             if (auto* targetContext = dynamicDowncast<NodeVMGlobalObject>(proxy->target())) {
@@ -1684,6 +1669,21 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         }
         return JSValue::encode(sandbox);
     }
+
+    JSValue optionsArg = callFrame->argument(1);
+
+    // Validate options argument
+    if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+    }
+
+    NodeVMContextOptions contextOptions {};
+    JSValue importer;
+
+    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration", &importer);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    contextOptions.notContextified = notContextified;
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
 

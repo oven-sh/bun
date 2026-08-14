@@ -74,10 +74,11 @@ function pruneTrackedContexts() {
 }
 
 function createContext(contextObject?, options?) {
-  if (typeof options === "object" && options !== null) {
+  const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
+  // Node returns an existing context before it reads or validates `options`.
+  if (!alreadyContextified && typeof options === "object" && options !== null) {
     validateOneOf(options.microtaskMode, "options.microtaskMode", ["afterEvaluate", undefined]);
   }
-  const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
   const context = createContextNative(contextObject, options);
   if (!alreadyContextified) {
     if (trackedContexts.length >= trackedContextsPruneAt) {

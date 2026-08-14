@@ -1077,6 +1077,127 @@ describe("context options with throwing getters", () => {
   });
 });
 
+describe("createContext() on an object that is already a context", () => {
+  // Node's createContext() returns an existing context before it looks at
+  // `options`, so options that are rejected for a fresh sandbox are ignored
+  // here. Expected messages were checked against node v26.3.0.
+  const invalidOptions: [description: string, options: unknown, rejection: { code: string; message: string }][] = [
+    [
+      "options is not an object",
+      1,
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options" argument must be of type object. Received type number (1)',
+      },
+    ],
+    [
+      "options is null",
+      null,
+      { code: "ERR_INVALID_ARG_TYPE", message: 'The "options" argument must be of type object. Received null' },
+    ],
+    [
+      "name is not a string",
+      { name: 1 },
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.name" property must be of type string. Received type number (1)',
+      },
+    ],
+    [
+      "origin is not a string",
+      { origin: 1 },
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.origin" property must be of type string. Received type number (1)',
+      },
+    ],
+    [
+      "codeGeneration is not an object",
+      { codeGeneration: 1 },
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.codeGeneration" property must be of type object. Received type number (1)',
+      },
+    ],
+    [
+      "codeGeneration.strings is not a boolean",
+      { codeGeneration: { strings: 1 } },
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.codeGeneration.strings" property must be of type boolean. Received type number (1)',
+      },
+    ],
+    [
+      "codeGeneration.wasm is not a boolean",
+      { codeGeneration: { wasm: 1 } },
+      {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.codeGeneration.wasm" property must be of type boolean. Received type number (1)',
+      },
+    ],
+    [
+      "microtaskMode is not 'afterEvaluate'",
+      { microtaskMode: "x" },
+      {
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.microtaskMode' must be one of: 'afterEvaluate', undefined. Received 'x'",
+      },
+    ],
+  ];
+
+  test.each(invalidOptions)("%s: a contextified sandbox is returned as-is", (_, options) => {
+    const context = createContext({});
+    expect(createContext(context, options as any)).toBe(context);
+  });
+
+  test.each(invalidOptions)("%s: a DONT_CONTEXTIFY context is returned as-is", (_, options) => {
+    const context = createContext(constants.DONT_CONTEXTIFY);
+    expect(createContext(context, options as any)).toBe(context);
+  });
+
+  test.each(invalidOptions)("%s: still rejected when the sandbox is not a context yet", (_, options, rejection) => {
+    expect(() => createContext({}, options as any)).toThrow(expect.objectContaining(rejection));
+    expect(() => createContext(constants.DONT_CONTEXTIFY, options as any)).toThrow(expect.objectContaining(rejection));
+  });
+
+  test("the options are not read at all", () => {
+    const options = {};
+    for (const key of ["name", "origin", "codeGeneration", "importModuleDynamically", "microtaskMode"]) {
+      Object.defineProperty(options, key, {
+        get() {
+          throw new Error(`read options.${key}`);
+        },
+        enumerable: true,
+      });
+    }
+    const context = createContext({});
+    expect(createContext(context, options)).toBe(context);
+    expect(() => createContext({}, options)).toThrow(/^read options\./);
+  });
+
+  test("the existing context keeps its own options", () => {
+    const context = createContext({}, { codeGeneration: { strings: true } });
+    expect(createContext(context, { codeGeneration: { strings: "no" } } as any)).toBe(context);
+    expect(createContext(context, { codeGeneration: { strings: false } })).toBe(context);
+    expect(runInContext("eval('1 + 1')", context)).toBe(2);
+  });
+
+  test("runInNewContext() on an existing context only validates its own context options", () => {
+    const context = createContext({});
+    // `codeGeneration` is a createContext() option, not a runInNewContext()
+    // one, so it is never looked at once createContext() has returned early.
+    expect(runInNewContext("1", context, { codeGeneration: 1 } as any)).toBe(1);
+    // `contextCodeGeneration` is validated by runInNewContext() itself,
+    // whether or not the context already exists.
+    expect(() => runInNewContext("1", context, { contextCodeGeneration: 1 } as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.contextCodeGeneration" property must be of type object. Received type number (1)',
+      }),
+    );
+  });
+});
+
 describe("DONT_CONTEXTIFY", () => {
   test("globalThis prototype chain stays inside the sandbox realm", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);

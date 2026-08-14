@@ -937,10 +937,11 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
+        // Step over leading flags to reach the subcommand name. A lone `-` is not a
+        // flag: it is the stdin entry point (`bun - <args>`, as in `node -`), so it
+        // ends the search like `-e` does. Otherwise the argument after it would be
+        // taken as the subcommand and `bun - add x` would run `bun add x`.
+        while first_arg_name.len() > 1 && first_arg_name[0] == b'-' && first_arg_name[1] != b'e' {
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.

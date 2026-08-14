@@ -521,6 +521,84 @@ describe("Date.now() mocking", () => {
   });
 });
 
+describe.concurrent("fake clock is per-VM", () => {
+  test("workers with fake timers do not share a clock", async () => {
+    // Each worker pins its own system time, drains its pending timers, and
+    // checks that Date.now() landed where *its* clock says it should. With a
+    // shared clock the other worker's setSystemTime()/timer fires leak in.
+    const workerSrc = /* js */ `
+      const { jest } = Bun.jest(__filename);
+      const { parentPort, workerData } = require("worker_threads");
+      const { now, target } = workerData;
+      const mismatches = [];
+      for (let r = 0; r < 400; r++) {
+        jest.useFakeTimers({ now });
+        let n = 0;
+        setTimeout(() => n++, 1000);
+        const iv = setInterval(() => { if (n++ > 3) clearInterval(iv); }, 100);
+        jest.setSystemTime(target);
+        jest.runOnlyPendingTimers();
+        const after = Date.now();
+        if (after !== target + 1000) mismatches.push({ round: r, after, expected: target + 1000 });
+        jest.useRealTimers();
+      }
+      parentPort.postMessage(mismatches);
+    `;
+    const mainSrc = /* js */ `
+      const { Worker } = require("worker_threads");
+      const results = {};
+      const configs = [{ now: 0, target: 1e12 }, { now: 2 ** 40, target: 0 }];
+      let done = 0;
+      for (const workerData of configs) {
+        const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData });
+        w.on("message", mismatches => {
+          results[workerData.now] = mismatches;
+          if (++done === configs.length) {
+            console.log(JSON.stringify(results));
+            process.exit(0);
+          }
+        });
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", mainSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ "0": [], [2 ** 40]: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a worker's fake clock does not leak into main-thread timer scheduling", async () => {
+    // The worker exits with fake timers still active and its clock advanced.
+    // A real 20ms timer armed on the main thread afterwards must be scheduled
+    // against the real monotonic clock, not the worker's fake epoch (which is
+    // far in the past relative to process uptime and would fire it at once).
+    const src = /* js */ `
+      const { Worker } = require("worker_threads");
+      const w = new Worker(
+        'const { jest } = Bun.jest("worker"); jest.useFakeTimers({ now: 0 }); jest.advanceTimersByTime(5000); require("worker_threads").parentPort.postMessage(Date.now());',
+        { eval: true },
+      );
+      w.on("message", workerNow => {
+        const armed = performance.now();
+        setTimeout(() => {
+          console.log(JSON.stringify({ workerNow, firedEarly: performance.now() - armed < 19, mainDateReal: Date.now() > 1.7e12 }));
+          process.exit(0);
+        }, 20);
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ workerNow: 5000, firedEarly: false, mainDateReal: true });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("performance.now() mocking", () => {
   test("performance.now() should be mocked when fake timers are active", () => {
     vi.useFakeTimers();

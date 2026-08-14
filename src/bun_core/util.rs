@@ -5114,49 +5114,50 @@ pub mod timespec_mode {
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
-/// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
+/// from `bun_runtime::test_runner::timers::FakeTimers`. Thread-local so each
+/// VM (main thread, each `Worker`) has its own fake clock, matching the
+/// per-thread fake `TimerHeap` it drives.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    use core::cell::Cell;
 
-    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
-    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
-    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
+    std::thread_local! {
+        static MOCKED_TIME_NS: Cell<Option<i64>> = const { Cell::new(None) };
+        /// Mocked wall-clock `Date.now()` in ms.
+        static MOCKED_WALL_MS: Cell<Option<f64>> = const { Cell::new(None) };
+    }
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
     pub fn set(ns: i64) {
-        MOCKED_TIME_NS.store(ns, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(Some(ns));
     }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
     #[inline]
     pub fn clear() {
-        MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(None);
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
     pub fn get() -> Option<i64> {
-        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
-        if v == i64::MIN { None } else { Some(v) }
+        MOCKED_TIME_NS.get()
     }
     /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
     /// fake-timers alongside `set` so calendar-based consumers and the
     /// monotonic timer heap move through the same mock.
     #[inline]
     pub fn set_wall_ms(ms: f64) {
-        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(Some(ms));
     }
     /// Clear the mocked wall-clock time.
     #[inline]
     pub fn clear_wall() {
-        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(None);
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
     pub(crate) fn wall_ms() -> Option<f64> {
-        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
-        if v.is_nan() { None } else { Some(v) }
+        MOCKED_WALL_MS.get()
     }
 }
 

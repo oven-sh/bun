@@ -3102,19 +3102,19 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
+        // Same `<name>_<hash of the path relative to the cwd>` names that
+        // `LinkerContext::mangle_local_css` gives these locals in a bundle.
         let mut local_names = bun_css::LocalsResultsMap::default();
-        for (inner_index, symbol) in extra.symbols.iter().enumerate() {
-            if symbol.kind == bun_ast::symbol::Kind::LocalCss {
+        if !sheet.local_scope.is_empty() {
+            let path_hash = ::bun_base64::wyhash_url_safe(
+                alloc,
+                format_args!("{}", bstr::BStr::new(file_path_pretty)),
+                false,
+            );
+            for (local, entry) in sheet.local_scope.iter() {
                 local_names.insert(
-                    bun_ast::Ref::new(
-                        u32::try_from(inner_index).expect("int cast"),
-                        source_index.get(),
-                        bun_ast::RefTag::Symbol,
-                    ),
-                    crate::linker_context_mod::local_css_name(
-                        symbol.original_name.slice(),
-                        file_path_pretty,
-                    ),
+                    entry.ref_.to_real_ref(source_index.get()),
+                    strings::concat(&[local, b"_", path_hash]),
                 );
             }
         }

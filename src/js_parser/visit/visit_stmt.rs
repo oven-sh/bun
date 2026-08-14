@@ -362,8 +362,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Once lowered `using` wraps the module body in a try/catch, `export default` has to become
-    /// a binding plus `export { name as default }`, which `finalize` keeps outside the block.
     fn append_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,

@@ -2121,7 +2121,11 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         };
-        let dest = bun_paths::basename(dest_path.as_bytes());
+        // `dest_path` is `name` or `@scope/name` (`alias_is_safe_install_target`), so the
+        // entry name is its NUL-terminated tail.
+        let dest: &ZStr = ZStr::from_slice_with_nul(
+            &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
+        );
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
@@ -2172,7 +2176,14 @@ impl<'a> PackageInstall<'a> {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;
             }
-            dest_buf[offset..offset + dest.len()].copy_from_slice(dest);
+            if offset + dest.len() >= dest_buf.len() {
+                return InstallResult::fail(
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                    Step::LinkingDependency,
+                    None,
+                );
+            }
+            dest_buf[offset..offset + dest.len()].copy_from_slice(dest.as_bytes());
             offset += dest.len();
             dest_buf[offset] = 0;
 
@@ -2232,18 +2243,14 @@ impl<'a> PackageInstall<'a> {
             };
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
-            // copies in stack buffers.
+            // `symlinkat` takes `&ZStr`; build a NUL-terminated copy of the target in a
+            // stack buffer.
             let mut target_buf = PathBuffer::uninit();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
             // SAFETY: NUL written above.
             let target_z = ZStr::from_buf(&target_buf, target.len());
-            let mut dest_name_buf = [0u8; 512];
-            dest_name_buf[..dest.len()].copy_from_slice(dest);
-            // SAFETY: zero-initialized; NUL at [dest.len()].
-            let dest_z = ZStr::from_buf(&dest_name_buf, dest.len());
-            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
+            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }
         }

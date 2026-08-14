@@ -1554,6 +1554,25 @@ describe.concurrent("tsconfig option overrides the tsconfig.json found on disk",
     expect(result.success).toBe(false);
   });
 
+  test("still reports a broken tsconfig.json it scans, like a build without the option", async () => {
+    // The scan feeds the shared directory cache, so the file is parsed (and its error reported)
+    // exactly as it would be for a build that actually uses it.
+    using dir = tempDir("build-api-tsconfig-broken-on-disk", {
+      "tsconfig.build.json": `{}`,
+      "sub/tsconfig.json": `{ "compilerOptions": nope }`,
+      "sub/index.ts": `export const x = 1;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "sub/index.ts")],
+      tsconfig: join(String(dir), "tsconfig.build.json"),
+      throw: false,
+    });
+    expect(
+      result.logs.map(log => ({ message: log.message, file: normalizeBunSnapshot(log.position!.file, String(dir)) })),
+    ).toEqual([{ message: "Unexpected nope", file: "<dir>/sub/tsconfig.json" }]);
+    expect(result.success).toBe(false);
+  });
+
   test("rejects a non-string value", () => {
     expect(() => {
       Bun.build({

@@ -63,9 +63,7 @@ describe("bun run --tsconfig-override", () => {
 
     expect(successStdout).toContain("success from custom tsconfig");
 
-    if (!successStderr.includes("Internal error: directory mismatch")) {
-      expect(successStderr).toBe("");
-    }
+    expect(successStderr).toBe("");
     expect(successExitCode).toBe(0);
   });
 
@@ -104,9 +102,7 @@ describe("bun run --tsconfig-override", () => {
 
     expect(stdout).toContain("42");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -151,9 +147,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("Button component");
     expect(stdout).toContain("monorepo-app");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -200,9 +194,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("home-data");
     expect(stdout).toContain("formatted-test");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -256,9 +248,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("core-module");
     expect(stdout).toContain("auth-feature");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -297,9 +287,7 @@ describe("bun run --tsconfig-override", () => {
 
     expect(stdout).toContain("Result: 8");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 

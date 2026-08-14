@@ -943,8 +943,7 @@ pub mod bv2_impl {
                     })
                 }
 
-                /// Returns the map-owned key and contents of `specifier` as imported
-                /// from `source_file` (`b""` for an entry point).
+                /// Map-owned key and contents; `source_file` is `b""` for an entry point.
                 pub(crate) fn lookup(
                     &self,
                     source_file: &[u8],

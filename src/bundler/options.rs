@@ -326,8 +326,7 @@ impl TargetExt for Target {
 
 const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
 
-/// Decides the documented `target` default (docs/bundler/index.mdx): a build
-/// without an explicit target is built for Bun when an entry point has this hashbang.
+/// The `target` default documented in docs/bundler/index.mdx; callers apply it only when no target was given.
 pub fn any_entry_point_has_bun_hashbang(
     entry_points: &[Box<[u8]>],
     file_map: Option<&crate::bundle_v2::FileMap>,

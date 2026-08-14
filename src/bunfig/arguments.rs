@@ -17,9 +17,7 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-/// `dir/path`, NUL-terminated in `buf`. `dir` (cwd, `$HOME`, ...) and `path`
-/// (argv) are unbounded, so the result may not fit; `None` then. No file can be
-/// opened at such a path, so callers treat it like any other unreadable config.
+/// `None` when `dir/path` does not fit: nothing could be opened at such a path anyway.
 fn join_config_path<'buf>(
     dir: &[u8],
     path: &[u8],
@@ -43,8 +41,6 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     join_config_path(dir, b".bunfig.toml", buf)
 }
 
-/// An auto-loaded bunfig that cannot be read is treated as absent; one the
-/// user asked for is fatal.
 fn unreadable_config(
     auto_loaded: bool,
     err: &bun_sys::Error,

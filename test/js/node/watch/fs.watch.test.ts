@@ -4,6 +4,8 @@ import {
   bunExe,
   bunRun,
   bunRunAsScript,
+  isASAN,
+  isDebug,
   isLinux,
   isMacOS,
   isWindows,
@@ -853,6 +855,10 @@ describe("fs.watch", () => {
     const existingDir = Buffer.alloc(255, "e").toString();
     const createdDir = Buffer.alloc(255, "d").toString();
     const createdFile = Buffer.alloc(255, "f").toString();
+    // Only there to dump what did arrive when an event goes missing; the whole
+    // scenario takes about a second under ASAN, and CI's per-test timeout is
+    // well above this.
+    const deadlineMs = isASAN || isDebug ? 30_000 : 10_000;
 
     using dir = tempDir("fs-watch-deeper-than-path-max", {});
 
@@ -908,7 +914,7 @@ describe("fs.watch", () => {
           events: events.map(event => [event.type, String(event.name).length]),
         }));
         process.exit(1);
-      }, 4000);
+      }, ${deadlineMs});
 
       (async () => {
         await until(() => errors.length === 1);

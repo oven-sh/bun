@@ -33,62 +33,41 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
     await Bun.write(join(tmpbase, "response-file.test.txt"), new Uint32Array(1024));
     await gcTick();
-    expect(await Bun.write(new TextEncoder().encode(tmpbase + "response-file.test.txt"), new Uint32Array(1024))).toBe(
-      new Uint32Array(1024).byteLength,
-    );
+    expect(
+      await Bun.write(new TextEncoder().encode(join(tmpbase, "response-file.test.txt")), new Uint32Array(1024)),
+    ).toBe(new Uint32Array(1024).byteLength);
     await gcTick();
   });
 
   describe("large file", () => {
     it("write large file (text)", async () => {
       using tmpbase = tempDir("large-file-text", {});
-      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const filename = join(tmpbase, "bun-test-large-file.txt");
       const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
 
-      try {
-        unlinkSync(filename);
-      } catch (e) {}
       await Bun.write(filename, content);
       expect(await Bun.file(filename).text()).toBe(content);
-
-      try {
-        unlinkSync(filename);
-      } catch (e) {}
     });
 
     it("write large file (bytes)", async () => {
       using tmpbase = tempDir("large-file-bytes", {});
-      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const filename = join(tmpbase, "bun-test-large-file.txt.bytes");
       const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
 
-      try {
-        unlinkSync(filename + ".bytes");
-      } catch (e) {}
       var bytes = new TextEncoder().encode(content);
-      const written = await Bun.write(filename + ".bytes", bytes);
+      const written = await Bun.write(filename, bytes);
       expect(written).toBe(bytes.byteLength);
-      expect(new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(bytes)).toBe(true);
-
-      try {
-        unlinkSync(filename + ".bytes");
-      } catch (e) {}
+      expect(new Buffer(await Bun.file(filename).arrayBuffer()).equals(bytes)).toBe(true);
     });
 
     it("write large file (Blob)", async () => {
       using tmpbase = tempDir("large-file-blob", {});
-      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const filename = join(tmpbase, "bun-test-large-file.txt.blob");
       const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
 
-      try {
-        unlinkSync(filename + ".blob");
-      } catch (e) {}
       var bytes = new Blob([content]);
-      await Bun.write(filename + ".blob", bytes);
-      expect(await Bun.file(filename + ".blob").text()).toBe(content);
-
-      try {
-        unlinkSync(filename + ".blob");
-      } catch (e) {}
+      await Bun.write(filename, bytes);
+      expect(await Bun.file(filename).text()).toBe(content);
     });
   });
 
@@ -239,39 +218,28 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.file -> Bun.file", async () => {
     using tmpbase = tempDir("bun-file-to-file", {});
-    try {
-      fs.unlinkSync(path.join(tmpbase, "fetch.js.in"));
-    } catch (e) {}
-    await gcTick();
-    try {
-      fs.unlinkSync(path.join(tmpbase, "fetch.js.out"));
-    } catch (e) {}
-    await gcTick();
+    const input = join(tmpbase, "fetch.js.in");
+    const output = join(tmpbase, "fetch.js.out");
 
-    fs.writeFileSync(tmpbase + "fetch.js.in", exampleHtml);
+    fs.writeFileSync(input, exampleHtml);
     await gcTick();
     {
-      const result = await Bun.write(Bun.file(tmpbase + "fetch.js.out"), Bun.file(tmpbase + "fetch.js.in"));
+      const result = await Bun.write(Bun.file(output), Bun.file(input));
       await gcTick();
-      expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
+      expect(await Bun.file(output).text()).toBe(exampleHtml);
       await gcTick();
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
+      await Bun.write(Bun.file(input).slice(0, (exampleHtml.length / 2) | 0), Bun.file(output));
+      expect(await Bun.file(input).text()).toBe(exampleHtml.substring(0, (exampleHtml.length / 2) | 0));
     }
 
     {
       await gcTick();
-      await Bun.write(tmpbase + "fetch.js.in", Bun.file(tmpbase + "fetch.js.out"));
+      await Bun.write(input, Bun.file(output));
       await gcTick();
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
+      expect(await Bun.file(input).text()).toBe(exampleHtml);
     }
   });
 
@@ -363,17 +331,14 @@ const IS_UV_FS_COPYFILE_DISABLED =
   it("Bun.file -> Response", async () => {
     using tmpbase = tempDir("bun-file-to-response", {});
     await using server = exampleSite("https");
-    // ensure the file doesn't already exist
-    try {
-      fs.unlinkSync(tmpbase + "fetch.js.out");
-    } catch {}
+    const output = join(tmpbase, "fetch.js.out");
     await gcTick();
     await gcTick();
     const resp = await fetch(server.url, { tls: { ca: server.ca } });
     await gcTick();
     await gcTick();
-    expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(exampleHtml.length);
-    expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
+    expect(await Bun.write(output, resp)).toBe(exampleHtml.length);
+    expect(await Bun.file(output).text()).toBe(exampleHtml);
     await gcTick();
   });
 
@@ -393,10 +358,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write('output.html', '')", async () => {
     using tmpbase = tempDir("bun-write-output-html", {});
-    await Bun.write(tmpbase + "output.html", "lalalala");
-    expect(await Bun.write(tmpbase + "output.html", "")).toBe(0);
-    await Bun.write(tmpbase + "output.html", "lalalala");
-    expect(await Bun.file(tmpbase + "output.html").text()).toBe("lalalala");
+    const output = join(tmpbase, "output.html");
+    await Bun.write(output, "lalalala");
+    expect(await Bun.write(output, "")).toBe(0);
+    await Bun.write(output, "lalalala");
+    expect(await Bun.file(output).text()).toBe("lalalala");
   });
 
   it("Bun.write(Bun.stdout, 'Bun.write STDOUT TEST')", async () => {
@@ -556,10 +522,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
         element.setInnerContent("<blink>it worked!</blink>", { html: true });
       },
     });
-    await Bun.write(tmpbase + "html-rewriter.txt.js", "<div>hello</div>");
-    var input = new Response(Bun.file(tmpbase + "html-rewriter.txt.js"));
+    const inpath = join(tmpbase, "html-rewriter.txt.js");
+    await Bun.write(inpath, "<div>hello</div>");
+    var input = new Response(Bun.file(inpath));
     var output = rewriter.transform(input);
-    const outpath = tmpbase + `html-rewriter.${Date.now()}.html`;
+    const outpath = join(tmpbase, "html-rewriter.html");
     await Bun.write(outpath, output);
     expect(await Bun.file(outpath).text()).toBe("<div><blink>it worked!</blink></div>");
     done();

@@ -1,7 +1,7 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { join, parse } from "path";
 
 function replaceHash(html: string) {
   return html
@@ -717,6 +717,50 @@ test("wildcard static routes", async () => {
       expect(text).toContain("<title>Error Page</title>");
     }
   }
+});
+
+test("dev server serves html routes when the cwd is the filesystem root", async () => {
+  // The dev server's root is the cwd. Starting from the filesystem root is the
+  // one case where the root ends in a separator; debug builds used to abort in
+  // DevServer::relative_path on the first bundle.
+  using dir = tempDir("bun-serve-html-fs-root", {
+    "index.html": /*html*/ `<!DOCTYPE html>
+      <html>
+        <head><script type="module" src="./app.js"></script></head>
+        <body><h1>served from the filesystem root</h1></body>
+      </html>`,
+    "app.js": /*js*/ `console.log("served from the filesystem root");`,
+    "serve.js": /*js*/ `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const page = await fetch(server.url);
+      const pageText = await page.text();
+      const scriptSrc = pageText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1];
+      const script = await fetch(new URL(scriptSrc, server.url));
+      const scriptText = await script.text();
+      server.stop(true);
+      console.log(
+        JSON.stringify({
+          page: page.status,
+          pageHasHeading: pageText.includes("served from the filesystem root"),
+          script: script.status,
+          scriptHasApp: scriptText.includes('"served from the filesystem root"'),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "serve.js")],
+    env: bunEnv,
+    cwd: parse(process.cwd()).root,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(JSON.stringify({ page: 200, pageHasHeading: true, script: 200, scriptHasApp: true }));
+  expect(exitCode).toBe(0);
 });
 
 test("serve html with JSX runtime in development mode", async () => {

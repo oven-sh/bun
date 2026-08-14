@@ -5950,17 +5950,22 @@ impl DevServer {
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
     ) -> &'a [u8] {
-        debug_assert!(self.root[self.root.len() - 1] != b'/');
-
         if !paths::is_absolute(path) {
             return path;
         }
 
-        if path.len() > self.root.len()
-            && path[self.root.len()] == b'/'
-            && path.starts_with(&self.root)
-        {
-            return &path[self.root.len() + 1..];
+        if let Some(rest) = path.strip_prefix(&*self.root) {
+            // A root that already ends in a separator (the filesystem root,
+            // when the server is started from `/`) needs no separator
+            // stripped from `rest`.
+            let rel = if self.root.ends_with(b"/") {
+                Some(rest)
+            } else {
+                rest.strip_prefix(b"/")
+            };
+            if let Some(rel) = rel {
+                return rel;
+            }
         }
 
         if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {

@@ -372,7 +372,7 @@ describe("Bun.serve HTML manifest", () => {
         });
 
         // The page's own script, the lazy chunk, and the asset only the lazy chunk imports.
-        for (const file of readdirSync(".").sort()) {
+        for (const file of readdirSync(import.meta.dir).sort()) {
           if (!/^(index|lazy|logo)-/.test(file)) continue;
           const { status } = await fetch(new URL(file, server.url));
           console.log(file.replace(/-[a-z0-9]+\\./, "-[hash]."), status);

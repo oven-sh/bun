@@ -182,8 +182,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    // Same size as the files' entry bits (the linker's list includes the dynamic
-    // import entry points); differently sized `AutoBitSet`s never intersect.
+    // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
     let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
     let mut chunks_to_visit: Vec<u32> = Vec::new();
@@ -231,9 +230,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         }
     }
 
-    // List everything the page's chunks import, transitively, and remember the
-    // entry points among them: with code splitting, a dynamic import is an entry
-    // point, and the assets only it reaches carry only its bit.
+    // Every chunk the page's chunks import, transitively.
     while let Some(chunk_index) = chunks_to_visit.pop() {
         if chunks_to_write.is_set(chunk_index as usize) {
             continue;
@@ -244,6 +241,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         for import in ch.cross_chunk_imports.iter() {
             let imported = &chunks[import.chunk_index as usize];
             if imported.entry_point.is_entry_point() {
+                // A dynamic import's entry point: its bit is what the assets only it reaches carry.
                 entry_point_bits.set(imported.entry_point.entry_point_id() as usize);
             }
             chunks_to_visit.push(import.chunk_index);

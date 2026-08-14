@@ -91,15 +91,20 @@ static napi_value queue_from_finalizer(napi_env env, napi_callback_info info) {
   return external;
 }
 
+// One napi_create_function + napi_set_named_property per export rather than
+// napi_define_properties: the ASAN lane runs this file with
+// BUN_JSC_validateExceptionChecks=1, which napi_define_properties' method
+// path does not pass yet.
+static void export_function(napi_env env, napi_value exports, const char *name,
+                            napi_callback callback) {
+  napi_value function;
+  napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, NULL, &function);
+  napi_set_named_property(env, exports, name, function);
+}
+
 NAPI_MODULE_INIT() {
-  napi_property_descriptor props[] = {
-      {"queue", NULL, queue, NULL, NULL, NULL, napi_default, NULL},
-      {"queueFromComplete", NULL, queue_from_complete, NULL, NULL, NULL,
-       napi_default, NULL},
-      {"queueFromFinalizer", NULL, queue_from_finalizer, NULL, NULL, NULL,
-       napi_default, NULL},
-  };
-  napi_define_properties(env, exports, sizeof(props) / sizeof(props[0]),
-                         props);
+  export_function(env, exports, "queue", queue);
+  export_function(env, exports, "queueFromComplete", queue_from_complete);
+  export_function(env, exports, "queueFromFinalizer", queue_from_finalizer);
   return exports;
 }

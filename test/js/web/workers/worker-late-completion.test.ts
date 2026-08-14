@@ -316,7 +316,7 @@ async function buildAddon(source: string, dir: string) {
       path.join(dir, "addon.node"),
     ],
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

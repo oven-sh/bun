@@ -1012,26 +1012,166 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("context name/origin options", () => {
+  // Node's createContext() takes { name, origin }; runInNewContext() takes the
+  // same two as { contextName, contextOrigin } (lib/vm.js getContextOptions())
+  // and ignores name/origin. Neither spelling is an option of the Script
+  // constructor, runInContext() or runInThisContext().
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+    return "did not throw";
+  }
+  const notAString = (option: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${option}" property must be of type string. Received ${received}`,
+  });
+  const nonStrings: [value: unknown, received: string][] = [
+    [1, "type number (1)"],
+    [null, "null"],
+    [new String("ctx"), "an instance of String"],
+  ];
+  // Options whose getters throw if an entry point reads a key it should ignore.
+  function unreadable(...keys: string[]) {
+    const options = {};
+    for (const key of keys) {
+      Object.defineProperty(options, key, {
+        get() {
+          throw new Error(`read options.${key}`);
+        },
+        enumerable: true,
+      });
+    }
+    return options;
+  }
+
+  describe("Script#runInNewContext()", () => {
+    test.each(["contextName", "contextOrigin"])("rejects a non-string %s", option => {
+      for (const [value, received] of nonStrings) {
+        expect(thrownBy(() => new Script("1").runInNewContext({}, { [option]: value }))).toEqual(
+          notAString(`options.${option}`, received),
+        );
+      }
+    });
+
+    test("validates them whatever the sandbox argument is", () => {
+      const options: object = { contextName: 1 };
+      const bad = notAString("options.contextName", "type number (1)");
+      expect(thrownBy(() => new Script("1").runInNewContext(undefined, options))).toEqual(bad);
+      expect(thrownBy(() => new Script("1").runInNewContext(createContext({}), options))).toEqual(bad);
+      expect(thrownBy(() => new Script("1").runInNewContext(constants.DONT_CONTEXTIFY, options))).toEqual(bad);
+    });
+
+    test("reports contextName before contextOrigin before contextCodeGeneration, like Node", () => {
+      const run = (options: object) => thrownBy(() => new Script("1").runInNewContext({}, options));
+      expect(run({ contextName: 1, contextOrigin: 1, contextCodeGeneration: 1 })).toEqual(
+        notAString("options.contextName", "type number (1)"),
+      );
+      expect(run({ contextOrigin: 1, contextCodeGeneration: 1 })).toEqual(
+        notAString("options.contextOrigin", "type number (1)"),
+      );
+      expect(run({ contextCodeGeneration: 1 })).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.contextCodeGeneration" property must be of type object. Received type number (1)',
+      });
+    });
+
+    test("accepts string or undefined values", () => {
+      const run = (options: object) => new Script("1 + 1").runInNewContext({}, options);
+      expect(run({ contextName: "sandbox", contextOrigin: "https://example.com" })).toBe(2);
+      expect(run({ contextName: "", contextOrigin: "" })).toBe(2);
+      expect(run({ contextName: undefined, contextOrigin: undefined })).toBe(2);
+    });
+
+    test("does not read createContext()'s name/origin", () => {
+      const run = (options: object) => new Script("1 + 1").runInNewContext({}, options);
+      expect(run({ name: 1, origin: 1 })).toBe(2);
+      expect(run(unreadable("name", "origin"))).toBe(2);
+    });
+  });
+
+  describe("runInNewContext()", () => {
+    test.each(["contextName", "contextOrigin"])("rejects a non-string %s", option => {
+      for (const [value, received] of nonStrings) {
+        expect(thrownBy(() => runInNewContext("1", {}, { [option]: value }))).toEqual(
+          notAString(`options.${option}`, received),
+        );
+      }
+    });
+
+    test("accepts string values", () => {
+      expect(runInNewContext("1 + 1", {}, { contextName: "sandbox", contextOrigin: "https://example.com" })).toBe(2);
+    });
+  });
+
+  describe("createContext()", () => {
+    test.each(["name", "origin"])("rejects a non-string %s", option => {
+      for (const [value, received] of nonStrings) {
+        expect(thrownBy(() => createContext({}, { [option]: value }))).toEqual(
+          notAString(`options.${option}`, received),
+        );
+      }
+    });
+
+    test("does not read runInNewContext()'s contextName/contextOrigin", () => {
+      const options: object = { contextName: 1, contextOrigin: 1 };
+      expect(() => createContext({}, options)).not.toThrow();
+      expect(() => createContext({}, unreadable("contextName", "contextOrigin"))).not.toThrow();
+    });
+  });
+
+  describe("entry points that take neither spelling", () => {
+    const options: object = { name: 1, origin: 1, contextName: 1, contextOrigin: 1 };
+
+    test("new Script()", () => {
+      expect(new Script("1 + 1", options).runInThisContext()).toBe(2);
+      const script = new Script("1 + 1", unreadable("name", "origin", "contextName", "contextOrigin"));
+      expect(script.runInThisContext()).toBe(2);
+    });
+
+    test("runInThisContext()", () => {
+      expect(runInThisContext("1 + 1", options)).toBe(2);
+    });
+
+    test("runInContext()", () => {
+      expect(runInContext("1 + 1", createContext({}), options)).toBe(2);
+    });
+
+    test("Script#runInContext() and Script#runInThisContext()", () => {
+      expect(new Script("1 + 1").runInContext(createContext({}), options)).toBe(2);
+      expect(new Script("1 + 1").runInThisContext(options)).toBe(2);
+    });
+  });
+});
+
 describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
-    // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // Each entry point tests the context-option keys it reads. createContext()
+    // spells the first three name/origin/codeGeneration; runInNewContext()
+    // spells them contextName/contextOrigin/contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
-    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
-    const contextKeys = (...codeGenerationKeyNames: string[]) => [
-      "name",
-      "origin",
-      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+    const contextKeys = (nameKey: string, originKey: string, codeGenerationKey: string) => [
+      nameKey,
+      originKey,
+      codeGenerationKey,
+      `${codeGenerationKey}.strings`,
+      `${codeGenerationKey}.wasm`,
       "importModuleDynamically",
       "microtaskMode",
     ];
+    const createContextKeys = contextKeys("name", "origin", "codeGeneration");
+    const runInNewContextKeys = contextKeys("contextName", "contextOrigin", "contextCodeGeneration");
     const matrix = {
-      createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
-      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
+      createContext: createContextKeys,
+      runInNewContext: runInNewContextKeys,
+      scriptRunInNewContext: runInNewContextKeys,
     };
     const code = `
       const vm = require("node:vm");

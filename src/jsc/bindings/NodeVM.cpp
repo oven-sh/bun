@@ -640,7 +640,7 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
 }
 
-void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer)
+void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const NodeVMContextOptionKeys& keys, JSValue* importer)
 {
     if (importer) {
         *importer = jsUndefined();
@@ -656,21 +656,21 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
     JSObject* options = asObject(optionsArg);
 
     // Check name property
-    auto nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s));
+    auto nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, keys.name));
     RETURN_IF_EXCEPTION(scope, );
     if (nameValue) {
         if (!nameValue.isUndefined() && !nameValue.isString()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "options.name"_s, "string"_s, nameValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, keys.name), "string"_s, nameValue);
             return;
         }
     }
 
     // Check origin property
-    auto originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s));
+    auto originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, keys.origin));
     RETURN_IF_EXCEPTION(scope, );
     if (originValue) {
         if (!originValue.isUndefined() && !originValue.isString()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "options.origin"_s, "string"_s, originValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, keys.origin), "string"_s, originValue);
             return;
         }
     }
@@ -704,7 +704,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
         outOptions.ownMicrotaskQueue = true;
     }
 
-    JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey));
+    JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, keys.codeGeneration));
     RETURN_IF_EXCEPTION(scope, );
 
     if (codeGenerationValue) {
@@ -713,7 +713,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
         }
 
         if (!codeGenerationValue.isObject()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey), "object"_s, codeGenerationValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, keys.codeGeneration), "object"_s, codeGenerationValue);
             return;
         }
 
@@ -723,7 +723,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
         RETURN_IF_EXCEPTION(scope, );
         if (allowStringsValue) {
             if (!allowStringsValue.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".strings"_s), "boolean"_s, allowStringsValue);
+                ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, keys.codeGeneration, ".strings"_s), "boolean"_s, allowStringsValue);
                 return;
             }
 
@@ -735,7 +735,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
         RETURN_IF_EXCEPTION(scope, );
         if (allowWasmValue) {
             if (!allowWasmValue.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".wasm"_s), "boolean"_s, allowWasmValue);
+                ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, keys.codeGeneration, ".wasm"_s), "boolean"_s, allowWasmValue);
                 return;
             }
 
@@ -1433,7 +1433,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     JSValue globalObjectDynamicImportCallback;
 
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &globalObjectDynamicImportCallback);
+    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, runInNewContextOptionKeys, &globalObjectDynamicImportCallback);
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
@@ -1667,7 +1667,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue importer;
 
-    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration", &importer);
+    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, createContextOptionKeys, &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;

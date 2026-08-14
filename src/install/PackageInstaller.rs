@@ -116,6 +116,8 @@ use bun_core::UnwrapOrOom;
 #[derive(Default)]
 pub struct NodeModulesFolder {
     pub(crate) tree_id: lockfile::tree::Id,
+    /// Absolute path of this `node_modules` directory; doubles as the path of
+    /// the `destination_dir` handed to `PackageInstall`.
     pub(crate) path: Vec<u8>,
 }
 
@@ -1413,6 +1415,7 @@ impl<'a> PackageInstaller<'a> {
                 None
             },
             cache_dir: Fd::INVALID, // assigned below
+            cache_dir_path: b"",
             destination_dir_subpath,
             // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
             // field outlives `installer`. `destination_dir_subpath` above derives from the
@@ -1446,6 +1449,8 @@ impl<'a> PackageInstaller<'a> {
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir_path =
+                    package_manager::get_cache_directory_path(self.manager_mut()).as_bytes();
             }
             resolution::Tag::Git => {
                 installer.cache_dir_subpath = package_manager::cached_git_folder_name(
@@ -1454,6 +1459,8 @@ impl<'a> PackageInstaller<'a> {
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir_path =
+                    package_manager::get_cache_directory_path(self.manager_mut()).as_bytes();
             }
             resolution::Tag::Github => {
                 installer.cache_dir_subpath = package_manager::cached_github_folder_name(
@@ -1462,6 +1469,8 @@ impl<'a> PackageInstaller<'a> {
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir_path =
+                    package_manager::get_cache_directory_path(self.manager_mut()).as_bytes();
             }
             resolution::Tag::Folder => {
                 let folder_str = *resolution.folder();
@@ -1480,6 +1489,7 @@ impl<'a> PackageInstaller<'a> {
                             ZStr::from_buf(&self.folder_path_buf, folder.len());
                     }
                     installer.cache_dir = Fd::cwd();
+                    installer.cache_dir_path = FileSystem::instance().top_level_dir();
                 } else {
                     // transitive folder dependencies are not hoisted
                     if folder.len() >= self.folder_path_buf.len()
@@ -1520,6 +1530,7 @@ impl<'a> PackageInstaller<'a> {
 
                     // cache_dir might not be created yet (if it's in node_modules)
                     installer.cache_dir = Fd::cwd();
+                    installer.cache_dir_path = FileSystem::instance().top_level_dir();
                 }
             }
             resolution::Tag::LocalTarball => {
@@ -1529,6 +1540,8 @@ impl<'a> PackageInstaller<'a> {
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir_path =
+                    package_manager::get_cache_directory_path(self.manager_mut()).as_bytes();
             }
             resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
@@ -1537,6 +1550,8 @@ impl<'a> PackageInstaller<'a> {
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir_path =
+                    package_manager::get_cache_directory_path(self.manager_mut()).as_bytes();
             }
             resolution::Tag::Workspace => {
                 let folder_str = *resolution.workspace();
@@ -1552,10 +1567,12 @@ impl<'a> PackageInstaller<'a> {
                         ZStr::from_buf(&self.folder_path_buf, folder.len());
                 }
                 installer.cache_dir = Fd::cwd();
+                installer.cache_dir_path = FileSystem::instance().top_level_dir();
             }
             resolution::Tag::Root => {
                 installer.cache_dir_subpath = ZStr::from_static(b".\0");
                 installer.cache_dir = Fd::cwd();
+                installer.cache_dir_path = FileSystem::instance().top_level_dir();
             }
             resolution::Tag::Symlink => {
                 let directory = package_manager::global_link_dir(self.manager_mut());
@@ -1566,6 +1583,7 @@ impl<'a> PackageInstaller<'a> {
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
                     installer.cache_dir = Fd::cwd();
+                    installer.cache_dir_path = FileSystem::instance().top_level_dir();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
                     let buf = self.folder_path_buf.as_mut_slice();
@@ -1582,6 +1600,7 @@ impl<'a> PackageInstaller<'a> {
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                     installer.cache_dir = directory;
+                    installer.cache_dir_path = global_link_dir;
                 }
             }
             _ => {
@@ -1876,6 +1895,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
                         installer.cache_dir = owned_cache_dir.fd();
+                        installer.cache_dir_path = dir_name;
 
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, &destination_dir)

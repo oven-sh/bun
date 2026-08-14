@@ -36,9 +36,11 @@ macro_rules! debug {
     ($($args:tt)*) => { bun_output::scoped_log!(migrate, $($args)*) };
 }
 
+/// `dir_path` is the absolute path `dir` was opened from.
 pub fn detect_and_load_other_lockfile<'a>(
     this: &'a mut Lockfile,
     dir: Fd,
+    dir_path: &[u8],
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
 ) -> LoadResult<'a> {
@@ -52,11 +54,11 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
         // file closes on Drop
         let mut lockfile_path_buf = PathBuffer::uninit();
-        let Ok(lockfile_path) = bun_sys::get_fd_path(lockfile.handle(), &mut lockfile_path_buf)
-        else {
-            break 'npm;
-        };
-        let lockfile_path: &[u8] = &*lockfile_path;
+        let lockfile_path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            dir_path,
+            &mut lockfile_path_buf.0,
+            &[b"package-lock.json"],
+        );
         let Ok(data) = lockfile.read_to_end() else {
             break 'npm;
         };
@@ -93,17 +95,18 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = File::read_from(dir, b"yarn.lock") else {
             break 'yarn;
         };
-        let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir) {
-            Ok(r) => r,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::Migrating,
-                    value: e,
-                    lockfile_path: zstr!("yarn.lock"),
-                    format: LockfileFormat::Text,
-                });
-            }
-        };
+        let migrate_result =
+            match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir, dir_path) {
+                Ok(r) => r,
+                Err(e) => {
+                    return LoadResult::Err(LoadResultErr {
+                        step: LoadStep::Migrating,
+                        value: e,
+                        lockfile_path: zstr!("yarn.lock"),
+                        format: LockfileFormat::Text,
+                    });
+                }
+            };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);

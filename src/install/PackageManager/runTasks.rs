@@ -1385,7 +1385,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let queued = enqueue::enqueue_git_checkout(
                             manager,
                             checkout_id,
-                            repo_fd,
+                            task.id,
                             dep_id,
                             dep_name,
                             &res,

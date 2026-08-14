@@ -60,33 +60,11 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            // `get_fd_path_w` writes the raw `\\?\C:\...` result into
-            // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
-            // stripping the long-path prefix. We can't keep that slice borrowed
-            // across the loop (borrowck vs `cwd_buf`), so capture both its start
-            // OFFSET and length, then reslice `cwd_buf[off..off+len]` per-iter.
-            // Slicing from 0 would yield `\\?\C:\…` with the last 4 chars of the
-            // real cwd dropped — wrong path for every project-relative hardlink.
-            let (dest_cwd_off, dest_cwd_len) = {
-                let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
-                    Ok(s) => &*s,
-                    Err(_) => {
-                        return Ok(sys::Result::Err(sys::Error::from_code(
-                            sys::E::ACCES,
-                            sys::Tag::link,
-                        )));
-                    }
-                };
-                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
-                // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
-                // NB: capture `len`/`dest_ptr` first so NLL drops the `&mut cwd_buf`
-                // loan (held via `dest_cwd`) before `cwd_buf.as_ptr()` takes `&cwd_buf`
-                // — otherwise E0502 on x86_64-pc-windows-msvc.
-                let len = dest_cwd.len();
-                let dest_ptr = dest_cwd.as_ptr();
-                let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
-                (off, len)
-            };
+            let dest_cwd_len = bun_core::strings::convert_utf8_to_utf16_in_buffer(
+                &mut cwd_buf[..],
+                crate::bun_fs::FileSystem::instance().top_level_dir(),
+            )
+            .len();
 
             loop {
                 let entry = match self.walker.next() {
@@ -131,10 +109,7 @@ impl Hardlinker {
                             {
                                 &[dest_slice]
                             } else {
-                                &[
-                                    &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
-                                    dest_slice,
-                                ]
+                                &[&cwd_buf[..dest_cwd_len], dest_slice]
                             };
                             let joined = bun_paths::resolve_path::join_string_buf_w_same::<
                                 bun_paths::platform::Windows,

@@ -272,7 +272,7 @@ pub fn do_patch_commit(
     let name = manager.lockfile.str(&pkg.name).to_vec();
     let cache_result =
         compute_cache_dir_and_subpath(manager, &name, &pkg.resolution, &mut folder_path_buf, None);
-    let cache_dir: Fd = cache_result.cache_dir;
+    let cache_dir_path = cache_result.cache_dir_path;
     let cache_dir_subpath: &ZStr = cache_result.cache_dir_subpath;
     let changes_dir: &[u8] = &changes_dir;
     let lockfile: &Lockfile = &manager.lockfile;
@@ -292,19 +292,8 @@ pub fn do_patch_commit(
         let new_folder = changes_dir;
         let mut buf2 = PathBuffer::uninit();
         let mut buf3 = PathBuffer::uninit();
-        let old_folder: &[u8] = 'old_folder: {
-            let cache_dir_path = match sys::get_fd_path(cache_dir, &mut buf2) {
-                Ok(s) => s,
-                Err(e) => {
-                    Output::err(e, "failed to read from cache", ());
-                    Global::crash();
-                }
-            };
-            break 'old_folder resolve_path::join::<platform::Posix>(&[
-                cache_dir_path,
-                cache_dir_subpath.as_bytes(),
-            ]);
-        };
+        let old_folder: &[u8] =
+            resolve_path::join::<platform::Posix>(&[cache_dir_path, cache_dir_subpath.as_bytes()]);
 
         let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",
@@ -732,211 +721,219 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
-    let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
-        match arg_kind {
-            PatchArgKind::Path => 'brk: {
-                let package_json_path =
-                    resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-                let package_json_source: bun_ast::Source =
-                    match bun_ast::to_source(package_json_path, Default::default()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            Output::err(
-                                e,
-                                "failed to read {f}",
-                                (bun_fmt::quote(package_json_path.as_bytes()),),
-                            );
-                            Global::crash();
-                        }
-                    };
-
-                initialize_store();
-                let log = manager.log_mut();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                            err.name(),
-                            bstr::BStr::new(package_json_source.path.pretty_dir()),
+    let (cache_dir, cache_dir_path, cache_dir_subpath, module_folder, pkg_name) = match arg_kind {
+        PatchArgKind::Path => 'brk: {
+            let package_json_path =
+                resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
+            let package_json_source: bun_ast::Source =
+                match bun_ast::to_source(package_json_path, Default::default()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        Output::err(
+                            e,
+                            "failed to read {f}",
+                            (bun_fmt::quote(package_json_path.as_bytes()),),
                         );
                         Global::crash();
                     }
                 };
-                let json = parsed.root;
 
-                let version: &[u8] = 'version: {
-                    if let Some(v) = json.get(b"version") {
-                        if let bun_ast::ExprData::EString(s) = &v.data {
-                            let s = s.data.slice();
-                            break 'version s;
+            initialize_store();
+            let log = manager.log_mut();
+            let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                Ok(p) => p,
+                Err(err) => {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                        err.name(),
+                        bstr::BStr::new(package_json_source.path.pretty_dir()),
+                    );
+                    Global::crash();
+                }
+            };
+            let json = parsed.root;
+
+            let version: &[u8] = 'version: {
+                if let Some(v) = json.get(b"version") {
+                    if let bun_ast::ExprData::EString(s) = &v.data {
+                        let s = s.data.slice();
+                        break 'version s;
+                    }
+                }
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
+                    bstr::BStr::new(package_json_source.path.text()),
+                );
+                Global::crash();
+            };
+
+            let mut resolver: () = ();
+            let mut package = Package::default();
+            let log = manager.log_mut();
+            // borrowck — `parse_with_json` needs `&mut Lockfile` and
+            // `&mut PackageManager` simultaneously, but the lockfile here is
+            // `manager.lockfile`. Temporarily move the Box out so the two
+            // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
+            // (it takes the lockfile as its own parameter). Restore before
+            // propagating any error so `manager` is never left half-torn.
+            let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
+            let parse_result = package.parse_with_json::<()>(
+                &mut lockfile,
+                manager,
+                log,
+                &package_json_source,
+                json,
+                &mut resolver,
+                Features::FOLDER,
+            );
+            manager.lockfile = lockfile;
+            parse_result?;
+            let lockfile: &Lockfile = &manager.lockfile;
+            let strbuf = lockfile.buffers.string_bytes.as_slice();
+
+            let actual_package = match lockfile.package_index.get(&package.name_hash) {
+                None => {
+                    bun_core::pretty_error!(
+                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
+                    );
+                    Global::crash();
+                }
+                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
+                Some(PackageIndexEntry::Ids(ids)) => 'id: {
+                    let mut resolution_label = Vec::new();
+                    for &id in ids.as_slice() {
+                        let pkg = *lockfile.packages.get(id as usize);
+                        if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf)
+                            == version
+                        {
+                            break 'id pkg;
                         }
                     }
                     bun_core::pretty_error!(
-                        "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
-                        bstr::BStr::new(package_json_source.path.text()),
+                        "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
+                        bstr::BStr::new(package.name.slice(strbuf)),
                     );
                     Global::crash();
-                };
+                }
+            };
 
-                let mut resolver: () = ();
-                let mut package = Package::default();
-                let log = manager.log_mut();
-                // borrowck — `parse_with_json` needs `&mut Lockfile` and
-                // `&mut PackageManager` simultaneously, but the lockfile here is
-                // `manager.lockfile`. Temporarily move the Box out so the two
-                // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
-                // (it takes the lockfile as its own parameter). Restore before
-                // propagating any error so `manager` is never left half-torn.
-                let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
-                let parse_result = package.parse_with_json::<()>(
-                    &mut lockfile,
-                    manager,
-                    log,
-                    &package_json_source,
-                    json,
-                    &mut resolver,
-                    Features::FOLDER,
-                );
-                manager.lockfile = lockfile;
-                parse_result?;
-                let lockfile: &Lockfile = &manager.lockfile;
-                let strbuf = lockfile.buffers.string_bytes.as_slice();
-
-                let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                    None => {
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        );
-                        Global::crash();
+            let name = lockfile.str(&package.name).to_vec();
+            let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
+                let mut name_and_version = Vec::new();
+                write!(
+                    &mut name_and_version,
+                    "{}@{}",
+                    bstr::BStr::new(&name),
+                    actual_package.resolution.fmt(strbuf, PathSep::Posix)
+                )
+                .expect("unreachable");
+                let name_and_version_hash = string_hash(&name_and_version);
+                if let Some(patched_dep) = lockfile.patched_dependencies.get(&name_and_version_hash)
+                {
+                    if let Some(hash) = patched_dep.patchfile_hash() {
+                        break 'existing_patchfile_hash Some(hash);
                     }
-                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                    Some(PackageIndexEntry::Ids(ids)) => 'id: {
-                        let mut resolution_label = Vec::new();
-                        for &id in ids.as_slice() {
-                            let pkg = *lockfile.packages.get(id as usize);
-                            if print_resolution_label(
-                                &mut resolution_label,
-                                &pkg.resolution,
-                                strbuf,
-                            ) == version
-                            {
-                                break 'id pkg;
-                            }
-                        }
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                            bstr::BStr::new(package.name.slice(strbuf)),
-                        );
-                        Global::crash();
+                }
+                break 'existing_patchfile_hash None;
+            };
+
+            let cache_result = compute_cache_dir_and_subpath(
+                manager,
+                &name,
+                &actual_package.resolution,
+                &mut folder_path_buf,
+                existing_patchfile_hash,
+            );
+            let cache_dir = cache_result.cache_dir;
+            let cache_dir_path = cache_result.cache_dir_path;
+            let cache_dir_subpath = cache_result.cache_dir_subpath;
+
+            #[cfg(windows)]
+            let buf =
+                resolve_path::path_to_posix_buf::<u8>(argument, &mut win_normalizer[..]).to_vec();
+            #[cfg(not(windows))]
+            let buf = argument.to_vec();
+
+            break 'brk (
+                cache_dir,
+                cache_dir_path,
+                cache_dir_subpath.as_bytes(),
+                buf,
+                name,
+            );
+        }
+        PatchArgKind::NameAndVersion => 'brk: {
+            let pkg_maybe_version_to_patch = argument;
+            let (name, version) =
+                Dependency::split_name_and_maybe_version(pkg_maybe_version_to_patch);
+            let mut iterator =
+                tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&manager.lockfile);
+            let (pkg_id, folder_relative_path) = pkg_info_for_name_and_version(
+                &manager.lockfile,
+                &mut iterator,
+                pkg_maybe_version_to_patch,
+                name,
+                version,
+            );
+
+            let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
+            let pkg = *manager.lockfile.packages.get(pkg_id as usize);
+            let pkg_name = pkg.name.slice(strbuf).to_vec();
+
+            let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
+                let mut name_and_version = Vec::new();
+                write!(
+                    &mut name_and_version,
+                    "{}@{}",
+                    bstr::BStr::new(name),
+                    pkg.resolution.fmt(strbuf, PathSep::Posix)
+                )
+                .expect("unreachable");
+                let name_and_version_hash = string_hash(&name_and_version);
+                if let Some(patched_dep) = manager
+                    .lockfile
+                    .patched_dependencies
+                    .get(&name_and_version_hash)
+                {
+                    if let Some(hash) = patched_dep.patchfile_hash() {
+                        break 'existing_patchfile_hash Some(hash);
                     }
-                };
+                }
+                break 'existing_patchfile_hash None;
+            };
 
-                let name = lockfile.str(&package.name).to_vec();
-                let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    let mut name_and_version = Vec::new();
-                    write!(
-                        &mut name_and_version,
-                        "{}@{}",
-                        bstr::BStr::new(&name),
-                        actual_package.resolution.fmt(strbuf, PathSep::Posix)
-                    )
-                    .expect("unreachable");
-                    let name_and_version_hash = string_hash(&name_and_version);
-                    if let Some(patched_dep) =
-                        lockfile.patched_dependencies.get(&name_and_version_hash)
-                    {
-                        if let Some(hash) = patched_dep.patchfile_hash() {
-                            break 'existing_patchfile_hash Some(hash);
-                        }
-                    }
-                    break 'existing_patchfile_hash None;
-                };
+            let pkg_resolution = pkg.resolution;
+            let cache_result = compute_cache_dir_and_subpath(
+                manager,
+                &pkg_name,
+                &pkg_resolution,
+                &mut folder_path_buf,
+                existing_patchfile_hash,
+            );
 
-                let cache_result = compute_cache_dir_and_subpath(
-                    manager,
-                    &name,
-                    &actual_package.resolution,
-                    &mut folder_path_buf,
-                    existing_patchfile_hash,
-                );
-                let cache_dir = cache_result.cache_dir;
-                let cache_dir_subpath = cache_result.cache_dir_subpath;
+            let cache_dir = cache_result.cache_dir;
+            let cache_dir_path = cache_result.cache_dir_path;
+            let cache_dir_subpath = cache_result.cache_dir_subpath;
 
-                #[cfg(windows)]
-                let buf = resolve_path::path_to_posix_buf::<u8>(argument, &mut win_normalizer[..])
+            let module_folder_ =
+                resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
+            #[cfg(windows)]
+            let buf =
+                resolve_path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..])
                     .to_vec();
-                #[cfg(not(windows))]
-                let buf = argument.to_vec();
+            #[cfg(not(windows))]
+            let buf = module_folder_.to_vec();
 
-                break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, name);
-            }
-            PatchArgKind::NameAndVersion => 'brk: {
-                let pkg_maybe_version_to_patch = argument;
-                let (name, version) =
-                    Dependency::split_name_and_maybe_version(pkg_maybe_version_to_patch);
-                let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(
-                    &manager.lockfile,
-                );
-                let (pkg_id, folder_relative_path) = pkg_info_for_name_and_version(
-                    &manager.lockfile,
-                    &mut iterator,
-                    pkg_maybe_version_to_patch,
-                    name,
-                    version,
-                );
-
-                let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
-                let pkg = *manager.lockfile.packages.get(pkg_id as usize);
-                let pkg_name = pkg.name.slice(strbuf).to_vec();
-
-                let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    let mut name_and_version = Vec::new();
-                    write!(
-                        &mut name_and_version,
-                        "{}@{}",
-                        bstr::BStr::new(name),
-                        pkg.resolution.fmt(strbuf, PathSep::Posix)
-                    )
-                    .expect("unreachable");
-                    let name_and_version_hash = string_hash(&name_and_version);
-                    if let Some(patched_dep) = manager
-                        .lockfile
-                        .patched_dependencies
-                        .get(&name_and_version_hash)
-                    {
-                        if let Some(hash) = patched_dep.patchfile_hash() {
-                            break 'existing_patchfile_hash Some(hash);
-                        }
-                    }
-                    break 'existing_patchfile_hash None;
-                };
-
-                let pkg_resolution = pkg.resolution;
-                let cache_result = compute_cache_dir_and_subpath(
-                    manager,
-                    &pkg_name,
-                    &pkg_resolution,
-                    &mut folder_path_buf,
-                    existing_patchfile_hash,
-                );
-
-                let cache_dir = cache_result.cache_dir;
-                let cache_dir_subpath = cache_result.cache_dir_subpath;
-
-                let module_folder_ =
-                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
-                #[cfg(windows)]
-                let buf =
-                    resolve_path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..])
-                        .to_vec();
-                #[cfg(not(windows))]
-                let buf = module_folder_.to_vec();
-
-                break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, pkg_name);
-            }
-        };
+            break 'brk (
+                cache_dir,
+                cache_dir_path,
+                cache_dir_subpath.as_bytes(),
+                buf,
+                pkg_name,
+            );
+        }
+    };
 
     let module_folder: &[u8] = &module_folder;
     let pkg_name: &[u8] = &pkg_name;
@@ -956,9 +953,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // recreate the path below it so the copy lands in a project-local tree.
     detach_module_folder_from_shared_store(module_folder);
 
-    if let Err(e) =
-        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
-    {
+    if let Err(e) = overwrite_package_in_node_modules_folder(
+        cache_dir,
+        cache_dir_path,
+        cache_dir_subpath,
+        module_folder,
+    ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
@@ -1141,6 +1141,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
 
 fn overwrite_package_in_node_modules_folder(
     cache_dir: Fd,
+    cache_dir_path: &[u8],
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
@@ -1164,13 +1165,10 @@ fn overwrite_package_in_node_modules_folder(
     > = 'src_path: {
         #[cfg(windows)]
         {
-            let mut path_buf = bun_paths::WPathBuffer::uninit();
-            let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-
             let mut sp = bun_paths::AbsPath::<
                 bun_paths::OSPathChar,
                 { bun_paths::path_options::PathSeparators::AUTO },
-            >::from(&*abs_path)
+            >::from(cache_dir_path)
             .unwrap();
             sp.append(cache_dir_subpath)?;
 
@@ -1180,6 +1178,7 @@ fn overwrite_package_in_node_modules_folder(
         // unused if not windows
         #[cfg(not(windows))]
         {
+            let _ = cache_dir_path;
             break 'src_path bun_paths::AbsPath::init();
         }
     };

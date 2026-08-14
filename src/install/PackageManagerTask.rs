@@ -513,7 +513,7 @@ impl<'a> Task<'a> {
                         &mut this.log,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
                         unsafe { &mut *manager }.get_cache_directory(),
-                        git_checkout.repo_dir,
+                        git_checkout.clone_id,
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),
@@ -687,7 +687,7 @@ pub struct GitCloneRequest {
 }
 
 pub struct GitCheckoutRequest {
-    pub(crate) repo_dir: Fd,
+    pub(crate) clone_id: Id,
     pub(crate) dependency_id: DependencyID,
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,

@@ -28,6 +28,8 @@ pub struct PackageInstall<'a> {
     /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub(crate) cache_dir: Fd,
+    /// Absolute path `cache_dir` was opened from.
+    pub(crate) cache_dir_path: &'a [u8],
     pub(crate) cache_dir_subpath: &'a ZStr,
     // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
@@ -1226,76 +1228,51 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
+            let _ = destbase;
+            let mut join_buf = path::path_buffer_pool::get();
 
-            // SAFETY: FFI — destbase.fd() is an open handle; state.buf is a valid writable
-            // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    destbase.fd().native(),
-                    state.buf.as_mut_ptr(),
-                    u32::try_from(state.buf.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if dest_path_length == 0 || dest_path_length >= state.buf.len() {
-                let e = windows::Win32Error::get();
-                let err = if dest_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
-                } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
-                // Drop on caller's `state` closes cached_package_dir; explicit close
-                // here would double-close (see posix branch above for full rationale).
-                return InstallResult::fail(err, Step::OpeningDestDir, None);
+            // `\\?\`-prefixed so CopyFileW/CreateHardLinkW accept >MAX_PATH.
+            let dest_dir = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
+                &self.node_modules.path,
+                &mut join_buf.0,
+                &[destpath.as_bytes()],
+            );
+            let mut i = strings::to_kernel32_path(&mut state.buf[..], dest_dir).len();
+            if i == 0 {
+                return InstallResult::fail(
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                    Step::OpeningDestDir,
+                    None,
+                );
             }
-
-            let mut i: usize = dest_path_length;
-            if state.buf[i] != u16::from(b'\\') {
+            if state.buf[i - 1] != u16::from(b'\\') {
                 state.buf[i] = u16::from(b'\\');
                 i += 1;
             }
-
-            i += strings::to_wpath_normalized(&mut state.buf[i..], destpath.as_bytes()).len();
-            state.buf[i] = bun_paths::SEP_WINDOWS as u16;
-            i += 1;
             state.buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&state.buf[..], i);
 
             let _ = mkdir_recursive_os_path(fullpath);
             state.to_copy_buf_off = fullpath.len();
 
-            // SAFETY: FFI — cached_package_dir.fd() is an open handle (opened above);
-            // state.buf2 is a valid writable WPathBuffer of the passed length.
-            let cache_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    state.cached_package_dir.fd().native(),
-                    state.buf2.as_mut_ptr(),
-                    u32::try_from(state.buf2.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if cache_path_length == 0 || cache_path_length >= state.buf2.len() {
-                let e = windows::Win32Error::get();
-                let err = if cache_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
-                } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
-                // Drop on caller's `state` closes cached_package_dir; explicit close
-                // here would double-close (see posix branch above for full rationale).
-                return InstallResult::fail(err, Step::CopyingFiles, None);
+            let cache_dir = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
+                self.cache_dir_path,
+                &mut join_buf.0,
+                &[self.cache_dir_subpath.as_bytes()],
+            );
+            let n = strings::to_kernel32_path(&mut state.buf2[..], cache_dir).len();
+            if n == 0 {
+                return InstallResult::fail(
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                    Step::CopyingFiles,
+                    None,
+                );
             }
-            // borrowck — index by `cache_path_length` directly so no shared borrow is live.
-            state.to_copy_buf2_off = if state.buf2[cache_path_length - 1] != u16::from(b'\\') {
-                state.buf2[cache_path_length] = u16::from(b'\\');
-                cache_path_length + 1
+            state.to_copy_buf2_off = if state.buf2[n - 1] != u16::from(b'\\') {
+                state.buf2[n] = u16::from(b'\\');
+                n + 1
             } else {
-                cache_path_length
+                n
             };
             InstallResult::Success
         }
@@ -1758,7 +1735,11 @@ impl<'a> PackageInstall<'a> {
         let to_copy_buf2_offset: usize;
         #[cfg(unix)]
         {
-            let cache_dir_path = sys::get_fd_path(state.cached_package_dir.fd(), &mut buf2)?;
+            let cache_dir_path = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                self.cache_dir_path,
+                &mut buf2.0,
+                &[self.cache_dir_subpath.as_bytes()],
+            );
             let cache_len = cache_dir_path.len();
             if cache_len > 0 && cache_dir_path[cache_len - 1] != SEP {
                 buf2[cache_len] = SEP;
@@ -2075,14 +2056,12 @@ impl<'a> PackageInstall<'a> {
         .then_some(dirname_slice);
 
         let mut dest_buf = PathBuffer::uninit();
+        let mut join_buf = path::path_buffer_pool::get();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
         let mut to_buf = PathBuffer::uninit();
-        // Open the target relative to cache_dir, then resolve its canonical path.
-        // Returning a borrow of `to_buf` from an `FnMut` closure is rejected by
-        // borrowck, so inline the open/getFdPath/close.
         // `bun_sys::Error::into()` would yield raw errno tags (`ENOENT`/`EACCES`),
-        // so map the openat errno to the named error tag to preserve the
+        // so map the realpath errno to the named error tag to preserve the
         // user-visible error tag
         // (test/cli/install/bun-link.test.ts asserts on `FileNotFound:`).
         let realpath_err = |e: bun_sys::Error| -> crate::Error {
@@ -2098,24 +2077,13 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
-            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
-            // resolves via `GetFinalPathNameByHandleW`.
-            let fd = match sys::openat(
-                self.cache_dir,
-                symlinked_path,
-                sys::O::RDONLY | sys::O::DIRECTORY,
-                0,
-            ) {
-                Ok(fd) => fd,
-                Err(err) => {
-                    return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None);
-                }
-            };
-            let res = sys::get_fd_path(fd, &mut to_buf);
-            fd.close();
-            match res {
-                Ok(s) => &*s,
+            let symlinked_abs = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                self.cache_dir_path,
+                &mut join_buf.0,
+                &[symlinked_path.as_bytes()],
+            );
+            match sys::realpath(symlinked_abs, &mut to_buf) {
+                Ok(s) => s,
                 Err(err) => {
                     return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None);
                 }
@@ -2125,63 +2093,25 @@ impl<'a> PackageInstall<'a> {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
-            let mut wbuf = bun_paths::WPathBuffer::uninit();
-            // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
-            // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    destination_dir.fd().native(),
-                    wbuf.as_mut_ptr(),
-                    u32::try_from(wbuf.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if dest_path_length == 0 || dest_path_length >= wbuf.len() {
-                let e = windows::Win32Error::get();
-                let err = if dest_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
-                } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
-                return InstallResult::fail(err, Step::LinkingDependency, None);
-            }
-
-            let mut i: usize = dest_path_length;
-            if wbuf[i] != u16::from(b'\\') {
-                wbuf[i] = u16::from(b'\\');
-                i += 1;
-            }
-
             if let Some(dir) = subdir {
-                i += strings::to_wpath_normalized(&mut wbuf[i..], dir).len();
-                wbuf[i] = bun_paths::SEP_WINDOWS as u16;
-                i += 1;
-                wbuf[i] = 0;
-                // SAFETY: NUL written at [i].
-                let fullpath = bun_core::WStr::from_buf(&wbuf[..], i);
-
-                let _ = mkdir_recursive_os_path(fullpath);
+                let subdir_path = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
+                    &self.node_modules.path,
+                    &mut join_buf.0,
+                    &[dir],
+                );
+                let mut wbuf = bun_paths::w_path_buffer_pool::get();
+                let _ =
+                    mkdir_recursive_os_path(strings::to_kernel32_path(&mut wbuf[..], subdir_path));
             }
 
-            let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written as usize;
-            if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
-                dest_buf[offset] = bun_paths::SEP_WINDOWS;
-                offset += 1;
-            }
-            dest_buf[offset..offset + dest.len()].copy_from_slice(dest);
-            offset += dest.len();
-            dest_buf[offset] = 0;
-
-            // SAFETY: NUL written at [offset].
-            let dest_z = ZStr::from_buf(&dest_buf, offset);
+            let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
+                &self.node_modules.path,
+                &mut dest_buf.0,
+                &[subdir.unwrap_or(b""), dest],
+            );
 
             let to_len = to_path.len();
             to_buf[to_len] = 0;
-            // SAFETY: NUL written at [to_len].
             let target_z = ZStr::from_buf(&to_buf, to_len);
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
@@ -2226,9 +2156,20 @@ impl<'a> PackageInstall<'a> {
             };
             let dest_dir: &Dir = owned_dest_dir.as_ref().unwrap_or(destination_dir);
 
-            let dest_dir_path = match sys::get_fd_path(dest_dir.fd(), &mut dest_buf) {
-                Ok(p) => p,
-                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+            // The kernel resolves the relative link from the physical location
+            // of `dest_dir`, so compute it against the realpath.
+            let dest_dir_path = {
+                let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                    &self.node_modules.path,
+                    &mut join_buf.0,
+                    &[subdir.unwrap_or(b"")],
+                );
+                match sys::realpath(joined, &mut dest_buf) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                    }
+                }
             };
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);

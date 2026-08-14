@@ -455,12 +455,19 @@ impl Lockfile {
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
-        self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
+        self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(
+            Fd::cwd(),
+            FileSystem::instance().top_level_dir(),
+            manager,
+            log,
+        )
     }
 
+    /// `dir_path` is the absolute path `dir` was opened from.
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
+        dir_path: &[u8],
         mut manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
@@ -498,7 +505,7 @@ impl Lockfile {
                                 if let Some(pm) = manager {
                                     // The format is carried inside the `LoadResult` itself.
                                     return migration::detect_and_load_other_lockfile(
-                                        self, dir, pm, log,
+                                        self, dir, dir_path, pm, log,
                                     );
                                 }
                             }

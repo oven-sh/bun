@@ -14,7 +14,7 @@ use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
 use crate::package_install::PackageInstall;
-use crate::package_manager;
+use crate::package_manager::{self, TemporaryDirectory};
 use crate::{
     DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
     resolution::Resolution,
@@ -43,8 +43,7 @@ pub struct PatchTask {
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
-    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
-    pub(crate) tempdir: Fd,
+    pub(crate) tempdir: &'static TemporaryDirectory,
     pub(crate) project_dir: &'static [u8],
     pub(crate) callback: Callback,
     pub(crate) task: ThreadPoolTask,
@@ -120,6 +119,7 @@ pub struct ApplyPatch {
 
     /// Borrowed view of the manager's cache directory fd (see comment at top of file).
     pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_path: &'static [u8],
     pub(crate) cache_dir_subpath: ZBox,
     pub(crate) cache_dir_subpath_without_patch_hash: ZBox,
 
@@ -429,12 +429,12 @@ impl PatchTask {
                 Err(_no_space_left) => unreachable!(),
             };
 
-        let system_tmpdir = self.tempdir;
+        let system_tmpdir = self.tempdir.handle.fd();
 
         let pkg_name = patch.pkgname;
 
         let dummy_node_modules = crate::package_installer::NodeModulesFolder {
-            path: Vec::<u8>::new(),
+            path: self.tempdir.path.as_bytes().to_vec(),
             tree_id: 0,
         };
 
@@ -479,6 +479,7 @@ impl PatchTask {
         let lockfile = &self.manager.get().lockfile;
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
+            cache_dir_path: patch.cache_dir_path,
             cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
             destination_dir_subpath_buf: &mut dest_subpath_buf[..],
@@ -726,7 +727,7 @@ impl PatchTask {
         // The field is only ever consumed as a byte slice (`join_z_buf` input,
         // log formatting), so no trailing NUL is needed.
 
-        let tempdir = manager.get_temporary_directory().handle.fd();
+        let tempdir = manager.get_temporary_directory();
         Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
@@ -795,14 +796,16 @@ impl PatchTask {
         let cache_dir_subpath_without_patch_hash =
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
+        let cache_dir_path = stuff.cache_dir_path;
 
-        let tempdir = pkg_manager.get_temporary_directory().handle.fd();
+        let tempdir = pkg_manager.get_temporary_directory();
         Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {
                 pkg_id,
                 patch_hash,
                 cache_dir,
+                cache_dir_path,
                 patchfilepath,
                 pkgname: pkg_name,
                 logger: Log::init(),

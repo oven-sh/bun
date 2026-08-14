@@ -186,12 +186,13 @@ pub use super::package_installer::PackageInstaller;
 pub use self::package_manager_directories as directories;
 use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
-    attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
-    cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
-    cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
-    fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
+    TemporaryDirectory, attempt_to_create_package_json, cached_git_folder_name,
+    cached_git_folder_name_print, cached_git_folder_name_print_auto, cached_github_folder_name,
+    cached_github_folder_name_print, cached_github_folder_name_print_auto,
+    cached_npm_package_folder_name, cached_npm_package_folder_name_print,
+    cached_npm_package_folder_print_basename, cached_tarball_folder_name,
+    cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
+    get_cache_directory, get_cache_directory_and_abs_path, get_cache_directory_path,
     get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
     path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
     update_lockfile_if_needed, write_yarn_lock,
@@ -370,7 +371,7 @@ pub struct PackageManager {
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: Box<[u8]>,
+    pub(crate) global_link_dir_path: &'static [u8],
 
     pub(crate) on_wake: WakeHandler,
 
@@ -1297,13 +1298,13 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> = Vec::with_capacity(
-        existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
+        existing_path.len() + 1 + tempdir.path.len() + 1 + manager.node_gyp_tempdir_name.len(),
     );
     path_var.extend_from_slice(existing_path);
     if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
         path_var.push(DELIMITER);
     }
-    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
+    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.path.as_bytes()));
     path_var.push(SEP);
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
     manager.env_mut().map.put(b"PATH", &path_var)?;
@@ -1313,7 +1314,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     write!(
         cursor,
         "{}{}{}{}{}",
-        bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
+        bstr::BStr::new(strings::without_trailing_slash(tempdir.path.as_bytes())),
         SEP_STR,
         bstr::BStr::new(strings::without_trailing_slash(
             &manager.node_gyp_tempdir_name
@@ -1460,8 +1461,9 @@ pub fn init(
         if let Some(opts) = ctx.install.as_deref() {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
-        let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
-        bun_sys::fchdir(global_dir)?;
+        let (_global_dir, global_dir_path) =
+            package_manager_options::open_global_dir(explicit_global_dir)?;
+        bun_sys::chdir(&global_dir_path)?;
     }
 
     // Registers the resolver-tier singleton
@@ -1645,10 +1647,11 @@ pub fn init(
                     parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
                         0;
 
+                    let json_path = &parent_path_buf
+                        [..parent_without_trailing_slash.len() + b"/package.json".len()];
                     let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
-                        &parent_path_buf
-                            [..parent_without_trailing_slash.len() + b"/package.json".len()],
+                        json_path,
                         bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
                         0,
                     ) {
@@ -1661,16 +1664,8 @@ pub fn init(
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
-                    // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
-                    // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
-                    let json_path = unsafe {
-                        bun_sys::get_fd_path(
-                            json_file.handle,
-                            &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
-                        )?
-                    };
                     let json_source =
-                        bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
+                        bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
                     initialize_store();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
@@ -1757,12 +1752,14 @@ pub fn init(
                             };
 
                             #[cfg(windows)]
+                            let mut posix_buf = bun_paths::path_buffer_pool::get();
+                            #[cfg(windows)]
                             let maybe_workspace_path = {
-                                parent_path_buf[..child_path.len()].copy_from_slice(child_path);
+                                posix_buf[..child_path.len()].copy_from_slice(child_path);
                                 resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                    &mut parent_path_buf[..child_path.len()],
+                                    &mut posix_buf[..child_path.len()],
                                 );
-                                &parent_path_buf[..child_path.len()]
+                                &posix_buf[..child_path.len()]
                             };
                             #[cfg(not(windows))]
                             let maybe_workspace_path = child_path;
@@ -1816,10 +1813,11 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
+        let p = resolve_path::join_string_buf::<platform::Auto>(
+            &mut root_buf.0,
+            &[strings::without_trailing_slash(tld), b"package.json"],
+        );
         let plen = p.len();
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
@@ -2064,7 +2062,7 @@ pub fn init(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
@@ -2106,11 +2104,8 @@ pub fn init(
 
     {
         // make sure folder packages can find the root package without creating a new one
-        // Posix-normalize the
-        // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
-        // hashing the raw bytes would seed a key the resolver never looks up — copy into
-        // a stack buffer and convert separators in place.
+        // `FolderResolution.hash` is always fed `/`-separated bytes by every
+        // resolver-side caller, so posix-normalize the separators before hashing.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
         let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
         let mut buf = PathBuffer::uninit();
@@ -2498,7 +2493,7 @@ fn init_with_runtime_once(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,

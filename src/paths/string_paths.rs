@@ -353,6 +353,18 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
         let n = to_w_path(&mut wbuf[4..], path).len();
         return wstr_in_buf(wbuf, n + 4);
     }
+    // `\\server\share\…` → `\\?\UNC\server\share\…`
+    if utf8.len() > 2
+        && resolve_path::is_sep_any(utf8[0])
+        && resolve_path::is_sep_any(utf8[1])
+        && !resolve_path::is_sep_any(utf8[2])
+        && utf8[2] != b'.'
+        && utf8[2] != b'?'
+    {
+        wbuf[..8].copy_from_slice(bun_core::w!("\\\\?\\UNC\\"));
+        let n = to_w_path(&mut wbuf[8..], &utf8[2..]).len();
+        return wstr_in_buf(wbuf, n + 8);
+    }
     to_w_path(wbuf, path)
 }
 

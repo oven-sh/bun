@@ -216,23 +216,12 @@ impl Scripts {
             #[cfg(not(windows))]
             let cwd: &[u8] = cwd_.slice();
 
+            // Lifecycle scripts of junctioned (workspace / `bun link`) packages
+            // run from the real directory, matching what `chdir` does on POSIX.
             #[cfg(windows)]
-            let cwd: &[u8] = 'brk: {
-                let Ok(cwd_handle) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_.slice_z())
-                else {
-                    break 'brk cwd_.slice();
-                };
-                // Resolve the canonical path, then close the directory HANDLE.
-                // (`Fd` is `Copy` with no `Drop`, so without this explicit
-                // close one kernel directory HANDLE leaks per script-bearing
-                // package.)
-                let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
-                let _ = bun_sys::close(cwd_handle);
-                match path {
-                    Ok(p) => p,
-                    Err(_) => cwd_.slice(),
-                }
+            let cwd: &[u8] = match bun_sys::realpath(cwd_.slice_z(), &mut cwd_buf) {
+                Ok(p) => p,
+                Err(_) => cwd_.slice(),
             };
 
             return Some(List {

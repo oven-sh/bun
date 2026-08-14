@@ -8,7 +8,6 @@ use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::_folder_resolver::{
@@ -275,11 +274,11 @@ pub fn enqueue_git_for_checkout(
         return;
     }
 
-    if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+    if this.git_repositories.contains_key(&clone_id) {
         let task = enqueue_git_checkout(
             this,
             checkout_id,
-            repo_fd,
+            clone_id,
             dependency_id,
             alias,
             resolution,
@@ -1287,7 +1286,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let task = enqueue_git_checkout(
                     this,
                     checkout_id,
-                    repo_fd,
+                    clone_id,
                     id,
                     alias,
                     &res,
@@ -1784,7 +1783,7 @@ fn enqueue_git_clone(
 pub fn enqueue_git_checkout(
     this: &mut PackageManager,
     task_id: Task::Id,
-    dir: Fd,
+    clone_id: Task::Id,
     dependency_id: DependencyID,
     name: &[u8],
     resolution: &Resolution,
@@ -1816,7 +1815,7 @@ pub fn enqueue_git_checkout(
             tag: crate::package_manager_task::Tag::GitCheckout,
             request: crate::package_manager_task::Request {
                 git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
-                    repo_dir: dir,
+                    clone_id,
                     resolution: *resolution,
                     dependency_id,
                     name: StringOrTinyString::init_append_if_needed(
@@ -2769,17 +2768,7 @@ fn get_or_put_resolved_package(
             }
         }
         dependency::version::Tag::Symlink => {
-            // reshaped for borrowck — `link_dir` / `symlink_path`
-            // borrow into `*this`; detach their lifetimes so the
-            // `&mut PackageManager` reborrow for `get_or_put` does not
-            // conflict.
-            // SAFETY: `global_link_dir_path` returns a slice into the lazily-
-            // initialized `PackageManager.global_link_dir_path` (a `Box<[u8]>`
-            // set once and never freed); `get_or_put` copies `symlink_path`
-            // into the lockfile string buffer before any other mutation.
-            // `version.tag == Symlink`.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+            let link_dir = package_manager_real::global_link_dir_path(this);
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),

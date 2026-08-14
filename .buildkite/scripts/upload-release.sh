@@ -308,7 +308,14 @@ function sign_and_upload_manifest() {
   # runs — almost always a typo in a secret name, and a distinct error
   # here beats the confusing rollout-warning-then-helper-error pair).
   if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
-    assert_command "gpg" "gnupg" "https://gnupg.org/download/"
+    # Inline probe, not assert_command: assert_command `exit`s on a
+    # missing tool, which would terminate the whole script and bypass
+    # the fail-soft `||` guard at this function's call site. A `return`
+    # keeps the failure inside the guard.
+    if ! command -v gpg >/dev/null 2>&1; then
+      echo "error: gpg is not installed; cannot sign manifest" >&2 || true
+      return 1
+    fi
   elif [ -n "$gpg_private_key" ] || [ -n "$gpg_passphrase" ]; then
     echo "error: only one of GPG_PRIVATE_KEY / GPG_PASSPHRASE is set in Buildkite secrets;" >&2 || true
     echo "error: both are required to sign, or both unset to publish unsigned." >&2 || true
@@ -520,7 +527,7 @@ function create_release() {
   # the archive upload and the remaining release steps. The daily sign
   # cron self-heals the manifest on the next pass.
   sign_and_upload_manifest "$tag" "${files[@]}" \
-    || echo "warn: manifest sign/upload failed (exit $?); the daily sign cron will catch up" >&2
+    || echo "warn: manifest sign/upload failed (exit $?); the daily sign cron will catch up" >&2 || true
   update_github_release "$tag"
   create_sentry_release "$tag"
   send_discord_announcement "$tag"

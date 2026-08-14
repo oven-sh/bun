@@ -159,8 +159,7 @@ async function expectCopied(proc: Bun.Subprocess, stdout: Collected, stderr: Col
     await ready(stderr);
     await feedInTwoPieces(stdout, stderr, sendLine(proc));
     await expectCopied(proc, stdout, stderr);
-  }, // Boots a second runtime inside the child; a few seconds under ASAN.
-  30_000);
+  }, 30_000); // Boots a second runtime inside the child; a few seconds under ASAN.
 
   for (const [name, env] of loops) {
     // The reader of the child's stdout does not start until this test sends it

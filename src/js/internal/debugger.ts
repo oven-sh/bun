@@ -388,8 +388,7 @@ class Debugger {
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
-      // A --watch reload execs over this process and would otherwise find this
-      // socket file still on disk when it binds the same path again.
+      // Unlinked by a --watch reload, which execs over this process and binds it again.
       addInspectorUnixSocketPath(pathname);
       return;
     }

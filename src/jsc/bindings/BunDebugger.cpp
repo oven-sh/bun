@@ -683,11 +683,9 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
-// Paths of the unix sockets internal/debugger.ts is listening on: one per
-// ws+unix:// URL, and --inspect and BUN_INSPECT can each supply one. Only the
-// debugger thread appends; the list is read by whichever thread replaces the
-// process (the file watcher, the JS thread, or the crash handler), so the head is
-// published through an atomic and entries are never freed.
+// ws+unix:// paths internal/debugger.ts is listening on (--inspect and BUN_INSPECT can
+// each add one). Appended by the debugger thread, read by whichever thread reloads the
+// process (possibly the crash handler): atomic head, entries are never freed.
 struct InspectorUnixSocket {
     CString path;
     InspectorUnixSocket* next;
@@ -708,15 +706,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject 
     return JSValue::encode(jsUndefined());
 }
 
-// A watch-mode reload execs over this process: that closes the listening sockets
-// but leaves their files behind, and the reloaded process inherits the same
-// --inspect / BUN_INSPECT values, so it would bind the same paths and fail with
-// EADDRINUSE. Same cleanup Server.stop() does for a unix listener.
-//
-// Not synchronized with a bind in progress on the debugger thread: a reload landing
-// in the microseconds between that bind and its registration (startup only) leaves
-// that file behind and that one reload fails as before. Waiting for that thread here
-// is not worth it, and this also runs from the crash handler.
+// The reload execs over this process, which closes the sockets but not their files, and
+// the reloaded process binds the same paths again (the unlink Server.stop() would do).
+// A bind still in flight on the debugger thread is not waited for: a reload in that
+// startup window fails with EADDRINUSE as every reload did before this existed.
 extern "C" void BunDebugger__willReloadProcess()
 {
     for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)

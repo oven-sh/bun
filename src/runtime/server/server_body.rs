@@ -2605,10 +2605,10 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
-        // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it. One-shot sweep (Node semantics): busy
-        // connections are spared and are NOT marked to close later.
+        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // the guard so it cannot re-derive `&mut self` while this frame owns
+        // it. One-shot sweep (Node semantics): busy connections are spared
+        // and are NOT marked to close later.
         self.deinit_running.set(true);
         let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
@@ -2826,11 +2826,7 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener()
-            && self.pending_requests.get() == 0
-            && !self.has_active_connections()
-            && !self.has_active_web_sockets()
-        {
+        if self.is_closed() {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {

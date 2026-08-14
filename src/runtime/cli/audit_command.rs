@@ -74,6 +74,14 @@ impl AuditCommand {
             Output::err_generic("bun audit fix does not take arguments", ());
             Global::exit(1);
         }
+        if !fix && cli.positionals.len() > 1 {
+            Output::err_generic(
+                "unknown subcommand \"{s}\" for bun audit",
+                (BStr::new(cli.positionals[1]),),
+            );
+            bun_core::note!("did you mean 'bun audit fix'?");
+            Global::exit(1);
+        }
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
         {
@@ -97,7 +105,6 @@ impl AuditCommand {
             }
         };
         let json_output = manager.options.json_output;
-
         if fix {
             return Self::audit_fix(
                 ctx,
@@ -210,8 +217,9 @@ impl AuditCommand {
             match collect_vulnerabilities(&response_text, audit_level, ignore_list)? {
                 Some(vulnerabilities) => vulnerabilities,
                 None => {
-                    let _ = Output::writer().write_all(&response_text);
-                    let _ = Output::writer().write_all(b"\n");
+                    bun_core::pretty_errorln!(
+                        "<red>error<r>: audit request failed to parse json. Is the registry down?"
+                    );
                     Output::flush();
                     Global::exit(1);
                 }
@@ -233,6 +241,7 @@ impl AuditCommand {
             .map(|vulnerability| Advisory {
                 package_name: vulnerability.package_name.clone(),
                 vulnerable_versions: vulnerability.vulnerable_versions.clone(),
+                ignore_token: ignore_token(vulnerability),
             })
             .collect();
         let dry_run = pm.options.dry_run;
@@ -872,6 +881,13 @@ fn keep_vulnerability(
         strings::eql(&vulnerability.id, ignored_cve)
             || strings::index_of(&vulnerability.url, ignored_cve).is_some()
     })
+}
+
+fn ignore_token(vulnerability: &VulnerabilityInfo) -> Box<[u8]> {
+    match strings::index_of(&vulnerability.url, b"GHSA-") {
+        Some(i) => Box::from(&vulnerability.url[i..]),
+        None => vulnerability.id.clone(),
+    }
 }
 
 fn collect_vulnerabilities(

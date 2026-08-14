@@ -1123,7 +1123,9 @@ fn print_install_summary(
 
     let mut printed_timestamp = false;
     if this.options.do_.summary() {
-        print_summary_tree(this, install_summary, log_level)?;
+        if this.subcommand != Subcommand::Dedupe {
+            print_summary_tree(this, install_summary, log_level)?;
+        }
 
         if !did_meta_hash_change {
             this.summary.remove = 0;
@@ -1569,7 +1571,7 @@ fn index_of_named_update(
         return None;
     }
     let realname = realname.slice(buf);
-    manager.index_of_update_request(bun_semver::string::Builder::string_hash(realname), realname)
+    manager.index_of_update_request_named(realname)
 }
 
 #[cold]

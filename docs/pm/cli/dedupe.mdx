@@ -12,13 +12,15 @@ bun dedupe
 ```
 
 ```
-Removed 2 duplicate versions: esbuild@0.15.10, react@18.2.0
+- esbuild@0.15.10
+- react@18.2.0
+Removed 2 duplicate versions
 ```
 
 If there is nothing to remove, the command prints:
 
 ```
-Already deduplicated.
+🎉 No duplicates — checked 148 packages, every one already resolves to a single version [9.00ms]
 ```
 
 ### `--check`
@@ -30,7 +32,10 @@ bun dedupe --check
 ```
 
 ```
-1 duplicate version can be removed: esbuild@0.15.10
+- esbuild@0.15.10
+- react@18.2.0
+2 duplicate versions can be removed [12.00ms]
+  bun dedupe
 ```
 
 ### Notes
@@ -38,7 +43,7 @@ bun dedupe --check
 - Overrides and catalogs are honoured: a dependency is re-pointed using its effective range.
 - A dependency listed directly in the root or a workspace `package.json` is only moved to an older version when that is the only way to remove a version: if a transitive dependency pins an older version exactly, the direct range is collapsed onto it (pnpm keeps both versions in that case). Use `bun update` or an [override](/pm/overrides) if you want the newer version to win.
 - A range whose version survives is never moved.
-- A version listed in `patchedDependencies` is never moved away from and never removed. If removing some other version would leave a patched package unreachable, that version is kept as well, and both `bun dedupe` and `bun dedupe --check` say so on stderr, e.g. `note: kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)`. Delete the patch entry (or `bun update` the dependent) if you want the version removed.
+- A version listed in `patchedDependencies` is never moved away from and never removed. If removing some other version would leave a patched package unreachable, that version is kept as well, and both `bun dedupe` and `bun dedupe --check` say so, e.g. `  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)`. Delete the patch entry (or `bun update` the dependent) if you want the version removed.
 - Bundled dependencies stay on the copy inside their tarball, and dependencies specified as a dist-tag (such as `latest`), a git URL, or a tarball keep the version they resolved to. A dist-tag keeps its version because only the registry knows what the tag points at now; other ranges are still collapsed onto that version.
 - Only the ranges of packages that remain installed are counted; a version that the same run removes does not influence where its own dependencies end up, so running the command twice never changes anything the second time.
 - It works from the ranges recorded in `bun.lock`. If the dependencies, overrides, or catalogs in any `package.json` changed since the last install, it stops with `error: the lockfile is out of date with package.json, nothing was deduplicated` and exits with code `1` (also with `--check`); run `bun install` first. Edits that do not affect resolution (`scripts`, `trustedDependencies`) do not block it.

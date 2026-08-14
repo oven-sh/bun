@@ -12,14 +12,16 @@ bun prune
 ```
 - node_modules/@types/node
 - node_modules/left-pad
-Removed 2 packages
+Removed 2 packages (checked 948) [22.00ms]
 ```
 
-If there is nothing to remove, the command prints:
+`checked` is the number of entries it examined across every `node_modules` folder (and `node_modules/.bun` with the isolated linker). If there is nothing to remove, the command prints how much it checked instead:
 
 ```
-Nothing to prune.
+Done! Checked 948 packages across 12 folders (nothing to prune) [14.00ms]
 ```
+
+If there is no `node_modules` folder at all, it prints `Done! No node_modules folder (nothing to prune)` and exits with code 0.
 
 ### `--production`
 
@@ -37,7 +39,7 @@ RUN bun prune --production
 
 ### `--dry-run`
 
-`bun prune --dry-run` prints the same list followed by `Would remove N packages` and deletes nothing.
+`bun prune --dry-run` prints the same list followed by `Would remove N packages (checked M)` and deletes nothing.
 
 ```bash terminal icon="terminal"
 bun prune --production --dry-run
@@ -45,7 +47,7 @@ bun prune --production --dry-run
 
 ```
 - node_modules/typescript
-Would remove 1 package
+Would remove 1 package (checked 948) [9.00ms]
 ```
 
 ### `--filter`
@@ -58,7 +60,7 @@ bun prune --production --filter app
 
 ```
 - node_modules/.bun/typescript@5.4.0
-Removed 1 package
+Removed 1 package (checked 1103) [18.00ms]
 ```
 
 ### Notes

@@ -309,6 +309,9 @@ const AUDIT_PARAMS: &[ParamType] = &[
     clap::param!(
         "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
     ),
+    clap::param!(
+        "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
+    ),
 ];
 
 static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
@@ -999,6 +1002,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
   <d>Show what bun audit fix would change without changing anything.<r>
   <b><green>bun audit fix --dry-run<r>
 
+  <d>Also apply fixes that your package.json ranges exclude, rewriting those ranges.<r>
+  <b><green>bun audit fix --latest<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/install/audit<r>.
 ";
 
@@ -1406,6 +1412,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             cli.audit_ignore_list = args.options(b"--ignore");
+            cli.latest = args.flag(b"--latest");
+            if cli.latest && !(cli.positionals.len() > 1 && cli.positionals[1] == b"fix") {
+                Output::err_generic("--latest only applies to bun audit fix", ());
+                Global::crash();
+            }
         }
 
         if let Some(opt) = args.option(b"--config") {

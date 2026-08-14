@@ -744,6 +744,8 @@ _bun_audit_completion() {
         '--production[Omit devDependencies]' \
         '*--omit[Exclude dependency types from the audit]:type:(dev optional peer)' \
         '--dry-run[Show what bun audit fix would change without changing anything]' \
+        '--latest[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '-L[Let bun audit fix update direct dependencies past their declared ranges]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--help[Print this help menu]' &&
         ret=0

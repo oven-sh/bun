@@ -1481,7 +1481,13 @@
           "type": "string"
         }
       ],
-      "examples": ["bun audit", "bun audit --json", "bun audit fix", "bun audit fix --dry-run"],
+      "examples": [
+        "bun audit",
+        "bun audit --json",
+        "bun audit fix",
+        "bun audit fix --dry-run",
+        "bun audit fix --latest"
+      ],
       "usage": "Usage: bun audit [flags]",
       "documentationUrl": "https://bun.com/docs/install/audit.",
       "dynamicCompletions": {},
@@ -1493,6 +1499,14 @@
             {
               "name": "dry-run",
               "description": "Show what bun audit fix would change without changing anything",
+              "hasValue": false,
+              "required": false,
+              "multiple": false
+            },
+            {
+              "name": "latest",
+              "shortName": "L",
+              "description": "Also update past the ranges declared in package.json and catalogs, rewriting them to accept the fix",
               "hasValue": false,
               "required": false,
               "multiple": false

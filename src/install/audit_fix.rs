@@ -27,6 +27,8 @@ pub use package_json_edits::PackageJsonEdit;
 pub struct Advisory {
     pub package_name: Box<[u8]>,
     pub vulnerable_versions: Box<[u8]>,
+    /// What `bun audit --ignore` takes for this advisory: its GHSA id when the url has one, else its numeric id.
+    pub ignore_token: Box<[u8]>,
 }
 
 #[derive(Clone)]
@@ -53,6 +55,7 @@ pub struct Blocker {
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
+    pub latest_fixes: bool,
 }
 
 pub struct BlockedFix {
@@ -66,6 +69,7 @@ pub struct BlockedFix {
 pub struct UnfixableFix {
     pub name: Box<[u8]>,
     pub from: Box<[u8]>,
+    pub ignore_tokens: Vec<Box<[u8]>>,
 }
 
 pub struct ManifestUnavailable {
@@ -124,7 +128,14 @@ struct Edge {
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
     bundled: bool,
+    latest_fixes: bool,
     pin: Option<PackageJsonEdit>,
+}
+
+#[derive(Clone, Copy)]
+struct Target {
+    candidate: usize,
+    edit: bool,
 }
 
 struct Instance {
@@ -218,6 +229,7 @@ fn pin_for(
     dep_id: usize,
     dep: &Dependency,
     parent: PackageID,
+    latest: bool,
 ) -> Option<PackageJsonEdit> {
     if parent == invalid_package_id || dep.behavior.is_bundled() || dep.behavior.is_workspace() {
         return None;
@@ -248,7 +260,7 @@ fn pin_for(
                 .catalogs
                 .find(buf, catalog_name, dep.name.slice(buf))?;
             if entry.version.tag != DependencyVersionTag::Npm
-                || entry.version.npm().version.get_exact_version().is_none()
+                || (!latest && entry.version.npm().version.get_exact_version().is_none())
             {
                 return None;
             }
@@ -262,7 +274,9 @@ fn pin_for(
             })
         }
         DependencyVersionTag::Npm => {
-            dep.version.npm().version.get_exact_version()?;
+            if !latest {
+                dep.version.npm().version.get_exact_version()?;
+            }
             let file: Box<[u8]> = if parent_res.tag == ResolutionTag::Root {
                 Box::from(&b"package.json"[..])
             } else {
@@ -289,6 +303,8 @@ fn pin_for(
 }
 
 pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crate::Result<FixPlan> {
+    let latest = manager.options.do_.update_to_latest();
+    let exact = manager.options.enable.exact_versions();
     let mut range_buf: Vec<u8> = Vec::new();
     let mut range_spans: Vec<(usize, usize)> = Vec::with_capacity(advisories.len());
     for advisory in advisories {
@@ -404,6 +420,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 if dependent.is_empty() {
                     dependent.extend_from_slice(b"package.json");
                 }
+                let mut pin = pin_for(lockfile, dep_id, dep, parent, true);
+                let latest_fixes = !latest && pin.is_some();
+                if latest_fixes {
+                    pin = pin_for(lockfile, dep_id, dep, parent, false);
+                }
                 instances[instance as usize].edges.push(Edge {
                     dep_id: dep_id as DependencyID,
                     parent,
@@ -415,7 +436,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     literal: Box::from(dep.version.literal.slice(buf)),
                     dependent: dependent.into_boxed_slice(),
                     bundled: dep.behavior.is_bundled(),
-                    pin: pin_for(lockfile, dep_id, dep, parent),
+                    latest_fixes,
+                    pin,
                 });
             }
         }
@@ -533,16 +555,24 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             for &a in &inst.advisories {
                 advisory_still_present.set(a);
             }
+            let mut ignore_tokens: Vec<Box<[u8]>> = inst
+                .advisories
+                .iter()
+                .map(|&a| advisories[a].ignore_token.clone())
+                .collect();
+            ignore_tokens.sort_unstable();
+            ignore_tokens.dedup();
             unfixable.push(UnfixableFix {
                 name: inst.name,
                 from: inst.from,
+                ignore_tokens,
             });
             continue;
         }
 
         let mut caret_buf: Vec<u8> = Vec::new();
         let mut caret: Option<Group> = None;
-        if inst.edges.iter().any(|edge| edge.pin.is_some()) {
+        if !latest && inst.edges.iter().any(|edge| edge.pin.is_some()) {
             caret_buf.reserve_exact(inst.from.len() + 1);
             caret_buf.push(b'^');
             caret_buf.extend_from_slice(&inst.from);
@@ -551,38 +581,64 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 SlicedString::init(&caret_buf, &caret_buf),
             )?);
         }
-        let accepts = |edge: &Edge, v: Semver::Version| -> bool {
-            if edge.bundled {
-                return false;
-            }
-            if edge.pin.is_some() {
-                return caret
+        let range_accepts = |edge: &Edge, v: Semver::Version| -> bool {
+            !edge.bundled
+                && edge
+                    .range
                     .as_ref()
-                    .is_some_and(|caret| caret.satisfies(v, &caret_buf, manifest_buf));
+                    .is_some_and(|range| range.npm().version.satisfies(v, buf, manifest_buf))
+        };
+        let pin_accepts = |edge: &Edge, v: Semver::Version| -> bool {
+            edge.pin.is_some()
+                && (latest
+                    || caret
+                        .as_ref()
+                        .is_some_and(|caret| caret.satisfies(v, &caret_buf, manifest_buf)))
+        };
+        let accepts = |edge: &Edge, target: Target, v: Semver::Version| -> bool {
+            if target.edit {
+                pin_accepts(edge, v)
+            } else {
+                range_accepts(edge, v)
             }
-            edge.range
-                .as_ref()
-                .is_some_and(|range| range.npm().version.satisfies(v, buf, manifest_buf))
+        };
+        let find_target = |edge: &Edge, span: core::ops::Range<usize>| -> Option<Target> {
+            span.clone()
+                .find(|&c| range_accepts(edge, candidates[c].version))
+                .map(|c| Target {
+                    candidate: c,
+                    edit: false,
+                })
+                .or_else(|| {
+                    span.clone()
+                        .find(|&c| pin_accepts(edge, candidates[c].version))
+                        .map(|c| Target {
+                            candidate: c,
+                            edit: true,
+                        })
+                })
         };
 
-        let mut target: Vec<Option<usize>> = inst
+        let mut target: Vec<Option<Target>> = inst
             .edges
             .iter()
-            .map(|edge| candidates.iter().position(|c| accepts(edge, c.version)))
+            .map(|edge| {
+                find_target(edge, 0..upgrade_count)
+                    .or_else(|| find_target(edge, upgrade_count..candidates.len()))
+            })
             .collect();
-        let has_upgrader = target.iter().any(|t| t.is_some_and(|c| c < upgrade_count));
-        if has_upgrader {
-            let common = (0..upgrade_count).find(|&c| {
-                inst.edges
-                    .iter()
-                    .zip(&target)
-                    .filter(|(_, t)| t.is_some_and(|b| b < upgrade_count))
-                    .all(|(edge, _)| accepts(edge, candidates[c].version))
-            });
+        let upgraders = || {
+            inst.edges.iter().zip(&target).filter_map(|(edge, t)| {
+                t.filter(|t| t.candidate < upgrade_count).map(|t| (edge, t))
+            })
+        };
+        if upgraders().next().is_some() {
+            let common = (0..upgrade_count)
+                .find(|&c| upgraders().all(|(edge, t)| accepts(edge, t, candidates[c].version)));
             if let Some(common) = common {
                 for t in target.iter_mut().flatten() {
-                    if *t < upgrade_count {
-                        *t = common;
+                    if t.candidate < upgrade_count {
+                        t.candidate = common;
                     }
                 }
             }
@@ -591,7 +647,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         let mut chosen: Vec<usize> = if inst.edges.is_empty() {
             vec![0]
         } else {
-            target.iter().flatten().copied().collect()
+            target.iter().flatten().map(|t| t.candidate).collect()
         };
         chosen.sort_unstable();
         chosen.dedup();
@@ -600,25 +656,25 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             let to = fmt_version(candidate.version, manifest_buf);
             let mut edges: Vec<PlannedEdge> = Vec::new();
             let mut edits: Vec<PackageJsonEdit> = Vec::new();
-            for (edge, _) in inst
+            for (edge, t) in inst
                 .edges
                 .iter()
                 .zip(&target)
-                .filter(|(_, t)| **t == Some(c))
+                .filter_map(|(edge, t)| t.filter(|t| t.candidate == c).map(|t| (edge, t)))
             {
                 match &edge.pin {
-                    None => edges.push(PlannedEdge {
-                        dep_id: edge.dep_id,
-                        parent: edge.parent,
-                    }),
-                    Some(pin) => {
+                    Some(pin) if t.edit => {
                         if !edits.iter().any(|edit| edit.same_site(pin)) {
                             let mut edit = pin.clone();
                             edit.new_literal =
-                                package_json_edits::new_literal_for(&pin.old_literal, &to);
+                                package_json_edits::new_literal_for(&pin.old_literal, &to, exact);
                             edits.push(edit);
                         }
                     }
+                    _ => edges.push(PlannedEdge {
+                        dep_id: edge.dep_id,
+                        parent: edge.parent,
+                    }),
                 }
             }
             fixes.push(PlannedFix {
@@ -660,6 +716,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     }
                 },
                 bundled: edge.bundled,
+                latest_fixes: edge.latest_fixes,
             })
             .collect();
         if blockers.is_empty() {
@@ -767,12 +824,24 @@ impl FixPlan {
                     );
                 }
             }
+            if self
+                .blocked
+                .iter()
+                .any(|item| item.blockers.iter().any(|b| b.latest_fixes))
+            {
+                prettyln!("    <cyan>bun audit fix --latest<r>");
+            }
             prettyln!("");
         }
         if !self.unfixable.is_empty() {
-            prettyln!("<red>no fix available:<r>");
+            prettyln!("<red>no published version fixes the advisory:<r>");
             for item in &self.unfixable {
                 prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.from));
+                pretty!("    <cyan>bun audit");
+                for token in &item.ignore_tokens {
+                    pretty!(" --ignore {}", BStr::new(token));
+                }
+                prettyln!("<r>");
             }
             prettyln!("");
         }

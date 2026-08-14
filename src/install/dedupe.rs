@@ -600,7 +600,14 @@ pub fn dedupe_before_install(
 
 fn report_already_deduplicated(manager: &PackageManager, kept: &[Box<[u8]>]) {
     if manager.options.log_level != LogLevel::Silent {
-        bun_core::prettyln!("Already deduplicated.");
+        let packages = manager.lockfile.packages.len().saturating_sub(1);
+        bun_core::pretty!(
+            "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
+            packages,
+            if packages == 1 { "" } else { "s" }
+        );
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("\n");
         print_kept(kept);
         Output::flush();
     }
@@ -611,7 +618,7 @@ fn report_already_deduplicated(manager: &PackageManager, kept: &[Box<[u8]>]) {
 
 fn print_kept(kept: &[Box<[u8]>]) {
     for line in kept {
-        bun_core::note!("kept {}", BStr::new(line));
+        bun_core::prettyln!("  <d>kept<r> {}", BStr::new(line));
     }
 }
 
@@ -639,24 +646,26 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
 
     let n = removed.len();
     let plural = if n == 1 { "" } else { "s" };
-    let mut list: Vec<u8> = Vec::new();
-    for (i, label) in removed.iter().enumerate() {
-        if i > 0 {
-            list.extend_from_slice(b", ");
+    if !quiet {
+        for label in removed {
+            bun_core::prettyln!("<red>-<r> {}", BStr::new(label));
         }
-        list.extend_from_slice(label);
     }
 
     if manager.options.dry_run {
         if !quiet {
-            bun_core::prettyln!(
-                "<yellow>{}<r> duplicate version{} can be removed: {}",
+            bun_core::pretty!(
+                "<yellow>{}<r> duplicate version{} can be removed ",
                 n,
-                plural,
-                BStr::new(&list)
+                plural
             );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+            bun_core::pretty!("\n");
             print_kept(&outcome.kept);
-            bun_core::note!("run 'bun dedupe' to remove them");
+            bun_core::prettyln!("  <cyan>bun dedupe<r>");
             Output::flush();
         }
         Global::exit(1);
@@ -669,27 +678,22 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
             } else {
                 "saving the lockfile is disabled"
             };
+            Output::flush();
             bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> {} duplicate version{} can be removed, but {}: {}",
+                "<r><red>error<r><d>:<r> {} duplicate version{} can be removed, but {}",
                 n,
                 plural,
-                why,
-                BStr::new(&list)
+                why
             );
             print_kept(&outcome.kept);
-            bun_core::note!("run 'bun dedupe --check' to only report duplicates");
+            bun_core::prettyln!("  <cyan>bun dedupe --check<r>");
             Output::flush();
         }
         Global::exit(1);
     }
 
     if !quiet {
-        bun_core::prettyln!(
-            "Removed <green>{}<r> duplicate version{}: {}",
-            n,
-            plural,
-            BStr::new(&list)
-        );
+        bun_core::prettyln!("Removed <green>{}<r> duplicate version{}", n, plural);
         print_kept(&outcome.kept);
         Output::flush();
     }

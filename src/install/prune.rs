@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_collections::DynamicBitSet;
+use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
@@ -58,6 +59,7 @@ struct Removal {
 struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
+    checked: usize,
 }
 
 impl Plan {
@@ -126,6 +128,7 @@ fn plural(n: usize) -> &'static str {
 }
 
 pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result<()> {
+    let start = nano_timestamp();
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
@@ -162,7 +165,11 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Ok(node_modules) => lstat_kind(&node_modules, b".bun") == EntryKind::Directory,
         Err(err) if err.get_errno() == E::ENOENT => {
             if !quiet {
-                bun_core::prettyln!("Nothing to prune.");
+                bun_core::pretty!(
+                    "<r><green>Done<r>! No node_modules folder <d>(nothing to prune)<r> "
+                );
+                Output::print_start_end_stdout(start, nano_timestamp());
+                bun_core::pretty!("\n");
                 Output::flush();
             }
             return Ok(());
@@ -210,9 +217,23 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         .sort_unstable_by(|a, b| a.display.cmp(&b.display));
 
     let n = plan.removals.len();
+    let checked = plan.checked;
+    let folders = plan
+        .folders
+        .iter()
+        .filter(|folder| matches!(folder.kind, FolderKind::NodeModules | FolderKind::Store))
+        .count();
     if n == 0 {
         if !quiet {
-            bun_core::prettyln!("Nothing to prune.");
+            bun_core::pretty!(
+                "<r><green>Done<r>! Checked <b>{}<r> package{} across {} folder{} <d>(nothing to prune)<r> ",
+                checked,
+                plural(checked),
+                folders,
+                plural(folders)
+            );
+            Output::print_start_end_stdout(start, nano_timestamp());
+            bun_core::pretty!("\n");
             Output::flush();
         }
         return Ok(());
@@ -223,7 +244,14 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
             for removal in &plan.removals {
                 bun_core::prettyln!("<red>-<r> {}", BStr::new(&removal.display));
             }
-            bun_core::prettyln!("Would remove <b>{}<r> package{}", n, plural(n));
+            bun_core::pretty!(
+                "Would remove <b>{}<r> package{} <d>(checked {})<r> ",
+                n,
+                plural(n),
+                checked
+            );
+            Output::print_start_end_stdout(start, nano_timestamp());
+            bun_core::pretty!("\n");
             Output::flush();
         }
         return Ok(());
@@ -234,7 +262,14 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
 
     let removed = n - failed;
     if !quiet {
-        bun_core::prettyln!("Removed <b>{}<r> package{}", removed, plural(removed));
+        bun_core::pretty!(
+            "Removed <b>{}<r> package{} <d>(checked {})<r> ",
+            removed,
+            plural(removed),
+            checked
+        );
+        Output::print_start_end_stdout(start, nano_timestamp());
+        bun_core::pretty!("\n");
         Output::flush();
     }
     if failed > 0 {
@@ -959,6 +994,7 @@ fn scan_folder(
                     name: &inner,
                     kind: inner_kind,
                 };
+                plan.checked += 1;
                 if !keep(&entry) {
                     plan.remove(scope_idx, &inner, inner_kind);
                 }
@@ -972,6 +1008,7 @@ fn scan_folder(
             name: &name,
             kind,
         };
+        plan.checked += 1;
         if !keep(&entry) {
             plan.remove(folder_idx, &name, kind);
         }
@@ -1113,7 +1150,11 @@ fn plan_isolated(
     if let Ok(store) = Dir::open(STORE_DIR) {
         let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
         for (name, kind) in read_entries(&store) {
-            if &*name == b"node_modules" || keep_store_entry(&name) {
+            if &*name == b"node_modules" {
+                continue;
+            }
+            plan.checked += 1;
+            if keep_store_entry(&name) {
                 continue;
             }
             plan.remove(store_idx, &name, kind);

@@ -105,7 +105,8 @@ _bun_completions() {
     PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
-    PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --cwd --help";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
@@ -181,7 +182,7 @@ _bun_completions() {
                 "${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}";
             return;;
         audit)
-            COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]}" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
             return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );

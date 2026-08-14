@@ -3,6 +3,7 @@ use bun_collections::VecExt as _;
 use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_semver::{PinnedVersion, Version};
 
 use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
@@ -40,21 +41,31 @@ impl PackageJsonEdit {
     }
 }
 
-pub(super) fn new_literal_for(old_literal: &[u8], to: &[u8]) -> Box<[u8]> {
+pub(super) fn new_literal_for(old_literal: &[u8], to: &[u8], exact: bool) -> Box<[u8]> {
     let old = strings::trim(old_literal, &strings::WHITESPACE_CHARS);
-    let mut out: Vec<u8> = Vec::with_capacity(old.len() + to.len() + 1);
-    match old.strip_prefix(b"npm:") {
+    let mut out: Vec<u8> = Vec::with_capacity(old.len() + to.len() + 2);
+    let range: &[u8] = match old.strip_prefix(b"npm:") {
         Some(alias) => match strings::last_index_of_char(alias, b'@') {
-            Some(i) if i > 0 => out.extend_from_slice(&old[..b"npm:".len() + i + 1]),
+            Some(i) if i > 0 => {
+                out.extend_from_slice(&old[..b"npm:".len() + i + 1]);
+                &alias[i + 1..]
+            }
             _ => {
                 out.extend_from_slice(old);
                 out.push(b'@');
+                b""
             }
         },
-        None => {
-            if old.starts_with(b"=") {
-                out.push(b'=');
-            }
+        None => old,
+    };
+    let range = strings::trim(range, &strings::WHITESPACE_CHARS);
+    if range.starts_with(b"=") {
+        out.push(b'=');
+    } else if !exact {
+        match Version::which_version_is_pinned(range) {
+            PinnedVersion::Patch => {}
+            PinnedVersion::Minor => out.push(b'~'),
+            PinnedVersion::Major => out.push(b'^'),
         }
     }
     out.extend_from_slice(to);

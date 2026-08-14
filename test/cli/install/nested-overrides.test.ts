@@ -1124,7 +1124,7 @@ describe.concurrent("per-edge effective range", () => {
     expect(await versionSeenBy(dir, "ofd1", "no-deps")).toBe("1.1.0");
     expect(await versionSeenBy(dir, "ofd2", "no-deps")).toBe("1.0.0");
     const { out, err, exitCode } = await run(dir, "dedupe", "--check");
-    expect(out).toContain("Already deduplicated.");
+    expect(out).toContain("No duplicates");
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
@@ -1138,7 +1138,8 @@ describe.concurrent("per-edge effective range", () => {
     expect(await versionSeenBy(dir, "ofd1", "no-deps")).toBe("1.1.0");
     expect(await versionSeenBy(dir, "ofd2", "no-deps")).toBe("1.0.0");
     const { out, exitCode } = await run(dir, "dedupe", "--check");
-    expect(out).toContain("1 duplicate version can be removed: no-deps@1.1.0");
+    expect(out).toContain("- no-deps@1.1.0");
+    expect(out).toContain("1 duplicate version can be removed");
     expect(exitCode).toBe(1);
   });
 });

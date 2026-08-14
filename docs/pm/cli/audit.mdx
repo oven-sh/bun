@@ -11,7 +11,7 @@ bun audit
 
 Bun sends the list of installed packages and versions to npm, and prints a report of any vulnerabilities found. Packages that come from a registry configured for their scope are sent to that registry's advisory endpoint instead, and its answer is merged into the same report; a registry that does not answer is listed after the report (`Skipped @acme/a, @acme/b because https://npm.acme.dev could not be audited`) and does not affect the exit code.
 
-The package list comes from `bun.lock` alone, so `node_modules` does not need to exist, and `bun audit` writes nothing: `package.json`, `bun.lock` and `node_modules` are left as they are (only `bun audit fix`, below, changes `bun.lock` and `node_modules`, and `package.json` only when it rewrites an exact pin).
+The package list comes from `bun.lock` alone, so `node_modules` does not need to exist, and `bun audit` writes nothing: `package.json`, `bun.lock` and `node_modules` are left as they are (only `bun audit fix`, below, changes `bun.lock` and `node_modules`, and `package.json` only when it rewrites an exact pin or is run with `--latest`).
 
 If no vulnerabilities are found, the command prints:
 
@@ -74,7 +74,7 @@ The response is printed as received: `--prod` and `--omit` still limit which pac
 
 ### `bun audit fix`
 
-`bun audit fix` runs the audit and then moves each vulnerable version installed in `bun.lock` to the lowest release that no advisory covers and that the ranges of its dependents accept (`overrides` and catalog entries count as ranges), then installs. A dependency that the root `package.json`, a workspace `package.json` or a catalog entry pins to an exact version is planned as if it were written `^version`; when that finds a fix, that `package.json` entry (or the catalog entry in the root; workspace files that say `catalog:` are left as they are) is rewritten to the new version. This is the only time the command edits `package.json`: `overrides` are never added or changed, and unrelated packages are not touched. `fix` is a subcommand, not a flag: `bun audit --fix` is rejected as an unknown flag.
+`bun audit fix` runs the audit and then moves each vulnerable version installed in `bun.lock` to the lowest release that no advisory covers and that the ranges of its dependents accept (`overrides` and catalog entries count as ranges), then installs. A dependency that the root `package.json`, a workspace `package.json` or a catalog entry pins to an exact version is planned as if it were written `^version`; when that finds a fix, that `package.json` entry (or the catalog entry in the root; workspace files that say `catalog:` are left as they are) is rewritten to the new version. Apart from that and `--latest` (below), the command does not edit `package.json`: `overrides` are never added or changed, and unrelated packages are not touched. `fix` is the only subcommand and it is not a flag: `bun audit --fix` is rejected as an unknown flag, and any other word (`bun audit fixx`) exits with `1` and `error: unknown subcommand "fixx"` before anything is sent to the registry.
 
 ```bash terminal icon="terminal"
 bun audit fix
@@ -89,20 +89,37 @@ fixing:
 blocked by a dependent's range:
   minimatch@0.3.0 → 3.0.2
     express@3.21.2 depends on minimatch@0.3.0
+  semver@5.7.1 → 6.3.1
+    my-app depends on semver@^5.0.0
+    bun audit fix --latest
+
+no published version fixes the advisory:
+  left-pad@1.3.0
+    bun audit --ignore GHSA-xxxx-xxxx-xxxx
 
 Fixed 2 vulnerabilities in 2 packages
-1 vulnerability remaining
+3 vulnerabilities remaining
 ```
 
 - `blocked by a dependent's range:` lists the dependents whose range accepts no safe release; they stay on the version they have. Other dependents of the same version whose ranges do accept the fix are still moved, in which case the package appears under both `fixing:` and this heading. Update the dependent, or add an `overrides` entry, and run the command again. A dependency bundled inside another package (`express@3.21.2 bundles minimatch@0.3.0`) can only be fixed by updating the package that bundles it.
-- Only stable releases are candidates. When no newer release is safe, the highest safe older release the ranges accept is installed instead and marked `(downgrade)`. `no fix available:` lists versions for which no safe release exists in either direction; `manifest could not be fetched:` lists versions whose registry request failed, and nothing is installed for them.
+- When any of the blocking ranges is one your own `package.json` (root or workspace) or a catalog entry declares, the section ends with the `bun audit fix --latest` command that gets past it. Without `--latest`, a range such as `^5.0.0` is never widened.
+- Only stable releases are candidates. When no newer release is safe, the highest safe older release the ranges accept is installed instead and marked `(downgrade)`. `no published version fixes the advisory:` lists versions for which no safe release exists in either direction; under each one is the `bun audit --ignore ...` command that silences its advisories, and the other way out is replacing the package. `manifest could not be fetched:` lists versions whose registry request failed, and nothing is installed for them.
 - A safe release published more recently than `--minimum-release-age` is still installed, marked `(newer than --minimum-release-age)`: the age gate is lifted for that package during this run only.
 - Advisories that match none of the installed versions are listed under `not matched to an installed version:` and count as remaining.
 - Counts are advisories, as in `bun audit`. After installing, Bun checks the `bun.lock` it wrote against the advisories again, so the `Fixed`/`remaining` lines, the exit code and the `vulnerable after install:` list (versions that survived, or that the fix itself pulled in) describe the lockfile on disk rather than the plan; an advisory counts as fixed only when no version it covers is left. `--dry-run` prints the plan without changing anything, and its counts are the plan's.
 - A fix that only moved `bun.lock` can be undone by a later dependency that pins the vulnerable version or by regenerating the lockfile; a rewritten `package.json` pin stays. Re-run `bun audit` after such changes.
 - `--json` prints one JSON object instead of the text report, with the fields `fixes`, `blocked`, `unfixable`, `manifestUnavailable`, `unmatched`, `unaudited`, `vulnerableAfterInstall`, `fixed`, `remaining` and `dryRun`. It is printed once the install has finished (with `--dry-run`, as soon as the plan is made); if a root lifecycle script writes to stdout, pass `--ignore-scripts` to keep the output parseable.
 - `--registry` applies to both the advisory request and the install of the fixed versions; there is no way to query one registry for advisories and install from another.
+- `--latest` (or `-L`) also rewrites the ranges your own `package.json` files and catalogs declare when they exclude the fix; see below. It is only accepted together with `fix`: `bun audit --latest` exits with `--latest only applies to bun audit fix`.
 - `--audit-level`, `--ignore` and `--prod` behave as for `bun audit`, except that `--prod` (like `--frozen-lockfile` and `--no-save`) stops `bun.lock` from being written, so `bun audit fix` rejects it before contacting the registry. `--omit` does not narrow what `bun audit fix` audits: every package in `bun.lock` is checked and fixed.
+
+### `bun audit fix --latest`
+
+```bash terminal icon="terminal"
+bun audit fix --latest
+```
+
+Same as `bun audit fix`, except that a range declared in the root `package.json`, a workspace `package.json` or a catalog entry no longer blocks a fix: the fix version is chosen as before, and the declared entry is rewritten to accept it. The rewrite keeps the style of the old entry: `^5.0.0` becomes `^6.3.1`, `~5.7.1` becomes `~6.3.1`, an exact version or `=` prefix stays exact, and an `npm:` alias keeps its alias (with `--exact` or `install.exact`, the bare version is written). Each rewrite is printed under `fixing:` in the same `package.json: old → new` form as an exact-pin rewrite. Ranges declared by other packages, and dependencies bundled inside another package, still block exactly as without the flag; the way past those is an `overrides` entry, or updating the dependent. Ranges that already accept the fix are left as they are, and an entry covered by `overrides` is never rewritten (`overrides` itself is not edited either).
 
 ### Exit code
 

@@ -15,7 +15,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 
 const long = "x".repeat(200);
-// inspect(long) is 'xxx…' (202 chars); node keeps the opening quote plus 127 x's.
+// `long` inspects to 202 characters (quotes included); the first 128 of them are
+// the opening quote plus 127 x's.
 const longCut = "'" + "x".repeat(127) + "...";
 
 function thrownBy(fn: () => unknown) {
@@ -164,12 +165,14 @@ describe("ERR_INVALID_ARG_VALUE cuts the received value at 128 characters like n
         );
     `;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+      // --no-warnings silences the stream/iter ExperimentalWarning so stderr is empty on success.
+      cmd: [bunExe(), "--no-warnings", "--experimental-stream-iter", "-e", script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "RangeError",
       code: "ERR_INVALID_ARG_VALUE",

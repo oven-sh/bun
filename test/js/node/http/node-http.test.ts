@@ -4620,4 +4620,65 @@ describe("request body still flows after res.end() was called in the handler", (
     expect(stdout.trim()).toBe('["data(3)"]');
     expect(exitCode).toBe(0);
   }, 20_000);
+
+  // The body outliving the response must not leave anything holding the event
+  // loop open: the process has to exit on its own both when the body does
+  // arrive later (with the connection then reused, so the early request is no
+  // longer the connection's current one when it closes) and when the client
+  // goes away mid-body instead.
+  it.each(["complete", "abort"])(
+    "process exits on its own after an early response (%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        const server = createServer((req, res) => {
+          if (req.url === "/early") {
+            req.on("close", () => console.log("req close complete=" + req.complete));
+            req.socket.on("close", () => console.log("socket close complete=" + req.complete));
+          }
+          res.end("ok:" + req.url);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = connect(server.address().port, "127.0.0.1");
+          let received = "";
+          client.on("data", chunk => {
+            received += chunk;
+            if (received.endsWith("ok:/early")) {
+              received = "";
+              if (${JSON.stringify(mode)} === "abort") {
+                client.destroy();
+                server.close(() => console.log("server closed"));
+              } else {
+                client.write("def");
+                client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+              }
+            } else if (received.endsWith("ok:/second")) {
+              client.end();
+              server.close(() => console.log("server closed"));
+            }
+          });
+          client.write("POST /early HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 6\\r\\n\\r\\nabc");
+        });
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n").sort()).toEqual(
+        mode === "abort"
+          ? ["server closed", "socket close complete=false"]
+          : ["req close complete=true", "server closed", "socket close complete=true"],
+      );
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

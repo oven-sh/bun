@@ -2408,8 +2408,7 @@ function adoptServerTLS(self, connection, tls) {
     try {
       attachServerTLSEngine(self, connection, tls);
     } catch (err) {
-      // Here there is no caller to throw to (unlike the synchronous engine
-      // branch, which throws from the constructor); report on the wrap.
+      // No caller to throw to here, unlike the synchronous engine branch.
       self.destroy(err);
       return;
     }

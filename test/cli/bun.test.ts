@@ -176,6 +176,38 @@ describe("bun", () => {
     });
   });
 
+  describe("removed commands", () => {
+    const env = { ...bunEnv, NO_COLOR: "1" };
+
+    test.concurrent("bun feedback is not a command", async () => {
+      using dir = tempDir("bun-feedback-removed", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "feedback", "--help"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain('error: Script not found "feedback"');
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("bun --help does not list feedback", async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const commands = stdout
+        .split(/\r?\n/)
+        .map(line => line.trim().split(/\s+/)[0])
+        .filter(Boolean);
+      expect(commands).toContain("upgrade");
+      expect(commands).not.toContain("feedback");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

@@ -387,8 +387,7 @@ public:
         delete handle;
     }
 
-    // isShuttingDown(): ~VM's Heap::lastChanceToFinalize fires the remaining weak-handle
-    // finalizers and precise-allocation destructors without entering the Sweeping mutator state.
+    // isShuttingDown(): ~VM (Heap::lastChanceToFinalize) runs finalizers without the Sweeping mutator state.
     bool inGC() const
     {
         return this->vm().isCollectorBusyOnCurrentThread() || this->vm().heap.isShuttingDown();

@@ -152,7 +152,7 @@ impl ErrorReportRequest {
                 code_type: ZigStackFrameCode::NONE,
                 is_async: false,
                 remapped: false,
-                jsc_stack_frame_index: -1,
+                source_provider: None,
             });
         }
 
@@ -306,7 +306,6 @@ impl ErrorReportRequest {
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            frames_are_throw_site: false,
             browser_url: BunString::init(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,

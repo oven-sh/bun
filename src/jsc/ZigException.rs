@@ -8,17 +8,12 @@ use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
+use crate::{JSErrorCode, JSRuntimeType, ZigStackFrame, ZigStackTrace};
 
-// SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
-// opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
-// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
+// SAFETY (safe fn): `ZigException` is a `#[repr(C)]` out-param the C++ side
+// fills in-place.
 unsafe extern "C" {
-    pub(crate) safe fn ZigException__collectSourceLines(
-        js_value: JSValue,
-        global: &JSGlobalObject,
-        exception: &mut ZigException,
-    );
+    pub(crate) safe fn ZigException__collectSourceLines(exception: &mut ZigException);
 }
 
 /// Represents a JavaScript exception with additional information
@@ -43,7 +38,6 @@ pub struct ZigException {
     pub exception: *mut c_void,
 
     pub remapped: bool,
-    pub frames_are_throw_site: bool,
 
     pub fd: i32,
 
@@ -51,8 +45,10 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        ZigException__collectSourceLines(value, global, self);
+    /// Slice the top frame's source lines out of the SourceProvider it was
+    /// populated from (for sources the printer can't read from disk).
+    pub(crate) fn collect_source_lines(&mut self) {
+        ZigException__collectSourceLines(self);
     }
 
     // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
@@ -179,7 +175,6 @@ impl Holder {
                 system_code: String::EMPTY,
                 path: String::EMPTY,
                 remapped: false,
-                frames_are_throw_site: false,
                 fd: -1,
                 browser_url: String::EMPTY,
             });

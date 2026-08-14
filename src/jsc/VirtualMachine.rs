@@ -5591,12 +5591,13 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
-                    // `Drop` so `copy_within` is unavailable; swap instead —
-                    // the discarded tail past `j` is never read after we
-                    // truncate `frames_len` below.
+                    // Swap rather than copy so each frame's refs stay owned
+                    // exactly once; the discarded frames collect past `j`.
                     frames_buf.swap(j, i);
                     j += 1;
+                }
+                for discarded in &mut frames_buf[j..frames_len] {
+                    discarded.deinit();
                 }
                 exception.stack.frames_len = j as u8;
                 frames_len = j;
@@ -5737,7 +5738,7 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
+                exception.collect_source_lines();
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -5781,7 +5782,7 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+            exception.collect_source_lines();
         }
 
         drop(top_source_url);

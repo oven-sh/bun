@@ -206,13 +206,14 @@ describe("native error printer describes an uncaught error by its origin", () =>
       {
         "main.js": `
           const err = new Error("no stack");
-          Object.defineProperty(err, "stack", { value: undefined });
+          void err.stack; // frames -> string
+          Object.defineProperty(err, "stack", { value: undefined }); // string -> nothing
           setImmediate(function rethrowSite() { throw err; });
         `,
       },
       "main.js",
     );
-    expect(frames[0]).toStartWith("at rethrowSite (main.js:4:");
+    expect(frames[0]).toStartWith("at rethrowSite (main.js:5:");
     expect(exitCode).toBe(1);
   });
 

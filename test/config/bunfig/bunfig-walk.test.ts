@@ -129,6 +129,22 @@ test.concurrent("a nested project outside the workspaces globs does not inherit"
   expect(exitCode).toBe(0);
 });
 
+// Fail closed: with no package.json anywhere up the tree, only cwd is
+// checked, so a bunfig.toml in an unrelated parent (e.g. /tmp) never applies.
+test.concurrent("no package.json anywhere bounds the lookup to cwd", async () => {
+  using dir = tempDir("bunfig-walk-no-pkg", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "scratch/index.ts": `console.log("hello");\n`,
+  });
+
+  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "scratch"), ["index.ts"]);
+
+  expect(stdout).toBe("hello\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("a cwd inside node_modules does not inherit", async () => {
   using dir = tempDir("bunfig-walk-nm", {
     "package.json": `{"name":"root"}\n`,

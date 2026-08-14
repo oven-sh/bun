@@ -138,8 +138,8 @@ fn in_node_modules(path: &[u8]) -> bool {
     let mut rest = path;
     while let Some(i) = bun_core::strings::index_of(rest, b"node_modules") {
         let end = i + b"node_modules".len();
-        let before_ok = i == 0 || bun_paths::is_sep_any(rest[i - 1]);
-        let after_ok = end == rest.len() || bun_paths::is_sep_any(rest[end]);
+        let before_ok = i == 0 || bun_paths::is_sep_native(rest[i - 1]);
+        let after_ok = end == rest.len() || bun_paths::is_sep_native(rest[end]);
         if before_ok && after_ok {
             return true;
         }
@@ -224,9 +224,10 @@ fn workspaces_claim(patterns: &[Box<[u8]>], rel: &[u8]) -> bool {
 }
 
 /// Prefix length of `cwd` naming the last directory the walk may check: the
-/// project root as `--filter` finds it (filter_arg.rs). `None` when no
-/// package.json exists up the tree.
-fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
+/// project root as `--filter` finds it (filter_arg.rs). With no package.json
+/// anywhere up the tree, the bound is cwd itself (fail closed, like
+/// `get_candidate_package_patterns`'s fallback to the working directory).
+fn walk_root_bound(cwd: &[u8]) -> usize {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
@@ -236,11 +237,14 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
     let nearest: &[u8] = loop {
         match read_package_json(dir) {
             // A workspace root is its own project.
-            PackageJson::Workspaces(_) => return Some(dir.len()),
+            PackageJson::Workspaces(_) => return dir.len(),
             PackageJson::Plain => break dir,
             PackageJson::Missing => {}
         }
-        dir = bun_paths::dirname(dir)?;
+        match bun_paths::dirname(dir) {
+            Some(parent) => dir = parent,
+            None => return cwd.len(),
+        }
     };
 
     // The nearest ancestor declaring workspaces bounds the walk iff its globs claim `nearest`.
@@ -249,7 +253,7 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
         anc = parent;
         if let PackageJson::Workspaces(patterns) = read_package_json(anc) {
             let rel_start = anc.len()
-                + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)));
+                + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_native(c)));
             let mut rel: Vec<u8> = nearest[rel_start..].to_vec();
             if cfg!(windows) {
                 for c in &mut rel {
@@ -259,13 +263,13 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
                 }
             }
             let member = workspaces_claim(&patterns, &rel);
-            return Some(if member { anc.len() } else { nearest.len() });
+            return if member { anc.len() } else { nearest.len() };
         }
-        if matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)) {
+        if matches!(anc.last(), Some(&c) if bun_paths::is_sep_native(c)) {
             break;
         }
     }
-    Some(nearest.len())
+    nearest.len()
 }
 
 pub fn load_config(
@@ -372,12 +376,11 @@ fn load_config_impl(
             }
             // node_modules cwds (lifecycle scripts) and compiled
             // executables keep the cwd-only lookup.
-            let bound: Option<usize> =
-                if StandaloneModuleGraph::get().is_some() || in_node_modules(dir) {
-                    Some(dir.len())
-                } else {
-                    walk_root_bound(dir)
-                };
+            let bound: usize = if StandaloneModuleGraph::get().is_some() || in_node_modules(dir) {
+                dir.len()
+            } else {
+                walk_root_bound(dir)
+            };
             // Roots ("/", "C:\\", UNC) keep their trailing separator: the last to check.
             let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
             let mut found_len: Option<usize> = None;
@@ -399,7 +402,7 @@ fn load_config_impl(
                     found_len = Some(joined_len);
                     break;
                 }
-                if matches!(bound, Some(b) if dir.len() <= b) {
+                if dir.len() <= bound {
                     break;
                 }
                 if is_root {

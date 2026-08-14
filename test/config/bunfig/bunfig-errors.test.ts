@@ -162,7 +162,9 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
 
     test("is loaded when a path longer than the buffer normalizes to one that fits", async () => {
       using dir = tempDir("bunfig-long-config", { "bunfig.toml": INVALID_BUNFIG });
-      const configArg = "x/../".repeat(Math.ceil(MAX_PATH_BYTES / "x/../".length)) + "bunfig.toml";
+      const hop = "x/../";
+      const hops = Buffer.alloc(Math.ceil(MAX_PATH_BYTES / hop.length) * hop.length, hop).toString();
+      const configArg = hops + "bunfig.toml";
       expect(configArg.length).toBeGreaterThan(MAX_PATH_BYTES);
 
       expectLoadedFrom(

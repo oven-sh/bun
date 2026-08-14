@@ -25,9 +25,15 @@ export type Browsers = {
 };
 
 export type ParserOptions = {
-  css_modules?: {
-    pure: boolean;
-  };
+  /**
+   * Scopes class and id selectors to the file, as for `*.module.css`. The binding parses the source as
+   * `test.module.css`, so every local is printed as `<name>_SsLGXg` (the hash of that filename, the same
+   * one `bun build` would give the file).
+   *
+   * Bun has no lightningcss-style `pure` mode; the binding throws if it is requested, so the
+   * `minify_error_test_with_options` cases that need it stay skipped.
+   */
+  css_modules?: boolean | { pure: boolean };
   flags?: ParserFlags[];
 };
 
@@ -50,6 +56,12 @@ export function minify_error_test_with_options(source: string, expectedError: st
 export function minify_test(source: string, expected: string) {
   test(source, () => {
     expect(minifyTestWithOptions(source, expected)).toEqual(expected);
+  });
+}
+
+export function minify_test_with_options(source: string, expected: string, options: ParserOptions) {
+  test(source, () => {
+    expect(minifyTestWithOptions(source, expected, options)).toEqual(expected);
   });
 }
 
@@ -80,5 +92,3 @@ export function attrTest(source: string, expected: string, minify: boolean, targ
 export function indoc(...args: any) {
   return dedent(...args);
 }
-
-export { minifyTestWithOptions };

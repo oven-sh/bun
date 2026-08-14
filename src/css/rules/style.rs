@@ -197,11 +197,9 @@ impl<R> StyleRule<R> {
             ];
             for (decls, important) in decls_groups {
                 for decl in decls {
-                    // In CSS modules `composes` is validated and recorded by the
-                    // parser (`StyleSheet::composes`); the printer only omits it.
-                    // Unlike lightningcss, nothing is checked here: the bundler wraps
-                    // a file's rules in the conditions of the `@import` that pulled
-                    // it in, so nesting in the output says nothing about the source.
+                    // `composes` was validated and recorded by the parser (`StyleSheet::composes`).
+                    // Don't re-check nesting here like lightningcss: the bundler wraps imported
+                    // files in their `@import` conditions, so output nesting is meaningless.
                     if dest.css_module.is_some() && matches!(decl, Property::Composes(_)) {
                         continue;
                     }

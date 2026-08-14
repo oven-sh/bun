@@ -311,10 +311,8 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// Composes handling dispatches through the `ComposesCtx` trait (defined in
-// `css_parser.rs`); `NoComposesCtx` returns `DisallowEntirely` for the
-// declaration blocks that are not style rules (@keyframes, @page, ...), where
-// `composes` has no meaning.
+// `NoComposesCtx` (declaration blocks that are not style rules, e.g. @page)
+// reports `DisallowEntirely`.
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -349,9 +347,8 @@ where
 
     if input.flags.css_modules() {
         if let css::Property::Composes(composes) = &mut property {
-            // A rejected `composes` is warned about and dropped, as in esbuild, so
-            // the only ones left in the AST are the accepted ones in style rules,
-            // which the printer omits (see `StyleRule::to_css_base`).
+            // Rejected declarations are dropped, as in esbuild; `StyleRule::to_css_base`
+            // relies on only accepted ones surviving.
             match composes_ctx.composes_state() {
                 css::ComposesState::Allow(_) => {
                     composes_ctx.record_composes(composes);

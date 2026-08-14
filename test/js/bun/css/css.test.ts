@@ -5726,6 +5726,10 @@ describe("css tests", () => {
     minify_test(":global .foo {width: 20px}", ":global .foo{width:20px}");
     minify_test(".foo:global .bar {width: 20px}", ".foo:global .bar{width:20px}");
     minify_test(".foo { :global { width: 20px } }", ".foo{& :global{width:20px}}");
+    // Inside a forgiving selector list the rejected `:global` alternative used to be dropped
+    // silently (`.x:is(:global .foo, .bar)` minified to `.x.bar`) instead of failing the parse.
+    minify_test(".x:is(:global .foo, .bar) {width: 20px}", ".x:is(:global .foo,.bar){width:20px}");
+    minify_test(".x:where(:global .foo, .bar) {width: 20px}", ".x:where(:global .foo,.bar){width:20px}");
 
     let deep_options: ParserOptions = {
       flags: [ParserFlags.DEEP_SELECTOR_COMBINATOR],

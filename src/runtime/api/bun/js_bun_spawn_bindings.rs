@@ -1930,11 +1930,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
 
-        // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let mut sync_loop = (IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN).then(|| {
-            unsafe { &mut *jsc_vm_ptr }
-                .rare_data()
-                .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
+            let vm = unsafe { &mut *jsc_vm_ptr };
+            // SAFETY: as above.
+            vm.rare_data().spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
         });
 
         while subprocess.compute_has_pending_activity() {

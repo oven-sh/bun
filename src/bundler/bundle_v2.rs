@@ -6909,9 +6909,7 @@ pub mod bv2_impl {
                 )?
                 .unwrap(),
             );
-            // The manifest is evaluated by the importing server code; only the HTML
-            // file itself (parsed separately) is a browser entry point. Code splitting
-            // flags chunks as browser output based on the target of the files in them.
+            // The parser defaults `target` to browser; this module belongs to the importing side.
             ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {

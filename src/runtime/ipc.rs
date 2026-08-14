@@ -1,5 +1,4 @@
 use core::cell::Cell;
-
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 

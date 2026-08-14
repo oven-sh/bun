@@ -861,7 +861,7 @@ impl QuicSession {
             if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
                 continue;
             }
-            let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global);
+            let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref()
@@ -1516,15 +1516,11 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .map(|b| {
-                bun_core::String::clone_utf8(&b)
-                    .to_js(global)
-                    .or_report(global)
-            })
+            .map(|b| bun_core::String::clone_utf8(&b).to_js(global).or_report())
             .unwrap_or(JSValue::UNDEFINED);
         let cipher_version = bun_core::String::static_(b"TLSv1.3")
             .to_js(global)
-            .or_report(global);
+            .or_report();
         // Node reports both fields only on failure -- the JS 'auto' rejection
         // gates on `validationErrorReason !== undefined` -- and a server with
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
@@ -1539,10 +1535,10 @@ impl QuicSession {
             Some((code, reason)) => (
                 bun_core::String::static_(reason.as_bytes())
                     .to_js(global)
-                    .or_report(global),
+                    .or_report(),
                 bun_core::String::static_(code.as_bytes())
                     .to_js(global)
-                    .or_report(global),
+                    .or_report(),
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
@@ -1661,7 +1657,7 @@ impl QuicSession {
         // drop this record.
         let data_js = bun_core::String::clone_utf8(data.as_bytes())
             .to_js(global)
-            .or_report(global);
+            .or_report();
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -1721,14 +1717,10 @@ impl QuicSession {
         // `close_reported` is already latched above, so returning here would
         // mark the close delivered without ever delivering it and `closed`
         // would never settle. Report and carry on with undefined.
-        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report(global);
+        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report();
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .map(|r| {
-                bun_core::String::clone_utf8(&r)
-                    .to_js(global)
-                    .or_report(global)
-            })
+            .map(|r| bun_core::String::clone_utf8(&r).to_js(global).or_report())
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -2294,9 +2286,7 @@ impl QuicSession {
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
-        Some(b) => bun_core::String::clone_utf8(b)
-            .to_js(global)
-            .or_report(global),
+        Some(b) => bun_core::String::clone_utf8(b).to_js(global).or_report(),
         None => JSValue::UNDEFINED,
     }
 }
@@ -2608,12 +2598,12 @@ lsquic_callback! {
 /// `undefined`, and the callback still runs (or is skipped by `run_callback`'s
 /// gate when it is the termination).
 trait OrReport {
-    fn or_report(self, global: &JSGlobalObject) -> JSValue;
+    fn or_report(self) -> JSValue;
 }
 
 impl OrReport for JsResult<JSValue> {
     #[inline]
-    fn or_report(self, _global: &JSGlobalObject) -> JSValue {
+    fn or_report(self) -> JSValue {
         match self {
             Ok(v) => v,
             Err(e) => {

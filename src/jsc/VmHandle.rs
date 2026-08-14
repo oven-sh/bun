@@ -547,7 +547,10 @@ impl VirtualMachine {
 // path (queued, released on the JS thread, then the wait ends) and the weak
 // path (queued-and-released while draining, or refused once closed) run with
 // their real preconditions every time instead of only when they lose the
-// race. Each is named on stderr.
+// race. Each is named on stderr. The parked thread keeps whatever locks it
+// holds (the fetch tasklet's mutex, a streaming body's buffer lock), so a row
+// whose worker then blocks on that same lock never reaches teardown: a hang
+// under the gate, not in production.
 #[cfg(debug_assertions)]
 mod test_gate {
     use super::{Ordering, State, Ticket, VmHandle};
@@ -567,7 +570,10 @@ mod test_gate {
         }
         s.drained.0.unlock();
     }
+    /// One line at a time: pool threads report concurrently.
+    static SAY: bun_threading::Mutex = bun_threading::Mutex::new();
     fn say(what: core::fmt::Arguments<'_>) {
+        let _g = SAY.lock_guard();
         let w = bun_core::output::error_writer();
         let _ = writeln!(w, "[vm] {what}");
         let _ = w.flush();
@@ -781,10 +787,19 @@ const _: () = assert!(State::Open as u8 == 0);
 /// holds) or a mini event loop. Captured on the owning thread when the work is
 /// created; dropped when the work is done with the loop. Cloning the JS arm
 /// takes one more ticket.
-#[derive(Clone)]
 pub enum ConcurrentPoster {
     Js(Ticket),
     Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+}
+
+impl Clone for ConcurrentPoster {
+    #[track_caller]
+    fn clone(&self) -> Self {
+        match self {
+            ConcurrentPoster::Js(t) => ConcurrentPoster::Js(t.clone()),
+            ConcurrentPoster::Mini(m) => ConcurrentPoster::Mini(*m),
+        }
+    }
 }
 
 impl ConcurrentPoster {

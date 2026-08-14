@@ -2617,13 +2617,19 @@ impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
+    #[track_caller]
     pub(crate) fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: shell_task_unset_callback,
             },
-            poster: parent.poster.clone(),
+            // Spelled out so `#[track_caller]` names this site, not `Option::clone`.
+            #[allow(clippy::manual_map)]
+            poster: match &parent.poster {
+                Some(p) => Some(p.clone()),
+                None => None,
+            },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2687,6 +2693,7 @@ impl ShellTask {
     /// About to leave the owning thread: take the poster (for a JS loop, a
     /// ticket on its VM) unless a pool-thread parent already handed one down
     /// (`new_child`). Owning thread otherwise.
+    #[track_caller]
     pub(crate) fn arm(&mut self) {
         if self.poster.is_none() {
             self.poster = Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(

@@ -70,6 +70,9 @@ pub struct WebWorker {
     env_snapshot: JsCell<Option<(bun_dotenv::Map, jsc::rare_data::ProxyEnvSlots)>>,
     standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     hot_reload: u8,
+    /// Debug builds: whether the test gate may be armed (first-level workers only).
+    #[cfg(debug_assertions)]
+    parent_is_main_thread: bool,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -339,7 +342,13 @@ impl WebWorker {
         // Everything the worker thread needs from this VM, copied here on its
         // own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
-        let (transform_options, env_snapshot, standalone_module_graph, hot_reload) = unsafe {
+        let (
+            transform_options,
+            env_snapshot,
+            standalone_module_graph,
+            hot_reload,
+            _parent_is_main_thread,
+        ) = unsafe {
             let parent = &*parent;
             let mut transform_options = (*parent.transpiler.options.transform_options).clone();
             if !inherit_exec_argv {
@@ -373,6 +382,7 @@ impl WebWorker {
                 (map, slots),
                 parent.standalone_module_graph,
                 parent.hot_reload,
+                parent.is_main_thread(),
             )
         };
 
@@ -383,6 +393,8 @@ impl WebWorker {
             env_snapshot: JsCell::new(Some(env_snapshot)),
             standalone_module_graph,
             hot_reload,
+            #[cfg(debug_assertions)]
+            parent_is_main_thread: _parent_is_main_thread,
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -566,6 +578,11 @@ impl WebWorker {
     #[inline]
     pub(crate) fn hot_reload(&self) -> u8 {
         self.hot_reload
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn parent_is_main_thread(&self) -> bool {
+        self.parent_is_main_thread
     }
 
     #[inline]

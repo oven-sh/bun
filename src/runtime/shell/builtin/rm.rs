@@ -1494,8 +1494,9 @@ impl DirTask {
             let poster = (*me.task_manager)
                 .task
                 .poster
-                .clone()
-                .expect("rm root task on the pool is armed");
+                .as_ref()
+                .expect("rm root task on the pool is armed")
+                .clone();
             (me, poster)
         };
         match &mut me.concurrent_task {

@@ -68,8 +68,9 @@ impl FetchTaskletDeinitHop {
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
-    /// `on_progress_update` would have dropped. The HTTP thread is parked /
-    /// this VM's requests are back, so a 1→0 here deinits against a live heap.
+    /// `on_progress_update` would have dropped. The HTTP thread's own +1 is
+    /// released only after its last touch of the tasklet, so a 1→0 here means
+    /// it is done with it, and this runs on the JS thread with the heap alive.
     unsafe fn release_unrun(this: *mut Self) {
         FetchTasklet::deref(this);
     }
@@ -534,14 +535,16 @@ impl FetchTasklet {
     ///     `deinit` to the JS thread, which teardown runs from its queue release.
     ///   * `true` — a non-final `on_progress_update` is queued (this entry is
     ///     still in `in_flight`, so the *final* `callback` hasn't run). That
-    ///     queued node owns the JS-side ref. The JS thread releases it from
-    ///     `release_queued_tasks` *after* the HTTP daemon parks;
-    ///     dropping it here too would leave the queued node pointing at a
-    ///     freed `FetchTasklet`. Drop only the HTTP-side ref.
+    ///     queued node owns the JS-side ref and its VM releases it from its
+    ///     queue; dropping it here too would leave the queued node pointing at
+    ///     a freed `FetchTasklet`. Drop only the HTTP-side ref.
     ///
-    /// `has_schedule_callback` is written exclusively by the HTTP-thread
-    /// `callback` and the JS-thread `on_progress_update`; the JS thread is
-    /// parked in `wait_timeout_while` here, so the load is race-free.
+    /// Only reachable for a request whose VM has *not* torn down (a worker
+    /// still running when the main thread exits): a VM's teardown waits for its
+    /// fetches' tickets — i.e. for their final callback — before the exiting
+    /// main thread parks the HTTP thread. `has_schedule_callback` is written by
+    /// the HTTP-thread `callback` and the JS-thread `on_progress_update` under
+    /// its own compare-exchange discipline, which this load relies on.
     ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
@@ -1787,12 +1790,11 @@ impl FetchTasklet {
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
-        // status_text and url must NOT be atomized: the Response can be
-        // destroyed from the HTTP thread via deref_from_thread() -> deinit()
-        // when the VM is shutting down (see is_shutting_down() branch), and
-        // atom strings live in a per-thread table — deref'ing them off-thread
-        // trips the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
-        // Plain WTFStringImpl refcounts are atomic, so clone_utf8 is safe.
+        // status_text and url must NOT be atomized: this runs on the HTTP
+        // thread, and atom strings live in a per-thread table — creating or
+        // deref'ing them off the JS thread trips the `wasRemoved`
+        // RELEASE_ASSERT in AtomStringImpl::remove(). Plain WTFStringImpl
+        // refcounts are atomic, so clone_utf8 is safe.
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticZigString (deref is a no-op, so still
         // safe to drop off-thread) and skip the WTF allocation entirely.
@@ -2399,16 +2401,14 @@ impl FetchTasklet {
     ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
-        let task_ref = Self::from_raw_mut(task);
         // The final callback is where the HTTP thread hands the fetch back:
         // move the ticket out (our deref below may free the tasklet the moment
         // its deinit hop is queued). Before that, this thread's ref keeps the
         // tasklet — and the ticket inside it — alive across the post.
         let done_ticket = if is_done {
             Some(
-                task_ref
-                    .http_ticket
-                    .take()
+                // SAFETY: `task` is live (fn contract); the field is HTTP-thread-only.
+                unsafe { (*task).http_ticket.take() }
                     .expect("fetch on the HTTP thread holds a ticket"),
             )
         } else {
@@ -2416,10 +2416,11 @@ impl FetchTasklet {
         };
         let ticket: &jsc::Ticket = match &done_ticket {
             Some(t) => t,
-            // SAFETY: `task` is live (fn contract); the field is HTTP-thread-only.
+            // SAFETY: as above.
             None => unsafe { (*task).http_ticket.as_ref() }
                 .expect("fetch on the HTTP thread holds a ticket"),
         };
+        let task_ref = Self::from_raw_mut(task);
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();

@@ -121,6 +121,44 @@ const ROWS: Row[] = [
     worker: `new Response(new Blob([Buffer.alloc(1 << 20, 9)]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();`,
     ticket: "CompressionStreamCoder.rs",
   },
+  {
+    // A Job whose subtasks fan out across the pool and finish it from whichever ends last.
+    name: "fs.promises.readdir recursive",
+    worker: `require("node:fs").promises.readdir(workerData.dir, { recursive: true });`,
+    ticket: "node_fs.rs",
+    files: { "a/b/c/d.txt": "x", "a/e.txt": "y", "f/g/h.txt": "z" },
+  },
+  {
+    // The completion is posted by the last of the copy's pool subtasks.
+    name: "fs.cp recursive",
+    worker: `require("node:fs").cp(require("node:path").join(workerData.dir, "src"), require("node:path").join(workerData.dir, "dst"), { recursive: true }, () => {});`,
+    ticket: "node_fs.rs",
+    files: { "src/a/b/c.txt": "x", "src/d.txt": "y", "src/e/f.txt": "z" },
+  },
+  // ── thread pool: Bun.$ builtins (interpreter state a JS wrapper owns) ────
+  {
+    // Subtasks created on the pool inherit the parent's ticket (new_child).
+    name: "$ ls -R",
+    worker: `Bun.$\`ls -R \${workerData.dir}\`.quiet().catch(() => {});`,
+    ticket: "interpreter.rs",
+    files: { "a/b/c/d.txt": "x", "a/e.txt": "y", "f/g/h.txt": "z" },
+  },
+  {
+    // The builtin's pool task hands the copy to an fs.cp task carrying a
+    // clone of its poster; that task's last subtask posts the completion.
+    name: "$ cp -R",
+    worker: `Bun.$\`cp -R \${workerData.dir}/src \${workerData.dir}/dst\`.quiet().catch(() => {});`,
+    ticket: "cp.rs",
+    files: { "src/a/b/c.txt": "x", "src/d.txt": "y", "src/e/f.txt": "z" },
+    // The cp builtin is Windows-only unless opted into (POSIX spawns cp(1)).
+    env: { BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+  },
+  {
+    name: "$ rm -rf",
+    worker: `Bun.$\`rm -rfv \${workerData.dir}/gone\`.quiet().catch(() => {});`,
+    ticket: "rm.rs",
+    files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone/e/f/g.txt": "z" },
+  },
   // ── thread pool: storage inside a JS-owned object ────────────────────────
   {
     // The zlib stream's native part is the pool task; input/output are JS buffers.

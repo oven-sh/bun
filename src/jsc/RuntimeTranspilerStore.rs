@@ -235,10 +235,11 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
-    /// VM teardown (JS thread, heap alive, script forbidden, embedded work
-    /// waited for so no job is mid-flight): jobs whose completion will not run —
-    /// queued after the last tick, or posted after `close()` began — release
-    /// their source, log and module promise here instead of running.
+    /// VM teardown (JS thread, heap alive, script forbidden; called on every
+    /// turn of the wait): jobs already handed back whose completion will not
+    /// run release their source, log and module promise here instead. Queued ⇒
+    /// the pool thread's last touch of the slot was the push (its ticket was
+    /// moved out first), so the slot is this thread's again.
     pub fn release_queued_jobs_for_teardown(&mut self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
@@ -247,8 +248,7 @@ impl RuntimeTranspilerStore {
             if job.is_null() {
                 break;
             }
-            // SAFETY: a live job popped from the intrusive queue; this thread
-            // owns it now (its worker-thread part finished before `close()`).
+            // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
                 (*job).promise.deinit();
                 (*job).reset_for_pool();

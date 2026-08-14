@@ -89,12 +89,13 @@ pub(crate) struct DeflateNegotiationResult {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Initializing,
+    /// Socket connecting/open, waiting for the upgrade response. Through a
+    /// proxy this is re-entered once CONNECT succeeds; for wss:// it also
+    /// spans the tunnel's TLS handshake (bytes route by `proxy.get_tunnel()`).
     Reading,
     Failed,
     /// Sent CONNECT, waiting for 200
     ProxyHandshake,
-    /// TLS inside tunnel (for wss:// through proxy)
-    ProxyTlsHandshake,
     /// WebSocket upgrade complete, forwarding data through tunnel
     Done,
 }
@@ -1187,7 +1188,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
-        unsafe { (*this).state = State::ProxyTlsHandshake };
+        unsafe { (*this).state = State::Reading };
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully

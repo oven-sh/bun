@@ -92,9 +92,6 @@ new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
 new!(pub BUN_INSPECT: string, "BUN_INSPECT", { default: b"" });
 new!(pub BUN_INSPECT_CONNECT_TO: string, "BUN_INSPECT_CONNECT_TO", { default: b"" });
-// `unix://<path>` or `tcp://host:port` that the debugger thread connects to once
-// its inspector is listening. Set together with `BUN_INSPECT` by the VS Code
-// extension, which attaches when the connection arrives.
 new!(pub BUN_INSPECT_NOTIFY: string, "BUN_INSPECT_NOTIFY", { default: b"" });
 new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});

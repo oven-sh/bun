@@ -3524,23 +3524,9 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        // `BUN_INSPECT` / `BUN_INSPECT_NOTIFY` are addressed to this one process
-        // (`configure_debugger` consumed them at VM init), like `NODE_CHANNEL_FD`
-        // below. Left in the map they reach `process.env` and every child's
-        // environment, and each child `bun` then brings up a second inspector on
-        // the same socket/port (EADDRINUSE, exit 1) or waits for a frontend that
-        // never comes. Done per VM because a worker's loader re-reads the process
-        // environment. `BUN_INSPECT_CONNECT_TO` is different: it is set on a whole
-        // terminal and means every bun process should connect, children included.
-        if bun_core::env_var::BUN_INSPECT.get_not_empty().is_some() {
-            map.remove(b"BUN_INSPECT");
-        }
-        if bun_core::env_var::BUN_INSPECT_NOTIFY
-            .get_not_empty()
-            .is_some()
-        {
-            map.remove(b"BUN_INSPECT_NOTIFY");
-        }
+        // Consumed by `configure_debugger`; a child inheriting them starts a second inspector.
+        map.remove(b"BUN_INSPECT");
+        map.remove(b"BUN_INSPECT_NOTIFY");
 
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);

@@ -116,13 +116,7 @@ pub struct Debugger {
     // `'static` is genuine: borrowed from process-lifetime env-var storage;
     // default `""`.
     pub from_environment_variable: &'static [u8],
-    /// `BUN_INSPECT_NOTIFY` — where the debugger thread reports that its
-    /// inspector is listening (see `internal/debugger.ts`). Carried here rather
-    /// than read back out of `process.env` on the debugger thread because the
-    /// launcher variables are removed from the VM's environment before that
-    /// thread starts (`VirtualMachine::load_extra_env_and_source_code_printer`).
-    /// Same `'static` env-var storage as `from_environment_variable`; `""` when
-    /// unset.
+    /// `BUN_INSPECT_NOTIFY` (`""` if unset); gone from the env map by the time it is needed.
     pub notify: &'static [u8],
     pub script_execution_context_id: u32,
     pub next_debugger_id: u64,

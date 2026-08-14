@@ -112,9 +112,7 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
-  // BUN_INSPECT_NOTIFY as read by the inspected thread at startup. It is passed
-  // in because that thread removes the launcher variables from the environment
-  // process.env is built from. Empty when unset or already delivered.
+  // BUN_INSPECT_NOTIFY; passed in because the inspected thread strips it from the env process.env is built from.
   notifyUrl: string,
 ): void {
   if (urlIsServer) {

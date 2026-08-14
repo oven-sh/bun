@@ -234,7 +234,9 @@ impl StatWatcherScheduler {
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
             // we are not running or the new watcher has a smaller interval
-            this_ref.current_interval.store(w.interval, Ordering::Relaxed);
+            this_ref
+                .current_interval
+                .store(w.interval, Ordering::Relaxed);
             Self::set_timer(this, w.interval);
         }
     }

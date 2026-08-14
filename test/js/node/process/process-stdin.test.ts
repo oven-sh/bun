@@ -531,3 +531,20 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test.skipIf(isWindows)("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
+  const total = 10 * 1024 * 1024;
+  const writer = `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`;
+  const reader = `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`;
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", `"$BUN" -e "$WRITER" | "$BUN" -e "$READER"`],
+    env: { ...bunEnv, BUN: bunExe(), WRITER: writer, READER: reader },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
+  expect(stdout).toBe(`${total} ${expected}`);
+  expect(exitCode).toBe(0);
+});

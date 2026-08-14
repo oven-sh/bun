@@ -1,6 +1,8 @@
 import { pathToFileURL } from "bun";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import path from "path";
 
 import { beforeEach, describe, expect, test } from "bun:test";
@@ -187,6 +189,49 @@ describe("fs.watchFile", () => {
       expect(watcher.listenerCount("change")).toBe(0);
     } finally {
       fs.unwatchFile(file);
+    }
+  });
+
+  test("a file: URL is path.resolve()d like a string, so a trailing slash still hits the same StatWatcher", () => {
+    const file = path.join(testDir, "watch.txt");
+    const trailingSlashUrl = new URL(pathToFileURL(file).href + "/");
+    const watcher = fs.watchFile(file, { interval: 50 }, () => {});
+    try {
+      expect(fs.watchFile(trailingSlashUrl, { interval: 50 }, () => {})).toBe(watcher);
+      expect(watcher.listenerCount("change")).toBe(2);
+
+      fs.unwatchFile(trailingSlashUrl);
+      expect(watcher.listenerCount("change")).toBe(0);
+    } finally {
+      fs.unwatchFile(file);
+      fs.unwatchFile(trailingSlashUrl);
+    }
+  });
+
+  // Like node, the path is validated before it is resolved, so the error reports
+  // the path exactly as it was passed (for a URL: what fileURLToPath made of it).
+  describe("null bytes in the path", () => {
+    const reason = "The argument 'path' must be a string, Uint8Array, or URL without null bytes";
+    const nulUrl = new URL("file:///C:/foo%00bar");
+    const cases: [name: string, input: string | URL, received: string][] = [
+      ["relative path string", "foo\0bar", "foo\0bar"],
+      ["file: URL", nulUrl, fileURLToPath(nulUrl)],
+    ];
+
+    for (const [name, input, received] of cases) {
+      const expected = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `${reason}. Received ${inspect(received)}`,
+      });
+
+      test(`watchFile rejects a ${name}`, () => {
+        expect(() => fs.watchFile(input, () => {})).toThrow(expected);
+      });
+
+      test(`unwatchFile rejects a ${name} even though nothing watches it`, () => {
+        expect(() => fs.unwatchFile(input)).toThrow(expected);
+      });
     }
   });
 

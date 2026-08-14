@@ -2287,11 +2287,12 @@ pub mod bv2_impl {
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         if self.is_server_html_import(loader, target) {
-                            // Fills the map slot reserved by `get_or_put` above with the
-                            // manifest module; `value_ptr` is not used on this path.
                             let manifest_source_index = self
                                 .enqueue_server_html_import(&file_map_result, &path_primary, target)
                                 .expect("oom");
+                            // SAFETY: see `value_ptr` note above; only the browser graph's map
+                            // was touched since.
+                            unsafe { *value_ptr = manifest_source_index };
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
@@ -2548,6 +2549,9 @@ pub mod bv2_impl {
                 if self.is_server_html_import(loader, target) {
                     let manifest_source_index = self
                         .enqueue_server_html_import(&resolve_result, &path, target)
+                        .expect("oom");
+                    self.path_to_source_index_map(target)
+                        .put(path.text, manifest_source_index)
                         .expect("oom");
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                         [import_record.importer_source_index as usize]
@@ -4817,8 +4821,6 @@ pub mod bv2_impl {
                                     },
                                     ..Default::default()
                                 };
-                                // Fills the map slot reserved by `get_or_put` above with
-                                // the manifest module; `value_ptr` is not used on this path.
                                 let manifest_source_index = this
                                     .enqueue_server_html_import(
                                         &resolve_result,
@@ -4826,6 +4828,9 @@ pub mod bv2_impl {
                                         resolve.import_record.original_target,
                                     )
                                     .expect("oom");
+                                // SAFETY: map slot from `get_or_put` above; only the browser
+                                // graph's map was touched since.
+                                unsafe { *value_ptr = manifest_source_index };
                                 out_source_index = Some(Index::init(manifest_source_index));
                                 is_html_manifest = true;
                             } else {
@@ -6223,8 +6228,7 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files. A hit takes the place of
-                // the resolver's result and is handled like a file on disk from there on.
+                // An in-memory file stands in for the resolver's result from here on.
                 let in_memory_result: Option<_resolver::Result> =
                     self.file_map.and_then(|file_map| {
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
@@ -6233,8 +6237,7 @@ pub mod bv2_impl {
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     if let Some(mut result) = in_memory_result {
-                        // The resolver fills this in from the transpiler (and tsconfig.json);
-                        // an in-memory file has no tsconfig.json.
+                        // No tsconfig.json to take these from.
                         result.jsx = transpiler.options.jsx.clone();
                         break result;
                     }
@@ -6620,10 +6623,13 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
-                    import_record.source_index = Index::init(
-                        self.generate_server_html_module(path, target)
-                            .expect("unreachable"),
-                    );
+                    let manifest_source_index = self
+                        .generate_server_html_module(path, target)
+                        .expect("unreachable");
+                    self.path_to_source_index_map(target)
+                        .put(path.text, manifest_source_index)
+                        .expect("oom");
+                    import_record.source_index = Index::init(manifest_source_index);
                 }
             }
 
@@ -6850,12 +6856,10 @@ pub mod bv2_impl {
             }
         }
 
-        /// Creates the module a server-side import of the HTML file at `path`
-        /// binds to, and registers it under `path` in `target`'s graph. Its AST
-        /// is a lazy export of a unique key that the linker replaces with the
-        /// manifest of the HTML entry point's outputs (see `HTMLImportManifest`);
-        /// the HTML file itself is bundled separately, as an entry point of the
-        /// browser graph. Returns the new module's source index.
+        /// Creates the module a server-side import of the HTML file at `path` binds
+        /// to: a lazy export of a placeholder the linker replaces with the manifest
+        /// of the page's browser build (see `HTMLImportManifest`). Returns its source
+        /// index; the caller registers it in `target`'s path map.
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,
@@ -6935,8 +6939,6 @@ pub mod bv2_impl {
             self.graph.input_files.append(fake_input_file)?;
             let _ = self.graph.ast.append(ast_for_html_entrypoint); // OOM/capacity: fire-and-forget
 
-            self.path_to_source_index_map(target)
-                .put(path.text, fake_source_index.0)?;
             self.graph
                 .html_imports
                 .server_source_indices
@@ -6945,22 +6947,17 @@ pub mod bv2_impl {
             Ok(fake_source_index.0)
         }
 
-        /// Whether an import record resolving to a file bundled with `loader`
-        /// from a graph targeting `target` is an HTML import in the sense of
-        /// [`Self::generate_server_html_module`]. Under the dev server, HTML
-        /// files are routes it owns, never modules of the server graph.
+        /// Whether an import of a file bundled with `loader` from a `target` graph
+        /// binds to a [`Self::generate_server_html_module`] (the dev server serves
+        /// HTML files as routes instead).
         fn is_server_html_import(&self, loader: Loader, target: options::Target) -> bool {
             loader == Loader::Html && target.is_server_side() && self.dev_server.is_none()
         }
 
-        /// The counterpart of what `resolve_import_records` + `process_resolve_queue`
-        /// do for an HTML import on the bulk resolution path, for the paths that
-        /// enqueue a resolved import record one at a time (`run_resolver` and
-        /// `on_resolve`): the server graph gets the manifest module, and the HTML
-        /// file is parsed once as a browser entry point, however many server files
-        /// import it and whether or not it is also a user-specified entry point.
-        /// `path` must already have its `pretty` initialized. Returns the manifest
-        /// module's source index, which is what the import record binds to.
+        /// What `resolve_import_records` + `process_resolve_queue` do for an HTML
+        /// import, for the paths that enqueue one resolved import at a time: creates
+        /// the manifest module (returned; the caller registers and binds it) and
+        /// parses the HTML file as a browser entry point unless that graph has it.
         fn enqueue_server_html_import(
             &mut self,
             resolve_result: &_resolver::Result,

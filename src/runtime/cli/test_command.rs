@@ -2615,7 +2615,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload as u8;
+            vm.hot_reload = ctx.debug.hot_reload;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2623,13 +2623,13 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
+                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                jsc::virtual_machine::HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2639,7 +2639,7 @@ impl TestCommand {
                         );
                     }
                 }
-                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                jsc::virtual_machine::HotReload::Watch => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -3009,7 +3009,7 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the

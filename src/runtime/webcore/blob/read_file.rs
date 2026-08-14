@@ -220,15 +220,12 @@ pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
 unsafe impl Send for ReadFile {}
 
 impl bun_jsc::JobContext for ReadFile {
+    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// Where the bytes go: completed by `then`, or cancelled when the VM releases the JS sides of
-    /// its live jobs at teardown (a refused or unrun read then frees only this off-thread part).
+    /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
+    /// back to a VM that is no longer running script and is released unrun.
     type Js = ReadFileCompletionFns;
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
         None
@@ -239,6 +236,19 @@ impl bun_jsc::JobContext for ReadFile {
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         Ok(ReadFile::then(this, completion, cx.global())?)
+    }
+    /// A read parked on a pipe/tty that never becomes readable is the one
+    /// state this job can be stuck in; end that wait (the read fails with
+    /// ECANCELED through the usual close path).
+    #[cfg(not(windows))]
+    unsafe fn cancel(this: *mut Self) {
+        // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
+        // other thread touches `io_request` until it is queued again here.
+        unsafe {
+            if (*this).io_parking.cancel() {
+                io::IoRequestLoop::schedule(&mut (*this).io_request);
+            }
+        }
     }
 }
 
@@ -284,6 +294,8 @@ pub struct ReadFile {
     pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
+    pub(crate) io_parking: super::IoParking,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
@@ -380,6 +392,7 @@ impl ReadFile {
                 callback: Self::on_request_readable,
                 scheduled: false,
             },
+            io_parking: super::IoParking::new(),
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
@@ -392,15 +405,18 @@ impl ReadFile {
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
@@ -410,17 +426,20 @@ impl ReadFile {
 
     pub(crate) fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
@@ -446,6 +465,10 @@ impl ReadFile {
                 std::ptr::from_mut::<io::Request>(request)
             ))
         };
+        if !this.io_parking.arm() {
+            this.fail_cancelled();
+            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
+        }
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
             ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
@@ -455,15 +478,32 @@ impl ReadFile {
         })
     }
 
+    /// The wait was cancelled (io thread: while parked — the close path that
+    /// follows finishes the job; pool thread: before it could park — the
+    /// caller finishes it): fail with ECANCELED.
+    #[cfg(not(windows))]
+    fn fail_cancelled(&mut self) {
+        let err = bun_sys::Error::from_code(bun_sys::E::ECANCELED, bun_sys::Tag::read);
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.state
+            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+    }
+
+    /// Pool thread: park on the io loop until the fd is readable (or finish
+    /// now if the VM cancelled the job meanwhile). The caller returns without
+    /// touching `self` again: from here the io thread has it.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
+        if !self.io_parking.park() {
+            self.fail_cancelled();
+            return self.on_finish();
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
-        }
+        io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
     /// Pick the read target: `buffer`'s spare capacity if it is at least as

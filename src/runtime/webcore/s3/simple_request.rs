@@ -115,8 +115,9 @@ pub struct S3HttpSimpleTask {
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// How the HTTP thread reaches the VM to deliver the response.
-    pub(crate) loop_handle: bun_jsc::LoopHandle,
+    /// Held while the request is out on the HTTP thread: how it delivers the
+    /// response, and what makes the VM wait for it.
+    pub(crate) http_ticket: Option<bun_jsc::Ticket>,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: *mut c_void,
@@ -207,6 +208,8 @@ enum ErrorType {
 }
 
 impl S3HttpSimpleTask {
+    const HOLDS_TICKET: &str = "S3 request on the HTTP thread holds a ticket";
+
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
     pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
@@ -430,20 +433,14 @@ impl S3HttpSimpleTask {
         unsafe { (*this).stage_http_result(async_http, result) };
         if is_done {
             // SAFETY: same exclusivity as above; the queue takes ownership of the inline
-            // `concurrent_task` field's `next` link. The VM waits for its S3 requests
-            // (embedded work) before closing its handle: always queued.
+            // `concurrent_task` field's `next` link. The ticket is moved out first: the
+            // JS thread may free `this` the moment it is queued.
             unsafe {
-                let handle = (*this).loop_handle.clone();
+                let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
                 let queued = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                let bun_jsc::vm_handle::Posted::Queued = handle.post_task(queued) else {
-                    unreachable!(
-                        "VM handle closed with an S3 request outstanding on the HTTP thread"
-                    );
-                };
-                // The HTTP thread is done with this request (`this` may already be freed).
-                handle.embedded_work_finished();
+                ticket.post(queued);
             }
         }
     }
@@ -460,14 +457,11 @@ impl S3HttpSimpleTask {
         unsafe {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
-            let handle = (*this).loop_handle.clone();
+            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
             let queued = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            let bun_jsc::vm_handle::Posted::Queued = handle.post_task(queued) else {
-                unreachable!("VM handle closed with an S3 request outstanding on the HTTP thread");
-            };
-            handle.embedded_work_finished();
+            ticket.post(queued);
         }
     }
 
@@ -565,8 +559,8 @@ pub(crate) fn execute_simple_s3_request(
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
     // A multipart/retry continuation can reach here from teardown's queue
-    // release; nothing new leaves a VM that is shutting down.
-    if !VirtualMachine::get().handle().accepting_work() {
+    // release; nothing new leaves a VM that is stopping.
+    if !VirtualMachine::get().script_allowed() {
         drop(options.range);
         callback.fail(
             b"ERR_S3_VM_SHUTDOWN",
@@ -637,7 +631,7 @@ pub(crate) fn execute_simple_s3_request(
         callback_context,
         callback,
         headers,
-        loop_handle: VirtualMachine::get().loop_handle(),
+        http_ticket: None,
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
@@ -711,9 +705,9 @@ pub(crate) fn execute_simple_s3_request(
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (embedded work).
+    // teardown (registry) and waits for it (the ticket).
     // SAFETY: as above.
-    unsafe { (*task_ptr).loop_handle.embedded_work_scheduled() };
+    unsafe { (*task_ptr).http_ticket = Some(VirtualMachine::get().ticket()) };
     crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
         .register();
     bun_http::HTTPThread::schedule(batch);

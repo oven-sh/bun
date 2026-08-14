@@ -209,9 +209,8 @@ pub struct VirtualMachine {
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // LAYERING: real type is `bun_runtime::cli::Command::HotReload` (forward
-    // dep); stored as its `u8` repr (see `HOT_RELOAD_*` constants).
-    pub hot_reload: u8,
+    /// `--hot` / `--watch` mode this VM runs under.
+    pub hot_reload: HotReload,
     pub jsc_vm: *mut VM,
 
     /// hide bun:wrap from stack traces
@@ -246,8 +245,6 @@ pub struct VirtualMachine {
     /// does not count). What is still pending on the entry promise after that
     /// is a top-level await.
     pub entry_evaluation_started: bool,
-    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
-    pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
 
     pub(crate) had_errors: bool,
 
@@ -331,8 +328,10 @@ pub struct VirtualMachine {
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `join_child_workers` drains at exit.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
-    /// The one object other threads hold to reach this VM (post completions,
-    /// wake, keep-alive, borrow VM-owned memory); closed by `teardown`.
+    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
+    pub(crate) jobs: crate::JsCell<crate::job::JobList>,
+    /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
+    /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
@@ -405,8 +404,19 @@ unsafe extern "C" {
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
 
-pub const HOT_RELOAD_HOT: u8 = 1;
-pub const HOT_RELOAD_WATCH: u8 = 2;
+pub use bun_options_types::context::HotReload;
+
+/// The `bun build --compile` executable's embedded module graph, if this
+/// process is one: set when the first VM is created with it, the same for
+/// every VM after.
+static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<
+    &'static dyn bun_resolver::StandaloneModuleGraph,
+> = std::sync::OnceLock::new();
+
+/// See [`STANDALONE_MODULE_GRAPH`]. Any thread.
+pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph> {
+    STANDALONE_MODULE_GRAPH.get().copied()
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
@@ -687,18 +697,22 @@ impl Drop for MacroModeGuard {
     }
 }
 
-// SAFETY: `VirtualMachine` is a per-JS-thread singleton (see `VMHolder`).
-// All access is same-thread; the `Sync` impl exists so `&'static
-// VirtualMachine` can be returned from [`VirtualMachine::get`] and passed
-// through `'static`-bound closures / trait objects without `T: Sync`
-// cascading. Cross-thread paths go through `ConcurrentTask` which never
-// hands out a `&VirtualMachine`. Fields mutated post-init are wrapped in
-// [`JsCell`] for interior mutability.
-unsafe impl Sync for VirtualMachine {}
-// SAFETY: see the `Sync` impl above — the VM is only ever accessed from its
-// owning JS thread; `Send` lets the boxed VM be moved into the worker thread
-// that will own it during `Worker` startup.
-unsafe impl Send for VirtualMachine {}
+// `VirtualMachine` is deliberately `!Send + !Sync` (its raw-pointer fields
+// make it so): a `&VirtualMachine`, a pointer to it or to its loops cannot be
+// carried to another thread. Other threads hold a `bun_jsc::Ticket` /
+// `VmHandle` and reach the VM only by posting to it. Fields mutated post-init
+// are wrapped in [`JsCell`] for same-thread interior mutability.
+// Fails to compile ("multiple applicable items") if `VirtualMachine` is
+// `Send` or `Sync`.
+const _: () = {
+    trait AmbiguousIfImpl<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+    impl<T: ?Sized + Send> AmbiguousIfImpl<u8> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<u16> for T {}
+    let _ = <VirtualMachine as AmbiguousIfImpl<_>>::some_item;
+};
 
 impl VirtualMachine {
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
@@ -752,7 +766,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn as_mut(&self) -> &mut VirtualMachine {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
-        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // SAFETY: JS thread only (`VirtualMachine` is `!Send + !Sync`).
         // Provenance comes from the thread-local `*mut` set in `init()`.
         unsafe { &mut *Self::get_mut_ptr() }
     }
@@ -771,7 +785,7 @@ impl VirtualMachine {
     /// `BackRef<VirtualMachine>` was constructed.
     #[inline(always)]
     pub fn get_mut() -> &'static mut VirtualMachine {
-        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // SAFETY: JS thread only (`VirtualMachine` is `!Send + !Sync`).
         // Provenance comes from the thread-local `*mut` set in `init()`.
         unsafe { &mut *Self::get_mut_ptr() }
     }
@@ -827,7 +841,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_mut(&self) -> &mut EventLoop {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
-        // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
+        // after `init()`; JS thread only (`VirtualMachine` is `!Sync`).
         unsafe { &mut *self.event_loop }
     }
 
@@ -840,11 +854,17 @@ impl VirtualMachine {
         unsafe { &*self.event_loop }
     }
 
-    /// A clone of this VM's [`crate::VmHandle`] — what off-thread work captures
-    /// instead of a pointer to the VM or its event loop.
+    /// A clone of this VM's uncounted [`crate::VmHandle`] — what something
+    /// that refers to this VM from elsewhere holds. Work that leaves the thread
+    /// on this VM's behalf takes a [`ticket`](Self::ticket) instead.
     #[inline]
     pub fn handle(&self) -> crate::VmHandle {
         (*self.handle).clone()
+    }
+
+    #[inline]
+    pub(crate) fn handle_ref(&self) -> &crate::VmHandle {
+        &self.handle
     }
 
     /// May native code enter user JavaScript right now? `true` in normal
@@ -1006,8 +1026,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn uws_loop_mut(&self) -> &mut uws::Loop {
         // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
-        // the JS thread once `init()` ran. Single-JS-thread invariant per
-        // `unsafe impl Sync`.
+        // the JS thread once `init()` ran; JS thread only (`!Sync`).
         unsafe { &mut *self.uws_loop() }
     }
 
@@ -1555,7 +1574,7 @@ impl VirtualMachine {
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
-        if self.hot_reload != HOT_RELOAD_HOT {
+        if self.hot_reload != HotReload::Hot {
             return None;
         }
         Some(self.rare_data().hot_map())
@@ -1713,11 +1732,10 @@ impl VirtualMachine {
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
     ///  B. release — cron, user timers and GC-controller timers cancelled; child
-    ///     workers joined; this VM's sqlite connections closed; the JS side of
-    ///     boxed pool jobs released; counted off-thread work waited for; main:
-    ///     HTTP thread parked; the VM handle closed; (Windows worker) in-flight
-    ///     uv requests completed; queued tasks and RareData's JS handles
-    ///     released without running.
+    ///     workers joined; this VM's sqlite connections closed; **the wait**:
+    ///     every ticket held off-thread comes back while queued work is
+    ///     released without running; the handle closes; main: HTTP thread
+    ///     parked; RareData's JS handles released.
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
     ///     drained; then the timer heap's loop handles closed.
@@ -1728,7 +1746,7 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// `this` is this thread's VM and no other thread can reach it any more
-    /// (worker: unpublished under `vm_lock`); `is_shutting_down` is set and
+    /// (worker: its handle unpublished); `is_shutting_down` is set and
     /// the exit handlers have run.
     pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
         // SAFETY: per fn contract — sole owner on the owning thread. Shared
@@ -1803,19 +1821,23 @@ impl VirtualMachine {
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
-        // Work still out on other threads (pool jobs, fetches): its JS side
-        // — promises, callbacks, pins, protected buffers, keep-alives — is
-        // released here, on this thread with the heap alive. After `close()`
-        // below the other thread cannot hand it back; it frees only its own part.
-        vm.jobs().release_all_js(&vm.global().js_thread());
-        // Pool work stored inside JS-owned objects (transpile slots, zlib
-        // streams) must be back before the handle closes: it completes into the
-        // still-open queue and is released below, on this thread.
+        // The one place the invariant is enforced: nothing below runs until
+        // everything that left this thread (pool jobs, fetches, uv work, C++
+        // work-queue tasks, child threads) has come back. Whatever arrives
+        // meanwhile — and whatever was already queued — is released here, on
+        // this thread with the heap alive, never run.
         teardown_log!(
-            "teardown: waiting for {} unit(s) of off-thread work",
-            vm.handle.embedded_work_outstanding()
+            "teardown: waiting for {} ticket(s) held off-thread",
+            vm.handle.tickets_outstanding()
         );
-        vm.handle.wait_for_embedded_work();
+        // A released completion can be a native continuation that opens
+        // something new (a multipart upload's next part); sweep again so it is
+        // cancelled rather than waited out.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        vm.handle.close_and_wait(|| unsafe {
+            (*this).release_queued_work();
+            let _ = Self::stop_phase_sweep(this, kind);
+        });
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -1824,21 +1846,13 @@ impl VirtualMachine {
             teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
             return;
         }
-        // From here no other thread reaches this VM: posts are refused (the
-        // poster releases its task itself), wake/keep-alive are no-ops, and any
-        // job still using VM-owned memory has finished (close waits for it).
-        vm.handle.close();
-        // Tasks posted by other threads (HTTP, children before they were
-        // joined) or by the request completions in A: release, do not run —
-        // their JSC handles must drop against a live heap.
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
-            (*this).release_queued_work();
             if let Some(rare) = (*this).rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
         }
-        teardown_log!("teardown: script forbidden, resources cancelled, children joined");
+        teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
         match kind {
@@ -1892,6 +1906,10 @@ impl VirtualMachine {
     unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
         let hooks = runtime_hooks();
         let mut result = SweepResult::Idle;
+        // Pool jobs parked on something external (a pipe that never becomes
+        // readable): their completions then arrive through the wait.
+        // SAFETY: fn contract.
+        unsafe { (*this).jobs.get() }.cancel_all();
         if let Some(hooks) = hooks {
             // SAFETY: fn contract.
             result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
@@ -2461,6 +2479,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
             addr_of_mut!((*vm).channel_ref).write(Default::default());
+            if let Some(graph) = opts.graph {
+                let _ = STANDALONE_MODULE_GRAPH.set(graph);
+            }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
@@ -3772,7 +3793,7 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
-        if self.hot_reload == HOT_RELOAD_WATCH {
+        if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state), and
             // emit the --watch-kill-signal JS handlers first, like node.
@@ -3947,22 +3968,15 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        #[cfg(debug_assertions)]
-        if bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_REFUSAL_GATE::get()
-            .unwrap_or(false)
-        {
-            vm_ref.handle.park_posts_until_closed();
+        if worker.arm_test_gate() {
+            vm_ref.handle.arm_test_gate();
         }
-        // `parent_vm()` is a `BackRef`; the parent outlives this worker while
-        // `parent_poll_ref` is held (see web_worker.rs file header).
-        let parent = worker.parent_vm();
-        vm_ref.standalone_module_graph = parent.standalone_module_graph;
         // The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        vm_ref.hot_reload = parent.hot_reload;
+        vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {
@@ -4898,7 +4912,7 @@ impl VirtualMachine {
 
     /// Tracks a listening socket so watch-mode reloads can close it.
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data().add_listening_socket_for_watch_mode(socket);
@@ -4906,7 +4920,7 @@ impl VirtualMachine {
 
     /// Stops tracking a watch-mode listening socket.
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data()

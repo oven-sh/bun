@@ -81,9 +81,7 @@ impl<'a> PropertyHandlerContext<'a> {
         self.rtl.push(rtl);
     }
 
-    /// Adds a declaration to the rule generated for one text direction only. Used when the
-    /// declaration the other direction would get is overridden by a later physical declaration in
-    /// the rule being minified.
+    /// For a compiled logical value whose other direction a later physical declaration overrides.
     pub(crate) fn add_directional_rule(&mut self, direction: Direction, property: css::Property) {
         match direction {
             Direction::Ltr => self.ltr.push(property),

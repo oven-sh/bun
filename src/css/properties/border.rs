@@ -610,13 +610,11 @@ pub struct BorderHandler {
     border_block_end: BorderShorthand,
     border_inline_start: BorderShorthand,
     border_inline_end: BorderShorthand,
-    /// Unparsed inline logical declarations (`border-inline-start: var(--b)`), held back while
-    /// logical borders are compiled away for the same reason parsed logical values are held in
-    /// the `BorderShorthand`s above: a physical declaration following them may override one of
-    /// the directions they compile to. Written out by `flush_logical`.
+    /// Unparsed inline declarations, held back like the parsed ones while logical borders are
+    /// compiled away.
     unparsed_inline: Vec<UnparsedProperty>,
-    /// Physical left/right sub-properties written out while the inline values above stayed
-    /// buffered (see `flush_before_unparsed`). Consumed by the next `flush`.
+    /// Left/right sub-properties written out by `flush_before_unparsed` while the inline values
+    /// stayed buffered.
     declared_after_inline: BorderProperty,
     category: PropertyCategory,
     border_image_handler: BorderImageHandler,
@@ -1227,15 +1225,8 @@ mod border_handler_body {
     }};
 }
 
-    /// Runs ahead of `flush_category!` when logical borders are compiled away. Each inline value
-    /// that differs between the two sides normally becomes one declaration in the ltr rule and one
-    /// in the rtl rule (`fc_logical_prop!`); those rules are appended after the rule being
-    /// minified and override everything declared in it. `declared` holds the physical
-    /// left/right sub-properties declared after the buffered logical values (see
-    /// `BorderHandler::keeps_logical_buffered`). In the direction where an inline side maps onto
-    /// one of them, the later physical declaration is what the source resolves to, so the
-    /// affected values are taken out of the normal flush here and written out for the other
-    /// direction only.
+    /// The ltr/rtl rules are appended after this rule and override it: a value mapping onto a
+    /// later `declared` side is taken away from `flush_category!` and only gets the other one.
     #[inline(never)]
     fn flush_overridden_inline(
         f: &mut FlushContext,
@@ -1250,9 +1241,7 @@ mod border_handler_body {
                 if left_declared || right_declared {
                     match (inline_start.$key.take(), inline_end.$key.take()) {
                         (Some(start), Some(end)) if css::generic::eql(&start, &end) => {
-                            // The same value on both sides does not depend on the direction, so
-                            // it goes into the rule itself, ahead of the physical values declared
-                            // after it.
+                            // Direction independent, so it stays in this rule.
                             if !left_declared {
                                 fc_prop!(f, $Left, start);
                             }
@@ -1261,10 +1250,8 @@ mod border_handler_body {
                             }
                         }
                         (start, end) => {
-                            // inline-start is the left side in ltr text and the right side in
-                            // rtl text; inline-end the other way around. At least one of the two
-                            // sides was declared later, so each value has at most one direction
-                            // left.
+                            // inline-start is left in ltr text and right in rtl text, inline-end
+                            // the other way around; one of the two sides was declared later.
                             if let Some(value) = start {
                                 if !left_declared {
                                     ctx_add_directional_with(f.ctx, Direction::Ltr, || {
@@ -1316,9 +1303,7 @@ mod border_handler_body {
         );
     }
 
-    /// The physical properties an inline logical border property compiles to, as
-    /// `(ltr, rtl)`: inline-start is the left side in ltr text and the right side in rtl text,
-    /// inline-end the other way around.
+    /// The physical properties an inline logical property compiles to in ltr and in rtl text.
     fn compiled_inline_targets(property_id: PropertyIdTag) -> Option<(PropertyId, PropertyId)> {
         use PropertyIdTag as P;
         Some(match property_id {
@@ -1340,10 +1325,8 @@ mod border_handler_body {
         })
     }
 
-    /// Writes out an unparsed inline logical declaration held back by `flush_unparsed` into the
-    /// ltr and rtl rules, except for a direction in which everything it sets was declared again
-    /// afterwards (`declared`, see `flush_overridden_inline`). An unparsed value cannot be split,
-    /// so one that a later declaration overrides only partially is still written out whole.
+    /// As `flush_overridden_inline`, for a declaration held back by `flush_unparsed`. It cannot be
+    /// split, so a direction is only left out when everything it sets there was declared later.
     #[inline(never)]
     fn flush_unparsed_inline(
         unparsed: &UnparsedProperty,
@@ -1386,8 +1369,6 @@ mod border_handler_body {
                         self.flush(dest, context);
                     }
 
-                    // A value containing syntax that isn't supported across all targets keeps
-                    // the previous value as a fallback.
                     if let Some(existing) = &self.$key.$prop
                         && !existing.eql($val)
                         && let Some(browsers) = &context.targets.browsers
@@ -1634,13 +1615,9 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
-        /// Whether a physical value arriving while logical ones are buffered leaves them buffered
-        /// instead of flushing them. That is done when the logical values are compiled away
-        /// anyway: `flush` then knows which physical sub-properties were declared after them and
-        /// leaves those out of the ltr/rtl rules, which would otherwise override the physical
-        /// value (see `flush_overridden_inline`). Every arm that stores a physical value records
-        /// the physical category, so a logical value arriving afterwards still flushes first and
-        /// physical values are never buffered ahead of logical ones.
+        /// Keeps compiled logical values buffered under the physical one, for
+        /// `flush_overridden_inline`. Every arm storing a physical value records the physical
+        /// category, so the reverse never happens.
         fn keeps_logical_buffered(
             &self,
             incoming: PropertyCategory,
@@ -1651,8 +1628,6 @@ mod border_handler_body {
                 && context.should_compile_logical(Feature::LogicalBorders)
         }
 
-        /// The physical left/right sub-properties currently buffered. They can only be buffered
-        /// alongside inline values that were declared before them (see `keeps_logical_buffered`).
         fn buffered_physical_inline(&self) -> BorderProperty {
             let mut declared = BorderProperty::empty();
             macro_rules! side {
@@ -1673,13 +1648,8 @@ mod border_handler_body {
             declared
         }
 
-        /// Flushes ahead of an unparsed declaration, which is written out directly instead of
-        /// being buffered; `declared` holds the properties it sets. Normally everything buffered
-        /// is flushed so that it ends up ahead of that declaration. Inline values that are
-        /// compiled away don't go into the rule itself, though, so when the declaration sets a
-        /// physical left/right property those stay buffered and the physical sub-properties
-        /// written out ahead of them are recorded instead: the declaration then overrides them
-        /// exactly like a buffered physical value does.
+        /// Before an unparsed declaration setting `declared` is written out: inline values being
+        /// compiled away stay buffered and what was written out ahead of them is recorded instead.
         fn flush_before_unparsed(
             &mut self,
             declared: BorderProperty,
@@ -1708,8 +1678,6 @@ mod border_handler_body {
             self.unparsed_inline = unparsed_inline;
             self.declared_after_inline = declared_after_inline;
             self.has_any = true;
-            // Same state as after buffering a physical value: further physical values are added
-            // to the buffer, a logical one flushes first.
             self.category = PropertyCategory::Physical;
         }
 
@@ -1721,10 +1689,8 @@ mod border_handler_body {
 
             self.has_any = false;
 
-            // Physical values are only buffered together with logical ones when they were declared
-            // after them, so the logical values go first: the block ones (and inline ones equal on
-            // both sides) land in this same rule, where source order decides. It also lets
-            // `flush_logical` see which physical values are buffered before they are taken out.
+            // Logical values first: any physical value buffered with them was declared later, and
+            // `flush_logical` needs to see it before `flush_physical` takes it.
             self.flush_logical(declared_after_inline, dest, context);
             self.flush_physical(dest, context);
 
@@ -1802,7 +1768,7 @@ mod border_handler_body {
 
             let arena = dest.bump();
 
-            // Held back before anything buffered below was declared, so they go first.
+            // Older than anything buffered below.
             for unparsed in self.unparsed_inline.drain(..) {
                 flush_unparsed_inline(&unparsed, declared, arena, context);
             }
@@ -1883,9 +1849,7 @@ mod border_handler_body {
 
             match unparsed.property_id.tag() {
                 property_id if compiled_inline_targets(property_id).is_some() => {
-                    // Held back like a parsed inline value (see `keeps_logical_buffered`); the
-                    // flush that preceded this call keeps an earlier value of the same property
-                    // ahead of it as a fallback.
+                    // The flush before this call wrote out any earlier value of the property.
                     self.unparsed_inline.push(unparsed.deep_clone(arena));
                     self.category = PropertyCategory::Logical;
                     self.has_any = true;

@@ -301,7 +301,7 @@ enum LogicalSlot {
     InlineEnd,
 }
 
-/// Physical inline sides set by declarations that came after the buffered logical values.
+/// Physical inline sides declared after the buffered inline values.
 #[derive(Copy, Clone, Default)]
 struct DeclaredSides {
     left: bool,
@@ -420,8 +420,7 @@ pub struct SizeHandler<S: SizeHandlerSpec> {
     pub(crate) block_end: Option<Property>,
     pub(crate) inline_start: Option<Property>,
     pub(crate) inline_end: Option<Property>,
-    /// Physical sides written out while the inline values above stayed buffered (see
-    /// `flush_before_unparsed`). Consumed by the next `flush`.
+    /// Sides written out by `flush_before_unparsed` while the inline values stayed buffered.
     declared_after_inline: DeclaredSides,
     pub(crate) has_any: bool,
     pub(crate) category: PropertyCategory,
@@ -776,10 +775,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 .as_ref()
                 .is_some_and(|browsers| !val.is_compatible(browsers));
 
-        // A physical value following logical ones flushes them, unless they are compiled away
-        // anyway: then they stay buffered, so that `flush` knows which physical sides were
-        // declared after them and leaves those out of the ltr/rtl rules, which would otherwise
-        // override this value (see `flush_compiled_inline`).
+        // Kept for `flush_compiled_inline`, which leaves out the directions this value overrides.
         let keep_logical_buffered = category == PropertyCategory::Physical
             && self.category == PropertyCategory::Logical
             && Self::compiles_logical(context);
@@ -789,9 +785,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    /// Whether the targets lack logical properties, so that the logical longhands are written out
-    /// as physical ones: the block ones into the rule itself, the inline ones into the ltr and rtl
-    /// rules that `PropertyHandlerContext` appends after it.
     fn compiles_logical(context: &PropertyHandlerContext) -> bool {
         S::FEATURE.is_some_and(|feature| context.should_compile_logical(feature))
     }
@@ -851,12 +844,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.has_any = true;
     }
 
-    /// Flushes ahead of an unparsed physical declaration, which is written out directly instead
-    /// of being buffered; `declared` holds the inline sides it sets. Normally everything buffered
-    /// is flushed so that it ends up ahead of that declaration. Inline values that are compiled
-    /// away don't go into the rule itself, though, so those stay buffered and the physical sides
-    /// written out ahead of them are recorded instead: the declaration then overrides them exactly
-    /// like a buffered physical value does (see `flush_helper_physical`).
+    /// Before an unparsed declaration setting `declared` is written out: inline values being
+    /// compiled away stay buffered and what was written out ahead of them is recorded instead.
     fn flush_before_unparsed(
         &mut self,
         declared: DeclaredSides,
@@ -882,8 +871,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.inline_end = inline_end;
         self.declared_after_inline = declared_after_inline;
         self.has_any = true;
-        // Same state as after buffering a physical value: further physical values are added to
-        // the buffer, a logical one flushes first.
         self.category = PropertyCategory::Physical;
     }
 
@@ -906,9 +893,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         let logical_supported = !Self::compiles_logical(context);
 
         if !logical_supported {
-            // Physical values are only buffered together with logical ones when they were declared
-            // after them (see `flush_helper_physical`), so the logical values go first: the block
-            // ones land in this same rule, where source order decides.
+            // Logical values first: any physical value buffered with them was declared later.
             Self::prop(
                 block_start.as_ref(),
                 S::BLOCK_START,
@@ -979,12 +964,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    /// Writes out the inline longhands for targets without logical properties. Unless both sides
-    /// hold the same value, each side becomes one declaration in the ltr rule and one in the rtl
-    /// rule, which are appended after the rule being minified and therefore override everything
-    /// declared in it. `declared` holds the physical sides declared after the logical values: in
-    /// the direction where a logical side maps onto one of them, the later physical declaration
-    /// is what the source resolves to, so no declaration is generated for that direction.
+    /// The ltr/rtl rules are appended after this rule and override it, so a direction in which a
+    /// side maps onto one of the later `declared` sides gets nothing.
     fn flush_compiled_inline(
         inline_start: Option<&Property>,
         inline_end: Option<&Property>,
@@ -992,7 +973,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // `variant_tag()` keeps `Unparsed` distinct, so only parsed values are compared.
         let start_value = inline_start
             .filter(|p| p.variant_tag() == S::INLINE_START)
             .map(S::extract_inline_start);
@@ -1002,8 +982,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if let Some(value) = start_value
             && end_value == Some(value)
         {
-            // The same value on both sides does not depend on the direction, so it goes into the
-            // rule itself, minus the sides declared again after it.
+            // Direction independent, so it stays in this rule.
             if !declared.left {
                 dest.push(S::make_left(value.clone()));
             }
@@ -1062,8 +1041,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    /// The physical form of a buffered logical longhand, which is either the parsed `logical`
-    /// property or an unparsed one carrying its id.
     fn to_physical(
         value: &Property,
         logical: PropertyIdTag,
@@ -1141,7 +1118,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    /// Writes a buffered logical longhand into the rule itself as `physical`.
     fn prop(
         value: Option<&Property>,
         logical: PropertyIdTag,

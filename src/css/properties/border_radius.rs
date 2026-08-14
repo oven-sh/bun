@@ -149,8 +149,7 @@ pub struct BorderRadiusHandler {
     pub(crate) start_end: Option<Property>,
     pub(crate) end_end: Option<Property>,
     pub(crate) end_start: Option<Property>,
-    /// Physical corners written out while the logical corners above stayed buffered (see
-    /// `flush_before_unparsed`). Consumed by the next `flush`.
+    /// Corners written out by `flush_before_unparsed` while the logical corners stayed buffered.
     declared_after_logical: DeclaredCorners,
     // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
@@ -158,7 +157,7 @@ pub struct BorderRadiusHandler {
     pub(crate) has_any: bool,
 }
 
-/// Physical corners set by declarations that came after the buffered logical corners.
+/// Physical corners declared after the buffered logical corners.
 #[derive(Copy, Clone, Default)]
 struct DeclaredCorners {
     top_left: bool,
@@ -261,11 +260,8 @@ macro_rules! single_property {
     }};
 }
 
-// When the logical corners are compiled away, each becomes one declaration in the ltr rule and
-// one in the rtl rule, which are appended after the rule being minified and therefore override
-// everything declared in it. In the direction where the corner maps onto a physical corner
-// declared after it (`$ltr_declared` / `$rtl_declared`), that later declaration is what the
-// source resolves to, so no declaration is generated for that direction.
+// The ltr/rtl rules are appended after this rule and override it, so a direction whose physical
+// corner was declared later (`$ltr_declared` / `$rtl_declared`) gets nothing.
 macro_rules! logical_property {
     (
         $d:expr, $ctx:expr, $bump:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr,
@@ -489,21 +485,13 @@ impl BorderRadiusHandler {
         self.flush(dest, context);
     }
 
-    /// Whether a physical corner arriving while logical corners are buffered leaves them buffered
-    /// instead of flushing them. That is done when the logical corners are compiled away anyway:
-    /// `flush` then knows which physical corners were declared after them and leaves those out of
-    /// the ltr/rtl rules, which would otherwise override the physical corner (see
-    /// `logical_property!`).
+    /// Keeps compiled logical corners buffered under the physical one for `logical_property!`.
     fn keeps_logical_buffered(context: &PropertyHandlerContext) -> bool {
         context.should_compile_logical(css::compat::Feature::LogicalBorderRadius)
     }
 
-    /// Flushes ahead of an unparsed physical declaration, which is written out directly instead
-    /// of being buffered; `declared` holds the corners it sets. Normally everything buffered is
-    /// flushed so that it ends up ahead of that declaration. Logical corners that are compiled
-    /// away don't go into the rule itself, though, so those stay buffered and the physical corners
-    /// written out ahead of them are recorded instead: the declaration then overrides them exactly
-    /// like a buffered physical corner does (see `keeps_logical_buffered`).
+    /// Before an unparsed declaration setting `declared` is written out: logical corners being
+    /// compiled away stay buffered and what was written out ahead of them is recorded instead.
     fn flush_before_unparsed(
         &mut self,
         declared: DeclaredCorners,
@@ -540,8 +528,6 @@ impl BorderRadiusHandler {
         self.end_start = end_start;
         self.declared_after_logical = declared_after_logical;
         self.has_any = true;
-        // Same state as after buffering a physical corner: further physical corners are added to
-        // the buffer, a logical one flushes first.
         self.category = PropertyCategory::Physical;
     }
 
@@ -562,8 +548,7 @@ impl BorderRadiusHandler {
         let end_end = self.end_end.take();
         let end_start = self.end_start.take();
 
-        // Physical corners are only buffered together with logical ones when they were declared
-        // after them (see `keeps_logical_buffered`).
+        // Any physical corner buffered alongside logical ones was declared after them.
         let declared = declared_after_logical.or(DeclaredCorners {
             top_left: top_left.is_some(),
             top_right: top_right.is_some(),
@@ -608,8 +593,7 @@ impl BorderRadiusHandler {
         single_property!(dest, context, BorderBottomRightRadius, bottom_right);
         single_property!(dest, context, BorderBottomLeftRadius, bottom_left);
 
-        // The start-* corners are at the top and the *-start corners on the left in ltr text;
-        // in rtl text the *-start corners are on the right.
+        // *-start corners are on the left in ltr text and on the right in rtl text.
         logical_property!(
             dest,
             context,

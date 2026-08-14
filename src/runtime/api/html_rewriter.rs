@@ -919,6 +919,11 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // https://github.com/oven-sh/bun/issues/3334
+        // Before `wire_input` takes the body: the output body is a stream, so
+        // a Blob input's Content-Type can only be carried over as a header.
+        let headers = original.clone_headers(global)?;
+
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),
             cell: Cell::new(JSValue::ZERO),
@@ -980,6 +985,7 @@ impl RewriterPipe {
         // hands that over as `DrainResult::Owned`.
         let result = bun_core::heap::alloc_nn(Response::init(
             webcore::response::Init {
+                headers,
                 status_code: 200,
                 ..Default::default()
             },
@@ -1007,9 +1013,6 @@ impl RewriterPipe {
             original.get_init_status_code(),
             original.get_init_status_text().clone(),
         );
-
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(global)?);
 
         let response_js_value = result_ref.to_js(&this.global);
 

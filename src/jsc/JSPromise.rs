@@ -266,10 +266,8 @@ impl JSPromise {
             return value;
         }
 
-        if value.is_any_error() {
-            return Self::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global, value,
-            );
+        if let Some(err) = value.to_error() {
+            return Self::rejected_promise(global, err).to_js();
         }
 
         Self::resolved_promise_value(global, value)
@@ -325,6 +323,18 @@ impl JSPromise {
     pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
         // FFI returns a non-null GC-managed cell tied to `global`'s VM.
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
+    }
+
+    /// Create a new promise rejected with the exception `err` proves is pending,
+    /// taking it off the VM. The reason is converted like [`reject`](Self::reject)
+    /// does; a termination is propagated instead of becoming a reason.
+    pub fn rejected_promise_with_caught_exception(
+        global: &JSGlobalObject,
+        err: JsError,
+    ) -> Result<&mut JSPromise, JsTerminated> {
+        let promise = Self::create(global);
+        promise.reject(global, Err(err))?;
+        Ok(promise)
     }
 
     /// **DEPRECATED** use `rejected_promise` instead.

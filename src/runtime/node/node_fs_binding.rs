@@ -103,11 +103,7 @@ fn run_async<A: FsArgument>(
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
             if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
-                let promise =
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global,
-                        abort_error,
-                    );
+                let promise = JSPromise::rejected_promise(global, abort_error).to_js();
                 args.unprotect();
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.

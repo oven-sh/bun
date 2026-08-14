@@ -944,3 +944,95 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// These writes fail before any I/O is scheduled, so the write returns a promise
+// that is already rejected. Those rejections must carry the error itself and be
+// reported the same way as the ones produced later by the async path.
+(isWindows ? describe : describe.concurrent)("Bun.write early rejections are tracked", () => {
+  // The endpoint is never contacted: the options are validated first.
+  const s3Options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my_bucket",
+    endpoint: "http://127.0.0.1:1",
+  };
+  const invalidS3Options = { storageClass: "INVALID_VALUE" };
+  const invalidS3Message = "storageClass must be one of";
+
+  async function runChild(body) {
+    using dir = tempDir("bun-write-early-reject", { "file.txt": "x" });
+    const prelude = `
+      const fs = require("fs");
+      const dir = ${JSON.stringify(String(dir))};
+      const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+      const s3file = new Bun.S3Client(${JSON.stringify(s3Options)}).file("key");
+      const invalidS3Options = ${JSON.stringify(invalidS3Options)};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["a string written to a directory", `Bun.write(dir, "x")`, "EISDIR"],
+    ["a TypedArray written to a directory", `Bun.write(dir, new Uint8Array(4))`, "EISDIR"],
+    // Truncating a directory fails with EINVAL on Windows and EISDIR elsewhere.
+    ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
+    // Windows reports these two as "UV_EBADF" (errno -4083), which the substring check also accepts.
+    ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
+    [
+      "a TypedArray written to a read-only file descriptor",
+      `Bun.write(Bun.file(fs.openSync(file, "r")), new Uint8Array(4))`,
+      "EBADF",
+    ],
+    ["BunFile.write() on a directory", `Bun.file(dir).write("x")`, "EISDIR"],
+    ["an S3 write with invalid options", `s3file.write("x", invalidS3Options)`, invalidS3Message],
+    [
+      "an S3 write of an empty Blob with invalid options",
+      `s3file.write(new Blob([]), invalidS3Options)`,
+      invalidS3Message,
+    ],
+  ])("%s is reported as an unhandled rejection", async (_, expression, expected) => {
+    const { stderr, exitCode } = await runChild(`${expression};`);
+    expect(stderr).toContain(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["a string", () => "x"],
+    ["an empty Blob", () => new Blob([])],
+  ])("an S3 write of %s with invalid options rejects with the validation error itself", async (_, data) => {
+    const promise = new Bun.S3Client(s3Options).file("key").write(data(), invalidS3Options);
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+    await expect(promise).rejects.toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining(invalidS3Message),
+    });
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.write(dir, "x");
+    `);
+    expect(stdout).toBe("EISDIR true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      Bun.write(dir, "x").catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught EISDIR\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -744,12 +744,7 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(
-                jsc::JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err_js,
-                ),
-            );
+            return Ok(jsc::JSPromise::rejected_promise(global_this, err_js).to_js());
         }
 
         if let Some(blob_) = self.to_any_blob() {

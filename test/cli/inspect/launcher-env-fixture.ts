@@ -20,8 +20,9 @@ if (!Bun.isMainThread) {
   }
 
   const worker = new Worker(import.meta.url);
-  const fromWorker = await new Promise(resolve => {
+  const fromWorker = await new Promise((resolve, reject) => {
     worker.onmessage = event => resolve(event.data);
+    worker.onerror = event => reject(event.error ?? new Error(event.message));
   });
   worker.terminate();
 

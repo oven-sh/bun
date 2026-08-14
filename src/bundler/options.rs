@@ -324,6 +324,39 @@ impl TargetExt for Target {
     }
 }
 
+const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
+
+/// `bun build` / `Bun.build()` without an explicit `target` default to
+/// `Target::Bun` when an entry point starts with `#!/usr/bin/env bun`
+/// (docs/bundler/index.mdx, "target"). Entry points are looked up in
+/// `file_map` first, then read from disk relative to the working directory;
+/// anything that is not a readable file (a bare specifier, a path only a
+/// plugin resolves) does not count.
+pub fn any_entry_point_has_bun_hashbang(
+    entry_points: &[Box<[u8]>],
+    file_map: Option<&crate::bundle_v2::FileMap>,
+) -> bool {
+    entry_points.iter().any(|entry_point| {
+        if let Some((_, contents)) = file_map.and_then(|files| files.lookup(b"", entry_point)) {
+            return has_bun_hashbang(contents);
+        }
+        let mut first_bytes = [0u8; BUN_HASHBANG.len() + 1];
+        bun_sys::File::openat(bun_sys::Fd::cwd(), entry_point, bun_sys::O::RDONLY, 0)
+            .and_then(|file| file.read_all(&mut first_bytes))
+            .is_ok_and(|len| has_bun_hashbang(&first_bytes[..len]))
+    })
+}
+
+/// `contents` need only hold one byte past the hashbang: that byte tells
+/// `bun` (line ends at LF / CRLF / EOF, or arguments follow) apart from `bunx`.
+fn has_bun_hashbang(contents: &[u8]) -> bool {
+    contents.starts_with(BUN_HASHBANG)
+        && matches!(
+            contents.get(BUN_HASHBANG.len()),
+            None | Some(b'\n' | b'\r' | b' ' | b'\t')
+        )
+}
+
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 

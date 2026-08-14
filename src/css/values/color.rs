@@ -2184,8 +2184,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    /// A `<percentage>` math function, as a unit value. The keywords are `<number>`s
-    /// (`calc(r * 50%)`), else percentages of their range as before (`calc(l + 10%)`).
+    /// A `<percentage>` math function over the channel keywords, as a unit value.
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(unit_value) = input.try_parse(|i| {
             RelativeComponentParser::parse_percentage_calc(i, this, |ctx, ident| {
@@ -2195,6 +2194,7 @@ impl RelativeComponentParser {
             return Ok(unit_value);
         }
 
+        // Keyword as a percentage of its range: `calc(l + 10%)`, `min(r, g)`.
         RelativeComponentParser::parse_percentage_calc(input, this, |ctx, ident| {
             let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;
             Some(Calc::Value(Box::new(Percentage { v: unit_value })))

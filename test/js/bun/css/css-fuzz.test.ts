@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { isCI, isDebug, tempDir } from "harness";
-import { join } from "node:path";
+import { isCI, isDebug } from "harness";
 
 interface InvalidFuzzOptions {
   maxLength: number;
@@ -10,6 +9,10 @@ interface InvalidFuzzOptions {
 
 const shutup = process.env.CSS_FUZZ_SHUTUP === "1";
 const log = shutup ? () => {} : console.log;
+
+// Virtual path of the fuzzed stylesheet, handed to Bun.build through `files` instead of being
+// written to disk. It has to be absolute: the bundler asserts that entry points are absolute paths.
+const entrypoint = "/css-fuzz/invalid.css";
 
 // Collection of invalid CSS generation strategies
 const invalidGenerators = {
@@ -122,8 +125,6 @@ if (!isCI) {
   )(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {
-      using dir = tempDir("css-fuzz", {});
-      const entrypoint = join(String(dir), "invalid.css");
       const options: InvalidFuzzOptions = {
         maxLength: 10000,
         strategy: strategy as any,
@@ -180,11 +181,11 @@ if (!isCI) {
         log("--- CSS Fuzz ---");
         invalidCSS = invalidCSS + "";
         log(JSON.stringify(invalidCSS, null, 2));
-        await Bun.write(entrypoint, invalidCSS);
 
         try {
           const result = await Bun.build({
             entrypoints: [entrypoint],
+            files: { [entrypoint]: invalidCSS },
           });
 
           // We expect the parser to either throw an error or return a valid result
@@ -231,8 +232,6 @@ if (!isCI) {
 
   // Additional test for mixed valid/invalid input
   test("CSS Parser Mixed Input Fuzzing", async () => {
-    using dir = tempDir("css-fuzz-mixed", {});
-    const entrypoint = join(String(dir), "invalid.css");
     const validCSS = ".test{color:red}";
 
     for (let i = 0; i < 100; i++) {
@@ -244,11 +243,11 @@ if (!isCI) {
 
       console.log("--- Mixed CSS ---");
       console.log(JSON.stringify(mixedCSS, null, 2));
-      await Bun.write(entrypoint, mixedCSS);
 
       try {
         await Bun.build({
           entrypoints: [entrypoint],
+          files: { [entrypoint]: mixedCSS },
         });
       } catch (error) {
         // Expected to throw, but shouldn't crash

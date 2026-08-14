@@ -327,6 +327,20 @@ describe("bundler", () => {
       expect(entry.imports.filter((i: { kind: string }) => i.kind === "dynamic-import")).toEqual([
         { path: stylesheetChunks[0][0], kind: "dynamic-import" },
       ]);
+      // The chunk declares what it exports. The export clause alone is emitted
+      // when the stylesheet's exports are not kept alive.
+      expect(api.readFile(join("/out", stylesheetChunks[0][0]))).toMatchInlineSnapshot(`
+        "// styles.module.css
+        var foo = "foo_-MSaAA";
+        var styles_module_default = {
+          foo
+        };
+        export {
+          styles_module_default as default,
+          foo
+        };
+        "
+      `);
     },
     run: {
       file: "/out/entry.js",
@@ -336,26 +350,44 @@ describe("bundler", () => {
   });
 
   // A stylesheet that one entry point imports statically and another one
-  // import()s: the static importer keeps its inline copy of the class map (it
-  // does not import the stylesheet's chunk), the dynamic importer loads the chunk.
+  // import()s: the static importer keeps its own inline copy of the stylesheet's
+  // JS (it does not import the stylesheet's chunk), the dynamic importer loads
+  // the chunk. Liveness is per file, not per chunk, so once the stylesheet is
+  // import()ed somewhere, the static importer's copy carries every export too,
+  // not only the `foo` it uses.
   itBundled("splitting/StaticAndDynamicImportOfSameCSSModule", {
     files: {
       "/static.js": `
-        import styles from './styles.module.css';
-        console.log('static', /^foo_/.test(styles.foo));
+        import { foo } from './styles.module.css';
+        console.log('static', /^foo_/.test(foo));
       `,
       "/dynamic.js": `
         const mod = await import('./styles.module.css');
-        console.log('dynamic', Object.keys(mod).join(','), /^foo_/.test(mod.default.foo));
+        console.log('dynamic', Object.keys(mod).join(','), /^bar_/.test(mod.default.bar));
       `,
-      "/styles.module.css": `.foo { color: red; }`,
+      "/styles.module.css": `
+        .foo { color: red; }
+        .bar { color: blue; }
+      `,
     },
     entryPoints: ["/static.js", "/dynamic.js"],
     splitting: true,
     outdir: "/out",
     metafile: true,
     onAfterBundle(api) {
-      expect(api.readFile("/out/static.js")).toMatch(/"foo_[^"]+"/);
+      expect(api.readFile("/out/static.js")).toMatchInlineSnapshot(`
+        "// styles.module.css
+        var foo = "foo_-MSaAA";
+        var bar = "bar_-MSaAA";
+        var styles_module_default = {
+          foo,
+          bar
+        };
+
+        // static.js
+        console.log("static", /^foo_/.test(foo));
+        "
+      `);
       expect(api.readFile("/out/dynamic.js")).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
 
       const { outputs } = JSON.parse(api.readFile("/metafile.json"));
@@ -377,9 +409,35 @@ describe("bundler", () => {
       {
         file: "/out/dynamic.js",
         env,
-        stdout: "dynamic default,foo true",
+        stdout: "dynamic bar,default,foo true",
       },
     ],
+  });
+
+  // A stylesheet that is both a user-specified entry point and import()ed only
+  // gets its CSS output (entry point kinds are exclusive), so the import() is
+  // still rewritten to the .css output (or, with --css-chunking, to whatever
+  // chunk is at index 0) instead of a JS chunk exporting the class map.
+  itBundled("splitting/DynamicImportOfUserSpecifiedCSSEntryPoint", {
+    todo: true,
+    files: {
+      "/entry.js": `
+        const mod = await import('./styles.module.css');
+        console.log(Object.keys(mod).join(','), /^foo_/.test(mod.foo));
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/styles\.module[^"]*\.js"\)/);
+    },
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: "default,foo true",
+    },
   });
 
   // A stylesheet the user passes as an entry point still only produces CSS.

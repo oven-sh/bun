@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
@@ -185,7 +185,7 @@ test.concurrent("a compiled executable reads config from its run directory only"
     "app.ts": `console.log("compiled app");\n`,
     "sub/.keep": "",
   });
-  const exe = join(String(dir), "sub", process.platform === "win32" ? "app.exe" : "app");
+  const exe = join(String(dir), "sub", isWindows ? "app.exe" : "app");
 
   const [, buildErr, buildCode] = await runIn(String(dir), ["build", "--compile", "app.ts", "--outfile", exe]);
   expect(buildErr).not.toContain("error");

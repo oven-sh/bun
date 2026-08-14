@@ -303,10 +303,6 @@ impl<'a> Parser<'a> {
         if bun_paths::is_package_path(&entry) {
             return entry;
         }
-        self.resolve_bunfig_relative(entry)
-    }
-
-    fn resolve_bunfig_relative(&self, entry: Box<[u8]>) -> Box<[u8]> {
         // join_abs_string_buf requires an absolute base.
         let Some(bunfig_dir) = bun_paths::dirname(self.source.path.text) else {
             return entry;

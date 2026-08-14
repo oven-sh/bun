@@ -6821,8 +6821,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     return JSC::JSValue::encode(completions);
 }
 
-// One `object.name` step of a completion chain, with ordinary property semantics (whole prototype
-// chain, getters run). `name` is UTF-8. A missing property or a throwing getter yields undefined.
+// One `object.name` step of a completion chain: ordinary property semantics (prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
 extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue objectValue,

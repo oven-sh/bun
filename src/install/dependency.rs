@@ -519,6 +519,43 @@ pub fn split_name_and_version_or_latest(str: &[u8]) -> (&[u8], &[u8]) {
     (name, version.unwrap_or(b"latest"))
 }
 
+/// Returns whether `spec` can be satisfied from npm registry metadata without
+/// project context. Named file, URL, git, alias, and workspace specs are not
+/// registry views even though they begin with a valid package name.
+pub fn is_registry_package_spec(spec: &[u8]) -> bool {
+    let (selector, package_name) = split_version_and_maybe_name(spec);
+    let Some(package_name) = package_name else {
+        return strings::is_npm_package_name(selector);
+    };
+    if !strings::is_npm_package_name(package_name) {
+        return false;
+    }
+
+    match Tag::infer(selector) {
+        Tag::Npm => {
+            !selector.starts_with(b"npm:")
+                && !selector.starts_with(b"patch:")
+                && Semver::query::is_valid(selector, SlicedString::init(selector, selector))
+                    .unwrap_or_else(|_| bun_core::out_of_memory())
+        }
+        Tag::DistTag => is_valid_registry_dist_tag(selector),
+        _ => false,
+    }
+}
+
+/// npm-package-arg accepts dist-tags only when `encodeURIComponent` would
+/// leave them unchanged. An empty selector is the omitted `latest` selector.
+#[inline]
+fn is_valid_registry_dist_tag(selector: &[u8]) -> bool {
+    selector.iter().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+    })
+}
+
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum SplitNameError {
     #[error("MissingVersion")]

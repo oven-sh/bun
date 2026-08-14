@@ -810,6 +810,17 @@ impl Token {
 }
 
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with_validity(input, sliced).map(|(group, _)| group)
+}
+
+/// Parses a version range and reports whether every token was valid range
+/// syntax. [`parse`] intentionally preserves permissive recovery from unknown
+/// tokens for existing callers.
+pub fn is_valid(input: &[u8], sliced: SlicedString) -> Result<bool, AllocError> {
+    parse_with_validity(input, sliced).map(|(_, valid)| valid)
+}
+
+fn parse_with_validity(input: &[u8], sliced: SlicedString) -> Result<(Group, bool), AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
@@ -823,6 +834,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+    let mut valid = true;
 
     while i < input.len() {
         skip_round = false;
@@ -886,11 +898,13 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 is_or = true;
             }
             b'|' => {
+                let pipe_start = i;
                 i += 1;
 
                 while i < input.len() && input[i] == b'|' {
                     i += 1;
                 }
+                valid &= i - pipe_start == 2;
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
@@ -899,6 +913,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 skip_round = true;
             }
             b'-' => {
+                valid = false;
                 i += 1;
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
@@ -912,6 +927,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 skip_round = true;
             }
             _ => {
+                valid = false;
                 i += 1;
                 token.tag = TokenTag::None;
 
@@ -927,6 +943,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
+            valid &= parse_result.strict_valid;
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -979,6 +996,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
+                valid &= second_parsed.strict_valid;
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);
@@ -1096,5 +1114,5 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
         }
     }
 
-    Ok(list)
+    Ok((list, valid))
 }

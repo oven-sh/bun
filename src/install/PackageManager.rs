@@ -801,6 +801,23 @@ impl PackageManager {
     ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
         init(ctx, cli, subcommand)
     }
+
+    /// Initializes a registry view, allowing a missing root manifest only for
+    /// npm package selectors; path, URL, and empty specs stay project-bound.
+    pub fn init_for_registry_view(
+        ctx: Command::Context,
+        cli: CommandLineArguments,
+        subcommand: Subcommand,
+        spec: &[u8],
+    ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+        let root_manifest_requirement = if crate::dependency::is_registry_package_spec(spec) {
+            RootManifestRequirement::OptionalForRegistryView
+        } else {
+            RootManifestRequirement::Required
+        };
+
+        init_with_manifest_requirement(ctx, cli, subcommand, root_manifest_requirement)
+    }
 }
 
 // Only consumer is `hasEnoughTimePassedBetweenWaitingMessages`.
@@ -1451,6 +1468,21 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    init_with_manifest_requirement(ctx, cli, subcommand, RootManifestRequirement::Required)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RootManifestRequirement {
+    Required,
+    OptionalForRegistryView,
+}
+
+fn init_with_manifest_requirement(
+    ctx: Command::Context,
+    cli: CommandLineArguments,
+    subcommand: Subcommand,
+    root_manifest_requirement: RootManifestRequirement,
+) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     if cli.global {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
@@ -1612,8 +1644,14 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
+            if root_manifest_requirement == RootManifestRequirement::OptionalForRegistryView {
+                this_cwd = original_cwd;
+                break 'child bun_sys::File::from_fd(Fd::invalid());
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
+
+        let has_root_manifest = child_json.handle.is_valid();
 
         debug_assert!(strings::eql_long(
             &original_package_json_path_buf[..this_cwd.len()],
@@ -1632,7 +1670,7 @@ pub fn init(
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
 
         // Check if this is a workspace; if so, use root package
-        if subcommand.should_chdir_to_root() {
+        if has_root_manifest && subcommand.should_chdir_to_root() {
             if !created_package_json {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
@@ -1794,6 +1832,7 @@ pub fn init(
         fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
         break 'root_package_json_file child_json;
     };
+    let has_root_manifest = root_package_json_file.handle.is_valid();
 
     let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
     bun_sys::chdir(&top_level_dir_z)?;
@@ -1816,13 +1855,15 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
-        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
-        let plen = p.len();
-        root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+        if has_root_manifest {
+            // bun_sys exposes the non-Z `get_fd_path`;
+            // append the NUL ourselves so the static `&ZStr` invariant holds.
+            let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
+            let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
+            let plen = p.len();
+            root_buf[plen] = 0;
+            ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+        }
     }
 
     // Returns the resolver's BSSMap-owned
@@ -2104,7 +2145,7 @@ pub fn init(
     // (`Box::new(Lockfile::default())`) so we never construct a zeroed
     // `Lockfile` only to drop it.
 
-    {
+    if has_root_manifest {
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated

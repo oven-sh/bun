@@ -1438,7 +1438,9 @@ export function findRepoRoot(): string {
  * in scope; here we only validate shape and resolve paths.
  */
 function parseLocalDeps(spec: string | undefined, cwd: string): Record<string, string> {
-  const out: Record<string, string> = {};
+  // Null prototype: any name (even `__proto__`) is stored as a plain entry and
+  // reaches the unknown-dep check in validateBunConfig.
+  const out = Object.create(null) as Record<string, string>;
   if (spec === undefined || spec === "") return out;
   for (const entry of spec.split(",")) {
     const eq = entry.indexOf("=");

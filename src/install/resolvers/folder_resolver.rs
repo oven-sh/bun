@@ -128,6 +128,15 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
             _ => unreachable!(),
         }))
     }
+
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        // Workspace members were already registered under their package.json
+        // name by `WorkspaceMap` and are found by that name again later.
+        if matches!(TAG, ResolutionTag::Workspace) {
+            return None;
+        }
+        Some(dependency::fallback_package_name(self.folder_path).to_vec())
+    }
 }
 
 type Resolver<'a> = NewResolver<'a, { ResolutionTag::Folder }>;

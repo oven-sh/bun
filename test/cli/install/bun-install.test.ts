@@ -9786,6 +9786,55 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     await expectRejected(String(dir), '"a\\b"');
   });
 
+  // The bun.lock parser splits `name@resolution` at the first "@" after an optional scope, so a
+  // name with any other "@" in it cannot be stored either, even though it is a safe folder name.
+  it("fails to install a file: folder whose name contains an @", async () => {
+    using dir = tempDir("invalid-name-at-folder", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../lib" },
+      }),
+      "lib/package.json": JSON.stringify({ name: "a@b", version: "1.0.0" }),
+    });
+
+    await expectRejected(String(dir), '"a@b"');
+  });
+
+  it("fails to install a local tarball whose scoped name contains a second @", async () => {
+    using dir = tempDir("invalid-name-at-tarball", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../dep.tgz" },
+      }),
+    });
+    await Bun.Archive.write(
+      join(String(dir), "dep.tgz"),
+      { "package/package.json": JSON.stringify({ name: "@scope/a@b", version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+
+    await expectRejected(String(dir), '"@scope/a@b"');
+  });
+
+  it("fails to install a workspace whose member's name contains an @", async () => {
+    using dir = tempDir("invalid-name-at-workspace", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        workspaces: ["packages/*"],
+      }),
+      "project/packages/member/package.json": JSON.stringify({ name: "a@b", version: "1.0.0" }),
+    });
+
+    const { err, exitCode } = await install(String(dir));
+    expect(err).toContain('error: Invalid package name "a@b"');
+    expect(err).toMatch(/ at .*member[\\/]package\.json:1:9\s/);
+    expect(await exists(join(String(dir), "project", "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   it("still installs scoped names and writes a lockfile the next install loads", async () => {
     using dir = tempDir("valid-scoped-name-tarball", {
       "project/package.json": JSON.stringify({

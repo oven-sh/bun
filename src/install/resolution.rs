@@ -94,17 +94,6 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
-    pub(crate) const ZEROED: Self = Self {
-        tag: Tag::Uninitialized,
-        _padding: [0; 7],
-        value: Value { uninitialized: () },
-    };
-
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
     pub(crate) fn init(value: TaggedValue<SemverInt>) -> Self {

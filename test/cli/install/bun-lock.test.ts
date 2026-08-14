@@ -813,6 +813,103 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   expect(await exited).toBe(0);
 });
 
+// bun.lock stores every package as "<name>@<resolution>" and splits the name back off at the
+// first "@" after an optional scope, so a package without a name cannot be stored. A folder or
+// tarball package whose package.json had no name used to be written as e.g. "@file:../dir", which
+// the next install could not parse: it printed "Ignoring lockfile", and --frozen-lockfile always
+// failed. Such packages are now named after their folder or tarball. The git variant lives in
+// bun-install-git-deps.test.ts, the isolated store layout in isolated-install.test.ts.
+it("names folder and tarball packages without a package.json name after their folder or tarball", async () => {
+  const noName = JSON.stringify({ version: "1.0.0" });
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: {
+      "pkgs/folder-pkg/package.json": noName,
+      "pkgs/empty-name-pkg/package.json": JSON.stringify({ name: "", version: "1.0.0" }),
+      // "odd@folder" cannot be stored as a name either, so this one gets the generic name.
+      "pkgs/odd@folder/package.json": noName,
+    },
+  });
+  await Bun.Archive.write(
+    join(packageDir, "tarball-pkg.tgz"),
+    { "package/package.json": noName },
+    { compress: "gzip" },
+  );
+  // Serves that tarball under other file names: remote packages are named after the URL.
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(file(join(packageDir, "tarball-pkg.tgz"))),
+  });
+  const dependencies: Record<string, string> = {
+    "folder-dep": "file:./pkgs/folder-pkg",
+    "empty-name-dep": "file:./pkgs/empty-name-pkg",
+    "odd-folder-dep": "file:./pkgs/odd@folder",
+    "tarball-dep": "file:./tarball-pkg.tgz",
+    "remote-dep": `http://localhost:${server.port}/remote-pkg.tgz`,
+    "signed-url-dep": `http://localhost:${server.port}/signed-pkg.tgz?token=abc/def`,
+  };
+  await write(packageJson, JSON.stringify({ name: "deps-without-names", dependencies }));
+
+  await runBunInstall(env, packageDir);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234").replaceAll(/"sha512-[^"]*"/g, '"<integrity>"'))
+    .toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 2,
+      "configVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "deps-without-names",
+          "dependencies": {
+            "empty-name-dep": "file:./pkgs/empty-name-pkg",
+            "folder-dep": "file:./pkgs/folder-pkg",
+            "odd-folder-dep": "file:./pkgs/odd@folder",
+            "remote-dep": "http://localhost:1234/remote-pkg.tgz",
+            "signed-url-dep": "http://localhost:1234/signed-pkg.tgz?token=abc/def",
+            "tarball-dep": "file:./tarball-pkg.tgz",
+          },
+        },
+      },
+      "packages": {
+        "empty-name-dep": ["empty-name-pkg@file:pkgs/empty-name-pkg", {}],
+
+        "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", {}],
+
+        "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", {}],
+
+        "remote-dep": ["remote-pkg@http://localhost:1234/remote-pkg.tgz", {}, "<integrity>"],
+
+        "signed-url-dep": ["signed-pkg@http://localhost:1234/signed-pkg.tgz?token=abc/def", {}, "<integrity>"],
+
+        "tarball-dep": ["tarball-pkg@./tarball-pkg.tgz", {}, "<integrity>"],
+      }
+    }
+    "
+  `);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+    "empty-name-dep",
+    "folder-dep",
+    "odd-folder-dep",
+    "remote-dep",
+    "signed-url-dep",
+    "tarball-dep",
+  ]);
+
+  // runBunInstall rejects any warning, which includes "warn: Ignoring lockfile".
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // The name comes from the folder, not from the alias, so a second alias for the same folder
+  // resolves to the package already in the lockfile.
+  dependencies["folder-dep-again"] = "file:./pkgs/folder-pkg";
+  await write(packageJson, JSON.stringify({ name: "deps-without-names", dependencies }));
+  await runBunInstall(env, packageDir);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+    '"folder-dep-again": ["folder-pkg@file:pkgs/folder-pkg", {}]',
+  );
+});
+
 it("escapes quotes and newlines in requested version literals when writing yarn.lock", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

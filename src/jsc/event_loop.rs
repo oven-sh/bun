@@ -399,19 +399,11 @@ impl EventLoop {
 
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
-        if self.entered_event_loop_count != 0 {
-            return Ok(());
+        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
+        {
+            return self.drain_microtasks();
         }
-        // `exit()`'s checkpoint, with the count at 1 while it runs so JS reached
-        // from a microtask nests instead of checkpointing again.
-        self.entered_event_loop_count = 1;
-        let drained = if self.vm_ref().is_inside_deferred_task_queue.get() {
-            Ok(())
-        } else {
-            self.drain_microtasks()
-        };
-        self.entered_event_loop_count = 0;
-        drained
+        Ok(())
     }
 
     /// When you call a JavaScript function from outside the event loop task

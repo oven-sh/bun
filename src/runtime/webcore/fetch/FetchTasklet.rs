@@ -1693,7 +1693,7 @@ impl FetchTasklet {
         // reader.cancel() / body.cancel() aborts the fetch so the server sees the
         // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
         self.abort_task();
-        self.ignore_remaining_response_body(false);
+        self.ignore_remaining_response_body();
     }
 
     pub(crate) fn on_stream_drained(&self) {
@@ -1830,7 +1830,7 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self, _from_finalizer: bool) {
+    fn ignore_remaining_response_body(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
@@ -1853,7 +1853,7 @@ impl FetchTasklet {
         // we should not keep the process alive if we are ignoring the body
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // Also fine from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`, `_from_finalizer`): unhooking touches no JS cell. The
+        // `WeakBlock::sweep`): unhooking touches no JS cell. The
         // request-body sink is left for `clear_sink()` in `deinit()` (an event-loop
         // task, outside sweep) to detach.
         self.clear_stream_handlers();
@@ -2645,11 +2645,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
+                        this.ignore_remaining_response_body();
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body(true);
+                    this.ignore_remaining_response_body();
                 }
             }
         }

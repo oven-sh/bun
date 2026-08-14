@@ -88,7 +88,11 @@ pub fn error_instance_from_location(
     };
     let mut stack: Vec<u8> = Vec::with_capacity(name.len() + message.len() + 64);
     let _ = write!(&mut stack, "{name}: {}", bstr::BStr::new(message));
-    let (line, column) = if file.is_empty() { (0, 0) } else { (line.max(0), column.max(0)) };
+    let (line, column) = if file.is_empty() {
+        (0, 0)
+    } else {
+        (line.max(0), column.max(0))
+    };
     if !file.is_empty() {
         let _ = write!(&mut stack, "\n    at {}", bstr::BStr::new(file));
         if line > 0 {

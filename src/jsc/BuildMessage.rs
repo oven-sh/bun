@@ -220,6 +220,9 @@ impl BuildMessage {
 
 // SerializedScriptValue.cpp
 #[unsafe(no_mangle)]
-extern "C" fn BuildMessage__toErrorInstance(this: &BuildMessage, global: &JSGlobalObject) -> JSValue {
+extern "C" fn BuildMessage__toErrorInstance(
+    this: &BuildMessage,
+    global: &JSGlobalObject,
+) -> JSValue {
     this.to_error_instance(global)
 }

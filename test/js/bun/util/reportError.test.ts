@@ -229,7 +229,10 @@ describe("native error printer describes an uncaught error by its origin", () =>
     );
     expect(stderr).toContain("2 | const y = ;");
     expect(stderr).toContain("error: Unexpected ;");
-    expect(frames).toEqual([expect.stringMatching(/^at bad\.js:2:11$/), expect.stringMatching(/^at rethrowSite \(main\.mjs:3:/)]);
+    expect(frames).toEqual([
+      expect.stringMatching(/^at bad\.js:2:11$/),
+      expect.stringMatching(/^at rethrowSite \(main\.mjs:3:/),
+    ]);
     expect(exitCode).toBe(1);
   });
 });

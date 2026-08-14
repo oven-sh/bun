@@ -771,3 +771,44 @@ test.skipIf(!isDebug)(
   },
   timeout,
 );
+
+// worker.terminate() never stopped a worker parked in
+// Atomics.wait() (sync-over-async worker pools park exactly there). JSC wakes
+// the parked thread when termination is requested, but the wake-up predicate
+// only looked at a flag the parked thread itself would have had to set, so it
+// went back to sleep and terminate()'s promise never settled.
+test("terminate() stops a worker blocked in Atomics.wait()", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+        "const i32 = new Int32Array(new SharedArrayBuffer(4));" +
+        "parentPort.postMessage('parking');" +
+        "Atomics.wait(i32, 0, 0);" +
+        "parentPort.postMessage('woke ' + Atomics.load(i32, 0));",
+        { eval: true },
+      );
+      w.on("message", async (m) => {
+        if (m !== "parking") { console.log("unexpected", m); process.exit(1); }
+        // The case of interest is terminate() landing once the worker is parked, for which there
+        // is no observable signal, so give it a moment; landing before it parks must pass too.
+        await Bun.sleep(100);
+        const code = await w.terminate();
+        console.log("terminated", code);
+      });
+      w.on("exit", (c) => console.log("exit", c));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+  expect(exitCode).toBe(0);
+});

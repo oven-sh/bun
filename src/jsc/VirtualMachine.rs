@@ -1604,6 +1604,9 @@ impl VirtualMachine {
                     return;
                 }
                 self.tick();
+                if !self.script_allowed() {
+                    return;
+                }
                 self.auto_tick_active();
                 dispatch = true;
             }

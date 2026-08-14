@@ -1583,3 +1583,37 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   const parsed = JSON.parse(text);
   expect(parsed.sourcesContent[0]).toBe(source);
 });
+
+// Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
+// own tasks, so any unrelated pool work extended the build by its full duration — a
+// node:fs read parked on a FIFO nobody writes made every later build hang forever.
+test.skipIf(isWindows)("Bun.build does not wait for unrelated thread-pool work", async () => {
+  using dir = tempDir("build-pool-wait", {
+    "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+    "b.ts": `export const b = 1;`,
+    "s.css": `body { color: red }`,
+    "run.js": `
+      const { join } = require("path");
+      const dir = process.argv[2];
+      require("child_process").execFileSync("mkfifo", [join(dir, "fifo")]);
+      await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      require("fs").readFile(join(dir, "fifo"), () => {}); // parks one pool thread in read() for good
+      await Bun.sleep(50);
+      const t = performance.now();
+      const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      console.log(result.success, result.outputs.length > 0, performance.now() - t < 10_000);
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js", String(dir)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("true true true\n");
+  expect(exitCode).toBe(0);
+}, 30_000);

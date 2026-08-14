@@ -35,6 +35,7 @@ pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use thread_pool::ThreadPool;
+pub use thread_pool::CountedTask;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;

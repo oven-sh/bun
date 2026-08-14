@@ -113,8 +113,26 @@ extern "C" fn select_alpn_callback(
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
         if !callback.is_empty() && !in_.is_null() && inlen > 0 {
-            // Exited (and, at loop entry, checkpointed) when this block ends,
-            // before the protocol selection below.
+            // Snapshot the per-loop BIO routing state around everything below that
+            // can run JS touching another TLS socket (the callback, its `error`
+            // handler, the selection's `toString`, the scope's checkpoint), and
+            // restore it on every path back to BoringSSL — after the scope guard
+            // below has exited, since this guard is declared first. Connected
+            // usockets only: UpgradedDuplex/Pipe own mem BIOs whose BIO_get_data
+            // is a BUF_MEM*, not loop_ssl_data.
+            let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
+            if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
+                tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
+                    boringssl_sys::SSL::opaque_ref(ssl),
+                    saved_loop_state.as_mut_ptr(),
+                );
+            }
+            // (A no-op for the all-null snapshot of a non-Connected socket.)
+            let _restore_loop_state = scopeguard::guard(saved_loop_state, |mut saved| {
+                tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(saved.as_mut_ptr());
+            });
+            // Exited (and, at loop entry, checkpointed) when this block ends or
+            // returns, before the loop state is restored.
             let _scope = ScopeExit {
                 socket: this,
                 scope: Some(handlers.enter()),
@@ -147,16 +165,6 @@ extern "C" fn select_alpn_callback(
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
                 ZigString::init(name.to_bytes()).to_js(&global)
             };
-            // Snapshot the per-loop BIO routing state around JS that may touch
-            // another TLS socket. Connected usockets only: UpgradedDuplex/Pipe
-            // own mem BIOs whose BIO_get_data is a BUF_MEM*, not loop_ssl_data.
-            let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
-            if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
-                tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                    boringssl_sys::SSL::opaque_ref(ssl),
-                    saved_loop_state.as_mut_ptr(),
-                );
-            }
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
                     Ok(v) => v,
@@ -166,14 +174,8 @@ extern "C" fn select_alpn_callback(
                 crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),
                 );
-                tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
-                    saved_loop_state.as_mut_ptr(),
-                );
                 return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
             }
-            tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
-                saved_loop_state.as_mut_ptr(),
-            );
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else

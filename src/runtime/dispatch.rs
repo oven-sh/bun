@@ -43,20 +43,6 @@ use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsResult};
 
-/// X-macro: the `node:fs` ops that are libuv requests on Windows
-/// (`UVFSRequest`); they complete on the JS thread and re-enter through the
-/// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
-/// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-#[cfg(windows)]
-macro_rules! for_each_fs_uv_op {
-    ($m:ident) => {
-        $m! {
-            Open Open; Close Close; Read Read; Write Write; Readv Readv;
-            Writev Writev; StatFS Statfs;
-        }
-    };
-}
-
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
@@ -778,7 +764,10 @@ mod run_impls {
         )*};
     }
     #[cfg(windows)]
-    for_each_fs_uv_op!(fs_uv_run_task);
+    fs_uv_run_task! {
+        Open Open; Close Close; Read Read; Write Write; Readv Readv;
+        Writev Writev; StatFS Statfs;
+    }
 
     // ── compression streams ──────────────────────────────────────────────
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full

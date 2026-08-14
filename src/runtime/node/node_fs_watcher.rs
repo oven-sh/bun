@@ -1,9 +1,9 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-#[cfg(not(windows))]
-use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(not(windows))]
+use bun_collections::BoundedArray;
 use bun_core::Output;
 use bun_core::ZigString;
 use bun_core::strings;
@@ -137,14 +137,13 @@ pub type FSWatchTask = FSWatchTaskPosix;
 // does not coerce to the `&[u8]` `emit()` expects — gate the whole posix task
 // to keep the Windows build sound.
 #[cfg(not(windows))]
+#[derive(Default)]
 pub struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
     /// embedded as `current_task` before the boxed `FSWatcher` address is
     /// known); patched to `Some` immediately after.
     ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
-    count: u8,
-
-    entries: [MaybeUninit<Entry>; 8],
+    entries: BoundedArray<Event, 8>,
     concurrent_task: ConcurrentTask,
 }
 
@@ -165,12 +164,6 @@ impl Taskable for FSWatchTaskPosix {
 }
 
 #[cfg(not(windows))]
-pub struct Entry {
-    event: Event,
-    needs_free: bool,
-}
-
-#[cfg(not(windows))]
 impl FSWatchTaskPosix {
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
@@ -180,29 +173,19 @@ impl FSWatchTaskPosix {
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
-    pub(crate) fn append(&mut self, event: Event, needs_free: bool) {
-        if self.count == 8 {
+    pub(crate) fn append(&mut self, event: Event) {
+        if self.entries.len() == 8 {
             self.enqueue();
-            let ctx = self.ctx;
-            *self = Self {
-                ctx,
-                count: 0,
-                entries: [const { MaybeUninit::uninit() }; 8],
-                concurrent_task: ConcurrentTask::default(),
-            };
         }
 
-        self.entries[self.count as usize].write(Entry { event, needs_free });
-        self.count += 1;
+        self.entries.append_assume_capacity(event);
     }
 
     pub(crate) fn run(&mut self) {
         // this runs on JS Context Thread
 
-        for i in 0..self.count as usize {
-            // SAFETY: entries [0..count) were written by `append`.
-            let entry = unsafe { self.entries[i].assume_init_ref() };
-            match &entry.event {
+        for event in self.entries.as_slice() {
+            match event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
                 Event::Error { err, close } => self.ctx().emit_error(err, *close),
@@ -216,28 +199,23 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn append_abort(&mut self) {
-        self.append(Event::Abort, false);
+        self.append(Event::Abort);
         self.enqueue();
     }
 
+    /// Leaves `entries` empty on every path, which is what `append` relies on.
     pub(crate) fn enqueue(&mut self) {
-        if self.count == 0 {
+        if self.entries.is_empty() {
             return;
         }
 
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
-            // Reshaped for borrowck — clone self into a heap task, then reset.
             let that = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
                 ctx: self.ctx,
-                count: self.count,
-                entries: core::mem::replace(
-                    &mut self.entries,
-                    [const { MaybeUninit::uninit() }; 8],
-                ),
+                entries: core::mem::take(&mut self.entries),
                 concurrent_task: ConcurrentTask::default(),
             }));
-            self.count = 0;
             // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
             // ownership of the `ConcurrentTask` node (and transitively the box)
             // until the JS thread drains and `heap::take`s it in `dispatch`.
@@ -249,39 +227,20 @@ impl FSWatchTaskPosix {
                 if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
                     // VM torn down: nobody will emit these events. Free the batch
                     // (its entries own their paths) and drop the activity ref.
-                    let mut task = bun_core::heap::take(that);
-                    task.clean_entries();
+                    drop(bun_core::heap::take(that));
                     self.ctx().unref_task();
                 }
             }
             return;
         }
-        // closed or detached so just cleanEntries
-        self.clean_entries();
-    }
-
-    pub(crate) fn clean_entries(&mut self) {
-        for i in 0..self.count as usize {
-            // SAFETY: entries [0..count) were written by `append`.
-            let needs_free = unsafe { self.entries[i].assume_init_ref() }.needs_free;
-            if needs_free {
-                // SAFETY: entries [0..count) were written by `append`; dropped at most once
-                // (count is reset to 0 below).
-                unsafe { self.entries[i].assume_init_drop() };
-            }
-        }
-        self.count = 0;
+        // closed or detached so just drop the batch
+        self.entries.clear();
     }
 }
 
 #[cfg(not(windows))]
 impl FSWatchTaskPosix {
-    /// `FSWatchTaskPosix.deinit`. **Not** `impl Drop`:
-    /// this is only ever called on heap clones produced by `enqueue()` (via the
-    /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
-    /// the assert below enforces that. A `Drop` impl would also fire on
-    /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
-    /// where `self` *is* `current_task`, which would always trip the assert.
+    /// Frees a heap batch made by `enqueue()`; the embedded `current_task` is never passed here.
     ///
     /// # Safety
     /// `this` must be the unique `heap::alloc` pointer produced by
@@ -289,12 +248,8 @@ impl FSWatchTaskPosix {
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is the unique live heap clone from
         // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
-        let mut task = unsafe { bun_core::heap::take(this) };
-        task.clean_entries();
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
-        }
+        let task = unsafe { bun_core::heap::take(this) };
+        debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
     }
 }
 
@@ -560,7 +515,7 @@ impl FSWatcher {
             }
         }
 
-        this.current_task.with_mut(|t| t.append(event, true));
+        this.current_task.with_mut(|t| t.append(event));
     }
 
     #[cfg(windows)]
@@ -1218,17 +1173,5 @@ impl FSWatcher {
             ));
         }
         Ok(ctx)
-    }
-}
-
-#[cfg(not(windows))]
-impl Default for FSWatchTaskPosix {
-    fn default() -> Self {
-        Self {
-            ctx: None,
-            count: 0,
-            entries: [const { MaybeUninit::uninit() }; 8],
-            concurrent_task: ConcurrentTask::default(),
-        }
     }
 }

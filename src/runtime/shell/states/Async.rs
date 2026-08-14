@@ -158,7 +158,7 @@ impl Async {
             EventLoopHandle::Js { owner } => {
                 owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
             }
-            EventLoopHandle::Mini(mut mini) => {
+            EventLoopHandle::Mini(mini) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the
                 // mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
@@ -166,8 +166,12 @@ impl Async {
                     run_from_main_thread_mini,
                 );
                 // SAFETY: the shell's own mini loop, on its thread.
-                unsafe { mini.get_mut() }
-                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
+                unsafe {
+                    bun_jsc::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent(
+                        mini.as_const_ptr(),
+                        core::ptr::NonNull::new(any).expect("heap task"),
+                    )
+                };
             }
         }
     }

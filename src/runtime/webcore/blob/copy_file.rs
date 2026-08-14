@@ -426,8 +426,7 @@ impl CopyFile {
             match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
 
-                // A pipe-to-pipe splice is non-blocking if either pipe is, so
-                // EAGAIN does not say which side would have blocked.
+                // A pipe-to-pipe splice is non-blocking if either pipe is, so wait on both sides.
                 bun_sys::E::EAGAIN => {
                     if let Err(err) = bun_sys::block_until_readable(src_fd)
                         .and_then(|()| bun_sys::block_until_writable(dest_fd))

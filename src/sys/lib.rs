@@ -7642,15 +7642,13 @@ pub fn kevent(
     }
 }
 
-/// Blocks until a read-side syscall on `fd` would not return EAGAIN; the
-/// retried syscall reports whatever is pending (data, EOF or the error).
+/// Blocks until a read from `fd` would not return EAGAIN (there is data, EOF or an error).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     block_until(fd, posix::POLL_IN)
 }
 
-/// Blocks until a write-side syscall on `fd` would not return EAGAIN; the
-/// retried syscall reports whatever is pending (room or the error, e.g. EPIPE).
+/// Blocks until a write to `fd` would not return EAGAIN (there is room, or an error like EPIPE).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     block_until(fd, posix::POLL_OUT)
@@ -7671,15 +7669,13 @@ fn block_until(fd: Fd, events: i16) -> Maybe<()> {
     }
 }
 
-/// Blocks until a read-side syscall on `fd` would not return EAGAIN; the
-/// retried syscall reports whatever is pending (data, EOF or the error).
+/// Blocks until a read from `fd` would not return EAGAIN (there is data, EOF or an error).
 #[cfg(target_os = "macos")]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     select_one(fd, SelectFor::Read)
 }
 
-/// Blocks until a write-side syscall on `fd` would not return EAGAIN; the
-/// retried syscall reports whatever is pending (room or the error, e.g. EPIPE).
+/// Blocks until a write to `fd` would not return EAGAIN (there is room, or an error like EPIPE).
 #[cfg(target_os = "macos")]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     select_one(fd, SelectFor::Write)
@@ -7692,9 +7688,7 @@ enum SelectFor {
     Write,
 }
 
-/// `select(2)`, not `poll(2)`: XNU's poll is the kqueue vnode filter, which for
-/// a named pipe never fires when the other end closes; `fifo_select` goes
-/// through the FIFO's socket and does. EINTR is retried.
+/// On XNU, poll(2) on a named pipe never wakes for the other end closing; select(2) does.
 #[cfg(target_os = "macos")]
 fn select_one(fd: Fd, what: SelectFor) -> Maybe<()> {
     debug_assert!(fd.is_valid());

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1074,6 +1074,159 @@ describe("context options with throwing getters", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("vm code compiled under the filename of a file Bun transpiled", () => {
+  // Bun's source maps are keyed by filename. The fixture compiles vm code under
+  // its own path, and that code must keep its physical positions instead of
+  // being remapped through the fixture's source map. The fixture opens with a
+  // comment spanning PADDING lines that the transpiler strips, so every line
+  // its source map can produce is > PADDING, while every vm function below
+  // sits on line 5 of its source: a remapped position can never be mistaken
+  // for the physical one. "other" compiles the same code under a name Bun never
+  // loaded and is what "own" has to match.
+  const PADDING = 20;
+  const padding = ["/*", ...Array.from({ length: PADDING - 2 }, () => " *"), " */"].join("\n") + "\n";
+  const body = String.raw`
+const vm = require("node:vm");
+const source = "\n\n\n\n(function f() { throw new Error('boom'); })";
+const moduleSource = "\n\n\n\nexport function f() { throw new Error('boom'); }";
+const callingBackSource = "\n\n\n\n(function f(callback) { callback(); })";
+const names = { own: __filename, other: "not-a-loaded-file.js" };
+const compile = {
+  script: name => new vm.Script(source, { filename: name }).runInThisContext(),
+  runInThisContext: name => vm.runInThisContext(source, { filename: name }),
+  runInNewContext: name => vm.runInNewContext(source, {}, { filename: name }),
+  compileFunction: name => vm.compileFunction("\n\n\n\nthrow new Error('boom')", [], { filename: name }),
+};
+
+function thrown(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  throw new Error("did not throw");
+}
+
+function position(err) {
+  const [, line, column] = /:(\d+):(\d+)\)?$/.exec(err.stack.split("\n")[1]);
+  return { line: +line, column: +column, errLine: err.line, originalLine: err.originalLine ?? null };
+}
+
+function perName(collect) {
+  return Object.fromEntries(Object.entries(names).map(([kind, name]) => [kind, collect(name)]));
+}
+
+async function collect() {
+  const results = {};
+  for (const [api, make] of Object.entries(compile)) {
+    results[api] = perName(name => position(thrown(make(name))));
+  }
+
+  results.sourceTextModule = {};
+  for (const [kind, name] of Object.entries(names)) {
+    const module = new vm.SourceTextModule(moduleSource, { identifier: name });
+    await module.link(() => {});
+    await module.evaluate();
+    results.sourceTextModule[kind] = position(thrown(module.namespace.f));
+  }
+
+  // Error.prepareStackTrace receives CallSites, which are remapped separately
+  // from the stack string.
+  Error.prepareStackTrace = (_, callSites) => callSites;
+  results.callSite = perName(name => {
+    const site = thrown(compile.script(name)).stack[0];
+    return { fileName: site.getFileName(), line: site.getLineNumber(), column: site.getColumnNumber() };
+  });
+  Error.prepareStackTrace = undefined;
+
+  // Bun.inspect (like the uncaught-error printer) remaps the JSC frames itself,
+  // handling the top frame separately from the rest. In callingBack the vm
+  // frame is the second one: the error is thrown by a callback from this file.
+  results.inspect = {
+    script: perName(name => Bun.inspect(thrown(compile.script(name)))),
+    runInNewContext: perName(name => Bun.inspect(thrown(compile.runInNewContext(name)))),
+    callingBack: perName(name => {
+      const f = vm.runInThisContext(callingBackSource, { filename: name });
+      return Bun.inspect(thrown(() => f(() => { throw new Error("boom"); })));
+    }),
+  };
+  return results;
+}
+
+const uncaught = process.argv[2];
+if (uncaught) {
+  console.log(__filename);
+  compile.script(names[uncaught])();
+} else {
+  collect().then(results => console.log(JSON.stringify({ filename: __filename, results })));
+}
+`;
+  // Line (in the fixture file) of the `fn();` call inside thrown(): the frame
+  // below the vm frame. It is only reported at this line if the fixture's own
+  // source map still applies.
+  const thrownCallLine = PADDING + body.split("\n").indexOf("    fn();") + 1;
+  const otherFrame = "at f (not-a-loaded-file.js:5:";
+  const ownToOther = (output: string, filename: string) =>
+    output.replace(`at f (${filename}:`, "at f (not-a-loaded-file.js:");
+
+  test.concurrent("error.stack, CallSites and Bun.inspect report the physical position", async () => {
+    using dir = tempDir("vm-own-filename", { "fixture.js": padding + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { filename, results } = JSON.parse(stdout);
+
+    for (const api of ["script", "runInThisContext", "runInNewContext", "compileFunction", "sourceTextModule"]) {
+      expect(results[api].own).toEqual(results[api].other);
+    }
+    for (const api of ["script", "runInThisContext", "runInNewContext", "sourceTextModule"]) {
+      expect(results[api].own).toMatchObject({ line: 5, errLine: 5, originalLine: null });
+    }
+    // compileFunction's body line is reported relative to its wrapper, so only
+    // the own/other equality above pins it; like every other vm frame it must
+    // not have been remapped at all.
+    expect(results.compileFunction.own.originalLine).toBeNull();
+
+    expect(results.callSite.other).toMatchObject({ fileName: "not-a-loaded-file.js", line: 5 });
+    expect(results.callSite.own).toEqual({ ...results.callSite.other, fileName: filename });
+
+    for (const api of ["script", "runInNewContext"]) {
+      expect(results.inspect[api].other).toContain("5 | (function f() { throw new Error('boom'); })");
+    }
+    for (const { own, other } of Object.values<any>(results.inspect)) {
+      expect(other).toContain(otherFrame);
+      expect(other).toContain(`at thrown (${filename}:${thrownCallLine}:`);
+      expect(ownToOther(own, filename)).toBe(other);
+    }
+  });
+
+  test.concurrent("the uncaught error printer reports the physical position", async () => {
+    using dir = tempDir("vm-own-filename-uncaught", { "fixture.js": padding + body });
+    const run = async (kind: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js", kind],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      return { filename: stdout.trim(), stderr };
+    };
+    const [own, other] = await Promise.all([run("own"), run("other")]);
+
+    expect(other.stderr).toContain("5 | (function f() { throw new Error('boom'); })");
+    expect(other.stderr).toContain(otherFrame);
+    expect(ownToOther(own.stderr, own.filename)).toBe(other.stderr);
   });
 });
 

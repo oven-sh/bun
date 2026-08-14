@@ -199,6 +199,8 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    // See Zig::isNodeVMSource(). The error printer skips source maps for these.
+    bool is_node_vm;
     int32_t jsc_stack_frame_index;
 
     ZigStackFrame()
@@ -208,6 +210,7 @@ typedef struct ZigStackFrame {
         , code_type {}
         , is_async(false)
         , remapped(false)
+        , is_node_vm(false)
         , jsc_stack_frame_index(-1)
     {
     }

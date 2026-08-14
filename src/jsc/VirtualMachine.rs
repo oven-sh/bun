@@ -5626,7 +5626,9 @@ impl VirtualMachine {
         let top_source_url = frames[top].source_url.to_utf8();
 
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if frames[top].is_node_vm {
+            None
+        } else if already_remapped {
             Some(bun_sourcemap::mapping::Lookup {
                 mapping: bun_sourcemap::mapping::Mapping {
                     generated: bun_sourcemap::LineColumnOffset::default(),
@@ -5775,7 +5777,7 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                if i == top || frames[i].position.is_invalid() || frames[i].is_node_vm {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();

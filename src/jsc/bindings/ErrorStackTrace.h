@@ -220,6 +220,14 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
+// True for code compiled by node:vm (every node:vm compile path attaches a
+// NodeVMScriptFetcher to its SourceOrigin). node:vm compiles the string it was
+// given as-is under a caller-chosen filename, while Bun's source maps are keyed
+// by filename, so positions in such code must never be remapped, even when the
+// filename is a file Bun transpiled.
+bool isNodeVMSource(JSC::SourceProvider* sourceProvider);
+bool isNodeVMSource(const JSC::StackFrame& frame);
+
 enum class FinalizerSafety {
     NotInFinalizer,
     MustNotTriggerGC,

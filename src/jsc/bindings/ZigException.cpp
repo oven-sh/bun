@@ -86,6 +86,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
     auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
+    frame.is_node_vm = Zig::isNodeVMSource(stackFrame);
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {

@@ -636,9 +636,7 @@ impl DirEntry {
         })
     }
 
-    /// Looks up an already-lowercase fixed name (`package.json`, ...). Callers
-    /// open that exact spelling next, so a hit stored under another case
-    /// (`Package.json`) only counts if the filesystem opens it too.
+    /// A hit stored under another case (`Package.json`) counts only if the probed spelling exists.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],

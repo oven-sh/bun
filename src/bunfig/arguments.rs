@@ -376,8 +376,7 @@ fn load_config_impl(
                 dir = &dir[..dir.len() - 1];
             }
             // node_modules cwds (lifecycle scripts) and compiled
-            // executables keep the cwd-only lookup. Computed lazily: the
-            // common bunfig-in-cwd hit never reads it.
+            // executables keep the cwd-only lookup.
             let cwd_only = StandaloneModuleGraph::get().is_some() || in_node_modules(dir);
             let start: &[u8] = dir;
             let mut bound: Option<usize> = None;

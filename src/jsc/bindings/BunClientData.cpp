@@ -188,9 +188,7 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(
 
     JSC::IsoSubspace* space = serverSlot.get();
     if (!space) {
-        // Matches ISO_SUBSPACE_INIT as used by the former inline body: every
-        // subspace created through subspaceForImpl<T> was already named "T"
-        // because the macro stringified the template parameter, not the type.
+        // "T" preserves the name ISO_SUBSPACE_INIT(…, T) produced for these subspaces before.
         serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, vm.heap, heapCellType, cellSize, numberOfLowerTierPreciseCells);
         space = serverSlot.get();
 

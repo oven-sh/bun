@@ -237,10 +237,7 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-// Out-of-line slow path shared by every subspaceForImpl<T> instantiation.
-// The template wrapper keeps only the fast-path cache check inline and
-// forwards the T-dependent constants + slot addresses here on a miss, so
-// the lock + IsoSubspace construction is emitted once instead of per-class.
+// Shared slow path for subspaceForImpl<T>; kept out of line so it is emitted once, not per T.
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(
     JSC::VM&,
     JSVMClientData&,

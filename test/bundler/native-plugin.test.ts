@@ -815,4 +815,49 @@ console.log(JSON.stringify(json))
       expect(result.success).toBeTrue();
     });
   }
+
+  // For target bun, an import of a file with the sqlite loader is normally left
+  // external (the database is opened at runtime) unless a plugin loads the file.
+  describe("sqlite loader", () => {
+    const project = {
+      "index.ts": /* ts */ `import db from "./app.sqlite";\nconsole.log(typeof db);`,
+      // Not a real database: the sqlite loader never reads the contents, but the
+      // plugin counts the "foo"s in whatever it receives.
+      "app.sqlite": "foo foo foo",
+    };
+
+    const addon = () => require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+    async function buildWithFilter(filter: RegExp) {
+      const napiModule = addon();
+      const external = napiModule.createExternal();
+      const dir = tempDirWithFiles("native-plugin-sqlite", project);
+      const result = await Bun.build({
+        target: "bun",
+        entrypoints: [path.join(dir, "index.ts")],
+        plugins: [
+          {
+            name: "xXx123_foo_counter_321xXx",
+            setup(build) {
+              build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
+            },
+          },
+        ],
+      });
+      expect(result.success).toBeTrue();
+      return { fooCount: napiModule.getFooCount(external), bundle: await result.outputs[0].text() };
+    }
+
+    it("a native plugin whose filter matches the file still receives it", async () => {
+      const { fooCount, bundle } = await buildWithFilter(/\.sqlite$/);
+      expect(fooCount).toBe(3);
+      expect(bundle).not.toContain('from "./app.sqlite"');
+    });
+
+    it("a native plugin for other files leaves the import external", async () => {
+      const { fooCount, bundle } = await buildWithFilter(/\.ts$/);
+      expect(fooCount).toBe(0);
+      expect(bundle).toContain('from "./app.sqlite" with { type: "sqlite" }');
+    });
+  });
 });

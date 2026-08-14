@@ -77,7 +77,9 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+// `List` is `NamespaceList` (onLoad / onResolve) or `NativePluginList` (onBeforeParse).
+template<typename List>
+static bool anyMatchesForNamespace(JSC::VM& vm, List& list, BunString* namespaceStr, BunString* path)
 {
     auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
     auto pathString = path->transferToWTFString();
@@ -522,6 +524,11 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
 extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
+}
+
+extern "C" bool JSBundlerPlugin__anyOnBeforeParseMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path)
+{
+    return anyMatchesForNamespace(pluginObject->vm(), pluginObject->plugin.onBeforeParse, namespaceString, path);
 }
 
 extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)

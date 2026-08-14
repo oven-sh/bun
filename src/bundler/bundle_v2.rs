@@ -716,6 +716,12 @@ pub mod bv2_impl {
                     path: &mut BunString,
                     is_on_load: bool,
                 ) -> bool;
+                #[link_name = "JSBundlerPlugin__anyOnBeforeParseMatches"]
+                safe fn JSBundlerPlugin__anyOnBeforeParseMatches(
+                    this: &Plugin,
+                    namespace: &mut BunString,
+                    path: &mut BunString,
+                ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
                 // callback without dereferencing, so the only pointer validity
                 // obligations are on `this`/`BunString` — discharged by `&`.
@@ -803,18 +809,36 @@ pub mod bv2_impl {
                     path: &crate::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
-                    let mut namespace_string = if path.is_file() {
-                        BunString::empty()
-                    } else {
-                        BunString::clone_utf8(path.namespace)
-                    };
-                    let mut path_string = BunString::clone_utf8(path.text);
+                    let (mut namespace_string, mut path_string) = Self::filter_input(path);
                     JSBundlerPlugin__anyMatches(
                         self,
                         &mut namespace_string,
                         &mut path_string,
                         is_on_load,
                     )
+                }
+
+                /// Whether a native `onBeforeParse` plugin would run on the file.
+                pub(crate) fn has_any_on_before_parse_matches(
+                    &self,
+                    path: &crate::bun_fs::Path,
+                ) -> bool {
+                    let (mut namespace_string, mut path_string) = Self::filter_input(path);
+                    JSBundlerPlugin__anyOnBeforeParseMatches(
+                        self,
+                        &mut namespace_string,
+                        &mut path_string,
+                    )
+                }
+
+                /// The C++ side takes ownership of both strings.
+                fn filter_input(path: &crate::bun_fs::Path) -> (BunString, BunString) {
+                    let namespace_string = if path.is_file() {
+                        BunString::empty()
+                    } else {
+                        BunString::clone_utf8(path.namespace)
+                    };
+                    (namespace_string, BunString::clone_utf8(path.text))
                 }
 
                 pub(crate) fn match_on_load(
@@ -5955,7 +5979,7 @@ pub mod bv2_impl {
 
     impl BundleV2<'_> {
         /// The sqlite loader opens the database at runtime; bundling the file could only
-        /// print the build machine's path. An onLoad plugin for the file takes precedence.
+        /// print the build machine's path. A plugin that loads the file takes precedence.
         fn leaves_sqlite_import_to_runtime(
             &self,
             loader: Loader,
@@ -5970,9 +5994,10 @@ pub mod bv2_impl {
                     kind,
                     ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
                 )
-                && !self
-                    .plugins_ref()
-                    .is_some_and(|plugins| plugins.has_any_matches(path, true))
+                && !self.plugins_ref().is_some_and(|plugins| {
+                    plugins.has_any_matches(path, true)
+                        || plugins.has_any_on_before_parse_matches(path)
+                })
         }
     }
 

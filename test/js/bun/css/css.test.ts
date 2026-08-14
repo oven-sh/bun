@@ -5719,6 +5719,14 @@ describe("css tests", () => {
     minify_test(".foo ::unknown(something(foo)) .bar {width: 20px}", ".foo ::unknown(something(foo)) .bar{width:20px}");
     minify_test(".foo ::unknown([abc]) .bar {width: 20px}", ".foo ::unknown([abc]) .bar{width:20px}");
 
+    // Without CSS modules, bare `:global` / `:local` are ordinary unknown pseudo-classes.
+    minify_test(":global {width: 20px}", ":global{width:20px}");
+    minify_test(":local {width: 20px}", ":local{width:20px}");
+    minify_test(":GLOBAL {width: 20px}", ":GLOBAL{width:20px}");
+    minify_test(":global .foo {width: 20px}", ":global .foo{width:20px}");
+    minify_test(".foo:global .bar {width: 20px}", ".foo:global .bar{width:20px}");
+    minify_test(".foo { :global { width: 20px } }", ".foo{& :global{width:20px}}");
+
     let deep_options: ParserOptions = {
       flags: [ParserFlags.DEEP_SELECTOR_COMBINATOR],
     };

@@ -21,6 +21,74 @@ describe("css", () => {
     },
   });
 
+  // The bare (non-functional) `:global` / `:local` switch syntax is not
+  // supported, so it is an error in a CSS module, where it would be ambiguous.
+  itBundled("css-module/BareGlobalPseudoClassIsAnError", {
+    files: {
+      "/index.module.css": /* css */ `
+      :global {
+        color: red;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    bundleErrors: {
+      "/index.module.css": ["CSS module class: 'global' is currently not supported."],
+    },
+  });
+
+  itBundled("css-module/BareLocalPseudoClassIsAnError", {
+    files: {
+      "/index.module.css": /* css */ `
+      :local {
+        color: red;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    bundleErrors: {
+      "/index.module.css": ["CSS module class: 'local' is currently not supported."],
+    },
+  });
+
+  // Outside of a CSS module they are unknown pseudo-classes like any other and
+  // are passed through unchanged.
+  itBundled("css-module/BareGlobalAndLocalPseudoClassesInPlainCss", {
+    files: {
+      "/index.css": /* css */ `
+      :global {
+        color: red;
+      }
+      :local {
+        color: blue;
+      }
+      :global .foo {
+        color: green;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.css"],
+    onAfterBundle(api) {
+      api.expectFile("/out/index.css").toEqualIgnoringWhitespace(`
+      /* index.css */
+      :global {
+        color: red;
+      }
+
+      :local {
+        color: #00f;
+      }
+
+      :global .foo {
+        color: green;
+      }
+      `);
+    },
+  });
+
   itBundled("css-module/BundleTwoFilesWithoutCodeSplitting", {
     files: {
       "/foo-entry.js": `

@@ -2414,7 +2414,6 @@ impl<'a> PackageInstaller<'a> {
         );
     }
 
-    /// returns true if scripts are enqueued
     /// The directory an installed package's lifecycle scripts run in: the
     /// package's real location, not the `node_modules` symlink/junction that
     /// points at it, so `process.cwd()` in the script agrees across platforms.
@@ -2460,6 +2459,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// returns true if scripts are enqueued
     fn enqueue_lifecycle_scripts(
         &mut self,
         folder_name: &[u8],

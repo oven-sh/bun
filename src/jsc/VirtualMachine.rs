@@ -4400,20 +4400,12 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            // As in Node, only `--preserve-symlinks-main` decides whether the
-            // entry point is followed; `--preserve-symlinks` covers the rest.
-            let saved_preserve_symlinks = self.transpiler.resolver.opts.preserve_symlinks;
-            if is_entry_point {
-                self.transpiler.resolver.opts.preserve_symlinks = self.preserve_symlinks_main;
-            }
-            let resolved = self.transpiler.resolver.resolve_and_auto_install(
+            match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
                 import_kind,
                 global_cache,
-            );
-            self.transpiler.resolver.opts.preserve_symlinks = saved_preserve_symlinks;
-            match resolved {
+            ) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
@@ -4487,9 +4479,36 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
-        // `main` becomes the path the entry module is actually keyed by (the
-        // resolver follows symlinks unless told not to), so `is_main`,
-        // `Bun.main` and `import.meta.main` agree with the loaded module.
+        if is_entry_point {
+            // As in Node, `--preserve-symlinks-main` alone decides whether the
+            // entry point is followed. The resolver followed it (or not) per
+            // `--preserve-symlinks`, whose directory cache must not see a
+            // per-resolve flag flip, so adjust the one result here instead.
+            if self.preserve_symlinks_main {
+                if result_path.is_symlink {
+                    // SAFETY: as for `text` above.
+                    ret.path = unsafe { bun_ptr::detach_lifetime(result_path.pretty) };
+                }
+            } else if self.transpiler.resolver.opts.preserve_symlinks {
+                let mut in_buf = bun_paths::path_buffer_pool::get();
+                let mut out_buf = bun_paths::path_buffer_pool::get();
+                if ret.path.len() < in_buf.len() {
+                    in_buf[..ret.path.len()].copy_from_slice(ret.path);
+                    in_buf[ret.path.len()] = 0;
+                    let z = bun_core::ZStr::from_buf(&in_buf[..], ret.path.len());
+                    if let Ok(real) = bun_sys::realpath(z, &mut out_buf) {
+                        if real != ret.path {
+                            ret.path = bun_resolver::fs::FileSystem::instance()
+                                .filename_store()
+                                .append_slice(real)?;
+                        }
+                    }
+                }
+            }
+        }
+        // `main` becomes the path the entry module is actually keyed by, so
+        // `is_main`, `Bun.main` and `import.meta.main` agree with the loaded
+        // module.
         if is_entry_point && ret.path != self.main() {
             self.main = bun_ptr::RawSlice::new(ret.path);
             self.main_hash = bun_watcher::Watcher::get_hash(ret.path);

@@ -1454,20 +1454,44 @@ pub mod fs {
             }
         }
 
-        /// The symlink-free form of an absolute `path` about which nothing is
-        /// known: every component is examined.
+        /// The symlink-free form of `path`, about which nothing is known:
+        /// every component is examined.
         pub fn realpath<'b>(
             &mut self,
             path: &[u8],
             out: &'b mut bun_paths::PathBuffer,
         ) -> crate::CrateResult<&'b [u8]> {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
-
-            let len = join_abs_string_buf::<platform::Auto>(self.cwd, &mut out[..], &[path]).len();
+            let len = if cfg!(windows) {
+                // Win32 itself collapses `..` lexically before the kernel sees
+                // the path, so normalizing first matches the OS.
+                use bun_paths::resolve_path::{join_abs_string_buf, platform};
+                join_abs_string_buf::<platform::Auto>(self.cwd, &mut out[..], &[path]).len()
+            } else if bun_paths::is_absolute(path) {
+                concat_into(&mut out[..], &[path])?
+            } else {
+                concat_into(&mut out[..], &[self.cwd, b"/", path])?
+            };
             let root = root_len(&out[..len]);
             let (len, _kind) = resolve_symlinks_after(out, len, root, false)?;
             Ok(&out[..len])
         }
+    }
+
+    fn name_too_long() -> bun_sys::Error {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::lstat)
+    }
+
+    /// `parts` back to back into `out`, leaving room for a NUL.
+    fn concat_into(out: &mut [u8], parts: &[&[u8]]) -> bun_sys::Result<usize> {
+        let mut len = 0;
+        for part in parts {
+            if len + part.len() >= out.len() {
+                return Err(name_too_long());
+            }
+            out[len..len + part.len()].copy_from_slice(part);
+            len += part.len();
+        }
+        Ok(len)
     }
 
     /// POSIX `SYMLOOP_MAX` is 8; Linux follows at most 40.
@@ -1567,11 +1591,13 @@ pub mod fs {
         }
     }
 
-    /// Userspace `realpath` for the tail of a path: `path[..len]` is absolute
-    /// and normalized, and `path[..known_real]` is already symlink-free.
-    /// Resolves the remaining components in place (one `lstat` each, plus a
-    /// `readlink` per link) and returns the new length and the kind of the
-    /// final component. `first_is_link` skips the `lstat` of the first
+    /// Userspace `realpath` for the tail of a path: `path[..len]` is absolute,
+    /// `path[..known_real]` is symlink-free and normalized, and the rest is
+    /// taken as written (on POSIX `..` applies to the *resolved* prefix, as the
+    /// kernel does; on Windows the caller has already collapsed it, as Win32
+    /// does). Resolves the remaining components in place — one `lstat` each,
+    /// plus a `readlink` per link — and returns the new length and the kind of
+    /// the final component. `first_is_link` skips the `lstat` of the first
     /// remaining component when the caller already knows it is a symlink.
     fn resolve_symlinks_after(
         path: &mut bun_paths::PathBuffer,
@@ -1579,8 +1605,6 @@ pub mod fs {
         mut known_real: usize,
         mut first_is_link: bool,
     ) -> bun_sys::Result<(usize, EntryKind)> {
-        use bun_paths::resolve_path::{join_abs_string_buf, platform};
-
         let mut link_buf = bun_paths::path_buffer_pool::get();
         let mut join_buf = bun_paths::path_buffer_pool::get();
         let mut kind = EntryKind::Dir;
@@ -1592,10 +1616,18 @@ pub mod fs {
             }
             let j = component_end(&path[..len], i);
             if j >= path.len() {
-                return Err(bun_sys::Error::from_code(
-                    bun_sys::E::ENAMETOOLONG,
-                    bun_sys::Tag::lstat,
-                ));
+                return Err(name_too_long());
+            }
+            if cfg!(not(windows)) {
+                let component = &path[i..j];
+                if component == b"." || component == b".." {
+                    if component == b".." {
+                        known_real = parent_len(&path[..known_real]);
+                    }
+                    len = splice_after(&mut path[..], known_real, j, len);
+                    kind = EntryKind::Dir;
+                    continue;
+                }
             }
 
             let saved = path[j];
@@ -1629,16 +1661,30 @@ pub mod fs {
                         )
                         .with_path(&path[..j]));
                     }
-                    let rest = skip_seps(&path[..len], j);
                     // A relative target is relative to the directory holding
                     // the link, which is `path[..known_real]` and symlink-free;
                     // an absolute one restarts from its own root.
-                    let new_len = join_abs_string_buf::<platform::Auto>(
-                        &path[..known_real],
-                        &mut join_buf[..],
-                        &[&link_buf[..n], &path[rest..len]],
-                    )
-                    .len();
+                    let target = &link_buf[..n];
+                    let new_len = if cfg!(windows) {
+                        use bun_paths::resolve_path::{join_abs_string_buf, platform};
+                        let rest = skip_seps(&path[..len], j);
+                        join_abs_string_buf::<platform::Auto>(
+                            &path[..known_real],
+                            &mut join_buf[..],
+                            &[target, &path[rest..len]],
+                        )
+                        .len()
+                    } else if bun_paths::is_absolute(target) {
+                        concat_into(&mut join_buf[..], &[target, &path[j..len]])?
+                    } else {
+                        concat_into(
+                            &mut join_buf[..],
+                            &[&path[..known_real], b"/", target, &path[j..len]],
+                        )?
+                    };
+                    if new_len >= path.len() {
+                        return Err(name_too_long());
+                    }
                     known_real = common_dir_prefix_len(&path[..known_real], &join_buf[..new_len]);
                     path[..new_len].copy_from_slice(&join_buf[..new_len]);
                     len = new_len;
@@ -1646,6 +1692,35 @@ pub mod fs {
                 }
             }
         }
+    }
+
+    /// `path` without its last component; a filesystem root is its own parent.
+    fn parent_len(path: &[u8]) -> usize {
+        let root = root_len(path);
+        let mut k = path.len();
+        while k > root && !bun_paths::is_sep_native(path[k - 1]) {
+            k -= 1;
+        }
+        while k > root && bun_paths::is_sep_native(path[k - 1]) {
+            k -= 1;
+        }
+        k
+    }
+
+    /// Drop `path[prefix..from]`, keeping exactly one separator between the
+    /// prefix and what followed. Returns the new length.
+    fn splice_after(path: &mut [u8], prefix: usize, from: usize, len: usize) -> usize {
+        let from = skip_seps(&path[..len], from);
+        if from == len {
+            return prefix;
+        }
+        let mut at = prefix;
+        if at == 0 || !bun_paths::is_sep_native(path[at - 1]) {
+            path[at] = bun_paths::SEP;
+            at += 1;
+        }
+        path.copy_within(from..len, at);
+        at + (len - from)
     }
 
     impl crate::fs_full::EntryKindResolver for RealFS {

@@ -696,11 +696,14 @@ const _: () = {
         fn some_item() {}
     }
     impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
-    #[allow(dead_code)]
-    struct Invalid;
-    impl<T: ?Sized + Send> AmbiguousIfImpl<Invalid> for T {}
-    // Fails to compile ("multiple applicable items") if `VirtualMachine: Send`.
+    struct IfSend;
+    impl<T: ?Sized + Send> AmbiguousIfImpl<IfSend> for T {}
+    struct IfSync;
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<IfSync> for T {}
+    // Fails to compile ("multiple applicable items") if `VirtualMachine` is
+    // `Send` or `Sync`.
     let _ = <VirtualMachine as AmbiguousIfImpl<_>>::some_item;
+    let _ = (core::mem::size_of::<IfSend>(), core::mem::size_of::<IfSync>());
     assert_not_send_sync::<VirtualMachine>();
 };
 

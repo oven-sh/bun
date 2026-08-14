@@ -64,6 +64,8 @@ pub struct ConcurrentCppTask {
 bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
 
 impl ConcurrentCppTask {
+    // `owned_task!` requires `fn run_owned(self: Box<Self>)`.
+    #[allow(clippy::boxed_local)]
     fn run_owned(self: Box<Self>) {
         let ConcurrentCppTask {
             cpp_task, ticket, ..

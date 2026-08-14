@@ -451,7 +451,7 @@ impl Debugger {
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is the `Box<DebuggerThreadInit>` leaked just below.
-            Debugger::start(unsafe { bun_core::heap::take(ctx.cast::<DebuggerThreadInit>()) });
+            Debugger::start(*unsafe { bun_core::heap::take(ctx.cast::<DebuggerThreadInit>()) });
         }
         #[allow(deprecated)]
         vm.global()
@@ -462,7 +462,7 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: Box<DebuggerThreadInit>) {
+    fn start(init: DebuggerThreadInit) {
         jsc::mark_binding();
 
         let this: &VirtualMachine = VirtualMachine::get();
@@ -474,7 +474,7 @@ impl Debugger {
             is_node_inspector,
             from_env,
             path_or_port,
-        } = *init;
+        } = init;
 
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);

@@ -132,7 +132,7 @@ pub struct Shared {
 #[derive(Default)]
 struct LiveTickets {
     next_id: u64,
-    at: std::collections::HashMap<u64, &'static Location<'static>>,
+    at: bun_collections::HashMap<u64, &'static Location<'static>>,
 }
 
 // SAFETY: `vm` is dereferenced only under the discipline in the module doc
@@ -551,19 +551,17 @@ impl VmHandle {
     #[cfg(debug_assertions)]
     fn dump_outstanding(&self, secs: u64) {
         let live = self.0.live.lock();
-        let mut by_site: std::collections::HashMap<&'static Location<'static>, u32> =
-            Default::default();
-        for loc in live.at.values() {
-            *by_site.entry(loc).or_default() += 1;
-        }
+        let mut sites: Vec<(&'static str, u32)> =
+            live.at.values().map(|l| (l.file(), l.line())).collect();
+        sites.sort_unstable();
         let w = bun_core::output::error_writer();
         let _ = writeln!(
             w,
             "[vm] teardown has waited {secs}s for {} ticket(s) still held off-thread:",
-            live.at.len()
+            sites.len()
         );
-        for (loc, n) in by_site {
-            let _ = writeln!(w, "[vm]   {n}× taken at {}:{}", loc.file(), loc.line());
+        for run in sites.chunk_by(|a, b| a == b) {
+            let _ = writeln!(w, "[vm]   {}× taken at {}:{}", run.len(), run[0].0, run[0].1);
         }
         let _ = w.flush();
     }

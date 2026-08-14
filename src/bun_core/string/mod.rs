@@ -1427,10 +1427,8 @@ impl ZigString {
     // `bun_runtime::webcore::encoding::ZigStringEncode` (extension trait); the
     // encoder bodies live in `bun_runtime`.
 
-    /// `ZigString.githubAction` — returns a `Display`
-    /// formatter that escapes the string for the data part of a GitHub Actions
-    /// annotation (see `crate::fmt::github_action_writer`). Encoding-aware via
-    /// `to_slice`.
+    /// `ZigString.githubAction` — `Display` formatter over
+    /// `crate::fmt::github_action_writer`; encoding-aware via `to_slice`.
     #[inline]
     pub fn github_action(self) -> ZigStringGithubActionFormatter {
         ZigStringGithubActionFormatter { text: self }

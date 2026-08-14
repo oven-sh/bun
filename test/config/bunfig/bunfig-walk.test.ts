@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import { dirname, join } from "path";
 
 // https://github.com/oven-sh/bun/issues/29308
 // An auto-loaded bunfig.toml is discovered by walking up from cwd, bounded at
@@ -129,9 +130,21 @@ test.concurrent("a nested project outside the workspaces globs does not inherit"
   expect(exitCode).toBe(0);
 });
 
+// The "no package.json anywhere" property extends above the tempdir, so the
+// test is only meaningful when the tmpdir ancestry is package.json-free.
+function packageJsonAboveTmpdir(): boolean {
+  let dir = realpathSync.native(os.tmpdir());
+  while (true) {
+    if (existsSync(join(dir, "package.json"))) return true;
+    const parent = dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
 // Fail closed: with no package.json anywhere up the tree, only cwd is
 // checked, so a bunfig.toml in an unrelated parent (e.g. /tmp) never applies.
-test.concurrent("no package.json anywhere bounds the lookup to cwd", async () => {
+test.skipIf(packageJsonAboveTmpdir())("no package.json anywhere bounds the lookup to cwd", async () => {
   using dir = tempDir("bunfig-walk-no-pkg", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,

@@ -1587,12 +1587,14 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.
-test.skipIf(isWindows)("Bun.build does not wait for unrelated thread-pool work", async () => {
-  using dir = tempDir("build-pool-wait", {
-    "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
-    "b.ts": `export const b = 1;`,
-    "s.css": `body { color: red }`,
-    "run.js": `
+test.skipIf(isWindows)(
+  "Bun.build does not wait for unrelated thread-pool work",
+  async () => {
+    using dir = tempDir("build-pool-wait", {
+      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+      "b.ts": `export const b = 1;`,
+      "s.css": `body { color: red }`,
+      "run.js": `
       const { join } = require("path");
       const dir = process.argv[2];
       const fs = require("fs");
@@ -1619,16 +1621,18 @@ test.skipIf(isWindows)("Bun.build does not wait for unrelated thread-pool work",
       console.log(readDone);
       process.exit(0);
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run.js", String(dir)],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("true true true false\ntrue\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true true true false\ntrue\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

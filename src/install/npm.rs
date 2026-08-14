@@ -2623,9 +2623,6 @@ impl PackageManifest {
                             }
                         }
 
-                        // A registry that advertises no hash at all stays quiet; one
-                        // that advertises a hash we cannot use gets a warning, since
-                        // the version will install unverified either way.
                         if !integrity_str.is_empty() || malformed_shasum {
                             log.add_warning_fmt(
                                 None,

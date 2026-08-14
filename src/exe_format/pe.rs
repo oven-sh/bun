@@ -38,6 +38,10 @@ pub enum Error {
     UnexpectedOverlayPresent,
     #[error("InsufficientSpace")]
     InsufficientSpace,
+    #[error("InvalidSectionData")]
+    InvalidSectionData,
+    #[error("SizeOfImageMismatch")]
+    SizeOfImageMismatch,
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables
@@ -1481,6 +1485,85 @@ impl PEFile {
         // SAFETY: opt_after points into self.data at validated offset.
         unsafe {
             (*opt_after).size_of_image = align_up_u32(new_va + payload, sect_align)?;
+        }
+        Ok(())
+    }
+
+    /// The current in-memory image. Used by the `bun:internal-for-testing`
+    /// hook so the adversarial suite can inspect the merged output.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Structural self-check run by the adversarial suite after a merge:
+    /// headers still parse, every section's raw range lies inside the file
+    /// and does not overlap another, and `SizeOfImage` matches the section
+    /// layout. A merge that corrupted the host in any of these ways is
+    /// reported as an error rather than silently producing a broken exe.
+    pub fn validate(&mut self) -> Result<(), Error> {
+        let pe_header = self.get_pe_header_mut()?;
+        // SAFETY: pe_header points into self.data at validated offset.
+        if unsafe { (*pe_header).signature } != PE_SIGNATURE {
+            return Err(Error::InvalidPESignature);
+        }
+
+        let optional_header = self.get_optional_header_mut()?;
+        // SAFETY: optional_header points into self.data at validated offset;
+        // read_unaligned copies the packed struct out so no reference to
+        // packed fields is formed.
+        let optional_header = unsafe { ptr::read_unaligned(optional_header) };
+        if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
+            return Err(Error::UnsupportedPEFormat);
+        }
+        if !is_pow2(optional_header.file_alignment) || !is_pow2(optional_header.section_alignment) {
+            return Err(Error::BadAlignment);
+        }
+        if optional_header.section_alignment < 4096
+            && optional_header.file_alignment != optional_header.section_alignment
+        {
+            return Err(Error::InvalidPEFile);
+        }
+
+        let section_headers_end =
+            self.section_headers_offset + size_of::<SectionHeader>() * self.num_sections as usize;
+        if section_headers_end > optional_header.size_of_headers as usize
+            || section_headers_end > self.data.len()
+        {
+            return Err(Error::InvalidPEFile);
+        }
+
+        let file_len = self.data.len();
+        let section_headers = self.get_section_headers()?;
+        let mut max_va_end: u32 = 0;
+        for (i, section) in section_headers.iter().enumerate() {
+            if section.size_of_raw_data > 0 {
+                let raw_end = section.pointer_to_raw_data as u64 + section.size_of_raw_data as u64;
+                if section.pointer_to_raw_data < optional_header.size_of_headers
+                    || raw_end > file_len as u64
+                {
+                    return Err(Error::InvalidSectionData);
+                }
+                for other in &section_headers[i + 1..] {
+                    if other.size_of_raw_data == 0 {
+                        continue;
+                    }
+                    let other_end = other.pointer_to_raw_data as u64 + other.size_of_raw_data as u64;
+                    if (section.pointer_to_raw_data as u64).max(other.pointer_to_raw_data as u64)
+                        < raw_end.min(other_end)
+                    {
+                        return Err(Error::InvalidPEFile);
+                    }
+                }
+            }
+            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
+            let va_end = section.virtual_address
+                + align_up_u32(vs_effective, optional_header.section_alignment)?;
+            max_va_end = max_va_end.max(va_end);
+        }
+
+        let expected = align_up_u32(max_va_end, optional_header.section_alignment)?;
+        if optional_header.size_of_image != expected {
+            return Err(Error::SizeOfImageMismatch);
         }
         Ok(())
     }

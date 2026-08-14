@@ -68,12 +68,12 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     result.put(
         global,
         b"output",
-        JSValue::create_buffer_from_box(global, host.data.clone().into_boxed_slice()),
+        JSValue::create_buffer_from_box(global, host.as_bytes().to_vec().into_boxed_slice())?,
     );
     result.put(
         global,
         b"metadata",
-        JSValue::create_buffer_from_box(global, meta.into_boxed_slice()),
+        JSValue::create_buffer_from_box(global, meta.into_boxed_slice())?,
     );
     result.put(
         global,

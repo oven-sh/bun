@@ -2256,13 +2256,13 @@ describe("css tests", () => {
       `,
     );
 
-    // Color space conversions routinely leave components like these behind. The exact residual
-    // depends on the platform's libm, so only check that every component is a number.
-    test("relative color conversion prints each component as a number", () => {
-      const output = minify_test_with_options(".foo{color:color(from color(display-p3 0 0 1) srgb r g b)}", "");
-      const number = String.raw`-?(?:\d+(?:\.\d+)?|\.\d+)(?:e-?\d+)?`;
-      expect(output).toMatch(new RegExp(String.raw`^\.foo\{color:color\(srgb ${number} ${number} ${number}\)\}$`));
-    });
+    // Color space conversions leave components like this behind on their own: the green
+    // channel of display-p3 blue in sRGB is an f32 rounding residual. (The blue channel goes
+    // through powf and is not pinned here.)
+    minify_test(
+      ".foo{color:color(from color(display-p3 0 0 1) srgb r g 1)}",
+      ".foo{color:color(srgb 0 -1.92523e-7 1)}",
+    );
   });
 
   describe("padding", () => {

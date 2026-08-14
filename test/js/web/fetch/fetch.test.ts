@@ -3473,40 +3473,43 @@ it.concurrent(
       sock.on("close", () => sockets.delete(sock));
       sock.on("error", () => {});
       sock.once("data", chunk => {
-        // /h drips DRIP_N header bytes, then bursts the rest of the head + body.
-        // /b bursts the head, then drips body bytes until the test ends the body.
+        // /h drips DRIP_N header bytes, then bursts the rest of the head + body so
+        // that a build which keeps re-arming gets a 200 instead of hanging.
+        // /b bursts the head, then drips body bytes; only the test ends its body.
         const headerDrip = chunk.includes("/h ");
         if (!headerDrip) sock.write(HEAD);
         const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY.slice(0, -1);
         let i = 0;
-        let finished = false;
-        const finish = () => {
-          if (finished) return;
-          finished = true;
-          clearInterval(iv);
-          intervals.delete(iv);
-          if (!sock.destroyed) sock.end(headerDrip ? HEAD.slice(DRIP_N) + BODY : BODY.slice(i));
-        };
         const iv = setInterval(() => {
-          if (sock.destroyed || i === dripped.length) {
-            finish();
+          if (!sock.destroyed && i < dripped.length) {
+            sock.write(dripped[i++]);
             return;
           }
-          sock.write(dripped[i++]);
+          clearInterval(iv);
+          intervals.delete(iv);
+          if (headerDrip && !sock.destroyed) sock.end(HEAD.slice(DRIP_N) + BODY);
         }, DRIP_MS);
         intervals.add(iv);
-        if (!headerDrip) bodyDrip.resolve(finish);
+        if (!headerDrip) {
+          bodyDrip.resolve(() => {
+            clearInterval(iv);
+            intervals.delete(iv);
+            if (!sock.destroyed) sock.end(BODY.slice(i));
+          });
+        }
       });
     });
     await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
     const port = (server.address() as AddressInfo).port;
 
     try {
+      // fetch() resolves once the head is in, so /b's timeout would surface from
+      // text(); catch() rather than a rejection handler on the same then() so it
+      // ends up in the assertion below instead of being thrown out of the test.
       const settle = (path: string) =>
-        fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS }).then(
-          async r => ({ ok: true as const, status: r.status, body: await r.text() }),
-          e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }),
-        );
+        fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS })
+          .then(async r => ({ ok: true as const, status: r.status, body: await r.text() }))
+          .catch(e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }));
 
       // /b goes first, and /h is only sent once the server has /b's request, so
       // /b's idle timer was armed no later than /h's. /h's header drip (DRIP_N *

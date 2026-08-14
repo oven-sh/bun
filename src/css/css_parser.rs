@@ -1530,10 +1530,7 @@ mod rule_parsers {
         ) -> CssResult<CssRuleList<T::AtRule>> {
             let loc = self.current_loc(input);
 
-            // Declarations can be immediately within @media and @supports blocks
-            // that are nested within a parent style rule. They apply to the parent
-            // rule's elements, from that position:
-            // https://drafts.csswg.org/css-nesting/#nested-declarations-rule
+            // Declarations directly inside a @media, @supports, ... block nested in a style rule.
             let (declarations, mut rules) = self.parse_nested(input, false)?;
 
             if declarations.len() > 0 {
@@ -2075,8 +2072,7 @@ mod rule_parsers {
                 let mut usage = PropertyBitset::init_empty();
                 let mut custom_properties: Vec<&'static [u8]> = Vec::new();
                 fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
-                // Declarations written after a nested rule still belong to this rule's
-                // elements.
+                // Declarations written after a nested rule are still this rule's own.
                 for rule in rules.v.iter() {
                     if let CssRule::NestedDeclarations(nested) = rule {
                         fill_property_bit_set(
@@ -2133,15 +2129,10 @@ mod rule_parsers {
         fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
-            // arena outlives the parser (it owns all parsed allocations); `'static`
-            // is the crate-wide erasure of its lifetime (see `parse_nested`).
+            // arena outlives the parser (it owns all parsed allocations).
             let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
 
-            // A declaration after a nested rule has to stay behind that rule in the
-            // cascade, so rather than joining the block's own declarations it goes
-            // into a nested declarations rule at the end of the block's rules,
-            // continuing the one the previous declaration started if there is one:
-            // https://drafts.csswg.org/css-nesting/#nested-declarations-rule
+            // Past a nested rule, declarations go into a `NestedDeclarationsRule` ending the list.
             let mut nested = match this.rules.v.pop() {
                 None => None,
                 Some(CssRule::NestedDeclarations(nested)) => Some(nested),
@@ -2177,8 +2168,7 @@ mod rule_parsers {
                 &mut ctx,
             );
 
-            // `RuleBodyParser` retries a declaration that failed to parse as a nested
-            // style rule; a rule that received nothing must not end up in front of it.
+            // A failed declaration is retried as a nested rule; leave no empty rule ahead of it.
             if let Some(nested) = nested
                 && !nested.declarations.is_empty()
             {

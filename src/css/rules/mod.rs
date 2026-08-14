@@ -426,10 +426,7 @@ impl<R> CssRuleList<R> {
         self.to_css_impl(dest, false)
     }
 
-    /// Prints the rules straight into the block the list's owner sits in, for an owner whose
-    /// own block is elided (`@media all` when minifying). Whatever follows the owner in that
-    /// block, which `to_css_impl` recorded in `dest.more_rules_follow` just before printing
-    /// the owner, therefore also follows this list's last rule.
+    /// For an owner printed without a block of its own: whatever follows it also follows this list.
     pub(crate) fn to_css_unwrapped(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let more_rules_follow = dest.more_rules_follow;
         self.to_css_impl(dest, more_rules_follow)
@@ -442,8 +439,7 @@ impl<R> CssRuleList<R> {
     ) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
-        // The other rules the loop skips still count as following their predecessors; that
-        // only costs a nested declarations rule ahead of them a `;` it could have dropped.
+        // Counting rules skipped below as followers only costs a nested declarations rule a `;`.
         let last = self
             .v
             .iter()
@@ -938,8 +934,6 @@ fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
-    // These declarations are as dead as the enclosing rule's own ones, which
-    // `StyleRule::minify` dropped.
     if parent_is_unused {
         return Ok(());
     }
@@ -1320,15 +1314,7 @@ pub struct MinifyContext<'a, 'bump> {
 }
 
 impl MinifyContext<'_, '_> {
-    /// Charge a rule with `selectors` selectors against the selector-expansion
-    /// budget.
-    ///
-    /// Compiling the enclosing nesting away for the targets repeats the rule's
-    /// selectors once per combination of the enclosing style rules' selectors.
-    /// That expansion is multiplicative across nesting levels, so bound it;
-    /// otherwise a few hundred bytes of deeply nested multi-selector rules
-    /// expand into gigabytes of cloned rules and output. See
-    /// [`MAX_SELECTOR_EXPANSION`]. `loc` is reported if the budget is exceeded.
+    /// Charges `selectors` selectors against [`MAX_SELECTOR_EXPANSION`], failing at `loc`.
     pub(crate) fn charge_selector_expansion(
         &mut self,
         selectors: u32,

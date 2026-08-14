@@ -38,14 +38,8 @@ impl<R> NestingRule<R> {
     }
 }
 
-/// A [nested declarations](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule)
-/// rule: declarations that follow a nested rule in a style rule's body, or sit directly in a
-/// conditional at-rule nested in one. They apply to the enclosing style rule's elements but
-/// cascade from their own position, after the nested rules before them.
+/// Declarations after a nested rule (drafts.csswg.org/css-nesting-1/#nested-declarations-rule).
 pub struct NestedDeclarationsRule {
-    /// The declarations.
-    // `DeclarationBlock<'bump>` borrows the parser arena; the lifetime is
-    // erased to `'static` here, matching `CssRule<R>` in rules/mod.rs.
     pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
@@ -55,26 +49,19 @@ impl NestedDeclarationsRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
         let Some(ctx) = dest.ctx else {
-            // Nesting is preserved: the declarations are printed in place, between the
-            // enclosing rule's nested rules.
-            let more_rules_follow = dest.more_rules_follow;
-            return write_declarations(&self.declarations, None, dest, false, more_rules_follow);
+            // Nesting is preserved: printed in place among the enclosing rule's nested rules.
+            let trailing_semicolon = !dest.minify || dest.more_rules_follow;
+            return write_declarations(&self.declarations, None, dest, false, trailing_semicolon);
         };
 
-        // Nesting is being compiled away, so the enclosing rule's block is already closed:
-        // these declarations get a rule of their own under the enclosing rule's selectors.
-        // The list is repeated as is rather than wrapped in `:is()`, which would give every
-        // selector the specificity of the most specific one.
+        // Compiled nesting: enclosing selectors as written, since `:is()` would change specificity.
         dest.nesting_expansions = 0;
         serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
-        dest.block(|d| write_declarations(&self.declarations, None, d, true, false))
+        let trailing_semicolon = !dest.minify;
+        dest.block(|d| write_declarations(&self.declarations, None, d, true, trailing_semicolon))
     }
 
-    /// Minifies the declarations and returns the already minified rules the property handlers
-    /// derived from them (logical property, `@supports` and dark color scheme fallbacks), for
-    /// the caller to insert right after this rule. Like the declarations, the fallbacks apply
-    /// to the enclosing style rule's elements, so they are built under `&` where
-    /// `minify_style_arm` builds a style rule's fallbacks under its own selectors.
+    /// Minifies the declarations; returns their fallback rules, which belong right after this rule.
     pub(crate) fn minify<R>(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
@@ -82,8 +69,7 @@ impl NestedDeclarationsRule {
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
-        // Compiling the enclosing nesting away prints the enclosing rule's selector list once
-        // more for this rule, and splitting that list for the targets clones this rule per part.
+        // Compiling nesting away prints the enclosing selector list once more for this rule.
         context.charge_selector_expansion(1, self.loc)?;
 
         context.handler_context.context = DeclarationContext::StyleRule;
@@ -98,6 +84,7 @@ impl NestedDeclarationsRule {
             return Ok(Vec::new());
         }
 
+        // The fallbacks apply to the enclosing rule's elements, so they are built under `&`.
         let enclosing = StyleRule::<R> {
             selectors: SelectorList::from_selector(Selector::from_component_in(
                 Component::Nesting,

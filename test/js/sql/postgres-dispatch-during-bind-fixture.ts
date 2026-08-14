@@ -149,25 +149,42 @@ const scenarios: Record<string, () => Promise<unknown>> = {
 
   // The conversion dispatches a query and then throws. The outer query rejects
   // with that error; the dispatched one was only enqueued and must still be
-  // dispatched afterwards rather than sit in the queue forever. (It currently
-  // rejects: the aborted Bind leaves a torn message in the write buffer, which
-  // makes the server drop the connection. Only its settling is asserted.)
+  // dispatched afterwards rather than sit in the queue forever. Only its
+  // settling is asserted: as long as an aborted Bind leaves its torn message in
+  // the write buffer the server drops the connection and it rejects; once that
+  // is rolled back it resolves.
   async "prepared statement, conversion throws after dispatching"() {
     await sql`select ${int(0)}::int4 as x`;
-    const param = {
-      valueOf() {
-        conversions++;
-        dispatched.push(sql`select 2 as y`.execute());
-        throw new RangeError("boom");
-      },
-    };
-    const outer = await settle(sql`select ${param}::int4 as x`);
-    const settled = await Promise.all(dispatched.map(settle));
-    // The pool reconnects if the torn message cost it the connection.
-    const afterwards = await settle(sql`select 3 as z`);
-    return { outer, dispatchedSettled: settled.length, afterwards, conversions };
+    return throwAfterDispatching();
+  },
+
+  // Same, with another query already in flight on the connection, so the outer
+  // request is not at the head of the queue when its Bind fails and has to be
+  // swept out from behind the in-flight one.
+  async "prepared statement behind an in-flight query, conversion throws after dispatching"() {
+    await sql`select ${int(0)}::int4 as x`;
+    const ahead = sql`select ${int(7)}::int4 as x`.execute();
+    // Issues the outer query synchronously, while `ahead` is still in flight.
+    const rest = throwAfterDispatching();
+    return { ahead: await settle(ahead), ...(await rest) };
   },
 };
+
+/** Issues the outer query synchronously; everything after the first await is reporting. */
+async function throwAfterDispatching() {
+  const param = {
+    valueOf() {
+      conversions++;
+      dispatched.push(sql`select 2 as y`.execute());
+      throw new RangeError("boom");
+    },
+  };
+  const outer = await settle(sql`select ${param}::int4 as x`);
+  const settled = await Promise.all(dispatched.map(settle));
+  // The pool reconnects if the torn message cost it the connection.
+  const afterwards = await settle(sql`select 3 as z`);
+  return { outer, dispatchedSettled: settled.length, afterwards, conversions };
+}
 
 const scenario = scenarios[process.env.SCENARIO!];
 if (!scenario) {

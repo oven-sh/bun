@@ -81,6 +81,13 @@ const scenarios: Record<string, unknown> = {
     afterwards: { ok: [{ z: 3 }] },
     conversions: 1,
   },
+  "prepared statement behind an in-flight query, conversion throws after dispatching": {
+    ahead: { ok: [{ x: 7 }] },
+    outer: { err: "boom" },
+    dispatchedSettled: 1,
+    afterwards: { ok: [{ z: 3 }] },
+    conversions: 1,
+  },
 };
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {

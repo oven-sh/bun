@@ -715,11 +715,6 @@ pub struct RewriterPipe {
     /// Input EOF arrived while a suspension or output backpressure kept us
     /// from calling `end_rewrite()`; run it once unblocked.
     input_ended: Cell<bool>,
-    /// `true` while a JS-pump `.then()` reaction (attached in
-    /// [`Self::wire_input`]) is still owed. The generated `${controller}__close`
-    /// drops its error argument, so `end_from_stream` defers terminal work to
-    /// the reaction (which carries the real error) while this is set.
-    js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,
     high_water_mark: Cell<BlobSizeType>,
@@ -926,7 +921,6 @@ impl RewriterPipe {
             context,
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
-            js_pump_reaction_pending: Cell::new(false),
             pending_input: JsCell::new(Vec::new()),
             high_water_mark: Cell::new(16384),
             output: Cell::new(None),
@@ -1160,7 +1154,6 @@ impl RewriterPipe {
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
                     jsc::js_promise::Status::Pending => {
-                        this.js_pump_reaction_pending.set(true);
                         assignment_result.then_with_value(
                             global,
                             this.cell.get(),
@@ -1276,7 +1269,7 @@ impl RewriterPipe {
         Writable::Owned(len)
     }
 
-    /// `SinkHandle::end` entry — input EOF or terminal upstream error.
+    /// Input EOF or terminal upstream error (`SinkHandle::end` or the JS pump's result).
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `m_sinkPtr` is nulled before any path can free the
@@ -1284,16 +1277,6 @@ impl RewriterPipe {
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
         self.detach_input_source(false);
-
-        if self.js_pump_reaction_pending.get() {
-            // The pump-promise `.then()` reaction is the single terminal
-            // authority on the JS-pump path: `rsisAbrupt` calls
-            // `controller.close(error)` synchronously (the generated `__close`
-            // drops the argument) before rejecting the pump promise, so running
-            // `end_rewrite` here would resolve the body with truncated output
-            // and pre-empt the reject reaction.
-            return;
-        }
 
         js_HTMLRewriterTransform::input_stream_set_cached(
             self.cell.get(),
@@ -1679,12 +1662,11 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         let _ = buf.write_latin1(bytes);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+    // Not terminal: `close(error)` arrives without its error; the pump's result ends the rewrite.
+    fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        self.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
@@ -3142,8 +3124,6 @@ fn on_resolve_input_stream(
         return Ok(JSValue::UNDEFINED);
     };
     let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
     this.end_from_stream(None);
     Ok(JSValue::UNDEFINED)
 }
@@ -3158,8 +3138,6 @@ fn on_reject_input_stream(
     };
     let err = args[0];
     let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
     this.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
         jsc::strong::Optional::create(err, global_this),
     )));

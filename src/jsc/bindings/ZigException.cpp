@@ -558,8 +558,12 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
 
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
-                        // populateStackTrace skips native frames; these are how they print.
-                        if (frame.sourceURL.isEmpty() || (frame.lineNumber.zeroBasedInt() < 0 && (frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s)))
+                        // A frame that can't be located isn't worth a slot: no URL, the
+                        // `unknown`/`native` placeholders populateStackTrace would have skipped
+                        // as native frames, or a bare word with neither line nor path.
+                        bool hasLine = frame.lineNumber.zeroBasedInt() >= 0;
+                        bool urlIsPath = frame.sourceURL.find('/') != WTF::notFound || frame.sourceURL.find('\\') != WTF::notFound;
+                        if (frame.sourceURL.isEmpty() || (!hasLine && (frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s || (frame.functionName.isEmpty() && !urlIsPath))))
                             return;
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};

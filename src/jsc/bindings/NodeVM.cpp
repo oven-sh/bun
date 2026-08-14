@@ -1619,21 +1619,20 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         }
     }
 
-    options.parsingContext->setGlobalScopeExtension(functionScope);
+    // Node compiles inside parsingContext (node_contextify.cc enters it before
+    // ScriptCompiler::CompileFunction), so the function and any compile error
+    // belong to that realm rather than to the caller's.
+    JSGlobalObject* parsingContext = options.parsingContext;
+    parsingContext->setGlobalScopeExtension(functionScope);
 
-    // Create the function using constructAnonymousFunction with the appropriate scope chain
-    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
+    JSFunction* function = constructAnonymousFunction(parsingContext, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!function) {
-        return throwVMError(globalObject, scope, "Failed to compile function"_s);
+        return throwVMError(parsingContext, scope, "Failed to compile function"_s);
     }
 
     fetcher->owner(vm, function);
-
-    if (!function) {
-        return throwVMError(globalObject, scope, "Failed to compile function"_s);
-    }
 
     return JSValue::encode(function);
 }

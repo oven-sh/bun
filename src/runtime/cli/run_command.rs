@@ -3096,7 +3096,10 @@ impl RemoteImageDownload {
         // to the channel.
         // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
         // `async_http` is the worker-thread temporary whose `.real` points back at
-        // `this.async_http`.
+        // `this.async_http`. `prefetch_remote_images` reads one tick per download
+        // before it returns (freeing `this` and ending `done`'s storage), and this
+        // download's tick is the last statement below, so everything here runs
+        // while both are live, and the channel is live until that publish's unlock.
         unsafe {
             let this = &mut *this;
             let async_http = &mut *async_http;
@@ -3110,7 +3113,10 @@ impl RemoteImageDownload {
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = (*this.done).write_item(0);
+            // If this is the last tick, the main thread may free the channel
+            // as soon as it has taken it, which `(*this.done).write_item(0)`
+            // would still hold a reference into (see `Channel::write_item_raw`).
+            let _ = DoneChannel::write_item_raw(this.done, 0);
         }
     }
 }

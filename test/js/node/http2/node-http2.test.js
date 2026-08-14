@@ -4116,20 +4116,27 @@ it("http2 stream.respondWithFD() reports a bad fd argument like node and accepts
     errors = collectInvalidArgTypeErrors(cases, value => stream.respondWithFD(value));
     stream.respondWithFD(fileHandle, { "content-type": "text/plain" });
   });
-  await new Promise(resolve => server.listen(0, resolve));
-  const client = http2.connect(`http://localhost:${server.address().port}`);
+  let client;
 
   try {
-    const req = client.request({ ":path": "/" });
-    const response = await new Promise((resolve, reject) => {
-      req.on("error", reject);
-      req.on("response", resolve);
-      req.end();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, resolve);
     });
+    client = http2.connect(`http://localhost:${server.address().port}`);
+
+    const { promise: finished, resolve, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    const req = client.request({ ":path": "/" });
+    req.on("error", reject);
+    let response;
+    req.on("response", headers => (response = headers));
     let body = "";
     req.setEncoding("utf8");
     req.on("data", chunk => (body += chunk));
-    await new Promise(resolve => req.on("end", resolve));
+    req.on("end", resolve);
+    req.end();
+    await finished;
 
     expect(errors).toEqual(
       cases.map(([, received]) => ({
@@ -4141,7 +4148,7 @@ it("http2 stream.respondWithFD() reports a bad fd argument like node and accepts
     expect(response[":status"]).toBe(200);
     expect(body).toBe("served from a FileHandle");
   } finally {
-    client.close();
+    client?.close();
     server.close();
     await fileHandle.close();
   }

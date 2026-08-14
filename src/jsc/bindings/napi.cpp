@@ -1447,8 +1447,7 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
 
-// node_api_create_external_string_{latin1,utf16}. On `disposeNow` the caller runs the addon's
-// finalizer itself, once this function's preamble scopes have closed.
+// On `disposeNow` the caller runs the addon's finalizer, which must not run under this function's preamble.
 template<typename ExternalChar, typename Char>
 static napi_status createExternalString(napi_env env, Char* str, size_t length, napi_finalize finalize_callback, void* finalize_hint, napi_value* result, bool* copied, bool& disposeNow)
 {

@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -211,5 +214,216 @@ describe("css", () => {
       const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
       expect(css).toContain(`.${betaOwn}`);
     },
+  });
+});
+
+/**
+ * Runs `bun build <entry> --outdir out` on the given files (plus an `entry.js`
+ * that imports `styles.module.css` and logs its exports). On success, returns
+ * the emitted stylesheet and, for a JS entry, the exports object it logs.
+ */
+async function buildCssModule(files: Record<string, string>, entry = "entry.js") {
+  using dir = tempDir("css-module-composes", {
+    "entry.js": `import styles from "./styles.module.css";\nconsole.log(JSON.stringify(styles));`,
+    ...files,
+  });
+  const run = async (args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  const { stderr, exitCode } = await run(["build", entry, "--outdir", "out"]);
+  if (exitCode !== 0) return { stderr, exitCode, css: undefined, exports: undefined };
+  const css = await Bun.file(join(String(dir), "out", "entry.css")).text();
+  const exports = entry.endsWith(".js") ? JSON.parse((await run([join("out", "entry.js")])).stdout) : undefined;
+  return { stderr, exitCode, css, exports };
+}
+
+// The parser decides whether a `composes` declaration counts (it has to sit
+// directly in a style rule whose selector is a single class) and records the
+// accepted ones for the bundler; the printer omits the property from the
+// stylesheet. Rejected declarations are reported as warnings and dropped, like
+// esbuild does; they must not fail the build.
+describe.concurrent("css-module composes placement", () => {
+  test("inside a nested style rule it is rejected with a warning", async () => {
+    const { stderr, exitCode, exports, css } = await buildCssModule({
+      "styles.module.css": `
+        .c { color: red }
+        .a { .z { composes: c; color: blue } }
+      `,
+    });
+    expect({ exitCode, stderr }).toEqual({
+      exitCode: 0,
+      stderr: expect.stringContaining('"composes" is not allowed inside nested selectors'),
+    });
+    expect(exports).toEqual({ c: "c_-MSaAA", a: "a_-MSaAA", z: "z_-MSaAA" });
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      .c_-MSaAA {
+        color: red;
+      }
+
+      .a_-MSaAA .z_-MSaAA {
+        color: #00f;
+      }
+      "
+    `);
+  });
+
+  test("on a selector that is not a single class it is rejected with a warning", async () => {
+    const { stderr, exitCode, exports, css } = await buildCssModule({
+      "styles.module.css": `
+        .c { color: red }
+        .a .b { composes: c; color: blue }
+      `,
+    });
+    expect({ exitCode, stderr }).toEqual({
+      exitCode: 0,
+      stderr: expect.stringContaining('"composes" only works inside single class selectors'),
+    });
+    expect(exports).toEqual({ c: "c_-MSaAA", a: "a_-MSaAA", b: "b_-MSaAA" });
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      .c_-MSaAA {
+        color: red;
+      }
+
+      .a_-MSaAA .b_-MSaAA {
+        color: #00f;
+      }
+      "
+    `);
+  });
+
+  test("directly inside an at-rule nested in a style rule it is rejected with a warning", async () => {
+    const { stderr, exitCode, exports, css } = await buildCssModule({
+      "styles.module.css": `
+        .c { color: red }
+        .a { @media (min-width: 1px) { composes: c; color: blue } }
+      `,
+    });
+    expect({ exitCode, stderr }).toEqual({
+      exitCode: 0,
+      stderr: expect.stringContaining('"composes" is not allowed inside nested selectors'),
+    });
+    expect(exports).toEqual({ c: "c_-MSaAA", a: "a_-MSaAA" });
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      .c_-MSaAA {
+        color: red;
+      }
+
+      @media (min-width: 1px) {
+        .a_-MSaAA {
+          color: #00f;
+        }
+      }
+      "
+    `);
+  });
+
+  test("in a style rule inside a top-level at-rule it is accepted", async () => {
+    const { stderr, exitCode, exports, css } = await buildCssModule({
+      "styles.module.css": `
+        .c { color: red }
+        @media (min-width: 1px) { .b { composes: c } }
+        @supports (display: grid) { @layer x { .d { composes: c; color: blue } } }
+      `,
+    });
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+    expect(exports).toEqual({ c: "c_-MSaAA", b: "c_-MSaAA b_-MSaAA", d: "c_-MSaAA d_-MSaAA" });
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      .c_-MSaAA {
+        color: red;
+      }
+
+      @media (min-width: 1px) {
+        .b_-MSaAA {
+        }
+      }
+
+      @supports (display: grid) {
+        @layer x {
+          .d_-MSaAA {
+            color: #00f;
+          }
+        }
+      }
+      "
+    `);
+  });
+
+  test("a module pulled in by a conditional @import still prints", async () => {
+    const { stderr, exitCode, css } = await buildCssModule(
+      {
+        "entry.css": `@import "./styles.module.css" layer(base) supports(display: grid) (min-width: 1px);`,
+        "styles.module.css": `
+          .c { color: red }
+          .b { composes: c }
+        `,
+      },
+      "entry.css",
+    );
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      @media (min-width: 1px) {
+        @supports (display: grid) {
+          @layer base {
+            .c_-MSaAA {
+              color: red;
+            }
+
+            .b_-MSaAA {
+            }
+          }
+        }
+      }
+
+      /* entry.css */
+
+      "
+    `);
+  });
+
+  test("a rejected declaration does not pull in the file it composes from", async () => {
+    const { stderr, exitCode, exports, css } = await buildCssModule({
+      "styles.module.css": `
+        .c { color: red }
+        .a .b { composes: x from "./other.module.css"; color: blue }
+        .a .d { composes: y from "./missing.module.css" }
+        .ok { composes: c }
+      `,
+      "other.module.css": `.x { color: green }`,
+    });
+    expect({ exitCode, stderr }).toEqual({
+      exitCode: 0,
+      stderr: expect.stringContaining('"composes" only works inside single class selectors'),
+    });
+    expect(exports).toEqual({ c: "c_-MSaAA", a: "a_-MSaAA", b: "b_-MSaAA", d: "d_-MSaAA", ok: "c_-MSaAA ok_-MSaAA" });
+    // Neither other.module.css nor the unresolvable missing.module.css is part
+    // of the bundle.
+    expect(css).toMatchInlineSnapshot(`
+      "/* styles.module.css */
+      .c_-MSaAA {
+        color: red;
+      }
+
+      .a_-MSaAA .b_-MSaAA {
+        color: #00f;
+      }
+
+      .ok_-MSaAA {
+      }
+      "
+    `);
   });
 });

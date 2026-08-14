@@ -158,7 +158,6 @@ impl<R> StyleRule<R> {
     }
 
     fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
-        use css::error::PrinterErrorKind;
         use css::properties::Property;
 
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
@@ -198,40 +197,13 @@ impl<R> StyleRule<R> {
             ];
             for (decls, important) in decls_groups {
                 for decl in decls {
-                    // The CSS modules `composes` property is handled specially, and omitted during printing.
-                    // We need to add the classes it references to the list for the selectors in this rule.
-                    if let Property::Composes(composes) = decl {
-                        if dest.is_nested() && dest.css_module.is_some() {
-                            return dest.new_error(
-                                PrinterErrorKind::invalid_composes_nesting,
-                                Some(composes.cssparser_loc),
-                            );
-                        }
-
-                        if dest.css_module.is_some() {
-                            // `handle_composes` needs `&mut dest` while the
-                            // module also lives in `dest.css_module`. Move the
-                            // module out for the duration of the call, then put
-                            // it back before any `dest.new_error` early return.
-                            let mut cm = dest.css_module.take();
-                            let err = if let Some(css_module) = &mut cm {
-                                css_module
-                                    .handle_composes(
-                                        dest,
-                                        &self.selectors,
-                                        composes,
-                                        self.loc.source_index,
-                                    )
-                                    .err()
-                            } else {
-                                None
-                            };
-                            dest.css_module = cm;
-                            if let Some(error_kind) = err {
-                                return dest.new_error(error_kind, Some(composes.cssparser_loc));
-                            }
-                            continue;
-                        }
+                    // In CSS modules `composes` is validated and recorded by the
+                    // parser (`StyleSheet::composes`); the printer only omits it.
+                    // Unlike lightningcss, nothing is checked here: the bundler wraps
+                    // a file's rules in the conditions of the `@import` that pulled
+                    // it in, so nesting in the output says nothing about the source.
+                    if dest.css_module.is_some() && matches!(decl, Property::Composes(_)) {
+                        continue;
                     }
 
                     dest.newline()?;

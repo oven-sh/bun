@@ -3134,6 +3134,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Marks a record returned by `add_import_record` as unused because the
+    /// declaration that added it is being discarded after it was parsed. The
+    /// bundler neither resolves nor bundles unused records.
+    pub(crate) fn mark_import_record_unused(&mut self, import_record_idx: u32) {
+        let ptr = self
+            .import_records
+            .expect("add_import_record only hands out indices when import records are tracked");
+        // SAFETY: see `Parser.import_records` field doc.
+        let import_records = unsafe { &mut *ptr.as_ptr() };
+        import_records[import_record_idx as usize]
+            .flags
+            .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+    }
+
     #[inline]
     pub(crate) fn arena(&self) -> &Bump {
         self.input.tokenizer.arena

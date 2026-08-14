@@ -349,6 +349,9 @@ where
 
     if input.flags.css_modules() {
         if let css::Property::Composes(composes) = &mut property {
+            // A rejected `composes` is warned about and dropped, as in esbuild, so
+            // a style rule only ever holds accepted ones, which the printer omits
+            // (see `StyleRule::to_css_base`).
             match composes_ctx.composes_state() {
                 css::ComposesState::DisallowEntirely => {}
                 css::ComposesState::Allow(_) => {
@@ -360,6 +363,8 @@ where
                         info.line,
                         info.column,
                     );
+                    composes.discard(input);
+                    return Ok(());
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
                     options.warn_fmt_with_notes(
@@ -373,6 +378,8 @@ where
                             location: Some(info.to_logger_location(options.filename)),
                         }]),
                     );
+                    composes.discard(input);
+                    return Ok(());
                 }
             }
         }

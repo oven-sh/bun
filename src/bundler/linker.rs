@@ -610,6 +610,8 @@ impl Linker {
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> crate::Result<PFs::Path<'static>> {
+        // `source_path` may come straight from an `onResolve` plugin, so it is
+        // not bounded by a path buffer the way the thread-local `relative` requires.
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
@@ -617,20 +619,19 @@ impl Linker {
                 }
 
                 if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
-                    // `linker.fs.relative` is a thin wrapper over
-                    // `bun.path.relative`; the inline `bun_resolver::fs`
-                    // module doesn't expose it yet, so call the path layer
-                    // directly. The threadlocal-buffer result must be
-                    // dup'd to outlive this call.
-                    let relative_name =
-                        dupe(bun_paths::resolve_path::relative(source_dir, source_path));
+                    let relative_name = dupe(&bun_paths::resolve_path::relative_alloc(
+                        source_dir,
+                        source_path,
+                    )?);
                     Ok(PFs::Path::init_with_pretty(source_path, relative_name))
                 } else {
                     Ok(PFs::Path::init_with_namespace(source_path, namespace))
                 }
             }
             ImportPathFormat::Relative => {
-                let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
+                let relative_path =
+                    bun_paths::resolve_path::relative_alloc(source_dir, source_path)?;
+                let relative_name: &[u8] = &relative_path;
 
                 let text: &'static [u8];
                 let pretty: &'static [u8];
@@ -685,8 +686,9 @@ impl Linker {
                     }
 
                     let top_level_dir = self.fs().top_level_dir;
-                    let mut base: &[u8] =
-                        bun_paths::resolve_path::relative(top_level_dir, source_path);
+                    let relative_path =
+                        bun_paths::resolve_path::relative_alloc(top_level_dir, source_path)?;
+                    let mut base: &[u8] = &relative_path;
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
                         base = &base[0..dot];
                     }

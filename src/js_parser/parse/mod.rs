@@ -1583,10 +1583,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
     }
 
-    /// `for (using of y)` loops over the variable `using`; `for (using of = x;;)` declares `of`.
+    /// `for (using of y)` loops over `using`; `for (using of = x;;)` or a TS `of: T` declares `of`.
     fn is_using_for_of_variable(&mut self) -> bool {
         self.lexer.is_contextual_keyword(b"of")
-            && !self.next_token_matches(|p| p.lexer.token == T::TEquals)
+            && !self.next_token_matches(|p| {
+                p.lexer.token == T::TEquals
+                    || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            })
     }
 
     /// This parses an expression. This assumes we've already parsed the "async"

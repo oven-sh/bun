@@ -5371,6 +5371,12 @@ describe("using declaration placement", () => {
     });
   });
 
+  it("a type annotation after `using of` in a for head also declares `of` (tsc does the same)", () => {
+    expect(verdict("for (using of: T = x;;);", "ts")).toBe("for (using of = x;; )\n  ;\n");
+    expect(verdict("for (await using of: T = x;;);", "ts")).toBe("for (await using of = x;; )\n  ;\n");
+    expect(verdict("for (using of: T = x;;);", "js")).toBe("Unexpected :");
+  });
+
   it("a newline after `using` in a clause is an identifier statement, not a declaration", () => {
     expect(new Bun.Transpiler({ loader: "js" }).transformSync("switch (x) {\n default:\n using\n a = b;\n }")).toBe(
       "switch (x) {\n  default:\n    using;\n    a = b;\n}\n",
@@ -5390,7 +5396,8 @@ describe("using declaration placement", () => {
     const out = new Bun.Transpiler({ loader: "js", target: "browser" }).transformSync(
       "switch (v()) {\n case 0: { using x = { [s]() {} }; }\n default: { using y = { [t]() {} }; }\n }",
     );
-    const [first, second] = out.split("default:").map(part => new Set(part.match(/__bun_temp_ref_\d+\$/g)));
+    // The counter is printed in hex.
+    const [first, second] = out.split("default:").map(part => new Set(part.match(/__bun_temp_ref_[0-9a-f]+\$/g)));
     expect(first.size).toBeGreaterThan(0);
     expect(second.size).toBe(first.size);
     expect(first.isDisjointFrom(second)).toBe(true);

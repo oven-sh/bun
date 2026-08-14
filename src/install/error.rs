@@ -450,10 +450,10 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
 
 impl From<crate::lockfile_real::bun_lock::ParseError> for Error {
     fn from(e: crate::lockfile_real::bun_lock::ParseError) -> Self {
+        use crate::lockfile_real::bun_lock::ParseError as E;
         match e {
-            crate::lockfile_real::bun_lock::ParseError::OutOfMemory => {
-                Self::Alloc(bun_alloc::AllocError)
-            }
+            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::UnknownLockfileVersion => Self::UnexpectedLockfileVersion,
             _ => Self::InvalidLockfile,
         }
     }

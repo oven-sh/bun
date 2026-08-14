@@ -859,29 +859,28 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });
 
-it("prints an actionable error for a lockfile version newer than this build supports", async () => {
+it("refuses to overwrite a lockfile whose version is newer than this build supports", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 
+  await write(join(packageDir, "vendor", "leaf", "package.json"), JSON.stringify({ name: "leaf", version: "1.2.3" }));
   await write(
     packageJson,
     JSON.stringify({
       name: "future-lockfile",
-      dependencies: {},
+      dependencies: { leaf: "file:./vendor/leaf" },
     }),
   );
 
-  await write(
-    join(packageDir, "bun.lock"),
-    JSON.stringify({
-      lockfileVersion: 99,
-      workspaces: {
-        "": {
-          name: "future-lockfile",
-        },
+  const futureLockfile = JSON.stringify({
+    lockfileVersion: 99,
+    workspaces: {
+      "": {
+        name: "future-lockfile",
       },
-      packages: {},
-    }),
-  );
+    },
+    packages: {},
+  });
+  await write(join(packageDir, "bun.lock"), futureLockfile);
 
   const { exited, stdout, stderr } = spawn({
     cmd: [bunExe(), "install"],
@@ -900,7 +899,12 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(err).toContain("Run 'bun upgrade'");
   // the old message gave no hint at all
   expect(err).not.toContain("Unknown lockfile version");
-  expect(await exited).toBe(0);
+
+  // An older client must not silently downgrade a lockfile written by a newer Bun.
+  expect(err).not.toContain("Ignoring lockfile");
+  expect(err).not.toContain("Saved lockfile");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(futureLockfile);
+  expect(await exited).toBe(1);
 });
 
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {

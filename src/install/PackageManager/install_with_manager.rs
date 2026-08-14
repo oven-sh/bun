@@ -1397,6 +1397,10 @@ fn report_lockfile_load_error(
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
+    // Never regenerate over a lockfile written by a newer Bun.
+    let fatal = manager.options.enable.fail_early()
+        || matches!(cause.value, crate::Error::UnexpectedLockfileVersion);
+
     if log_level != Options::LogLevel::Silent {
         match cause.step {
             lockfile::LoadStep::OpenFile => Output::err(
@@ -1421,7 +1425,7 @@ fn report_lockfile_load_error(
             ),
         }
 
-        if !manager.options.enable.fail_early() {
+        if !fatal {
             Output::print_errorln("");
             bun_core::warn!("Ignoring lockfile");
         }
@@ -1435,7 +1439,7 @@ fn report_lockfile_load_error(
         Output::flush();
     }
 
-    if manager.options.enable.fail_early() {
+    if fatal {
         Global::crash();
     }
     Ok(())

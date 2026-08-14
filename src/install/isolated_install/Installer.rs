@@ -1190,6 +1190,15 @@ impl Task {
                                 }
                             }
                         }
+
+                        // hardlink/copyfile overlay an existing tree, keeping files a previous patched build added.
+                        let mut previous = AutoPath::init_top_level_dir();
+                        installer.append_real_store_path(
+                            &mut previous,
+                            self.entry_id,
+                            Which::Final,
+                        );
+                        let _ = Fd::cwd().delete_tree(previous.slice());
                     }
 
                     if uses_global_store {

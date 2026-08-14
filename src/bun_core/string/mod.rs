@@ -242,6 +242,16 @@ impl String {
             }
         }
     }
+    /// [`clone_utf16`](Self::clone_utf16) for text the caller already knows
+    /// contains a character outside Latin-1; skips the narrowing scan.
+    pub fn clone_utf16_wide(s: &[u16]) -> Self {
+        if s.is_empty() {
+            return Self::EMPTY;
+        }
+        debug_assert!(s.iter().any(|&u| u > 0xFF));
+        // SAFETY: s.as_ptr()/len describe a valid u16 slice.
+        unsafe { BunString__fromUTF16(s.as_ptr(), s.len()) }
+    }
     pub fn create_atom(s: &[u8]) -> Self {
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
         unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
@@ -286,6 +296,35 @@ impl String {
         ctx: Ctx,
         callback: ExternalStringImplFreeFunction<Ctx>,
     ) -> Self {
+        // The length handed to WTF is a character count, so a byte slice can
+        // only describe a Latin-1 string; see `create_external_utf16`.
+        debug_assert!(is_latin1);
+        Self::create_external_impl(bytes.as_ptr(), bytes.len(), is_latin1, ctx, callback)
+    }
+
+    /// [`create_external`](Self::create_external) for UTF-16 code units:
+    /// `callback` receives `units.len()` (code units, not bytes).
+    pub fn create_external_utf16<Ctx>(
+        units: &[u16],
+        ctx: Ctx,
+        callback: ExternalStringImplFreeFunction<Ctx>,
+    ) -> Self {
+        Self::create_external_impl(
+            units.as_ptr().cast::<u8>(),
+            units.len(),
+            false,
+            ctx,
+            callback,
+        )
+    }
+
+    fn create_external_impl<Ctx>(
+        ptr: *const u8,
+        len: usize,
+        is_latin1: bool,
+        ctx: Ctx,
+        callback: ExternalStringImplFreeFunction<Ctx>,
+    ) -> Self {
         use core::ffi::c_void;
         // `Ctx` must be a pointer-sized, pointer-aligned handle.
         struct AssertPtrSized<C>(core::marker::PhantomData<C>);
@@ -299,9 +338,9 @@ impl String {
             };
         }
         let () = AssertPtrSized::<Ctx>::OK;
-        debug_assert!(!bytes.is_empty());
-        if bytes.len() > Self::max_length() {
-            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
+        debug_assert!(len != 0);
+        if len > Self::max_length() {
+            callback(ctx, ptr.cast_mut().cast::<c_void>(), len);
             return Self::DEAD;
         }
         // The const-assert above only checks size/alignment, so an owning
@@ -323,16 +362,9 @@ impl String {
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
-        // SAFETY: bytes describes a valid slice; len <= max_length checked.
-        let s = unsafe {
-            BunString__createExternal(
-                bytes.as_ptr(),
-                bytes.len(),
-                is_latin1,
-                ctx_erased,
-                cb_erased,
-            )
-        };
+        // SAFETY: `ptr`/`len` came from a live slice of the matching width in
+        // the callers above; len <= max_length checked.
+        let s = unsafe { BunString__createExternal(ptr, len, is_latin1, ctx_erased, cb_erased) };
         debug_assert!(s.0.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
         s
     }

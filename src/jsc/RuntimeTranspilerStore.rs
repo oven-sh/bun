@@ -37,7 +37,7 @@ use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::OwnedResolvedSource;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
+    Entry as CacheEntry, ModuleType as CacheModuleType,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
 use crate::strong::Optional as StrongOptional;
@@ -63,11 +63,23 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(vm, specifier, printer.ctx.get_written());
+pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+    let string = printer.ctx.clone_written_as_string();
+    dump_source_code(vm, specifier, &string);
+    string.deref();
 }
 
-pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
+/// The dump is meant to be read, so the module's Latin-1 or UTF-16 text is
+/// written out as UTF-8.
+pub(crate) fn dump_source_code(
+    vm: NonNull<VirtualMachine>,
+    specifier: &[u8],
+    source_code: &String,
+) {
+    dump_source_string(vm, specifier, source_code.to_utf8().slice());
+}
+
+fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
@@ -1004,7 +1016,7 @@ impl TranspilerJob {
             if bun_core::env::DUMP_SOURCE {
                 // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
                 let vm = unsafe { NonNull::new_unchecked(vm) };
-                dump_source_string(vm, specifier, entry.output_code.byte_slice());
+                dump_source_code(vm, specifier, &entry.output_code);
             }
 
             let module_info: *mut c_void = if use_isolation_source_provider_cache
@@ -1021,14 +1033,8 @@ impl TranspilerJob {
             };
 
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
-                source_code: match &mut entry.output_code {
-                    OutputCode::String(s) => *s,
-                    OutputCode::Utf8(utf8) => {
-                        let result = String::clone_utf8(utf8);
-                        *utf8 = Box::default();
-                        result
-                    }
-                },
+                // Takes over the entry's ref.
+                source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
                 tag: this_tag,
@@ -1094,7 +1100,7 @@ impl TranspilerJob {
         }
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
-            let writer = BufferWriter::init();
+            let writer = BufferWriter::init_latin1();
             let mut bp = Box::new(BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
             bp
@@ -1104,7 +1110,7 @@ impl TranspilerJob {
         // _writeback guard (the thread-local's buffer is reused).
         let mut printer = core::mem::replace(
             source_code_printer,
-            BufferPrinter::init(BufferWriter::init()),
+            BufferPrinter::init(BufferWriter::init_latin1()),
         );
         printer.ctx.reset();
 
@@ -1112,12 +1118,12 @@ impl TranspilerJob {
         const MAX_BUFFER_CAP: usize = 512 * 1024;
         if printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
             // printer.ctx.buffer.deinit() → Drop
-            let writer = BufferWriter::init();
+            let writer = BufferWriter::init_latin1();
             *source_code_printer = BufferPrinter::init(writer);
             source_code_printer.ctx.append_null_byte = false;
             printer = core::mem::replace(
                 source_code_printer,
-                BufferPrinter::init(BufferWriter::init()),
+                BufferPrinter::init(BufferWriter::init_latin1()),
             );
         }
 
@@ -1163,8 +1169,10 @@ impl TranspilerJob {
                 |(dst, src)| {
                     // SAFETY: both pointees outlive this scope; no aliases at drop.
                     unsafe {
-                        *dst =
-                            core::mem::replace(&mut *src, BufferPrinter::init(BufferWriter::init()))
+                        *dst = core::mem::replace(
+                            &mut *src,
+                            BufferPrinter::init(BufferWriter::init_latin1()),
+                        )
                     };
                 },
             );
@@ -1198,12 +1206,17 @@ impl TranspilerJob {
             // `cache.output_code` (only the `r#impl == None` fallback does,
             // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
             debug_assert!(cache.output_code.is_none());
-            let result = String::clone_latin1(written);
+            // Already in the width JSC wants (Latin-1, or UTF-16 if the text
+            // needed it); this is a copy, not a transcode.
+            debug_assert!(
+                source_code_printer.ctx.output_encoding() != strings::EncodingNonAscii::Utf8
+            );
+            let result = source_code_printer.ctx.clone_written_as_string();
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
-                let writer = BufferWriter::init();
+                let writer = BufferWriter::init_latin1();
                 *source_code_printer = BufferPrinter::init(writer);
                 source_code_printer.ctx.append_null_byte = false;
             }

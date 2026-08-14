@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_core::String as BunString;
+use bun_core::strings::EncodingNonAscii;
 use bun_options_types::Format;
 
 bun_opaque::opaque_ffi! {
@@ -8,11 +9,36 @@ bun_opaque::opaque_ffi! {
     pub struct CachedBytecode;
 }
 
+/// `input_encoding` of the generators below; mirrors `BytecodeSourceEncoding`
+/// in ZigSourceProvider.cpp. JSC only accepts bytecode generated from a string
+/// equal to the one the module loader builds, so the generator has to decode
+/// the bytes the same way the load path for that kind of source does: bundler
+/// output on disk is UTF-8, while the runtime printer's buffer is already in
+/// its final width (see `bun_js_printer::BufferWriter::init_latin1`).
+fn encoding_tag(encoding: EncodingNonAscii) -> u8 {
+    match encoding {
+        EncodingNonAscii::Utf8 => 0,
+        EncodingNonAscii::Latin1 => 1,
+        EncodingNonAscii::Utf16 => 2,
+    }
+}
+
+type Generator = unsafe extern "C" fn(
+    source_provider_url: *mut BunString,
+    input_code: *const u8,
+    input_source_code_size: usize,
+    input_encoding: u8,
+    output_byte_code: *mut Option<NonNull<u8>>,
+    output_byte_code_size: *mut usize,
+    cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
+) -> bool;
+
 unsafe extern "C" {
     fn generateCachedModuleByteCodeFromSourceCode(
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_encoding: u8,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -22,6 +48,7 @@ unsafe extern "C" {
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_encoding: u8,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -37,75 +64,40 @@ impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
-    pub(crate) fn generate_for_esm(
-        source_provider_url: &mut BunString,
-        input: &[u8],
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
-        let mut this: Option<NonNull<CachedBytecode>> = None;
-
-        let mut input_code_size: usize = 0;
-        let mut input_code_ptr: Option<NonNull<u8>> = None;
-        // SAFETY: out-params are valid for write; input slice valid for read.
-        let ok = unsafe {
-            generateCachedModuleByteCodeFromSourceCode(
-                source_provider_url,
-                input.as_ptr(),
-                input.len(),
-                &raw mut input_code_ptr,
-                &raw mut input_code_size,
-                &raw mut this,
-            )
-        };
-        if ok {
-            // SAFETY: on success, C++ guarantees both out-params are non-null
-            // and the slice is valid for `input_code_size` bytes until deref().
-            let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            return Some((slice, this.unwrap()));
-        }
-
-        None
-    }
-
-    pub(crate) fn generate_for_cjs(
-        source_provider_url: &mut BunString,
-        input: &[u8],
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
-        let mut this: Option<NonNull<CachedBytecode>> = None;
-        let mut input_code_size: usize = 0;
-        let mut input_code_ptr: Option<NonNull<u8>> = None;
-        // SAFETY: out-params are valid for write; input slice valid for read.
-        let ok = unsafe {
-            generateCachedCommonJSProgramByteCodeFromSourceCode(
-                source_provider_url,
-                input.as_ptr(),
-                input.len(),
-                &raw mut input_code_ptr,
-                &raw mut input_code_size,
-                &raw mut this,
-            )
-        };
-        if ok {
-            // SAFETY: on success, C++ guarantees both out-params are non-null
-            // and the slice is valid for `input_code_size` bytes until deref().
-            let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            return Some((slice, this.unwrap()));
-        }
-
-        None
-    }
-
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
+        input_encoding: EncodingNonAscii,
         source_provider_url: &mut BunString,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
-        match format {
-            Format::Esm => Self::generate_for_esm(source_provider_url, input),
-            Format::Cjs => Self::generate_for_cjs(source_provider_url, input),
-            _ => None,
+        let generator: Generator = match format {
+            Format::Esm => generateCachedModuleByteCodeFromSourceCode,
+            Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
+            _ => return None,
+        };
+
+        let mut this: Option<NonNull<CachedBytecode>> = None;
+        let mut output_size: usize = 0;
+        let mut output_ptr: Option<NonNull<u8>> = None;
+        // SAFETY: out-params are valid for write; input slice valid for read.
+        let ok = unsafe {
+            generator(
+                source_provider_url,
+                input.as_ptr(),
+                input.len(),
+                encoding_tag(input_encoding),
+                &raw mut output_ptr,
+                &raw mut output_size,
+                &raw mut this,
+            )
+        };
+        if !ok {
+            return None;
         }
+        // SAFETY: on success, C++ guarantees both out-params are non-null
+        // and the slice is valid for `output_size` bytes until deref().
+        let slice = unsafe { bun_core::ffi::slice(output_ptr.unwrap().as_ptr(), output_size) };
+        Some((slice, this.unwrap()))
     }
 }
 
@@ -132,11 +124,13 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
+    source_encoding: EncodingNonAscii,
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(false);
-    let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
+    let (bytes, handle) =
+        CachedBytecode::generate(format, source, source_encoding, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the

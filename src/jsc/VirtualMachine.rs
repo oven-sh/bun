@@ -6392,9 +6392,8 @@ impl VirtualMachine {
             }
 
             if !is_first_property {
-                // Ends the last property line; the second newline separates the
-                // properties from the stack trace.
-                pretty_write!(writer, "<r>\n\n")?;
+                pretty_write!(writer, "<r>\n")?;
+                writer.write_all(b"\n")?;
             }
 
             // "cause" is not enumerable, so the above loop won't see it.

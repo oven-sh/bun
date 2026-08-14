@@ -754,13 +754,11 @@ static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Set once a CLI flag or `NODE_USE_SYSTEM_CA` pins the CA store, so deferred
-/// bunfig loads can't override it.
+/// Set when a CLI flag or `NODE_USE_SYSTEM_CA` pins the CA store; bunfig can't override it.
 pub(crate) static Bun__Node__CAStore_locked: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Applies the bunfig `CA` value unless a CLI flag or env var locked the store.
-/// Idempotent.
+/// Applies the bunfig `CA` value unless the store is locked. Idempotent.
 pub(crate) fn apply_bunfig_ca_store(ctx: &mut bun_options_types::context::ContextData) {
     if !Bun__Node__CAStore_locked.load(core::sync::atomic::Ordering::Relaxed) {
         if let Some(ca_store) = ctx.runtime_options.ca_store {

@@ -611,19 +611,21 @@ async function localDnsServer() {
   });
 }
 
-// A resolver with no explicit servers uses the platform resolver on Android;
+// A resolver with no explicit servers uses the platform resolver on Android 10+;
 // setServers([...]) switches it to those servers, setServers([]) switches back.
 test("Resolver getServers/setServers round-trip", async () => {
   const server = await localDnsServer();
   try {
     const resolver = new dns.promises.Resolver();
-    if (isAndroid) expect(resolver.getServers()).toEqual([]);
+    // On Android 10+ a fresh resolver is on the platform resolver, which reports
+    // no server list; before that (API 28) it is plain c-ares like everywhere else.
+    const usesPlatformResolver = isAndroid && resolver.getServers().length === 0;
     resolver.setServers([`127.0.0.1:${server.port}`]);
     expect(resolver.getServers()).toEqual([`127.0.0.1:${server.port}`]);
     expect(await resolver.resolve4("example.com")).toEqual(["127.0.0.2"]);
     resolver.setServers([]);
     expect(resolver.getServers()).toEqual([]);
-    if (isAndroid) {
+    if (usesPlatformResolver) {
       // back on the platform resolver: whatever it answers (or fails with), it
       // is not the local responder's 127.0.0.2
       expect(await resolver.resolve4("example.com").catch(e => [e.code])).not.toEqual(["127.0.0.2"]);

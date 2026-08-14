@@ -1,31 +1,127 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
+
+// The `bun install` that `bun init` runs reads this global bunfig. The
+// tailwind and shadcn templates depend on bun-plugin-tailwind, whose `bun` peer
+// dependency pulls in the npm `bun` package, and that package's postinstall
+// costs several seconds per install on some CI machines (it shells out to
+// `npm install` on musl and to PowerShell on Windows x64). Nothing in this file
+// asserts on lifecycle scripts.
+const globalConfigDir = tempDirWithFiles("bun-init-global-config", {
+  ".bunfig.toml": "[install]\nignoreScripts = true\n",
+});
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
 // PATH, which varies by CI machine — disable the detection so the directory
 // snapshots are stable everywhere.
-const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
+const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1", XDG_CONFIG_HOME: globalConfigDir };
 
-(isWindows ? describe : describe.concurrent)("bun init", () => {
-  // Every test's `bun init` runs a real `bun install`. bun dedupes downloads
-  // within a process but not across them, so on a cold CI cache the concurrent
-  // inits each re-fetch the same tarballs. Prime the shared install cache once,
-  // serially: `--react=shadcn`'s lockfile is a superset of the other react
-  // templates', and `-y` covers the blank template (typescript + @types/bun).
-  beforeAll(async () => {
-    for (const flag of ["-y", "--react=shadcn"]) {
-      const temp = tempDirWithFiles("bun-init-cache-prime", {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "init", flag],
-        cwd: temp,
-        stdio: ["ignore", "ignore", "ignore"],
-        env: initEnv,
-      });
-      await proc.exited;
+// `src/cli` is a symlink to `src/runtime/cli`, which Windows checkouts may
+// materialize as a plain file, so go through the real path.
+const templateSourceDir = path.join(import.meta.dir, "../../../src/runtime/cli/init");
+
+interface InitResult {
+  dir: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  /** Everything `bun init` left in `dir`, captured before any test builds into it. */
+  files: string[];
+}
+
+// Relative paths of everything under `dir`, sorted, with node_modules listed
+// as a single entry: the installed packages are asserted on separately.
+function listFiles(dir: string, prefix = ""): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory() && entry.name !== "node_modules") {
+      files.push(...listFiles(dir, rel));
+    } else {
+      files.push(rel);
     }
+  }
+  return files.sort();
+}
+
+describe.concurrent("bun init", () => {
+  // `bun init <template>` scaffolds the template and runs a real `bun install`
+  // against the registry. Each template is initialized at most once per run
+  // and the cases below share the result: the react templates are the
+  // expensive installs (shadcn is ~60 packages), and the assertions only read
+  // from the directory, apart from `bun run build`, which writes `dist/`.
+  const templateInits = new Map<string, Promise<InitResult>>();
+
+  function initTemplate(flag: string): Promise<InitResult> {
+    let init = templateInits.get(flag);
+    if (!init) {
+      init = (async () => {
+        const dir = tempDirWithFiles(`bun-init${flag.replace(/[^a-z]+/g, "-")}`, {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", flag],
+          cwd: dir,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: initEnv,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { dir, stdout, stderr, exitCode, files: listFiles(dir) };
+      })();
+      templateInits.set(flag, init);
+    }
+    return init;
+  }
+
+  // bun dedupes downloads within one `bun install`, not across processes, so
+  // on a cold CI cache concurrent inits would each fetch the same tarballs.
+  // shadcn's dependency closure is a superset of every other template's
+  // (including the blank one: @types/bun + typescript), so initializing it
+  // first, alone, leaves every other install in this file fully cached.
+  beforeAll(async () => {
+    await initTemplate("--react=shadcn");
   }, 240_000);
+
+  afterAll(async () => {
+    const dirs = [globalConfigDir];
+    for (const init of await Promise.allSettled(templateInits.values())) {
+      if (init.status === "fulfilled") dirs.push(init.value.dir);
+    }
+    await Promise.all(dirs.map(dir => fs.promises.rm(dir, { recursive: true, force: true })));
+  });
+
+  // The scaffolding `bun init` does for a react template is fully determined
+  // by the template's source directory plus the generated README/.gitignore,
+  // and `bun init` exits 0 even when the nested `bun install` fails, so the
+  // evidence that the install ran is the lockfile and node_modules.
+  function expectReactTemplate(init: InitResult, source: string, readmeTitle: string) {
+    const { dir, stdout, stderr, exitCode } = init;
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(stderr).not.toMatch(/^(error|warn)/m);
+
+    // Line endings are normalized because the checkout that built the binary
+    // and the one running the tests need not agree on them.
+    const lf = (file: string) => fs.readFileSync(file, "utf8").replaceAll("\r\n", "\n");
+    const sourceDir = path.join(templateSourceDir, source);
+    // The template directory's own bun.lock (and the node_modules a local
+    // `bun install` in there leaves behind) are not part of the scaffold;
+    // `bun init` writes a fresh bun.lock.
+    const templateFiles = listFiles(sourceDir).filter(file => file !== "bun.lock" && file !== "node_modules");
+    expect(templateFiles.length).toBeGreaterThan(0);
+    for (const file of templateFiles) {
+      expect(lf(path.join(dir, file)), file).toBe(lf(path.join(sourceDir, file)));
+    }
+
+    const readme = fs.readFileSync(path.join(dir, "README.md"), "utf8");
+    expect(readme).toStartWith(`# ${readmeTitle}\n`);
+    expect(readme).toInclude("bun v" + Bun.version.replaceAll("-debug", ""));
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies }).sort();
+    expect(declared).toContain("typescript");
+    const installed = declared.filter(name => fs.existsSync(path.join(dir, "node_modules", name, "package.json")));
+    expect(installed).toEqual(declared);
+  }
 
   test("bun init works", async () => {
     await using temp = tempDir("bun-init-works", {});
@@ -57,10 +153,15 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
     expect(readme).toInclude("index.ts");
 
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(readdirSync(temp).sort()).toEqual([
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]);
   }, 30_000);
 
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
@@ -85,9 +186,16 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(stderr).not.toContain("\x1b[");
     expect(exitCode).toBe(0);
 
-    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    // The blank template was scaffolded and installed, exactly as with -y.
+    expect(readdirSync(temp).sort()).toEqual([
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]);
   }, 30_000);
 
   test("bun init in folder", async () => {
@@ -125,13 +233,19 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     await using temp = tempDir("bun-init-error-rather-than-overwriting-file", {
       "mydir": "don't delete me!!!",
     });
-    const { exited } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "pipe", "pipe"],
       env: initEnv,
     });
-    expect(await exited).not.toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toMatchInlineSnapshot(`
+      "Failed to change directory to mydir: ENOTDIR
+      "
+    `);
+    expect(exitCode).toBe(1);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(await Bun.file(path.join(temp, "mydir")).text()).toBe("don't delete me!!!");
   });
@@ -238,78 +352,89 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   });
 
   test("bun init --react works", async () => {
-    await using temp = tempDir("bun-init--react-works", {});
-
-    const { exited } = Bun.spawn({
-      cmd: [bunExe(), "init", "--react"],
-      cwd: temp,
-      stdio: ["ignore", "inherit", "inherit"],
-      env: initEnv,
-    });
-
-    expect(await exited).toBe(0);
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toHaveProperty("dependencies.react");
-    expect(pkg).toHaveProperty("dependencies.react-dom");
-    expect(pkg).toHaveProperty("devDependencies.@types/react");
-    expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
-
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    const init = await initTemplate("--react");
+    expect(init.files).toMatchInlineSnapshot(`
+      [
+        ".gitignore",
+        "README.md",
+        "bun-env.d.ts",
+        "bun.lock",
+        "bunfig.toml",
+        "node_modules",
+        "package.json",
+        "src/APITester.tsx",
+        "src/App.tsx",
+        "src/frontend.tsx",
+        "src/index.css",
+        "src/index.html",
+        "src/index.ts",
+        "src/logo.svg",
+        "src/react.svg",
+        "tsconfig.json",
+      ]
+    `);
+    expectReactTemplate(init, "react-app", "bun-react-template");
   }, 30_000);
 
   test("bun init --react=tailwind works", async () => {
-    await using temp = tempDir("bun-init--react=tailwind-works", {});
-
-    const { exited } = Bun.spawn({
-      cmd: [bunExe(), "init", "--react=tailwind"],
-      cwd: temp,
-      stdio: ["ignore", "inherit", "inherit"],
-      env: initEnv,
-    });
-
-    expect(await exited).toBe(0);
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toHaveProperty("dependencies.react");
-    expect(pkg).toHaveProperty("dependencies.react-dom");
-    expect(pkg).toHaveProperty("devDependencies.@types/react");
-    expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
-    expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
-
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
+    const init = await initTemplate("--react=tailwind");
+    expect(init.files).toMatchInlineSnapshot(`
+      [
+        ".gitignore",
+        "README.md",
+        "build.ts",
+        "bun-env.d.ts",
+        "bun.lock",
+        "bunfig.toml",
+        "node_modules",
+        "package.json",
+        "src/APITester.tsx",
+        "src/App.tsx",
+        "src/frontend.tsx",
+        "src/index.css",
+        "src/index.html",
+        "src/index.ts",
+        "src/logo.svg",
+        "src/react.svg",
+        "tsconfig.json",
+      ]
+    `);
+    expectReactTemplate(init, "react-tailwind", "bun-react-tailwind-template");
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
-    await using temp = tempDir("bun-init--react=shadcn-works", {});
-
-    const { exited } = Bun.spawn({
-      cmd: [bunExe(), "init", "--react=shadcn"],
-      cwd: temp,
-      stdio: ["ignore", "inherit", "inherit"],
-      env: initEnv,
-    });
-
-    expect(await exited).toBe(0);
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toHaveProperty("dependencies.react");
-    expect(pkg).toHaveProperty("dependencies.react-dom");
-    expect(pkg).toHaveProperty("dependencies.@radix-ui/react-slot");
-    expect(pkg).toHaveProperty("dependencies.class-variance-authority");
-    expect(pkg).toHaveProperty("dependencies.clsx");
-    expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
-
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+    const init = await initTemplate("--react=shadcn");
+    expect(init.files).toMatchInlineSnapshot(`
+      [
+        ".gitignore",
+        "README.md",
+        "build.ts",
+        "bun-env.d.ts",
+        "bun.lock",
+        "bunfig.toml",
+        "components.json",
+        "node_modules",
+        "package.json",
+        "src/APITester.tsx",
+        "src/App.tsx",
+        "src/components/ui/button.tsx",
+        "src/components/ui/card.tsx",
+        "src/components/ui/input.tsx",
+        "src/components/ui/label.tsx",
+        "src/components/ui/select.tsx",
+        "src/components/ui/textarea.tsx",
+        "src/frontend.tsx",
+        "src/index.css",
+        "src/index.html",
+        "src/index.ts",
+        "src/lib/utils.ts",
+        "src/logo.svg",
+        "src/react.svg",
+        "styles/globals.css",
+        "tsconfig.json",
+      ]
+    `);
+    expectReactTemplate(init, "react-shadcn", "bun-react-tailwind-shadcn-template");
   }, 30_000);
 
   // Every template declares `typescript: "^6"`, so the `bun install` that
@@ -318,54 +443,48 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
     "bun init %s installs TypeScript 6, typechecks, and builds",
     async flag => {
-      await using temp = tempDir(`bun-init-ts6${flag.replace(/[^a-z]+/g, "-")}`, {});
+      const { dir, stdout, stderr, exitCode } = await initTemplate(flag);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
-      await using init = Bun.spawn({
-        cmd: [bunExe(), "init", flag],
-        cwd: temp,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: initEnv,
-      });
-      const [initStdout, initStderr, initExited] = await Promise.all([
-        init.stdout.text(),
-        init.stderr.text(),
-        init.exited,
-      ]);
-      expect({ initStdout, initStderr, initExited }).toMatchObject({ initExited: 0 });
-
-      const tsPkg = JSON.parse(fs.readFileSync(path.join(temp, "node_modules/typescript/package.json"), "utf8"));
+      const tsPkg = JSON.parse(fs.readFileSync(path.join(dir, "node_modules/typescript/package.json"), "utf8"));
       expect(tsPkg.version).toStartWith("6.");
 
       // What matters is that the template typechecks, not which runtime runs
       // the compiler, and tsc under a debug+ASAN bun is 10-50x slower.
       await using tsc = Bun.spawn({
         cmd: [nodeExe() ?? bunExe(), "node_modules/typescript/bin/tsc", "--noEmit"],
-        cwd: temp,
+        cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,
       });
       const [tscStdout, tscStderr, tscExited] = await Promise.all([tsc.stdout.text(), tsc.stderr.text(), tsc.exited]);
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
-      // The blank template has no `build` script; the react templates do.
-      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
-      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
-      // pass --bun.
-      const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-      if (pkg.scripts?.build) {
-        await using build = Bun.spawn({
-          cmd: [bunExe(), "--bun", "run", "build"],
-          cwd: temp,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: bunEnv,
-        });
-        const [buildStdout, buildStderr, buildExited] = await Promise.all([
-          build.stdout.text(),
-          build.stderr.text(),
-          build.exited,
-        ]);
-        expect({ buildStdout, buildStderr, buildExited }).toMatchObject({ buildExited: 0 });
+      // The blank template has no `build` script; the react templates build
+      // src/index.html into dist/. bun-plugin-tailwind's `bun` peer dep puts a
+      // node_modules/.bin/bun ahead of bunExe() on the script's PATH (with
+      // scripts ignored it is the npm package's placeholder, which only prints
+      // an error), so pass --bun to run the script's `bun` as the bun under test.
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      if (flag === "-y") {
+        expect(pkg.scripts).toBeUndefined();
+        return;
       }
+      expect(pkg.scripts).toHaveProperty("build");
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "--bun", "run", "build"],
+        cwd: dir,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [buildStdout, buildStderr, buildExited] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect({ buildStdout, buildStderr, buildExited }).toMatchObject({ buildExited: 0 });
+      expect(readdirSync(path.join(dir, "dist"))).toContain("index.html");
     },
     180_000,
   );

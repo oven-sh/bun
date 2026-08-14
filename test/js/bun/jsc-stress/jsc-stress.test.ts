@@ -121,6 +121,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Parser
+  "template-literal-line-terminators-after-cached-arrow-function.js",
 ];
 
 const wasmFixtures = [

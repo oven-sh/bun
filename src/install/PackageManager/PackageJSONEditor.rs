@@ -6,7 +6,7 @@ use bun_ast::{E, Expr, G};
 use bun_core::{Global, Output, strings};
 use bun_semver as semver;
 
-use bun_install::dependency::{self, TagExt as _};
+use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
@@ -42,18 +42,14 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
 /// `npm:@foo/bar@~1.2.3` -> (`npm:@foo/bar`, `~1.2.3`); `npm:foo` -> (`npm:foo`, `""`).
 fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     let literal = strings::trim(literal, &strings::WHITESPACE_CHARS);
-    let name = literal.strip_prefix(b"npm:")?;
-    let scope_len = usize::from(name.starts_with(b"@"));
-    if name.len() == scope_len {
+    let (name, version) = Dependency::split_name_and_maybe_version(literal.strip_prefix(b"npm:")?);
+    if name.is_empty() || name == b"@" {
         return None;
     }
-    match strings::index_of_char_usize(&name[scope_len..], b'@') {
-        Some(i) => {
-            let (alias, version) = literal.split_at(b"npm:".len() + scope_len + i);
-            Some((alias, &version[1..]))
-        }
-        None => Some((literal, b"")),
-    }
+    Some((
+        &literal[..b"npm:".len() + name.len()],
+        version.unwrap_or(b""),
+    ))
 }
 
 /// `version_literal` behind `from`'s `npm:<name>@` (if any), unless it already names a target.

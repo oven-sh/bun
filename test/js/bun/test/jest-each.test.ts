@@ -57,3 +57,21 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
+
+describe("mixed table containing an empty array row", () => {
+  // In Jest, a table whose rows are not all arrays is normalised so that each
+  // row is passed as a single argument.
+  it.each([undefined, null, "", [], {}])("does not wait on done() for %p", v => {
+    expect(typeof v).not.toBe("function");
+  });
+
+  const emptyArr: never[] = [];
+  it.each([0, emptyArr])("passes %p through as the row value", v => {
+    expect(v === 0 || v === emptyArr).toBe(true);
+  });
+
+  const rowA = ["a", "b"];
+  it.each([rowA, "c"])("wraps array rows in a mixed table: %p", v => {
+    expect(v === rowA || v === "c").toBe(true);
+  });
+});

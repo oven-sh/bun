@@ -785,6 +785,20 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                    // Folder packages never hoist, so a cycle between them would nest forever.
+                    let mut tree_id = next_id;
+                    while tree_id != INVALID_ID {
+                        let tree: Tree = builder.list.items_tree()[tree_id as usize];
+                        let ancestor_dep_id = tree.dependency_id;
+                        if (ancestor_dep_id as usize) < dependencies.len()
+                            && builder.resolutions[ancestor_dep_id as usize] == pkg_id
+                            && dependencies[ancestor_dep_id as usize].name_hash
+                                == dependency.name_hash
+                        {
+                            continue 'dep;
+                        }
+                        tree_id = tree.parent;
+                    }
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: false,

@@ -1,9 +1,0 @@
-{
-  "name": "workspace-with-overrides",
-  "workspaces": [
-    "ws"
-  ],
-  "overrides": {
-    "arg": "4.1.3"
-  }
-}

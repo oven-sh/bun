@@ -105,6 +105,7 @@ struct Migrator<'a> {
     workspace_map: Option<&'a WorkspaceMap>,
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,
+    shadowed: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -135,6 +136,7 @@ pub(super) fn migrate_packages(
         workspace_map,
         index,
         link_entries: DynamicBitSet::init_empty(entry_count)?,
+        shadowed: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -151,7 +153,11 @@ pub(super) fn migrate_packages(
     while cursor < migrator.queue.len() {
         let (j, id) = migrator.queue[cursor];
         cursor += 1;
-        migrator.link_package(j, id)?;
+        if id == INVALID_PACKAGE_ID {
+            migrator.shadow_dependencies(j);
+        } else {
+            migrator.link_package(j, id)?;
+        }
     }
 
     migrator.warn_unreachable();
@@ -401,7 +407,16 @@ impl<'a> Migrator<'a> {
                     bstr::BStr::new(key),
                     existing
                 );
+                // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
+                if res.tag == resolution::Tag::Npm && meta.integrity.tag.is_supported() {
+                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing as usize];
+                    if !existing_meta.integrity.tag.is_supported() {
+                        existing_meta.integrity = meta.integrity;
+                        self.this.packages.items_resolution_mut()[existing as usize] = res;
+                    }
+                }
                 self.entry_package_ids[j as usize] = existing;
+                self.shadow(j);
                 return Ok(existing);
             }
         }
@@ -874,12 +889,40 @@ impl<'a> Migrator<'a> {
             .filter(|&x| !self.link_entries.is_set(x as usize))
     }
 
+    fn shadow(&mut self, j: u32) {
+        if self.shadowed.is_set(j as usize) {
+            return;
+        }
+        self.shadowed.set(j as usize);
+        self.queue.push((j, INVALID_PACKAGE_ID));
+    }
+
+    fn shadow_dependencies(&mut self, j: u32) {
+        let entries = self.entries;
+        let entry = &entries[j as usize];
+        let pkg = entry_object(entry);
+        let key = entry.key.slice();
+        for group in DEPENDENCY_GROUPS {
+            let Some(deps) = pkg.get(group.prop).and_then(|d| d.as_object()) else {
+                continue;
+            };
+            for prop in deps.properties() {
+                if let Some((t, _)) = self.find_target(key, prop.key.slice())
+                    && self.entry_package_ids[t as usize] == INVALID_PACKAGE_ID
+                {
+                    self.shadow(t);
+                }
+            }
+        }
+    }
+
     fn warn_unreachable(&self) {
         let mut count: usize = 0;
         let mut list = String::new();
         for (j, entry) in self.entries.iter().enumerate() {
             if self.link_entries.is_set(j)
                 || self.entry_package_ids[j] != INVALID_PACKAGE_ID
+                || self.shadowed.is_set(j)
                 || pkg_flag_is_true(entry_object(entry), b"extraneous")
             {
                 continue;

@@ -111,7 +111,6 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
 
 test("npm lockfile with relative workspaces", async () => {
   const testDir = tmpdirSync();
-  console.log(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
   fs.cpSync(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
   const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
     env: bunEnv,
@@ -566,9 +565,13 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
 });
 
 describe("package-lock.json migration fixes", () => {
-  const NPM = join(import.meta.dir, "npm");
+  const ARBORIST = join(import.meta.dir, "npm-arborist");
+  const arboristFixtures: { name: string; root?: string }[] = JSON.parse(
+    fs.readFileSync(join(ARBORIST, "fixtures.json"), "utf8"),
+  );
   // Port 1 refuses connections, so any accidental registry access fails the test.
-  const OFFLINE_BUNFIG = `[install]\nregistry = "http://localhost:1/"\n`;
+  const OFFLINE_REGISTRY = "http://localhost:1/";
+  const OFFLINE_BUNFIG = `[install]\nregistry = "${OFFLINE_REGISTRY}"\n`;
 
   function writeExtra(dir: string, extra: Record<string, string>) {
     fs.writeFileSync(join(dir, "bunfig.toml"), OFFLINE_BUNFIG);
@@ -578,10 +581,32 @@ describe("package-lock.json migration fixes", () => {
     }
   }
 
+  // The project dir of a fixture copy; disposing removes the whole copy, including out-of-tree link targets.
+  class FixtureDir extends String {
+    constructor(
+      dir: string,
+      private copy: Disposable,
+    ) {
+      super(dir);
+    }
+    [Symbol.dispose]() {
+      this.copy[Symbol.dispose]();
+    }
+  }
+
   function fixture(name: string, extra: Record<string, string> = {}) {
-    const dir = tempDir("npm-migrate-" + name, join(NPM, name));
-    writeExtra(String(dir), extra);
-    return dir;
+    const entry = arboristFixtures.find(f => f.name === name);
+    if (!entry) throw new Error(`${name} is not listed in npm-arborist/fixtures.json`);
+    const copy = tempDir("npm-migrate-" + name, join(ARBORIST, name));
+    const dir = entry.root ? join(String(copy), entry.root) : String(copy);
+    writeExtra(dir, extra);
+    return new FixtureDir(dir, copy) as unknown as string & Disposable;
+  }
+
+  // Some arborist fixtures ship a package.json that disagrees with their lockfile, which --frozen-lockfile rejects.
+  function manifestFromLockfile(name: string) {
+    const lock = JSON.parse(fs.readFileSync(join(ARBORIST, name, "package-lock.json"), "utf8"));
+    return JSON.stringify(lock.packages[""]);
   }
 
   function synthetic(name: string, files: Record<string, string>) {
@@ -669,7 +694,7 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("root bundleDependencies keeps its subtree (B2)", async () => {
-    using dir = fixture("testing-rebuild-bundle-a");
+    using dir = fixture("testing-rebuild-bundle--a");
     const { text, lock } = await migrate(dir);
     expect(lock.packages["@isaacs/testing-rebuild-bundle-b"][0]).toBe("@isaacs/testing-rebuild-bundle-b@1.0.1");
     expect(lock.workspaces[""].dependencies).toStrictEqual({ "@isaacs/testing-rebuild-bundle-b": "" });
@@ -678,7 +703,9 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("root bundle with cyclic bundled contents (B2)", async () => {
-    using dir = fixture("bundle-metadep-duplication-x");
+    using dir = fixture("bundle-metadep-duplication--x", {
+      "package.json": manifestFromLockfile("bundle-metadep-duplication--x"),
+    });
     const before = await pmHash(dir);
     const { text, lock } = await migrate(dir);
     expect(Object.keys(lock.packages).sort()).toStrictEqual(
@@ -778,7 +805,7 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("lockfileVersion 4 is accepted (B3)", async () => {
-    const src = join(NPM, "workspaces-with-overrides");
+    const src = join(ARBORIST, "workspaces-with-overrides");
     const packageLock = JSON.parse(fs.readFileSync(join(src, "package-lock.json"), "utf8"));
     packageLock.lockfileVersion = 4;
     packageLock.packages["node_modules/arg"].patched = { "patches/arg.patch": "sha512-x" };
@@ -818,7 +845,7 @@ describe("package-lock.json migration fixes", () => {
   );
 
   test.concurrent("root duplicate groups and optional peer meta match a fresh parse (B5, B8)", async () => {
-    using dir = fixture("edit-package-json-ok");
+    using dir = fixture("edit-package-json--ok");
     const { lock } = await migrate(dir);
     const root = lock.workspaces[""];
     expect(root.dependencies).toStrictEqual({ abbrev: "^1.1.1" });
@@ -830,15 +857,7 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("file: specs into a registry package's folder (B4)", async () => {
-    const src = join(NPM, "external-link-dep");
-    using base = tempDir("npm-migrate-external-link-dep", {
-      "proj/package.json": fs.readFileSync(join(src, "package.json"), "utf8"),
-      "proj/package-lock.json": fs.readFileSync(join(src, "package-lock.json"), "utf8"),
-      "proj/bunfig.toml": OFFLINE_BUNFIG,
-      "cli-750/package.json": '{"name":"monorepo"}',
-    });
-    const dir = join(String(base), "proj");
-
+    using dir = fixture("external-link-dep");
     const { text, lock } = await migrate(dir);
     for (const key of ["aaaaaa", "abbrev", "zzzzzz"]) {
       expect(lock.packages[key][0]).toBe("abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz");
@@ -865,19 +884,27 @@ describe("package-lock.json migration fixes", () => {
   );
 
   test.concurrent("out-of-tree link targets and their node_modules (B6, walk)", async () => {
-    using dir = fixture("external-link-root");
+    using dir = fixture("external-link--root");
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain('"../a"');
-    expect(stderr).toContain('"../i"');
-    expect(stderr).toContain('"../m"');
-    expect(lock.packages.j[0]).toBe("j@file:../i/j");
-    expect(lock.packages.j[1]).toStrictEqual({ dependencies: { k: "" } });
-    expect(lock.packages.x[0]).toBe("x@1.0.0");
-    const firsts = firstsOf(lock.packages);
-    expect(firsts).toContain("k@1.0.0");
-    expect(firsts).toContain("b@file:../a/node_modules/b");
-    expect(firsts).toContain("c@1.0.0");
-    expect(firsts).toContain("o@file:../m/node_modules/n/o");
+    expect(stderr).toContain(
+      'skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"',
+    );
+    expect(lock.packages.j).toStrictEqual(["j@file:../i/j", { dependencies: { k: "" } }]);
+    const registry = (name: string) => `${OFFLINE_REGISTRY}${name}/-/${name}-1.0.0.tgz`;
+    // Entries without `resolved` get the configured registry (B4); folder names follow npm's name-from-folder.
+    expect(
+      Object.fromEntries(Object.entries<any[]>(lock.packages).map(([key, v]) => [key, [v[0], v[1]]])),
+    ).toStrictEqual({
+      c: ["c@1.0.0", registry("c")],
+      j: ["j@file:../i/j", { dependencies: { k: "" } }],
+      k: ["k@1.0.0", registry("k")],
+      o: ["o@file:../m/node_modules/n/o", { dependencies: { p: "" } }],
+      o2: ["o2@file:../m/node_modules/n/o2", { dependencies: { p: "" } }],
+      x: ["x@1.0.0", registry("x")],
+      "o/p": ["p@file:../m/node_modules/p", {}],
+      "o2/p": ["p@file:../m/node_modules/p", {}],
+      "x/b": ["b@file:../a/node_modules/b", { dependencies: { c: "" } }],
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -908,13 +935,26 @@ describe("package-lock.json migration fixes", () => {
   test.concurrent("bundled entry without resolved (B9)", async () => {
     const A = "@isaacs/testing-rebuild-bundle-a";
     const Bn = "@isaacs/testing-rebuild-bundle-b";
-    using dir = fixture("testing-rebuild-bundle-parent");
+    using dir = fixture("testing-rebuild-bundle--parent");
     const { lock } = await migrate(dir);
     expect(lock.packages[A][2].dependencies).toStrictEqual({ [Bn]: "" });
     const nested = lock.packages[`${A}/${Bn}`];
     expect(nested[0]).toBe(`${Bn}@1.0.1`);
     expect(nested[2].bundled).toBe(true);
     await frozen(dir);
+  });
+
+  test.concurrent("a bundled copy reached first does not lose the registry copy's integrity (B7, B9)", async () => {
+    const B = "@isaacs/testing-bundledeps";
+    using dir = fixture("two-bundled-deps");
+    const npmLock = JSON.parse(fs.readFileSync(join(ARBORIST, "two-bundled-deps", "package-lock.json"), "utf8"));
+    const { integrity } = npmLock.packages[`node_modules/${B}-b`];
+    const { lock } = await migrate(dir);
+    // `${B}-a` (bundled) reaches its nested `${B}-b` before `${B}-c` reaches the hoisted registry one.
+    const b = [`${B}-b@1.0.0`, "", {}, integrity];
+    expect(lock.packages[`${B}-b`]).toStrictEqual(b);
+    expect(lock.packages[`${B}/${B}-b`]).toStrictEqual(b);
+    expect(lock.packages[`${B}/${B}-a`][2]).toStrictEqual({ dependencies: { [`${B}-b`]: "*" }, bundled: true });
   });
 
   test.concurrent("identical name@version at several paths becomes one package (B7)", async () => {
@@ -924,7 +964,15 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).not.toContain("not depended on");
     expect(exitCode).toBe(0);
     expect(await pmHash(dir)).toBe(before);
-    expect(firstsOf(lock.packages).filter(v => v === "eslint-visitor-keys@1.3.0")).toHaveLength(4);
+    // npm nested four copies of 1.3.0; bun keeps one package and hoists it (2.0.0 stays under eslint).
+    expect(
+      Object.entries<any[]>(lock.packages)
+        .filter(([, v]) => v[0].startsWith("eslint-visitor-keys@"))
+        .map(([key, v]) => [key, v[0]]),
+    ).toStrictEqual([
+      ["eslint-visitor-keys", "eslint-visitor-keys@1.3.0"],
+      ["eslint/eslint-visitor-keys", "eslint-visitor-keys@2.0.0"],
+    ]);
     await frozen(dir);
 
     using fresh = fixture("carbonium");
@@ -962,7 +1010,13 @@ describe("package-lock.json migration fixes", () => {
     expect(install.exitCode).toBe(0);
     const { lock: updated } = await readLock(dir);
     expect(updated.workspaces["packages/d"]).toStrictEqual({ name: "d", version: "1.0.0" });
-    expect(updated.packages).toStrictEqual(lock.packages);
+    const { d, ...rest } = updated.packages;
+    expect(d).toStrictEqual(["d@workspace:packages/d"]);
+    // "" means the registry.npmjs.org tarball; a re-save under a different configured registry spells it out.
+    for (const entry of Object.values(rest) as unknown[][]) {
+      if (typeof entry[1] === "string" && entry[1].startsWith(OFFLINE_REGISTRY)) entry[1] = "";
+    }
+    expect(rest).toStrictEqual(lock.packages);
   });
 
   test.concurrent("absent peer and optional targets keep their edges (#49, #52)", async () => {
@@ -1021,25 +1075,18 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
-  describe("regression guard", () => {
+  describe("arborist fixtures", () => {
     // Snapshot matchers are unsupported inside a concurrent group, so these stay sequential.
-    test.each([
-      "workspaces-simple-virtual",
-      "workspaces-top-level-link-virtual",
-      "workspaces-shared-deps-virtual",
-      "cli-750",
-      "dedupe-lockfile",
-      "update-exact-version",
-      "peer-dep-cycle-with-sw",
-      "testing-peer-deps-nested",
-      "link-dep-lifecycle-scripts",
-      "flow-outdated",
-    ])("regression guard: %s migrates unchanged", async name => {
+    test.each(arboristFixtures.map(f => f.name))("%s", async name => {
       using dir = fixture(name);
-      const { text, exitCode } = await migrate(dir);
-      expect(text).toMatchSnapshot();
-      expect(exitCode).toBe(0);
-      await frozen(dir);
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      const report = [stderr.replace(/^\[[\d.]+m?s\] /gm, "").trimEnd(), `bun pm migrate exit code: ${exitCode}`];
+      if (exitCode === 0) {
+        const { text } = await readLock(dir);
+        const check = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+        report.push(`bun install --frozen-lockfile exit code: ${check.exitCode}`, "", text);
+      }
+      expect(report.join("\n")).toMatchSnapshot();
     });
   });
 });

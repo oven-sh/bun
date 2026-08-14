@@ -1,7 +1,0 @@
-{
-  "name": "prune-lockfile-optional-peer",
-  "version": "1.0.0",
-  "dependencies": {
-    "dedent": "^1.6.0"
-  }
-}

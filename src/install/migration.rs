@@ -375,31 +375,18 @@ fn pkg_flag_is_true(pkg: &E::ObjectJSON, key: &[u8]) -> bool {
     matches!(pkg.get(key), Some(E::JsonValue::Boolean(true)))
 }
 
+/// npm's `name-from-folder`: the basename, keeping an `@scope` parent component.
 fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
-    if pkg_path.is_empty() {
-        return b"";
+    let Some(slash) = strings::last_index_of_char(pkg_path, b'/') else {
+        return pkg_path;
+    };
+    let parent = &pkg_path[..slash];
+    let parent_start = strings::last_index_of_char(parent, b'/').map_or(0, |i| i + 1);
+    if parent[parent_start..].starts_with(b"@") {
+        &pkg_path[parent_start..]
+    } else {
+        &pkg_path[slash + 1..]
     }
-
-    let pkg_name_start: usize =
-        if let Some(last_index) = strings::last_index_of(pkg_path, b"/node_modules/") {
-            last_index + b"/node_modules/".len()
-        } else if pkg_path.starts_with(b"node_modules/") {
-            b"node_modules/".len()
-        } else if let Some(last_index) = strings::last_index_of(pkg_path, b"/") {
-            // Link targets outside `node_modules/` (e.g. `vendor/a`) use the
-            // path's basename; keep the scope (`vendor/@scope/a`) like npm's
-            // `name-from-folder`, which omits `name` when it matches this.
-            let parent = &pkg_path[..last_index];
-            match strings::last_index_of(parent, b"/") {
-                Some(i) if parent[i + 1..].starts_with(b"@") => i + b"/".len(),
-                None if parent.starts_with(b"@") => 0,
-                _ => last_index + b"/".len(),
-            }
-        } else {
-            0
-        };
-
-    &pkg_path[pkg_name_start..]
 }
 
 #[inline]

@@ -1,7 +1,0 @@
-{
-  "name": "workspace-simple",
-  "workspaces": [
-    "a",
-    "b"
-  ]
-}

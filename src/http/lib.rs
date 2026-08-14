@@ -999,6 +999,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
@@ -1440,7 +1441,7 @@ pub(crate) fn print_request(
         "> {} {} {}",
         ver,
         BStr::new(request.method),
-        bun_core::fmt::redacted_npm_url(url),
+        EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
     );
     for header in request.headers {
         let name = header.name();
@@ -1451,8 +1452,8 @@ pub(crate) fn print_request(
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
                 "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
-                BStr::new(name),
-                BStr::new(&value[..scheme_len]),
+                escape_control_chars(name),
+                escape_control_chars(&value[..scheme_len]),
             );
         } else {
             bun_core::pretty_errorln!("> {}", header);

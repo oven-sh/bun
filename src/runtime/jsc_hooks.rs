@@ -1054,7 +1054,9 @@ pub(crate) unsafe fn auto_tick_after_immediates(
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || !unsafe { &*el }.immediate_tasks.is_empty()
+            || (!unsafe { &*el }.immediate_tasks.is_empty()
+                // (outer immediates a native-only run leaves queued are not pending for it)
+                && !bun_io::run_epoch::active_run_is_native_only())
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout (a native-only domain run
         // does not process the engines, so their stale deadline is no reason to wake).

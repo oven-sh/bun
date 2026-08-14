@@ -229,7 +229,7 @@ impl Tag {
         // (WTFTimer lives in its own heap, which is skipped wholesale during a run.)
         !matches!(
             self,
-            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
+            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer
         )
     }
 

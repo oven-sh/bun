@@ -1041,8 +1041,15 @@ impl All {
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
         let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
+        // A native-only domain run has no timers of its own (spawnSync enforces
+        // its timeout by deadline), so the heap neither wakes it nor is drained.
         // SAFETY: `this` is live, and only this thread touches the regular heap.
-        let reg_next = (unsafe { &*this }).timers.peek().map(|min| {
+        let reg_next = if bun_io::run_epoch::active_run_is_native_only() {
+            None
+        } else {
+            (unsafe { &*this }).timers.peek()
+        }
+        .map(|min| {
             // SAFETY: `peek` returns a live heap node.
             let next = unsafe { &(*min).next };
             Timespec {
@@ -1146,6 +1153,10 @@ impl All {
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+        if bun_io::run_epoch::active_run_is_native_only() {
+            // See `get_timeout`: nothing in either heap is the run's.
+            return;
+        }
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to

@@ -46,7 +46,10 @@ struct RunState {
     suppressed_before: bool,
     /// Foreign `setImmediate`s that reached the front, in order.
     parked_immediates: Vec<*mut ImmediateObject>,
-    /// Foreign event-loop tasks, in dequeue order.
+    /// The task queue as it stood at entry (all older than the run), set aside
+    /// wholesale so a backlog is not re-examined task by task on every call.
+    tasks_at_entry: Vec<Task>,
+    /// Foreign event-loop tasks that arrived during the run, in dequeue order.
     parked_tasks: Vec<Task>,
 }
 
@@ -109,6 +112,7 @@ pub(crate) fn park_task_if_foreign(task: Task) -> bool {
 pub struct DomainRun {
     vm: *mut VirtualMachine,
     start: u32,
+    policy: Policy,
 }
 
 impl DomainRun {
@@ -129,12 +133,22 @@ impl DomainRun {
                 (*vm).suppress_microtask_drain.replace(true)
             }
         };
+        // SAFETY: per fn contract; `event_loop()` is the VM's embedded loop.
+        let tasks_at_entry = unsafe {
+            let el = &mut *(*vm).event_loop();
+            let mut taken = Vec::with_capacity(el.tasks.readable_length());
+            while let Some(task) = el.tasks.read_item() {
+                taken.push(task);
+            }
+            taken
+        };
         RUNS.with_borrow_mut(|runs| {
             runs.push(RunState {
                 start,
                 policy,
                 suppressed_before,
                 parked_immediates: Vec::new(),
+                tasks_at_entry,
                 parked_tasks: Vec::new(),
             })
         });
@@ -146,7 +160,7 @@ impl DomainRun {
             }
         }
         bun_core::scoped_log!(DomainRun, "enter run {}", start);
-        DomainRun { vm, start }
+        DomainRun { vm, start, policy }
     }
 
     /// One gated turn of the loop: tasks, immediates and a checkpoint; then —
@@ -173,8 +187,12 @@ impl DomainRun {
         unsafe {
             let el = (*vm).event_loop();
             (*el).tick();
-            (*el).tick_immediate_tasks(vm);
-            let _ = (*el).drain_microtasks();
+            if self.policy == Policy::NativeAndScripts {
+                // (A native-only run has queued no immediates or microtasks of
+                // its own; the queues hold outer work and are left untouched.)
+                (*el).tick_immediate_tasks(vm);
+                let _ = (*el).drain_microtasks();
+            }
         }
         if done() {
             return deadline_passed();
@@ -202,7 +220,8 @@ unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
             let outer = runs.iter().rev().nth(1).map(|r| (r.start, r.policy));
             let run = runs.last_mut().expect("domain run active");
             debug_assert_eq!(run.start, start);
-            let tasks = core::mem::take(&mut run.parked_tasks);
+            let mut tasks = core::mem::take(&mut run.tasks_at_entry);
+            tasks.append(&mut run.parked_tasks);
             let immediates = core::mem::take(&mut run.parked_immediates);
             (tasks, immediates, run.policy, run.suppressed_before, outer)
         });

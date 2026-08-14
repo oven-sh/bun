@@ -46,6 +46,11 @@ WEBKIT_SRC="${WEBKIT_SRC:-/storage/Users/currentUser/springsources/WebKit}"
 WEBKIT_COMMIT=$(grep "export const WEBKIT_VERSION" "$REPO_ROOT/scripts/build/deps/webkit.ts" | head -1 | sed 's/.*"\([a-f0-9]\{40\}\)".*/\1/')
 [ -z "$WEBKIT_COMMIT" ] && { err "无法从 scripts/build/deps/webkit.ts 解析 WEBKIT_VERSION"; exit 1; }
 
+# ICU: brew icu4c@78 (OHOS 原生安装, 与上游 bundled ICU 78.3 一致)。
+# 原生编译直接用 brew 的库/头文件/工具, 无需 build/ohos-icu 交叉构建。
+# 保留 build/ohos-icu 布局 (target + host/bin) 以兼容 webkit.ts 的路径期望,
+# 内容为指向 brew 的符号链接。
+ICU_BREW="${ICU_BREW:-$HOMEBREW_PREFIX/opt/icu4c}"
 ICU_DIR="$REPO_ROOT/build/ohos-icu"
 ICU_TARGET="$ICU_DIR/target"
 ICU_LIB="$ICU_TARGET/lib"
@@ -82,7 +87,14 @@ phase_check() {
   [ -f "$BUN" ]                  || { err "bootstrap bun 未找到: $BUN"; fail=1; }
   local missing_icu=0
   for lib in libicudata.a libicui18n.a libicuuc.a; do
-    [ -f "$ICU_LIB/$lib" ] || { err "ICU 库缺少: $ICU_LIB/$lib"; missing_icu=1; }
+    [ -f "$ICU_BREW/lib/$lib" ] || { err "brew ICU 库缺少: $ICU_BREW/lib/$lib (brew install icu4c@78)"; missing_icu=1; }
+  done
+  [ -f "$ICU_BREW/include/unicode/umachine.h" ] || { err "brew ICU 头文件缺少: $ICU_BREW/include/unicode"; missing_icu=1; }
+  for tool in genrb genccode gencmn pkgdata; do
+    found=""
+    [ -f "$ICU_BREW/bin/$tool" ] && found="$ICU_BREW/bin/$tool"
+    [ -f "$ICU_BREW/sbin/$tool" ] && found="$ICU_BREW/sbin/$tool"
+    [ -z "$found" ] && { err "brew ICU 工具缺少: $tool"; missing_icu=1; }
   done
   [ "$missing_icu" = "1" ] && fail=1
   if [ "$fail" = "1" ]; then err "环境检查失败"; exit 1; fi
@@ -148,34 +160,33 @@ phase_webkit() {
 phase_setup_layout() {
   info "=== 设置构建布局 ==="
 
-  # 4a: build/ohos-icu — 指向本地 ICU 构建
+  # 4a: build/ohos-icu — 指向 brew icu4c@78 (原生安装) 的符号链接布局
+  # webkit.ts 期望 ohosIcuDir="<prefix>/target" + hostBin="<prefix>/host/bin",
+  # 所以保留该结构, 内容全部符号链接到 brew 安装 (原生编译, 无交叉构建)。
+  rm -rf "$ICU_DIR"
   mkdir -p "$ICU_TARGET/include" "$ICU_TARGET/lib" "$ICU_DIR/host/bin"
 
-  local icu_include
-  icu_include=$(find "$REPO_ROOT/build" -path "*/ohos-icu/target/include/unicode/umachine.h" 2>/dev/null | head -1 | xargs dirname 2>/dev/null | xargs dirname 2>/dev/null || true)
-  if [ -n "$icu_include" ] && [ -d "$icu_include/unicode" ]; then
-    ln -sf "$icu_include/unicode" "$ICU_TARGET/include/unicode" 2>/dev/null || true
-  fi
+  ln -sf "$ICU_BREW/include/unicode" "$ICU_TARGET/include/unicode" 2>/dev/null || true
 
   for lib in libicudata.a libicui18n.a libicuuc.a; do
-    if [ -f "$ICU_LIB/$lib" ]; then
-      [ -f "$ICU_TARGET/lib/$lib" ] || cp "$ICU_LIB/$lib" "$ICU_TARGET/lib/$lib"
+    if [ -f "$ICU_BREW/lib/$lib" ]; then
+      ln -sf "$ICU_BREW/lib/$lib" "$ICU_TARGET/lib/$lib"
     else
-      local found
-      found=$(find "$REPO_ROOT/build" -name "$lib" -type f 2>/dev/null | head -1)
-      if [ -n "$found" ]; then
-        cp "$found" "$ICU_TARGET/lib/$lib"
-      else
-        err "找不到 ICU 库: $lib"
-        exit 1
-      fi
+      err "brew ICU 库缺少: $ICU_BREW/lib/$lib"
+      exit 1
     fi
   done
 
   for tool in genrb genccode gencmn pkgdata; do
-    local t
-    t=$(command -v "$tool" 2>/dev/null || true)
-    [ -n "$t" ] && ln -sf "$t" "$ICU_DIR/host/bin/$tool" 2>/dev/null || true
+    local t=""
+    [ -f "$ICU_BREW/bin/$tool" ] && t="$ICU_BREW/bin/$tool"
+    [ -f "$ICU_BREW/sbin/$tool" ] && t="$ICU_BREW/sbin/$tool"
+    if [ -n "$t" ]; then
+      ln -sf "$t" "$ICU_DIR/host/bin/$tool"
+    else
+      err "brew ICU 工具缺少: $tool"
+      exit 1
+    fi
   done
 
   # 4b: build/ohos-cross-libs — 指向 llvm@21 的 OHOS libc++ (避免 musl 冲突)

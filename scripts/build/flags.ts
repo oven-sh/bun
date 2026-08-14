@@ -1248,6 +1248,15 @@ export const linkerFlags: Flag[] = [
         "-lc++",
         "-lc++abi",
         "-lunwind",
+        // OHOS: brew ICU (icu4c@78) is built against libc++'s `__n1` ABI
+        // namespace, which the static libc++_static.a (llvm@21, `__h`) does
+        // not provide. Resolve ICU's `__n1` undefined references from the
+        // SDK's libc++_shared.so at link time; the runtime loads it via
+        // DT_NEEDED alongside bun's statically-linked `__h` libc++ (the two
+        // namespaces are disjoint, so they coexist).
+        ...(c.ohosIcuDir && c.ohosSdkRoot
+          ? [join(c.ohosSdkRoot!, "native/llvm/lib/aarch64-linux-ohos/libc++_shared.so")]
+          : []),
         "-lc",
       ].filter(f => f !== ""),
     when: c => c.ohos,

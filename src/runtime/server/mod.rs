@@ -586,12 +586,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper while it is alive (`Strong` or `Weak`), or `None`
-    /// once `finalize()` has set `Finalized`. `Weak` means the wrapper cell is
+    /// Returns the wrapper while it is alive (`Strong` or `Weak`) and its VM
+    /// may still run script, else `None`. `Weak` means the wrapper cell is
     /// still live (its WriteBarrier slots still root the handlers); only
     /// `Finalized` means the slots are gone and the `config` shadows may point
-    /// at freed cells. Dispatch trampolines answer 503+close on `None`.
+    /// at freed cells. A VM whose script gate has closed (a worker that called
+    /// `process.exit()` or was asked to terminate, still draining the current
+    /// loop tick before its stop phase closes the listener) must not have a
+    /// request built for it either: uWS requires every dispatched request to
+    /// be answered or adopted, so dispatch trampolines answer 503+close on
+    /// `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
+        if !self.vm().script_allowed() {
+            return None;
+        }
         self.js_value.try_get()
     }
 }
@@ -1244,13 +1252,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
 
-        // A stopped server, or a VM whose script gate has closed (a worker asked
-        // to terminate, still draining its loop): uWS requires every dispatched
-        // request to be answered or adopted, so answer natively.
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
         let this_ref = unsafe { &*this };
-        if this_ref.js_value_for_dispatch().is_none() || !this_ref.vm().script_allowed() {
+        if this_ref.js_value_for_dispatch().is_none() {
             server_body::respond_stopped_503(resp);
             return;
         }

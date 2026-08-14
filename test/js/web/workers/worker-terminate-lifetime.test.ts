@@ -521,3 +521,56 @@ test(
   },
   timeout,
 );
+
+// Regression: a worker's own Bun.serve() listener kept dispatching requests
+// into the fetch handler for the rest of the loop tick after process.exit()
+// had stopped the VM. Building the Request for a VM whose termination had
+// already unwound script initialised JSRequestStructure under a pending
+// TerminationException, tripping VMTraps::deferTerminationSlow's
+// ASSERT(vm.hasTerminationRequest()). A stopped VM's server now answers 503
+// natively, as it already did for node:http.
+test.skipIf(!isDebug)(
+  "process.exit() with requests arriving at the worker's own Bun.serve() does not build them for a stopped VM",
+  async () => {
+    const workers = slow ? 8 : 24;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const s = Bun.serve({ port: 0, fetch: () => new Response('x') });" +
+          "for (let i = 0; i < 8; i++) fetch(s.url).then(r => r.text()).catch(() => {});" +
+          "setImmediate(() => process.exit(0));";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(src, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", (code) => {
+            if (code !== 0) { console.error("worker exited " + code); process.exit(1); }
+            exited++;
+            again();
+          });
+        }
+        again();
+        again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

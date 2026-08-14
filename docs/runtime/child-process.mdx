@@ -168,6 +168,27 @@ console.log(`CPU time (user): ${usage.cpuTime.user} µs`);
 console.log(`CPU time (system): ${usage.cpuTime.system} µs`);
 ```
 
+## Resource limits with cgroups (Linux)
+
+On Linux, pass `cgroup` to start the subprocess inside a [control group](https://docs.kernel.org/admin-guide/cgroup-v2.html). The child joins the cgroup before it begins executing, so limits configured on it — memory, pids, CPU — apply from the first instruction and to every process the child spawns in turn. When a memory limit is exceeded the kernel OOM-kills a process _inside_ the cgroup instead of reclaiming memory from the parent.
+
+A cgroup is a directory under `/sys/fs/cgroup`; create and configure it with ordinary file operations, then pass its path (or an open directory file descriptor):
+
+```ts index.ts icon="/icons/typescript.svg"
+import { mkdirSync, writeFileSync } from "node:fs";
+
+const dir = "/sys/fs/cgroup/build-jobs";
+mkdirSync(dir, { recursive: true });
+writeFileSync(`${dir}/memory.max`, String(2 * 1024 ** 3)); // cgroup v1: memory.limit_in_bytes
+
+const proc = Bun.spawn({
+  cmd: ["make", "-j8"],
+  cgroup: dir,
+});
+```
+
+The same directory can be passed to any number of spawns; the limit applies to their combined usage. Both cgroup v1 and v2 hierarchies are supported. Creating cgroups typically requires root or a delegated subtree. On other platforms the option is ignored; on Linux, the spawn fails if the cgroup cannot be joined.
+
 ## Using AbortSignal
 
 You can abort a subprocess using an `AbortSignal`:

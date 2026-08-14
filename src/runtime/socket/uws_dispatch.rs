@@ -180,7 +180,7 @@ us_dispatch_shims! {
 /// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
+unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
     data: *mut u8,
     len: c_int,
@@ -231,7 +231,11 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, len: c_int) {
+pub(crate) unsafe extern "C" fn us_dispatch_session(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
     let s_ref = us_socket_t::opaque_mut(s);
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
@@ -248,7 +252,7 @@ pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    let _ = TLSSocket::on_session(tls, slice);
+    TLSSocket::on_session(tls, slice);
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS
@@ -258,7 +262,11 @@ pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u
 /// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8, len: c_int) {
+pub(crate) unsafe extern "C" fn us_dispatch_keylog(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
     let s_ref = us_socket_t::opaque_mut(s);
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
@@ -275,5 +283,5 @@ pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    let _ = TLSSocket::on_keylog(tls, slice);
+    TLSSocket::on_keylog(tls, slice);
 }

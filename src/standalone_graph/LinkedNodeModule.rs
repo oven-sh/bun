@@ -60,6 +60,7 @@
 
 #![cfg(windows)]
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -67,7 +68,7 @@ use bun_core::scoped_log;
 use bun_exe_format::pe::{
     Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_MAGIC, LINKED_VERSION,
 };
-use bun_threading::Guarded;
+use bun_threading::Mutex;
 use bun_windows_sys::externs::kernel32;
 
 bun_core::declare_scope!(LinkedNodeModule, visible);
@@ -254,13 +255,27 @@ struct Table {
 /// path has no such lock, so we take our own around the lazy blob parse
 /// and the check-and-bind. Uncontended after first load.
 ///
-/// `raw_mutex()` is used (not the RAII guard) because the `did_bind`
-/// hand-off deliberately leaves the lock held across the FFI return;
-/// see `Bun__initLinkedNodeModule`.
-static TABLE: Guarded<Table> = Guarded::new(Table {
+/// A bare `Mutex` with explicit `lock()`/`unlock()` (not a RAII guard)
+/// because the `did_bind` hand-off deliberately leaves the lock held
+/// across the FFI return and `Bun__linkedNodeModuleUnlock()` releases it
+/// from C++; see `Bun__initLinkedNodeModule`. `TABLE` must only be
+/// touched while `LOCK` is held.
+static LOCK: Mutex = Mutex::new();
+
+struct TableCell(UnsafeCell<Table>);
+// SAFETY: every access to the inner `Table` goes through `LOCK`
+// (`Bun__initLinkedNodeModule` takes it before touching `TABLE` and either
+// releases it before returning or hands the release to
+// `Bun__linkedNodeModuleUnlock`), so the `UnsafeCell` is never aliased
+// mutably across threads. `Entry` holds `&'static [u8]` into the
+// loader-mapped blob plus plain data, and `Resolved`'s pointers are
+// process-wide image addresses, so the value itself is safe to share.
+unsafe impl Sync for TableCell {}
+
+static TABLE: TableCell = TableCell(UnsafeCell::new(Table {
     loaded: false,
     entries: Vec::new(),
-});
+}));
 
 fn blob() -> Option<&'static [u8]> {
     // SAFETY: implemented in c-bindings.cpp; returns a pointer into the
@@ -280,7 +295,7 @@ fn blob() -> Option<&'static [u8]> {
     Some(unsafe { core::slice::from_raw_parts(ptr, len as usize) })
 }
 
-/// Caller must hold `TABLE`'s mutex.
+/// Caller must hold `LOCK`.
 fn ensure_loaded(table: &mut Table) {
     if table.loaded {
         return;
@@ -369,7 +384,7 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
     Ok(())
 }
 
-/// Caller must hold `TABLE`'s mutex. Returns an index to avoid holding a
+/// Caller must hold `LOCK`. Returns an index to avoid holding a
 /// `&mut Entry` borrow across `bind()`.
 fn lookup(table: &Table, path: &[u8]) -> Option<usize> {
     // Build-time keys are always forward-slash `B:/~BUN` paths (to_bytes
@@ -716,7 +731,7 @@ fn bind_imports(base: *mut u8, entry: &Entry, self_h: *mut c_void) -> Result<(),
 /// `file://` prefix.
 ///
 /// When this call is the one that ran `bind()` (`out.did_bind == true`),
-/// the table mutex is intentionally left held across the return: the C++
+/// `LOCK` is intentionally left held across the return: the C++
 /// caller first publishes the addon's self-registration to the
 /// process-global `DLHandleMap`, then calls
 /// `Bun__linkedNodeModuleUnlock()`. A concurrent Worker blocked here on
@@ -747,15 +762,17 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
         return false;
     }
 
-    let mutex = TABLE.raw_mutex();
-    mutex.lock();
-    // SAFETY: mutex held; this is the Guarded's protected value.
-    let table = unsafe { &mut *TABLE.unsynchronized_value.get() };
+    LOCK.lock();
+    // SAFETY: LOCK is held (see the `TableCell` Sync impl); this is the
+    // only place a `&mut Table` is ever formed, and it does not outlive
+    // the locked region (the `did_bind` path returns without touching
+    // `table` again; the unlock happens in Bun__linkedNodeModuleUnlock).
+    let table = unsafe { &mut *TABLE.0.get() };
 
     ensure_loaded(table);
 
     let Some(idx) = lookup(table, path) else {
-        mutex.unlock();
+        LOCK.unlock();
         return false;
     };
     match table.entries[idx].state {
@@ -765,7 +782,7 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
                 *out = resolved;
             }
             // did_bind stays false — lock releases before return.
-            mutex.unlock();
+            LOCK.unlock();
             return true;
         }
         // A previous attempt already mutated the section; do not touch
@@ -773,7 +790,7 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
         // from `.bun`, so behaviour is exactly as if the merge had
         // never happened.
         State::Failed => {
-            mutex.unlock();
+            LOCK.unlock();
             return false;
         }
         State::Unbound => {}
@@ -799,7 +816,7 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
                 err
             );
             table.entries[idx].state = State::Failed;
-            mutex.unlock();
+            LOCK.unlock();
             false
         }
     }
@@ -811,5 +828,5 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
 /// `napi_register_module_v1` (which are re-entrant into init).
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__linkedNodeModuleUnlock() {
-    TABLE.raw_mutex().unlock();
+    LOCK.unlock();
 }

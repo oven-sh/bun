@@ -196,6 +196,7 @@ void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
     this->onResolveFunction.visit(visitor);
     this->setupFunction.visit(visitor);
     this->plugin.deferredPromises.visit(this, visitor);
+    this->plugin.onBeforeParseExternals.visit(this, visitor);
 }
 
 template<typename Visitor>
@@ -228,14 +229,22 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::RegExpObject* regExp = uncheckedDowncast<JSC::RegExpObject>(callFrame->argument(0));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExp = dynamicDowncast<JSC::RegExpObject>(callFrame->argument(0));
+    if (!regExp) [[unlikely]] {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected filter (1st argument) to be a RegExp"_s);
+        return {};
+    }
     WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     if (namespaceStr == "file"_s) {
         namespaceStr = String();
     }
 
     uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
-    auto& vm = JSC::getVM(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     unsigned index = 0;
     if (isOnLoad) {
@@ -347,7 +356,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     // Clone the regexp so we don't have to worry about it being used concurrently with the JS thread.
     // TODO: Should we have a regexp object for every thread in the thread pool? Then we could avoid using
     // a mutex to synchronize access to the same regexp from multiple threads.
-    JSC::RegExpObject* jsRegexp = uncheckedDowncast<JSC::RegExpObject>(callFrame->argument(0));
+    auto* jsRegexp = dynamicDowncast<JSC::RegExpObject>(callFrame->argument(0));
+    if (!jsRegexp) [[unlikely]] {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected filter (1st argument) to be a RegExp"_s);
+        return {};
+    }
     RegExp* reggie = jsRegexp->regExp();
     RegExp* newRegexp = RegExp::create(vm, reggie->pattern(), reggie->flags());
 
@@ -403,6 +416,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
+        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
     }
 
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);

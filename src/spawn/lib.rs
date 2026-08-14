@@ -48,6 +48,9 @@ pub mod process;
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
+pub mod error;
+pub use error::{Error, Result};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Public surface — re-exports under the names mid-tier callers already use.
 // ──────────────────────────────────────────────────────────────────────────
@@ -116,9 +119,6 @@ pub use bun_sys as spawn_sys;
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
 pub type SpawnResult = process::PosixSpawnResult;
-/// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
-#[cfg(unix)]
-pub type ExtraFd = process::PosixStdio;
 
 #[cfg(windows)]
 pub use process::{
@@ -127,8 +127,6 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub type ExtraFd = process::WindowsStdio;
 #[cfg(windows)]
 pub mod windows {
     /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
@@ -142,8 +140,6 @@ pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
     pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
-    #[cfg(not(windows))]
-    pub type WindowsOptions = ();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -158,6 +154,7 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     pub use crate::process::StdioKind;
@@ -173,11 +170,6 @@ pub mod subprocess {
     #[inline]
     pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
         Some(fd)
-    }
-    #[cfg(windows)]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        crate::process::WindowsStdioResult::BufferFd(fd)
     }
 
     /// The in-memory payload that a
@@ -211,7 +203,7 @@ pub mod subprocess {
             Self::OwnedBytes(bytes)
         }
 
-        pub fn slice(&self) -> &[u8] {
+        pub(crate) fn slice(&self) -> &[u8] {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
@@ -229,7 +221,7 @@ pub mod subprocess {
             *self = Source::Detached;
         }
 
-        pub fn memory_cost(&self) -> usize {
+        pub(crate) fn memory_cost(&self) -> usize {
             match self {
                 Source::OwnedBytes(b) => b.len(),
                 Source::Any(s) => s.memory_cost(),
@@ -273,7 +265,7 @@ pub struct RunResult {
 /// is NUL-terminated, the array is NULL-terminated, and env entries are
 /// flattened to `KEY=VALUE\0`.
 #[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
-pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
     // Windows: `process::sync::spawn`
     // below is libuv-based on Windows and reads `options.windows.loop_` to get
     // the `uv_loop_t*`, but the only caller (`repository::exec`) runs on a
@@ -300,7 +292,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         }
 
         let mut iter = opts.argv.iter();
-        let argv0 = iter.next().ok_or(bun_core::err!("FileNotFound"))?;
+        let argv0 = iter
+            .next()
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
         // `Command::new` does PATH/PATHEXT lookup on Windows.
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
@@ -313,9 +307,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         cmd.stdin(std::process::Stdio::null());
 
         let out = cmd.output().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => bun_core::err!("FileNotFound"),
-            std::io::ErrorKind::PermissionDenied => bun_core::err!("AccessDenied"),
-            _ => bun_core::err!("Unexpected"),
+            std::io::ErrorKind::NotFound => crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+            std::io::ErrorKind::PermissionDenied => {
+                crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+            }
+            _ => crate::Error::Unexpected,
         })?;
 
         let term = match out.status.code() {
@@ -339,11 +335,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
             break 'argv0;
         };
         // Only PATH-search bare names (no separator present).
-        if first.contains(&b'/') {
+        if bun_core::strings::contains_char(first, b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if bun_core::strings::contains_char(first, b'\\') {
             break 'argv0;
         }
         let path = opts
@@ -411,7 +407,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         ..Default::default()
     };
 
-    // Outer `Result<_, bun_core::Error>` for hard errors,
+    // Outer `Result<_, crate::Error>` for hard errors,
     // inner `Maybe` for the syscall error.
     let result = process::sync::spawn(&sync_opts)??;
 

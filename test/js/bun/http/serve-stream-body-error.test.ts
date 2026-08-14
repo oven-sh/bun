@@ -118,6 +118,95 @@ test.concurrent("mid-stream error in development mode: reported and not terminat
   expect(stderr).toContain("boom");
 });
 
+// The client aborts the download mid-stream, which makes Bun cancel the body
+// ReadableStream. The source's cancel() throws, but the rejected promise is
+// one Bun created internally: it must be marked handled rather than surfacing
+// as an unhandledRejection (which, under Bun's default policy, would exit the
+// whole server process because a remote peer hung up).
+test.concurrent.each(["cancel-throw", "cancel-async-reject", "cancel-byte-throw"])(
+  "%s: a throwing cancel() on client abort is not an unhandledRejection",
+  async variant => {
+    const { stdout, stderr, exitCode } = await runFixture(variant);
+    const result = JSON.parse(stdout);
+    expect({
+      result: {
+        statusLine: result.statusLine,
+        errorCb: result.errorCb,
+        unhandled: result.unhandled,
+        secondStatusLine: result.secondStatusLine,
+      },
+      stderr,
+      exitCode,
+    }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        errorCb: 0,
+        unhandled: 0,
+        secondStatusLine: "HTTP/1.1 200 OK",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// Same under `development: true` (the DEBUG RequestContext monomorphization).
+test.concurrent("cancel-throw in development mode: not an unhandledRejection", async () => {
+  const { stdout, stderr, exitCode } = await runFixture("cancel-throw", "development");
+  const result = JSON.parse(stdout);
+  expect({ unhandled: result.unhandled, errorCb: result.errorCb, stderr, exitCode }).toEqual({
+    unhandled: 0,
+    errorCb: 0,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// With Bun's default unhandledRejection policy (no handler installed), a
+// throwing cancel() triggered by a remote peer disconnecting mid-download
+// must not exit the server process.
+test.concurrent("a throwing cancel() on client abort does not kill the server process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import net from "node:net";
+      const cancelRan = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch() {
+          return new Response(new ReadableStream({
+            async pull(c) { c.enqueue("chunk-a"); await Bun.sleep(4); },
+            cancel() { queueMicrotask(cancelRan.resolve); throw new Error("boom"); },
+          }));
+        },
+      });
+      await new Promise(resolve => {
+        const sock = net.connect(server.port, "127.0.0.1", () => {
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        let buf = "";
+        sock.on("data", d => { buf += d; if (buf.includes("chunk-a")) sock.resetAndDestroy(); });
+        sock.on("error", () => {});
+        sock.on("close", resolve);
+      });
+      await cancelRan.promise;
+      // Tick the event loop past the unhandledRejection checkpoint that used
+      // to exit the process before this line was reached.
+      for (let i = 0; i < 10; i++) await Bun.sleep(0);
+      const res = await fetch(new URL("/ok", server.url));
+      console.log("alive", res.status);
+      server.stop(true);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive 200\n", stderr: "", exitCode: 0 });
+});
+
 // The whole point: with Bun's default unhandledRejection policy (no handler
 // installed), a single request whose Response body errors must not exit the
 // server process.

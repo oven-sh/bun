@@ -51,9 +51,7 @@
 
 use core::ops::Range;
 use core::ptr::NonNull;
-use std::io::Write as _;
 
-use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 use bun_core::{OwnedString, strings};
@@ -75,8 +73,6 @@ pub enum HostedGitInfoError {
 
 bun_core::oom_from_alloc!(HostedGitInfoError);
 
-bun_core::named_error_set!(HostedGitInfoError);
-
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseUrlError {
     #[error("InvalidGitUrl")]
@@ -86,8 +82,6 @@ pub enum ParseUrlError {
 }
 
 bun_core::oom_from_alloc!(ParseUrlError);
-
-bun_core::named_error_set!(ParseUrlError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Representation
@@ -106,8 +100,6 @@ pub enum Representation {
     Shortcut,
     /// git+ssh://git@domain/user/project.git#committish
     Sshurl,
-    /// ssh://domain/user/project.git#committish
-    Ssh,
     /// https://domain/user/project.git#committish
     Https,
     /// git://domain/user/project.git#committish
@@ -337,13 +329,6 @@ impl HostedGitInfo {
     }
 }
 
-pub struct StringPair {
-    // No constructor in this module (consumed by install_jsc), so own the
-    // buffers — callers allocate per use.
-    pub save_spec: Box<[u8]>,
-    pub fetch_spec: Option<Box<[u8]>>,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // parse_url
 // ──────────────────────────────────────────────────────────────────────────
@@ -370,7 +355,7 @@ impl Drop for OwnedJscUrl {
 // `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
     pub url: OwnedJscUrl,
-    pub proto: UrlProtocol<'a>,
+    pub(crate) proto: UrlProtocol<'a>,
 }
 
 /// Handles input like git:github.com:user/repo and inserting the // after the first : if necessary
@@ -439,7 +424,7 @@ pub enum WellDefinedProtocol {
 /// Sized to hold the longest protocol name plus one character for the colon.
 // Lives at module scope (not inside `impl WellDefinedProtocol`) because
 // inherent associated types are unstable (E0658).
-pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
+type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
 bun_core::comptime_string_map! {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
@@ -485,7 +470,7 @@ impl WellDefinedProtocol {
 
     /// Look up a protocol from a string that includes the trailing colon (e.g., "https:").
     /// This method strips the colon before looking up in the strings map.
-    pub(crate) fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
+    fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
         if protocol_with_colon.is_empty() {
             None
         } else {
@@ -498,12 +483,12 @@ impl WellDefinedProtocol {
     /// Maximum length of any protocol string in the strings map (computed at compile time).
     // The longest keys in `PROTOCOL_STRINGS` ("git+https", "git+rsync", "sourcehut",
     // "bitbucket") are 9 bytes.
-    pub(crate) const MAX_PROTOCOL_LENGTH: usize = 9;
+    const MAX_PROTOCOL_LENGTH: usize = 9;
 
     /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
     /// Takes a buffer pointer to hold the result.
     /// Returns a slice into that buffer containing the protocol string with colon.
-    pub(crate) fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
+    fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
         // Look up the protocol string (without colon) from the map
         let protocol_str = self.protocol_str();
 
@@ -658,7 +643,7 @@ pub enum UrlProtocol<'a> {
 
 impl<'a> UrlProtocol<'a> {
     /// Deduces the default representation for this protocol.
-    pub(crate) fn default_representation(self) -> Representation {
+    fn default_representation(self) -> Representation {
         match self {
             UrlProtocol::WellFormed(p) => p.default_representation(),
             _ => Representation::Sshurl, // Unknown/custom protocols default to sshurl
@@ -686,10 +671,6 @@ impl<'a> UrlProtocolPair<'a> {
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
     fn to_url(&self) -> Option<OwnedJscUrl> {
-        // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
-        // statistical distribution of URL lengths and found nothing.
-        const _LONG_URL_THRESH: usize = 2048;
-
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
@@ -1002,8 +983,6 @@ impl HostProvider {
 
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
     fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
-        const _MAX_HOSTNAME_LEN: usize = 253;
-
         let hostname_str = OwnedString::new(url.hostname());
 
         let hostname_utf8 = hostname_str.to_utf8();
@@ -1017,28 +996,18 @@ impl HostProvider {
 // HostProvider::Config
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Config {
-    pub protocols: &'static [WellDefinedProtocol],
-    pub domain: &'static [u8],
-    pub shortcut: &'static [u8],
-    pub tree_path: Option<&'static [u8]>,
-    pub blob_path: Option<&'static [u8]>,
-    pub edit_path: Option<&'static [u8]>,
-
-    pub format_ssh: formatters::ssh::Type,
-    pub format_sshurl: formatters::ssh_url::Type,
-    pub format_https: formatters::https::Type,
-    pub format_shortcut: formatters::shortcut::Type,
-    pub format_git: formatters::git::Type,
-    pub format_extract: formatters::extract::Type,
+pub(crate) struct Config {
+    pub(crate) domain: &'static [u8],
+    pub(crate) shortcut: &'static [u8],
+    pub(crate) format_extract: formatters::extract::Type,
 }
 
 // Uses `Range<usize>` into `_owned_buffer` rather than self-referential
 // slices (see the HostedGitInfo struct-level note).
-pub struct ExtractResult {
-    pub user: Option<Range<usize>>,
-    pub project: Range<usize>,
-    pub committish: Option<Range<usize>>,
+pub(crate) struct ExtractResult {
+    pub(crate) user: Option<Range<usize>>,
+    pub(crate) project: Range<usize>,
+    pub(crate) committish: Option<Range<usize>>,
     _owned_buffer: Option<Box<[u8]>>,
 }
 
@@ -1061,297 +1030,21 @@ impl ExtractResult {
 
 /// Encapsulates all the various foramtters that different hosts may have. Usually this has
 /// to do with URLs, but could be other things.
-pub mod formatters {
+pub(crate) mod formatters {
     use super::*;
 
-    pub(super) fn requires_user(user: Option<&[u8]>) {
-        if user.is_none() {
-            panic!(
-                "Attempted to format a default SSH URL without a user. This is an \
-                 irrecoverable programming bug in Bun. Please report this issue \
-                 on GitHub."
-            );
-        }
-    }
-
-    /// Mirrors hosts.js's sshtemplate
-    pub mod ssh {
-        use super::*;
-
-        pub type Type = fn(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError>;
-
-        pub(crate) fn default(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git@{}:{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn gist(
-            self_: HostProvider,
-            _user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git@{}:{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-    }
-
-    /// Mirrors hosts.js's sshurltemplate
-    pub mod ssh_url {
-        use super::*;
-
-        pub type Type = fn(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError>;
-
-        pub(crate) fn default(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+ssh://git@{}/{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn gist(
-            self_: HostProvider,
-            _user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+ssh://git@{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-    }
-
-    /// Mirrors hosts.js's httpstemplate
-    pub mod https {
-        use super::*;
-
-        pub type Type = fn(
-            self_: HostProvider,
-            auth: Option<&[u8]>,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError>;
-
-        pub(crate) fn default(
-            self_: HostProvider,
-            auth: Option<&[u8]>,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-
-            let auth_str: &[u8] = auth.unwrap_or(b"");
-            let auth_sep: &[u8] = if !auth_str.is_empty() { b"@" } else { b"" };
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+https://{}{}{}/{}/{}.git{}{}",
-                BStr::new(auth_str),
-                BStr::new(auth_sep),
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn gist(
-            self_: HostProvider,
-            _auth: Option<&[u8]>,
-            _user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+https://{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn sourcehut(
-            self_: HostProvider,
-            _auth: Option<&[u8]>,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "https://{}/{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-    }
-
-    /// Mirrors hosts.js's shortcuttemplate
-    pub mod shortcut {
-        use super::*;
-
-        pub type Type = fn(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError>;
-
-        pub(crate) fn default(
-            self_: HostProvider,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}{}/{}{}{}",
-                BStr::new(self_.shortcut()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn gist(
-            self_: HostProvider,
-            _user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}{}{}{}",
-                BStr::new(self_.shortcut()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-    }
-
     /// Mirrors hosts.js's extract function
-    pub mod extract {
+    pub(crate) mod extract {
         use super::*;
 
-        pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub(crate) type Type =
+            fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
         pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1419,7 +1112,7 @@ pub mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1531,7 +1224,7 @@ pub mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(mut user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1616,7 +1309,7 @@ pub mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1700,76 +1393,6 @@ pub mod formatters {
             }))
         }
     }
-
-    /// Mirrors hosts.js's gittemplate
-    pub mod git {
-        use super::*;
-
-        pub type Type = Option<
-            fn(
-                self_: HostProvider,
-                auth: Option<&[u8]>,
-                user: Option<&[u8]>,
-                project: &[u8],
-                committish: Option<&[u8]>,
-            ) -> Result<Vec<u8>, AllocError>,
-        >;
-
-        pub(crate) const DEFAULT: Type = None;
-
-        pub(crate) fn github(
-            self_: HostProvider,
-            auth: Option<&[u8]>,
-            user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            requires_user(user);
-
-            let auth_str: &[u8] = auth.unwrap_or(b"");
-            let auth_sep: &[u8] = if !auth_str.is_empty() { b"@" } else { b"" };
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git://{}{}{}/{}/{}.git{}{}",
-                BStr::new(auth_str),
-                BStr::new(auth_sep),
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-
-        pub(crate) fn gist(
-            self_: HostProvider,
-            _auth: Option<&[u8]>,
-            _user: Option<&[u8]>,
-            project: &[u8],
-            committish: Option<&[u8]>,
-        ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git://{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
-            )
-            .map_err(|_| AllocError)?;
-            Ok(v)
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1785,107 +1408,30 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
     CONFIGS.get_or_init(|| {
         EnumMap::from_fn(|k| match k {
             HostProvider::Bitbucket => Config {
-                protocols: &[
-                    WellDefinedProtocol::GitPlusHttp,
-                    WellDefinedProtocol::GitPlusHttps,
-                    WellDefinedProtocol::Ssh,
-                    WellDefinedProtocol::Https,
-                ],
                 domain: b"bitbucket.org",
                 shortcut: b"bitbucket:",
-                tree_path: Some(b"src"),
-                blob_path: Some(b"src"),
-                edit_path: Some(b"?mode=edit"),
-                format_ssh: formatters::ssh::default,
-                format_sshurl: formatters::ssh_url::default,
-                format_https: formatters::https::default,
-                format_shortcut: formatters::shortcut::default,
-                format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::bitbucket,
             },
             HostProvider::Gist => Config {
-                protocols: &[
-                    WellDefinedProtocol::Git,
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::GitPlusHttps,
-                    WellDefinedProtocol::Ssh,
-                    WellDefinedProtocol::Https,
-                ],
                 domain: b"gist.github.com",
                 shortcut: b"gist:",
-                tree_path: None,
-                blob_path: None,
-                edit_path: Some(b"edit"),
-                format_ssh: formatters::ssh::gist,
-                format_sshurl: formatters::ssh_url::gist,
-                format_https: formatters::https::gist,
-                format_shortcut: formatters::shortcut::gist,
-                format_git: Some(formatters::git::gist),
                 format_extract: formatters::extract::gist,
             },
             HostProvider::Github => Config {
-                protocols: &[
-                    WellDefinedProtocol::Git,
-                    WellDefinedProtocol::Http,
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::GitPlusHttps,
-                    WellDefinedProtocol::Ssh,
-                    WellDefinedProtocol::Https,
-                ],
                 domain: b"github.com",
                 shortcut: b"github:",
-                tree_path: Some(b"tree"),
-                blob_path: Some(b"blob"),
-                edit_path: Some(b"edit"),
-                format_ssh: formatters::ssh::default,
-                format_sshurl: formatters::ssh_url::default,
-                format_https: formatters::https::default,
-                format_shortcut: formatters::shortcut::default,
-                format_git: Some(formatters::git::github),
                 format_extract: formatters::extract::github,
             },
             HostProvider::Gitlab => Config {
-                protocols: &[
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::GitPlusHttps,
-                    WellDefinedProtocol::Ssh,
-                    WellDefinedProtocol::Https,
-                ],
                 domain: b"gitlab.com",
                 shortcut: b"gitlab:",
-                tree_path: Some(b"tree"),
-                blob_path: Some(b"tree"),
-                edit_path: Some(b"-/edit"),
-                format_ssh: formatters::ssh::default,
-                format_sshurl: formatters::ssh_url::default,
-                format_https: formatters::https::default,
-                format_shortcut: formatters::shortcut::default,
-                format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::gitlab,
             },
             HostProvider::Sourcehut => Config {
-                protocols: &[WellDefinedProtocol::GitPlusSsh, WellDefinedProtocol::Https],
                 domain: b"git.sr.ht",
                 shortcut: b"sourcehut:",
-                tree_path: Some(b"tree"),
-                blob_path: Some(b"tree"),
-                edit_path: None,
-                format_ssh: formatters::ssh::default,
-                format_sshurl: formatters::ssh_url::default,
-                format_https: formatters::https::sourcehut,
-                format_shortcut: formatters::shortcut::default,
-                format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::sourcehut,
             },
         })
     })
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// TestingAPIs
-// ──────────────────────────────────────────────────────────────────────────
-
-// Layering: `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher
-// tier). Re-exporting them here would re-introduce the install ↔ jsc cycle.
-// Module kept as a marker for the original `TestingAPIs` namespace.
-pub mod testing_apis {}

@@ -37,11 +37,24 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
         use bun_jsc::ComptimeStringMapExt as _;
         match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(
-                "color",
-                property_name,
-                "OutputColorFormat string",
-            )),
+            None => {
+                // List the accepted spellings straight from the lookup map so the
+                // error message can't drift from what the parser actually accepts.
+                let n = OUTPUT_COLOR_FORMAT_MAP.len();
+                let mut one_of = std::string::String::from("'");
+                for (i, key) in OUTPUT_COLOR_FORMAT_MAP.keys().enumerate() {
+                    one_of.push_str(std::str::from_utf8(key).expect("map keys are ASCII"));
+                    one_of.push('\'');
+                    if i + 2 < n {
+                        one_of.push_str(", '");
+                    } else if i + 2 == n {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }
@@ -88,7 +101,7 @@ fn color_int_from_js(
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
-pub mod ansi256 {
+pub(crate) mod ansi256 {
     use std::io::Write as _;
 
     const Q2C: [u32; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
@@ -281,27 +294,16 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 }
             }
         } else if args[0].is_object() {
-            let r = color_int_from_js(
-                global,
-                args[0].get(global, b"r")?.unwrap_or(JSValue::ZERO),
-                "r",
-            )?;
-            let g = color_int_from_js(
-                global,
-                args[0].get(global, b"g")?.unwrap_or(JSValue::ZERO),
-                "g",
-            )?;
-            let b = color_int_from_js(
-                global,
-                args[0].get(global, b"b")?.unwrap_or(JSValue::ZERO),
-                "b",
-            )?;
+            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
+            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
+            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
 
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {
                     if a_value.is_number() {
+                        // CSS spec says to clamp values to their valid range so we'll respect that here
                         break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).rem_euclid(256))
+                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
                                 .unwrap(),
                         );
                     }

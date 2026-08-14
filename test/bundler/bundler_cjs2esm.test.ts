@@ -392,4 +392,162 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // `delete (null ?? exports.a)` evaluates to a value, so the result is `true`
+  // with no effect on the property. Under cjs2esm, `exports.a` is rewritten to
+  // an `ECommonjsExportIdentifier`; the printer has to re-wrap it as `(0, ...)`
+  // so `delete` still sees a value instead of the hoisted binding.
+  itBundled("cjs2esm/DeleteFoldedExportsPropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.a = 1;
+        console.log(delete (null ?? exports.a), exports.a);
+        console.log(delete (0, exports.a), exports.a);
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/^[^"]*delete\s+\$a\b/m);
+    },
+    run: { stdout: "true 1\ntrue 1" },
+  });
+  itBundled("cjs2esm/DeleteFoldedExportsPropertyRefConsumer", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./lib.js";
+        console.log(a);
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        console.log(delete (null ?? exports.a), exports.a);
+      `,
+    },
+    run: { stdout: "true 1\n1" },
+  });
+  // `module.exports` under cjs2esm rewrites to ESpecial::ModuleExports, which
+  // prints as the `exports_*` namespace symbol. Output-shape check only: a bare
+  // `module.exports` value-read under cjs2esm currently emits a reference that
+  // has no declaration (a separate pre-existing issue), so the bundle cannot be
+  // executed here.
+  itBundled("cjs2esm/DeleteFoldedModuleExportsRef", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.a = 1;
+        globalThis.r = delete (null ?? module.exports);
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/delete\s+\(0,\s*exports_\w+\)/);
+      expect(code).not.toMatch(/delete\s+exports_\w+\b/);
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/4565
+  // `exports.x = ...` as the unbraced body of if/while/do/else must not be
+  // converted to `var $x = ...; export { $x as x };` because `export` is only
+  // valid at the top level of a module.
+  const noNestedExport = (api: { readFile(path: string): string }) => {
+    // Before the fix, the output contained `export { $x as x };` nested inside
+    // a block, which is a syntax error. Any indented `export {` is wrong here.
+    expect(api.readFile("out.js")).not.toMatch(/^\s+export\s*\{/m);
+  };
+  itBundled("cjs2esm/ExportsAssignInSingleStmtIf#4565", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.always, lib.cond]));
+      `,
+      "/lib.js": /* js */ `
+        exports.always = 1;
+        if (process.env.NEVER_SET_4565) exports.cond = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,null]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtElse", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        if (process.env.NEVER_SET_4565) void 0;
+        else exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        let i = 0;
+        while (i++ < 1) exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtDoWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        do exports.b = 2; while (false);
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ModuleExportsAssignInSingleStmtIf", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        if (process.env.NEVER_SET_4565) module.exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,null]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInNestedSingleStmtIf", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        if (!process.env.NEVER_SET_4565) if (!process.env.NEVER_SET_4565) exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignTopLevelStillConverts", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './lib.js';
+        console.log(JSON.stringify([a, b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        exports.b = 2;
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "[1,2]" },
+  });
 });

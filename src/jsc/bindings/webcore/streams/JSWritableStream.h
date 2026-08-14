@@ -50,6 +50,7 @@ public:
     // m_pendingAbortRequest.{promise,reason}, and m_writeRequests (a barrier container: UNDER
     // cellLock()).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

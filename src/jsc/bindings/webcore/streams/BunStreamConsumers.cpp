@@ -18,6 +18,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -43,6 +44,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
 
 // JSBunStandaloneTextSink — the GENERIC toText accumulator cell (BunStandaloneTextSink.h).
 
@@ -100,6 +102,14 @@ void JSBunStandaloneTextSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_accumulator.visit(locker, visitor);
 }
 
+void JSBunStandaloneTextSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSBunStandaloneTextSink>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_accumulator.analyzeHeap(locker, cell, analyzer);
+}
+
 // JSOneShotDirectSink — consumeDirectStreamToArrayBuffer's throwaway controller cell.
 
 const ClassInfo JSOneShotDirectSink::s_info = { "OneShotDirectSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSOneShotDirectSink) };
@@ -145,10 +155,21 @@ void JSOneShotDirectSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_capabilityPromise);
-    visitor.append(thisObject->m_closeFunction);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_arrayBufferSink);
+    visitor.appendHidden(thisObject->m_capabilityPromise);
+    visitor.appendHidden(thisObject->m_closeFunction);
+}
+
+void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_arrayBufferSink, "arrayBufferSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_capabilityPromise, "capabilityPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closeFunction, "closeFunction"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -199,9 +220,19 @@ void JSReadableStreamIntoArrayOperation::visitChildrenImpl(JSCell* cell, Visitor
     auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_chunks);
-    visitor.append(thisObject->m_result);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_chunks);
+    visitor.appendHidden(thisObject->m_result);
+}
+
+void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_chunks, "chunks"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_result, "result"_s);
 }
 
 } // namespace WebCore
@@ -414,6 +445,21 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
+static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
+        if (!view->isDetached())
+            out = view->span();
+        return true;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+            out = impl->span();
+        return true;
+    }
+    return false;
+}
+
 // The toArrayBuffer chunk-array converter (RS:157-206).
 static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue chunksValue)
 {
@@ -436,16 +482,9 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-            return jsBuffer;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            if (impl && !view->byteOffset() && view->byteLength() == impl->byteLength()) {
-                auto* jsBuffer = view->possiblySharedJSBuffer(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return jsBuffer;
-            }
-            auto copied = JSC::ArrayBuffer::tryCreate(view->span());
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
             if (!copied) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -475,18 +514,14 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* uint8 = dynamicDowncast<JSC::JSUint8Array>(chunk))
-            return uint8;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            size_t byteOffset = view->byteOffset();
-            size_t byteLength = view->byteLength();
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), byteOffset, byteLength));
-        }
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = jsBuffer->impl();
-            size_t byteLength = impl ? impl->byteLength() : 0;
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
+            if (!copied) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(copied), 0, span.size()));
         }
         if (chunk.isString())
             RELEASE_AND_RETURN(scope, encodeStringToUint8Array(vm, globalObject, chunk));
@@ -523,17 +558,8 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
                 return chunk;
             RELEASE_AND_RETURN(scope, jsString(vm, stripped));
         }
-        bool isBinary = false;
         std::span<const uint8_t> span;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            isBinary = true;
-            span = view->isDetached() ? std::span<const uint8_t> {} : view->span();
-        } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            isBinary = true;
-            if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                span = impl->span();
-        }
-        if (isBinary) {
+        if (binaryChunkSpan(chunk, span)) {
             if (exceedsStringLimit(span.size())) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -1410,8 +1436,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSReadableStream>(callFrame->uncheckedArgument(1));
     JSValue error = callFrame->argument(0);
     stream->m_lockedWithoutReader = false;
-    Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
+    auto* cancelPromise = Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
     RETURN_IF_EXCEPTION(scope, {});
+    if (cancelPromise)
+        Bun::WebStreams::markPromiseAsHandled(vm, cancelPromise);
     Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     throwException(globalObject, scope, error);

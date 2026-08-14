@@ -22,6 +22,7 @@
 #include "JSMessagePort.h"
 
 #include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -154,7 +155,7 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -202,7 +203,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
+    // clears the handler and lets the loop exit again.
+    if (value.isCallable())
+        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }
@@ -231,8 +237,8 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
-
+    // node: only a 'message' handler starts the port and keeps the loop alive (setupPortReferencing);
+    // a 'messageerror' handler alone does neither.
     return true;
 }
 
@@ -252,7 +258,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage1Bod
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
+    auto transfer = convertTransferList(*lexicalGlobalObject, argument1.value(), "Optional transferList argument must be an iterable"_s, BadTransferElement::ThrowDataCloneError);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }
@@ -268,8 +274,24 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Bod
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto options = convert<IDLDictionary<StructuredSerializeOptions>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
+    // Not convert<IDLDictionary<StructuredSerializeOptions>>: that path is shared with
+    // structuredClone(), where node reports a non-object transfer element as a TypeError.
+    // From postMessage() the same element is a DataCloneError.
+    StructuredSerializeOptions options;
+    JSValue optionsValue = argument1.value();
+    if (!optionsValue.isUndefinedOrNull()) {
+        auto* optionsObject = optionsValue.getObject();
+        if (!optionsObject) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, throwScope);
+            return {};
+        }
+        JSValue transferValue = optionsObject->get(lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!transferValue.isUndefined()) {
+            options.transfer = convertTransferList(*lexicalGlobalObject, transferValue, "Optional options.transfer argument must be an iterable"_s, BadTransferElement::ThrowDataCloneError);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 
@@ -289,6 +311,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isUndefinedOrNull())
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
+        // node: a non-object transferList (number/string/boolean/symbol) is
+        // rejected as not-an-iterable before any iteration is attempted.
+        if (!distinguishingArg.isObject())
+            return throwVMError(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Optional transferList argument must be an iterable"_s));
         {
             bool success = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
             RETURN_IF_EXCEPTION(throwScope, {});
@@ -427,7 +453,7 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto* jsMessagePort = uncheckedDowncast<JSMessagePort>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
-    if (wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

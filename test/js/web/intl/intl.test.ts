@@ -10,14 +10,14 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { isMacOS } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
-// ICU they were generated against (Linux); macOS uses Apple's libicucore and
-// Windows is on a different ICU build, so snapshot diffs there are expected
-// and not a regression. The structural sweep below runs everywhere.
-const SNAPSHOT_ICU_VERSION = "75.1";
-const snapshotIf = isLinux && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
+// ICU they were generated against; macOS uses Apple's libicucore, so snapshot
+// diffs there are expected and not a regression. The structural sweep below
+// runs everywhere.
+const SNAPSHOT_ICU_VERSION = "78.3";
+const snapshotIf = !isMacOS && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
 
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;
 

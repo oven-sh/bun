@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
@@ -40,13 +42,13 @@ pub mod ssl_wrapper {
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
+    pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, bun_core::Error> {
+    ) -> Result<SSLWrapper<T>, crate::Error> {
         SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(bun_core::Error::from)
+            .map_err(crate::Error::from)
     }
 }
 
@@ -68,7 +70,7 @@ pub mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub mod ssl_config;
-pub use ssl_config::{SSLConfig, SSLConfigFromJs};
+pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
@@ -78,6 +80,7 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
+pub(crate) use socket_body::DuplexUpgradeContext;
 pub use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
 };
@@ -111,14 +114,14 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
+        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`). The
+// handlers take `ThisPtr<Self>` rather than `&mut self`:
 // a JS callback can close the socket and drop its last ref mid-dispatch, and a
 // `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
@@ -143,7 +146,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         code: i32,
         reason: *mut core::ffi::c_void,
     ) {
-        let _ = NewSocket::on_close(
+        NewSocket::on_close(
             this,
             s,
             code,
@@ -164,7 +167,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
     ) {
-        let _ = NewSocket::on_connect_error(this, s, code);
+        NewSocket::on_connect_error(this, s, code);
     }
     #[inline]
     fn on_handshake(
@@ -173,6 +176,6 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
     ) {
-        let _ = NewSocket::on_handshake(this, s, ok, err);
+        NewSocket::on_handshake(this, s, ok, err);
     }
 }

@@ -39,6 +39,7 @@ public:
     //   never re-acquires the lock). Never visit either container outside that scope, and
     //   never take a second Locker. Mutating ops that touch BOTH containers do the same.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

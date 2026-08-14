@@ -5892,16 +5892,31 @@ pub mod serializer {
             token
                 .to_css_generic(&mut fbs)
                 .map_err(|_| dest.add_fmt_error())?;
-            let s = fbs.get_written();
-            if value < 0.0 {
-                dest.write_str("-")?;
-                dest.write_bytes(strings::trim_leading_pattern2(s, b'-', b'0'))
-            } else {
-                dest.write_bytes(strings::trim_leading_char(s, b'0'))
-            }
+            write_without_leading_zero(fbs.get_written(), dest)
         } else {
             token.to_css_generic(dest).map_err(|_| dest.add_fmt_error())
         }
+    }
+
+    /// Writes a serialized number whose magnitude is below 1 without the zero in
+    /// front of the decimal point: `0.5px` -> `.5px`, `-0.5px` -> `-.5px`.
+    ///
+    /// Not every such number has that zero: `dtoa_short` prints magnitudes below
+    /// 1e-6 in exponent form (`-1e-7`) and rounds -0.9999999 to `-1`. Those are
+    /// written unchanged.
+    pub(crate) fn write_without_leading_zero(
+        number: &[u8],
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        let rest: &[u8] = match number {
+            [b'-', b'0', b'.', ..] => {
+                dest.write_char(b'-')?;
+                &number[2..]
+            }
+            [b'0', b'.', ..] => &number[1..],
+            _ => number,
+        };
+        dest.write_str(rest)
     }
 
     /// Write a CSS identifier, escaping characters as necessary.

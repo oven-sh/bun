@@ -3,11 +3,12 @@
 //! `parse` builds one of two shapes from `bun_parsers::xml` (see bun.d.ts
 //! for the user-facing description): the compact object (default) —
 //! `{ [root]: value }` where an element with no attributes and no child
-//! elements is its trimmed text, and otherwise an object with `"@name"`
+//! elements is its text, exactly, and otherwise an object with `"@name"`
 //! attribute keys, one key per distinct child element name (an array when
-//! the name repeats), and `"#text"` — or, with `{ compact: false }`, the node
-//! tree `{ name, attributes, children }`. `stringify` accepts either shape
-//! and always emits well-formed XML or throws.
+//! the name repeats or `arrays` lists it), and `"#text"` — or, with
+//! `{ compact: false }`, the node tree `{ name, attributes, children }` whose
+//! children also include `{ comment }` and `{ target, data }`. `stringify`
+//! accepts either shape and always emits well-formed XML or throws.
 
 use bun_collections::HashMap;
 use bun_core::{OwnedString, String as BunString};

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -207,6 +207,58 @@ console.log(JSON.stringify(html, null, 2));
       expect(faviconFile).toBeDefined();
       expect(faviconFile.loader).toBe("file");
       expect(faviconFile.headers["content-type"]).toBe("image/svg+xml");
+    },
+  });
+
+  // Assets referenced from the page's stylesheets (including @imported ones)
+  // are attributed to the page through the stylesheet, since they are not
+  // part of the JS module graph.
+  itBundled("html-import/stylesheet-url-assets-in-manifest", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+console.log(JSON.stringify(html.files.map(f => [f.input, f.loader, f.path])));
+`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>`,
+      "/app.ts": `console.log("app loaded");`,
+      "/styles.css": `@import "./theme.css";\nbody { margin: 0; }`,
+      "/theme.css": `body { background: url(./bg.png); }`,
+      // Large enough (>= 128 KiB) that the CSS bundler copies it to the output
+      // directory instead of inlining it as a data: URL; only copied assets
+      // have an output to serve.
+      "/bg.png": Buffer.alloc(128 * 1024, "x"),
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+
+    run: {
+      validate({ stdout }) {
+        const files: [string, string, string][] = JSON.parse(stdout);
+        expect(files.map(([input, loader]) => [input, loader])).toEqual([
+          ["index.html", "js"],
+          ["index.html", "html"],
+          ["index.html", "css"],
+          ["bg.png", "file"],
+        ]);
+        expect(files[3][2]).toMatch(/^\.\/bg-[a-z0-9]+\.png$/);
+      },
+    },
+
+    onAfterBundle(api) {
+      const pngs = readdirSync(api.join("out")).filter(f => f.endsWith(".png"));
+      expect(pngs).toEqual([expect.stringMatching(/^bg-[a-z0-9]+\.png$/)]);
+      const css = readdirSync(api.join("out")).find(f => f.endsWith(".css"))!;
+      expect(api.readFile(join("out", css))).toContain(`url("./${pngs[0]}")`);
     },
   });
 

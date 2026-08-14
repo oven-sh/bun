@@ -47,6 +47,7 @@ use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
+use crate::linker_context_mod::is_document;
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
@@ -235,6 +236,31 @@ pub(crate) fn write<W: Write + ?Sized>(
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
+    // Assets referenced by this entry point's documents (`<img src>` in the
+    // HTML, `url()` in its stylesheets) carry no entry bits of their own (see
+    // `is_document`), so they are attributed through the documents that
+    // reference them. Assets imported from JS are reached through their own
+    // entry bits below.
+    let mut referenced_by_documents = AutoBitSet::init_empty(file_entry_bits.len())?;
+    if !additional_output_files.is_empty() {
+        let css_asts = linker_graph.ast.items_css();
+        let loaders = graph.input_files.items_loader();
+        let import_records = linker_graph.ast.items_import_records();
+        for source_index in linker_graph.reachable_files.iter() {
+            let source_index = source_index.get() as usize;
+            if !is_document(css_asts, loaders, source_index)
+                || !file_entry_bits[source_index].has_intersection(&entry_point_bits)
+            {
+                continue;
+            }
+            for record in import_records[source_index].iter() {
+                if record.source_index.is_valid() {
+                    referenced_by_documents.set(record.source_index.get() as usize);
+                }
+            }
+        }
+    }
+
     // Write all chunks that have files associated with this entry point.
     // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
     // When there's only one HTML import, all browser chunks belong to that manifest.
@@ -301,7 +327,9 @@ pub(crate) fn write<W: Write + ?Sized>(
             }
             let bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
-            if bits.has_intersection(&entry_point_bits) {
+            if bits.has_intersection(&entry_point_bits)
+                || referenced_by_documents.is_set(source_index.get() as usize)
+            {
                 already_visited_output_file.set(i);
                 if !first {
                     writer.write_all(b",")?;

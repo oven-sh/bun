@@ -328,6 +328,92 @@ describe("bundler", () => {
     },
   });
 
+  // The url() assets of a stylesheet are printed into the stylesheet itself.
+  // They are not JS modules reached by the stylesheet's entry point, so a CSS
+  // entry point must not produce a JS chunk for them.
+  itBundled("splitting/CSSEntryPointWithURLAssetEmitsNoJSChunk", {
+    files: {
+      "/app.ts": `console.log("app");`,
+      "/style.css": `.foo { background: url(./img.png); }`,
+      "/img.png": Buffer.from("not really a png"),
+    },
+    entryPoints: ["/app.ts", "/style.css"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["app.js", "style.css"]);
+      api.expectFile("/out/style.css").toContain("data:image/png;base64,");
+    },
+  });
+
+  // Same as above, but the asset is also imported from JS. The stylesheet's
+  // entry point must not count as a second importer that splits the asset's
+  // module out of app.js into a shared chunk.
+  itBundled("splitting/AssetImportedByJSAndReferencedByCSSEntryPoint", {
+    files: {
+      "/app.ts": `
+        import img from "./img.png";
+        console.log("app", img);
+      `,
+      "/style.css": `.foo { background: url(./img.png); }`,
+      "/img.png": Buffer.from("not really a png"),
+    },
+    entryPoints: ["/app.ts", "/style.css"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual([
+        "app.js",
+        expect.stringMatching(/^img-[a-z0-9]+\.png$/),
+        "style.css",
+      ]);
+      api.expectFile("/out/app.js").not.toContain("import");
+    },
+    run: {
+      file: "/out/app.js",
+      stdout: /^app \.\/img-[a-z0-9]+\.png$/,
+    },
+  });
+
+  // Likewise for an asset referenced from two HTML documents: it is not a JS
+  // module shared by the two pages, so there is nothing to split into a chunk
+  // that both page scripts would have to import.
+  itBundled("splitting/AssetSharedByTwoHTMLEntryPointsEmitsNoJSChunk", {
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./index.ts"></script></head><body><img src="./logo.png"></body></html>`,
+      "/about.html": `<!DOCTYPE html><html><head><script type="module" src="./about.ts"></script></head><body><img src="./logo.png"></body></html>`,
+      "/index.ts": `console.log("index");`,
+      "/about.ts": `console.log("about");`,
+      "/logo.png": Buffer.from("not really a png"),
+    },
+    entryPoints: ["/index.html", "/about.html"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual([
+        expect.stringMatching(/^about-[a-z0-9]+\.js$/),
+        "about.html",
+        expect.stringMatching(/^index-[a-z0-9]+\.js$/),
+        "index.html",
+        expect.stringMatching(/^logo-[a-z0-9]+\.png$/),
+      ]);
+      for (const file of readdirSync(api.outdir)) {
+        if (file.endsWith(".js")) {
+          api.expectFile(join("out", file)).not.toContain("import");
+        }
+        if (file.endsWith(".html")) {
+          api.expectFile(join("out", file)).toMatch(/<img src="\.\/logo-[a-z0-9]+\.png">/);
+        }
+      }
+    },
+  });
+
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
   // cap with far fewer files than release, hence the scaled N.

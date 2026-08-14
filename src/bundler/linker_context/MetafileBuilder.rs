@@ -44,6 +44,7 @@ use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
 use crate::chunk::Content as ChunkContent;
+use crate::linker_context_mod::is_document;
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -220,11 +221,29 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
     // defer seen_sources.deinit() — handled by Drop
 
-    // Mark all files that appear in chunks
+    // Mark all files that appear in chunks. The assets referenced by the
+    // documents (HTML files, stylesheets) among them belong to no chunk (see
+    // `is_document`) but are written as those documents' imports below, so
+    // they are listed as inputs as well.
+    let css_asts = parse_graph.ast.items_css();
     for chunk in chunks.iter() {
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            if (source_index as usize) < sources.len() {
-                seen_sources.set(source_index as usize);
+            let source_index = source_index as usize;
+            if source_index >= sources.len() {
+                continue;
+            }
+            seen_sources.set(source_index);
+
+            if source_index < import_records_list.len()
+                && is_document(css_asts, loaders, source_index)
+            {
+                for record in import_records_list[source_index].as_slice() {
+                    if record.source_index.is_valid()
+                        && (record.source_index.get() as usize) < sources.len()
+                    {
+                        seen_sources.set(record.source_index.get() as usize);
+                    }
+                }
             }
         }
     }

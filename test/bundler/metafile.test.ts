@@ -488,6 +488,39 @@ describe("bundler metafile", () => {
     expect(foundCssBundle).toBe(true);
   });
 
+  test("metafile lists a stylesheet's url() asset as an input but not as part of the JS output", async () => {
+    using dir = tempDir("metafile-css-url-asset", {
+      "entry.js": `import "./style.css"; console.log("styled");`,
+      "style.css": `.foo { background: url(./img.png); }`,
+      "img.png": "not really a png",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const styleKey = Object.keys(metafile.inputs).find(k => k.endsWith("style.css"))!;
+    expect(styleKey).toBeDefined();
+
+    // The url() is an import edge of the stylesheet, and every bundled import
+    // edge resolves to an input.
+    const imgImport = metafile.inputs[styleKey].imports.find(imp => imp.path.endsWith("img.png"))!;
+    expect(imgImport).toMatchObject({ kind: "url-token", original: "./img.png" });
+    expect(imgImport.path in metafile.inputs).toBe(true);
+
+    // The asset is emitted through the stylesheet; it contributes nothing to
+    // the JS output and is not listed as one of its inputs.
+    const [jsOutputKey, jsOutput] = Object.entries(metafile.outputs).find(([path]) => path.endsWith(".js"))!;
+    expect(jsOutputKey).toBeDefined();
+    expect(Object.keys(jsOutput.inputs).map(k => k.split(/[\\/]/).pop())).toEqual(["entry.js"]);
+
+    const [, cssOutput] = Object.entries(metafile.outputs).find(([path]) => path.endsWith(".css"))!;
+    expect(Object.keys(cssOutput.inputs)).toEqual([styleKey]);
+  });
+
   test("metafile import paths match input keys for all importers of a shared module", async () => {
     // When the same module is imported from many files, every import record must emit the
     // resolved pretty path (matching the "inputs" key), not the raw "./b/shared.js" specifier.

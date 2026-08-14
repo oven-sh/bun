@@ -852,6 +852,7 @@ impl<'a> LinkerContext<'a> {
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
         let side_effects: *const [SideEffects] =
             self.parse_graph().input_files.items_side_effects();
+        let loaders: *const [Loader] = self.parse_graph().input_files.items_loader();
         let entry_point_kinds: *const [EntryPoint::Kind] =
             std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
@@ -866,6 +867,7 @@ impl<'a> LinkerContext<'a> {
         let (
             entry_points,
             side_effects,
+            loaders,
             import_records,
             entry_point_kinds,
             css_reprs,
@@ -877,6 +879,7 @@ impl<'a> LinkerContext<'a> {
             (
                 &*entry_points,
                 &*side_effects,
+                &*loaders,
                 &*import_records,
                 &*entry_point_kinds,
                 &*css_reprs,
@@ -898,6 +901,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 entry_point_kinds,
                 css_reprs,
+                loaders,
                 worklist: Vec::new(),
             };
 
@@ -927,6 +931,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
+                loaders,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -2580,7 +2585,41 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) loaders: &'r [Loader],
     pub(crate) worklist: Vec<TreeShakeWork>,
+}
+
+/// Whether `source_index` is a stylesheet or an HTML document rather than a
+/// JS module.
+///
+/// A document takes part in linking only through the modules it references
+/// (see [`document_links_to`]). The assets it references (`url()`, `<img
+/// src>`, ...) are resolved when the document itself is printed and are
+/// copied to the output by `process_files_to_copy`; the lazy-export JS stub
+/// such an asset parses to is only a module when JS imports it. Marking it
+/// live with the document's entry bits would make `compute_chunks` treat the
+/// stub as JS reached by the document's entry point and emit a JS chunk for
+/// it. `HTMLImportManifest` and `MetafileBuilder` attribute these assets to
+/// the documents that reference them instead.
+pub(crate) fn is_document(
+    css_reprs: &[crate::bundled_ast::CssCol],
+    loaders: &[Loader],
+    source_index: usize,
+) -> bool {
+    css_reprs[source_index].is_some() || loaders[source_index] == Loader::Html
+}
+
+/// Whether an import record of a document (see [`is_document`]) pointing at
+/// `source_index` links a module (a stylesheet via `@import`/`composes`/
+/// `<link rel="stylesheet">`, a script via `<script src>`) as opposed to
+/// referencing an asset. A stylesheet pointing at a JS file is rejected by
+/// `scan_css_imports` before linking gets here.
+pub(crate) fn document_links_to(
+    css_reprs: &[crate::bundled_ast::CssCol],
+    loaders: &[Loader],
+    source_index: usize,
+) -> bool {
+    css_reprs[source_index].is_some() || loaders[source_index].is_javascript_like()
 }
 
 #[derive(Clone, Copy)]
@@ -2598,6 +2637,7 @@ pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) loaders: &'r [Loader],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
@@ -2640,13 +2680,19 @@ impl<'a> LinkerContext<'a> {
             }
             let out_dist = distance + 1;
 
+            let from_document = is_document(ctx.css_reprs, ctx.loaders, source_index as usize);
             for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                    && !ctx.file_entry_bits[record.source_index.get() as usize]
-                        .is_set(entry_points_count)
+                if !record.source_index.is_valid() {
+                    continue;
+                }
+                let other = record.source_index.get();
+                if from_document && !document_links_to(ctx.css_reprs, ctx.loaders, other as usize) {
+                    continue;
+                }
+                if !self.is_external_dynamic_import(record, source_index)
+                    && !ctx.file_entry_bits[other as usize].is_set(entry_points_count)
                 {
-                    ctx.queue.push_back((record.source_index.get(), out_dist));
+                    ctx.queue.push_back((other, out_dist));
                 }
             }
 
@@ -2727,26 +2773,13 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        if ctx.css_reprs[source_index as usize].is_some() {
+        if is_document(ctx.css_reprs, ctx.loaders, source_index as usize) {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
-                    }
-                }
-            }
-            return;
-        }
-
-        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
-        // via .url kind import records. Follow all import records for HTML files
-        // so these assets are marked live and included in the manifest.
-        if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid() {
-                    let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
+                    if document_links_to(ctx.css_reprs, ctx.loaders, other as usize)
+                        && !self.graph.files_live.is_set(other as usize)
+                    {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
                 }

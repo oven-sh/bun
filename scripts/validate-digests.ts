@@ -17,8 +17,13 @@
 // without --pubkey the user's default gpg keyring is used.
 //
 // Usage:
-//   bun scripts/validate-digests.ts <tag> [--require-signer <fpr> [--pubkey <path>]]
+//   bun scripts/validate-digests.ts <tag> [--download] [--require-signer <fpr> [--pubkey <path>]]
 //   bun scripts/validate-digests.ts --dir <path> [--require-signer <fpr> [--pubkey <path>]]
+//
+// <tag> accepts "canary", "latest" (the newest stable release), a
+// release tag like "bun-v1.0.2", or a bare version like "1.0.2".
+// --download hashes downloaded asset bytes when GitHub reports no
+// digest for an asset (uploads predating the digest field).
 //
 // Originally contributed in https://github.com/oven-sh/bun/issues/28931.
 
@@ -30,13 +35,14 @@ import { join } from "node:path";
 interface Options {
   tag?: string;
   dir?: string;
+  download?: boolean;
   requireSigner?: string;
   pubkey?: string;
 }
 
 function usage(): never {
   console.error(
-    "Usage: bun scripts/validate-digests.ts (<tag> | --dir <path>) [--require-signer <fingerprint> [--pubkey <path>]]",
+    "Usage: bun scripts/validate-digests.ts (<tag> | latest | --dir <path>) [--download] [--require-signer <fingerprint> [--pubkey <path>]]",
   );
   process.exit(1);
 }
@@ -61,6 +67,9 @@ function parseArgs(argv: string[]): Options {
         opts.pubkey = argv[++i];
         if (!opts.pubkey) usage();
         break;
+      case "--download":
+        opts.download = true;
+        break;
       default:
         if (arg.startsWith("--") || opts.tag) usage();
         opts.tag = arg;
@@ -68,6 +77,7 @@ function parseArgs(argv: string[]): Options {
   }
   if (!opts.tag && !opts.dir) usage();
   if (opts.tag && opts.dir) usage();
+  if (opts.download && opts.dir) usage();
   if (opts.pubkey && !opts.requireSigner) usage();
   return opts;
 }
@@ -209,8 +219,14 @@ interface Source {
   digestOf(name: string): Promise<string>;
 }
 
-async function loadFromGitHub(tag: string): Promise<Source> {
-  const apiUrl = buildReleaseUrl("oven-sh", "bun", normalizeTag(tag));
+async function loadFromGitHub(tag: string, download: boolean): Promise<Source> {
+  // "latest" resolves through GitHub's dedicated endpoint to the
+  // newest stable release, so users can validate it without first
+  // looking up the current version number.
+  const apiUrl =
+    tag === "latest"
+      ? new URL("/repos/oven-sh/bun/releases/latest", "https://api.github.com").toString()
+      : buildReleaseUrl("oven-sh", "bun", normalizeTag(tag));
   console.log(`Fetching release metadata: ${apiUrl}`);
   const headers: Record<string, string> = {
     "Accept": "application/vnd.github+json",
@@ -228,6 +244,7 @@ async function loadFromGitHub(tag: string): Promise<Source> {
   }
   const { assets } = (await response.json()) as { assets: any[] };
   const digests = new Map<string, string | null | undefined>(assets.map(a => [a.name, a.digest]));
+  const urls = new Map<string, string>(assets.map(a => [a.name, a.browser_download_url]));
   const txtAsset = assets.find(a => a.name === "SHASUMS256.txt");
   const ascAsset = assets.find(a => a.name === "SHASUMS256.txt.asc");
   if (!txtAsset || !ascAsset) throw new Error("Missing required checksum assets.");
@@ -244,10 +261,24 @@ async function loadFromGitHub(tag: string): Promise<Source> {
       }
       const raw = digests.get(name);
       if (!raw) {
-        throw new Error(
-          `Asset "${name}" is on the release but GitHub reported no digest for it; ` +
-            `download the release and re-run with --dir to verify it by hashing.`,
-        );
+        if (!download) {
+          throw new Error(
+            `Asset "${name}" is on the release but GitHub reported no digest for it; ` +
+              `re-run with --download to verify it by hashing the downloaded bytes.`,
+          );
+        }
+        // Opt-in fallback: hash the asset bytes ourselves, streaming so
+        // multi-hundred-MB archives never sit in memory whole.
+        console.log(`No GitHub digest for ${name}; downloading to hash...`);
+        const res = await fetch(urls.get(name)!);
+        if (!res.ok) {
+          throw new Error(`GitHub returned ${res.status} ${res.statusText} for ${urls.get(name)}`);
+        }
+        const hash = createHash("sha256");
+        for await (const chunk of res.body!) {
+          hash.update(chunk);
+        }
+        return hash.digest("hex");
       }
       // GitHub's asset.digest is typically prefixed with 'sha256:'.
       return raw.replace("sha256:", "").toLowerCase();
@@ -283,7 +314,7 @@ async function loadFromDir(dir: string): Promise<Source> {
 async function validateDigests() {
   const opts = parseArgs(process.argv.slice(2));
   const fingerprint = opts.requireSigner ? normalizeFingerprint(opts.requireSigner) : undefined;
-  const source = opts.dir ? await loadFromDir(opts.dir) : await loadFromGitHub(opts.tag!);
+  const source = opts.dir ? await loadFromDir(opts.dir) : await loadFromGitHub(opts.tag!, opts.download === true);
 
   // Identity check: standalone .txt must exactly match the signed body,
   // so the checksums verified below are the checksums that were signed.

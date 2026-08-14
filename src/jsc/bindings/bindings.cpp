@@ -6821,6 +6821,31 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     return JSC::JSValue::encode(completions);
 }
 
+// One `object.name` step of a completion chain, with ordinary property semantics (whole prototype
+// chain, getters run). `name` is UTF-8. A missing property or a throwing getter yields undefined.
+extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue objectValue,
+    const unsigned char* namePtr,
+    size_t nameLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).getObject();
+    WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
+    if (!object || name.isNull())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
+}
+
 // Format a value for REPL output using util.inspect style
 extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     JSC::JSGlobalObject* globalObject,

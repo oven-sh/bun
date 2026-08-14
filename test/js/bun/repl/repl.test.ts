@@ -1187,13 +1187,55 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           // Both keys start with "caf" and have the same byte length, and `caf→`
           // comes first; only `cafés` can follow a `.`, so the ghost must be its
           // remainder.
-          send('globalThis.__u = { "caf\\u2192": 1, "caf\\u00e9s": 2 }; "u" + "Ready"\n');
+          send(
+            'globalThis.__u = { "caf\\u2192": 1, "caf\\u00e9s": 2 }; globalThis["caf\\u00e9"] = { latte: 1 }; "u" + "Ready"\n',
+          );
           await waitFor("uReady");
           send("__u.caf");
           await waitFor(`${DIM}és`);
           // The typed prefix itself may contain non-ASCII characters.
           send("é");
           await waitFor(`${DIM}s`);
+          // So may the object being completed: the chain segment is looked up as
+          // UTF-8, not byte-per-character.
+          send("\x15café.");
+          await waitFor(`${DIM}latte`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("resolves chain segments inherited from Object.prototype", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `constructor` comes from Object.prototype; it must resolve to `Object`
+          // like a real property access would, not stop at the object's own keys.
+          send('globalThis.__plain = {}; "plain" + "Ready"\n');
+          await waitFor("plainReady");
+          send("__plain.constructor.getOwnPropertyNa");
+          await waitFor(`${DIM}mes`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("spread dots do not turn the word into a property access", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("[...cons");
+          await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no suggestions inside a string literal", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `st` would otherwise match globals such as `structuredClone`, and the
+          // right arrow would accept that ghost, changing the evaluated string.
+          send('"st\x1b[C" + "x"\n');
+          await waitFor('"stx"');
         },
         { env: colorEnv },
       );

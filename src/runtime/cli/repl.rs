@@ -54,6 +54,13 @@ unsafe extern "C" {
         prefixPtr: *const u8,
         prefixLen: usize,
     ) -> JSValue;
+
+    fn Bun__REPL__getProperty(
+        globalObject: *const JSGlobalObject,
+        objectValue: JSValue,
+        namePtr: *const u8,
+        nameLen: usize,
+    ) -> JSValue;
 }
 
 // ============================================================================
@@ -1301,14 +1308,9 @@ impl<'a> Repl<'a> {
             if !identifier::is_identifier(part) || !current.is_object() {
                 return JSValue::UNDEFINED;
             }
-            match current.get(global, part) {
-                Ok(Some(next)) => current = next,
-                Ok(None) => return JSValue::UNDEFINED,
-                Err(_) => {
-                    global.clear_exception();
-                    return JSValue::UNDEFINED;
-                }
-            }
+            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `part` borrows
+            // from `expr`, which outlives the call.
+            current = unsafe { Bun__REPL__getProperty(global, current, part.as_ptr(), part.len()) };
         }
         current
     }
@@ -1334,7 +1336,7 @@ impl<'a> Repl<'a> {
         let Some(ctx) = parse_completion_context(&line, self.line_editor.cursor) else {
             return;
         };
-        if ctx.prefix.is_empty() && ctx.object_expr.is_empty() {
+        if (ctx.prefix.is_empty() && ctx.object_expr.is_empty()) || ends_inside_string(&line) {
             return;
         }
 
@@ -2772,6 +2774,26 @@ const JS_KEYWORDS: &[&[u8]] = &[
     b"yield",
 ];
 
+/// Words inside a `'…'`, `"…"` or backtick literal are not identifiers, so hinting there is noise.
+fn ends_inside_string(line: &[u8]) -> bool {
+    let mut quote = 0u8;
+    let mut escaped = false;
+    for &c in line {
+        if escaped {
+            escaped = false;
+        } else if c == b'\\' {
+            escaped = true;
+        } else if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if matches!(c, b'"' | b'\'' | b'`') {
+            quote = c;
+        }
+    }
+    quote != 0
+}
+
 /// `console.lo|` → `object_expr = "console"`, `prefix = "lo"`; empty `object_expr` = globalThis.
 struct CompletionContext<'a> {
     object_expr: &'a [u8],
@@ -2788,7 +2810,8 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
     let prefix_start = i;
     let prefix = &line[prefix_start..cursor];
 
-    if i == 0 || line[i - 1] != b'.' {
+    // `..` before the word is the tail of a spread (`[...args`), not member access.
+    if i == 0 || line[i - 1] != b'.' || (i >= 2 && line[i - 2] == b'.') {
         return Some(CompletionContext {
             object_expr: b"",
             prefix,

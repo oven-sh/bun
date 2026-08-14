@@ -343,8 +343,9 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // mktemp levels below the staging dir, so a deep staging path (CI
     // workspaces routinely are) used to overflow the cap: the agent
     // could not launch and the key import exited 2 before signing.
-    // The helper now redirects the agent sockets into a short /tmp
-    // dir, so signing must succeed regardless of staging-dir depth.
+    // The helper now redirects the agent sockets into a short dir
+    // (TMPDIR, HOME, or /tmp, whichever fits the cap first), so
+    // signing must succeed regardless of staging-dir depth.
     using dir = tempDir("bun-28931-deep-", {});
     // Push the staging dir well past the point where an in-home
     // socket path would exceed sun_path.

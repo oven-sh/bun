@@ -579,7 +579,8 @@ pub(crate) enum AsyncInput {
     Owned(Vec<u8>),
 }
 // SAFETY: `Pinned.ptr` is a backing store pinned + protected by the paired
-// `PinnedChunk` for as long as the job lives; read only under the pool borrow.
+// `PinnedChunk` on the job's Js side, dropped there only after the pool has
+// posted the job back; the pool reads it in `run`, under the job's ticket.
 unsafe impl Send for AsyncInput {}
 
 /// The pin + GC protection on a chunk whose bytes went to the pool; released

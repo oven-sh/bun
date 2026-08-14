@@ -43,9 +43,10 @@ impl JSValueNapiExt for JSValue {
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
-    /// Work the pool handed back during teardown: its `complete` callback is
-    /// how the addon learns the outcome and frees the work (Node calls it from
-    /// environment cleanup too); script it tries to run is refused at the boundary.
+    /// Work handed back during teardown (by the pool, or by `schedule` itself
+    /// once script was forbidden): its `complete` callback is how the addon
+    /// learns the outcome and frees the work (Node calls it from environment
+    /// cleanup too); script it tries to run is refused at the boundary.
     unsafe fn release_unrun(this: *mut Self) {
         let global = VirtualMachine::get().global();
         // `Err` is left pending for the release dispatcher's fold.
@@ -142,6 +143,12 @@ impl NapiEnv {
 
     pub(crate) fn pending_exception(&self) -> napi_status {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
+    }
+
+    /// Node's status for a call the environment can no longer serve because it
+    /// is shutting down.
+    pub(crate) fn cannot_run_js(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::cannot_run_js)
     }
 
     /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
@@ -1868,17 +1875,44 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn schedule(&mut self) {
-        if self.scheduled {
-            return;
+    /// `false`: refused untouched, the work stays the addon's to delete.
+    ///
+    /// # Safety
+    /// `this` is a live work on its JS thread. It may be gone when this
+    /// returns `true`: its `complete` (which addons delete the work from) can
+    /// run inside the call.
+    pub(crate) unsafe fn schedule(this: *mut Self) -> bool {
+        // SAFETY: fn contract. The work is only ever reached through `this`,
+        // one statement at a time, so no reference to it is live across
+        // `enqueue_task`, which may free it.
+        unsafe {
+            if (*this).scheduled {
+                return true;
+            }
+            let vm = VirtualMachine::get();
+            if vm.closed() {
+                // A finalizer of the collection destroying the heap:
+                // `vm.ticket()` would panic, and the closed queue would run
+                // `complete` right here, mid-collection.
+                return false;
+            }
+            (*this).scheduled = true;
+            if !vm.script_allowed() {
+                // The pool would only hand it back cancelled; skip the pool and
+                // the ticket. Whether the queue runs it or teardown releases
+                // it, `complete` gets `napi_cancelled` as before.
+                let _ = (*this).cancel();
+                vm.event_loop_mut().enqueue_task(Task::init(this));
+                return true;
+            }
+            (*this).poll_ref.ref_(bun_io::js_vm_ctx());
+            // The work object belongs to the addon and `execute` receives this
+            // env, so the VM waits for it (Node likewise settles its threadpool
+            // requests before an environment is freed).
+            (*this).ticket = Some(vm.ticket());
+            WorkPool::schedule(&raw mut (*this).task);
+            true
         }
-        self.scheduled = true;
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
-        // The work object belongs to the addon and `execute` receives this
-        // env, so the VM waits for it (Node likewise settles its threadpool
-        // requests before an environment is freed).
-        self.ticket = Some(self.global.bun_vm().ticket());
-        WorkPool::schedule(&raw mut self.task);
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
@@ -2234,12 +2268,18 @@ extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work
 extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    if work_.is_null() {
         return env.invalid_arg();
-    };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    work.schedule();
+    }
+    // SAFETY: non-null `work_` is the `napi_async_work` we allocated in
+    // `napi_create_async_work`, live until `schedule` (which may free it: its
+    // `complete` can run inside) takes it; no reference to it is formed here.
+    unsafe {
+        debug_assert!(core::ptr::eq(env.to_js(), (*work_).global.as_ptr()));
+        if !napi_async_work::schedule(work_) {
+            return env.cannot_run_js();
+        }
+    }
     env.ok()
 }
 

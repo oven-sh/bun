@@ -651,7 +651,8 @@ impl Config {
 // This is going to be hard to not leak
 /// `transpiler.transform()` off the JS thread. The parse/print state points
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
-/// which the job's Js side keeps alive and the pool borrow keeps valid.
+/// which the `Strong` on the job's Js side keeps alive until the job is back
+/// on the JS thread; `run` reads it while the job's ticket keeps the VM alive.
 pub(crate) struct TransformTask {
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
     pub output_code: BunString,
@@ -663,8 +664,8 @@ pub(crate) struct TransformTask {
     pub loader: Loader,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
 }
-// SAFETY: see the type doc — VM-owned config is read only under the pool
-// borrow; everything else is owned.
+// SAFETY: see the type doc — the wrapper's config (behind `transpiler` and
+// `tsconfig`) is read only in `run`, under the job's ticket; the rest is owned.
 unsafe impl Send for TransformTask {}
 
 #[derive(bun_jsc::JsAffine)]

@@ -49,6 +49,9 @@ pub struct EventLoop {
     /// Set when teardown releases the queue: from then on `enqueue_task`
     /// releases instead of parking (nothing will tick this loop again).
     closed_for_tasks: bool,
+    /// Set while `release_queued_tasks` is draining: a task enqueued by one
+    /// it releases is parked for that same drain (see `enqueue_task`).
+    releasing_tasks: bool,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick
@@ -119,6 +122,7 @@ impl Default for EventLoop {
         Self {
             tasks: Queue::init(),
             closed_for_tasks: false,
+            releasing_tasks: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
@@ -748,10 +752,14 @@ impl EventLoop {
     }
 
     pub fn enqueue_task(&mut self, task: Task) {
-        if self.closed_for_tasks {
+        if self.closed_for_tasks && !self.releasing_tasks {
             // Teardown already released the queue and this loop never ticks
             // again: release the task now, as `release_queued_tasks` would have
             // — the queue owns refusal, like `VmHandle::post` does off-thread.
+            // While that release is still draining, the task is parked for it
+            // instead, so a released task that enqueues another (a napi
+            // `complete` queueing more work) has it released after itself
+            // rather than inside itself.
             // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
             unsafe { self.release_task_unrun(task) };
             return;
@@ -809,10 +817,13 @@ impl EventLoop {
         self.closed_for_tasks = true;
         self.take_concurrent_tasks();
         let _ = self.promote_yield_tasks();
+        self.releasing_tasks = true;
+        // Also reads what the releases themselves enqueue (`enqueue_task`).
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
             unsafe { self.release_task_unrun(task) };
         }
+        self.releasing_tasks = false;
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.
         self.release_pending_immediates();

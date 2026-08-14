@@ -409,6 +409,14 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
+    /// Is the wait over? Past it nothing started for the VM runs any more:
+    /// [`VirtualMachine::ticket`] panics and a queued task is only released.
+    /// Any thread; meaningful on the JS thread (a final collection's finalizer).
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.state() == State::Closed
+    }
+
     pub(crate) fn tickets_outstanding(&self) -> u32 {
         self.0.tickets.load(Ordering::SeqCst)
     }
@@ -503,18 +511,29 @@ impl VmHandle {
 impl VirtualMachine {
     /// JS thread: a ticket for work about to leave this thread — this VM, and
     /// the loop it is currently ticking. Hold it in the in-flight operation
-    /// and drop it after the completion is posted. Infallible until the wait
-    /// has finished (after which nothing on this thread starts off-thread work).
+    /// and drop it after the completion is posted.
+    ///
+    /// Panics, in release too, once the VM is [`closed`](Self::closed): the
+    /// wait is over, so nothing would wait for this ticket and its completion
+    /// would land on a loop teardown is freeing. Callers that can run that late
+    /// (finalizers) check `closed()` and refuse the work; the panic names one
+    /// that did not.
     #[track_caller]
     #[inline]
     pub fn ticket(&self) -> Ticket {
         let h = self.handle_ref();
         h.assert_js_thread();
-        debug_assert!(
-            h.0.state() != State::Closed,
+        assert!(
+            !h.closed(),
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    /// [`VmHandle::closed`] for this VM.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.handle_ref().closed()
     }
 }
 

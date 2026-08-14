@@ -2103,6 +2103,382 @@ describe("css tests", () => {
     );
   });
 
+  // When logical properties are compiled away for old targets, the inline ones (and the logical
+  // border-radius corners) become rules appended after the original rule, one for ltr and one for
+  // rtl text, which override everything declared in the original rule. A physical declaration that
+  // comes later in the same block than the logical one it overlaps with must therefore win over the
+  // compiled copy: the copy for the direction in which the logical value maps onto that physical
+  // side is dropped, and only the other direction is emitted.
+  describe("physical declaration after a compiled logical one", () => {
+    const targets = { safari: 8 << 16 };
+    const rtlLangs =
+      ":lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)";
+    // The rules the compilation appends for the ltr and the rtl direction (each is emitted twice
+    // because :is() is prefixed for these targets).
+    const ltr = (decls: string) =>
+      `.foo:not(:-webkit-any(${rtlLangs})) { ${decls} } .foo:not(:is(${rtlLangs})) { ${decls} }`;
+    const rtl = (decls: string) => `.foo:-webkit-any(${rtlLangs}) { ${decls} } .foo:is(${rtlLangs}) { ${decls} }`;
+    const rule = (decls: string) => `.foo { ${decls} }`;
+    const compiled = (source: string, expected: string) => prefix_test(`.foo { ${source} }`, expected, targets);
+
+    describe.each([
+      ["margin", "margin-"],
+      ["padding", "padding-"],
+      ["inset", ""],
+    ])("%s", (shorthand, physicalPrefix) => {
+      const inlineStart = `${shorthand}-inline-start`;
+      const inlineEnd = `${shorthand}-inline-end`;
+      const blockStart = `${shorthand}-block-start`;
+      const left = `${physicalPrefix}left`;
+      const right = `${physicalPrefix}right`;
+      const top = `${physicalPrefix}top`;
+
+      // Each inline longhand maps onto left in one direction and right in the other; the direction
+      // in which it maps onto the side declared later is dropped.
+      compiled(`${inlineStart}: 3px; ${left}: 1px`, rule(`${left}: 1px;`) + rtl(`${right}: 3px;`));
+      compiled(`${inlineStart}: 3px; ${right}: 1px`, rule(`${right}: 1px;`) + ltr(`${left}: 3px;`));
+      compiled(`${inlineEnd}: 3px; ${left}: 1px`, rule(`${left}: 1px;`) + ltr(`${right}: 3px;`));
+      compiled(`${inlineEnd}: 3px; ${right}: 1px`, rule(`${right}: 1px;`) + rtl(`${left}: 3px;`));
+
+      // Both sides declared later: nothing of the logical value survives.
+      compiled(`${inlineStart}: 3px; ${left}: 1px; ${right}: 1px`, rule(`${left}: 1px; ${right}: 1px;`));
+
+      // Both inline longhands: in ltr text the right side comes from inline-end, in rtl text from
+      // inline-start; the left side is physical in both.
+      compiled(
+        `${inlineStart}: 3px; ${inlineEnd}: 4px; ${left}: 1px`,
+        rule(`${left}: 1px;`) + ltr(`${right}: 4px;`) + rtl(`${right}: 3px;`),
+      );
+      // Equal inline values don't depend on the direction and stay in the rule itself.
+      compiled(`${inlineStart}: 3px; ${inlineEnd}: 3px; ${left}: 1px`, rule(`${right}: 3px; ${left}: 1px;`));
+
+      // Later declarations of other properties don't affect it.
+      compiled(`${inlineStart}: 3px; ${top}: 1px`, rule(`${top}: 1px;`) + ltr(`${left}: 3px;`) + rtl(`${right}: 3px;`));
+      // A block longhand compiles into the rule itself and is unaffected.
+      compiled(
+        `${inlineStart}: 3px; ${blockStart}: 4px; ${left}: 1px`,
+        rule(`${top}: 4px; ${left}: 1px;`) + rtl(`${right}: 3px;`),
+      );
+      compiled(`${blockStart}: 3px; ${top}: 1px`, rule(`${top}: 3px; ${top}: 1px;`));
+
+      // The logical declaration coming last still wins.
+      compiled(
+        `${left}: 1px; ${inlineStart}: 3px`,
+        rule(`${left}: 1px;`) + ltr(`${left}: 3px;`) + rtl(`${right}: 3px;`),
+      );
+      compiled(
+        `${inlineStart}: 3px; ${left}: 1px; ${inlineStart}: 5px`,
+        rule(`${left}: 1px;`) + ltr(`${left}: 5px;`) + rtl(`${right}: 5px;`),
+      );
+      // inline-end declared after the physical left overrides it again in rtl text.
+      compiled(
+        `${inlineStart}: 3px; ${left}: 1px; ${inlineEnd}: 2px`,
+        rule(`${left}: 1px;`) + ltr(`${right}: 2px;`) + rtl(`${left}: 2px; ${right}: 3px;`),
+      );
+
+      // Unparsed values on either side.
+      compiled(`${inlineStart}: 3px; ${left}: var(--x)`, rule(`${left}: var(--x);`) + rtl(`${right}: 3px;`));
+      compiled(`${inlineStart}: var(--x); ${left}: 1px`, rule(`${left}: 1px;`) + rtl(`${right}: var(--x);`));
+      compiled(
+        `${inlineStart}: 3px; ${left}: var(--x); ${right}: var(--y)`,
+        rule(`${left}: var(--x); ${right}: var(--y);`),
+      );
+      compiled(`${inlineStart}: 3px; ${left}: 1px; ${right}: var(--y)`, rule(`${left}: 1px; ${right}: var(--y);`));
+      compiled(
+        `${inlineStart}: 3px; ${left}: var(--x); ${inlineStart}: 5px`,
+        rule(`${left}: var(--x);`) + ltr(`${left}: 5px;`) + rtl(`${right}: 5px;`),
+      );
+      compiled(
+        `${inlineStart}: 3px; ${top}: var(--t)`,
+        rule(`${top}: var(--t);`) + ltr(`${left}: 3px;`) + rtl(`${right}: 3px;`),
+      );
+
+      // The shorthand sets both sides.
+      compiled(`${inlineStart}: 3px; ${shorthand}: 0`, rule(`${shorthand}: 0;`));
+      compiled(`${inlineStart}: 3px; ${shorthand}: var(--all)`, rule(`${shorthand}: var(--all);`));
+      compiled(
+        `${inlineStart}: 3px; ${shorthand}: 0; ${inlineStart}: 5px`,
+        rule(`${shorthand}: 0;`) + ltr(`${left}: 5px;`) + rtl(`${right}: 5px;`),
+      );
+      // (`inset` itself is still emitted for these targets, which is a separate problem, so the
+      // folding into the shorthand is only checked for the others.)
+      if (shorthand !== "inset") {
+        compiled(
+          `${inlineStart}: 3px; ${top}: 1px; ${right}: 1px; ${physicalPrefix}bottom: 1px; ${left}: 1px`,
+          rule(`${shorthand}: 1px;`),
+        );
+      }
+
+      // With targets that support logical properties everything stays in the rule in source order.
+      describe("supported", () => {
+        prefix_test(`.foo { ${inlineStart}: 3px; ${left}: 1px }`, rule(`${inlineStart}: 3px; ${left}: 1px;`), {
+          chrome: 90 << 16,
+        });
+      });
+    });
+
+    // A physical value that needs the buffered values as a fallback still flushes them first.
+    compiled("margin-block-start: 3px; margin: 1dvh", rule("margin-top: 3px; margin: 1dvh;"));
+    compiled("margin-block-start: 3px; margin-top: 1dvh", rule("margin-top: 3px; margin-top: 1dvh;"));
+    compiled(
+      "margin-inline-start: 3px; margin-left: 1px; margin-left: 1dvh",
+      rule("margin-left: 1px; margin-left: 1dvh;") + rtl("margin-right: 3px;"),
+    );
+
+    describe("border", () => {
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: 1px",
+        rule("border-left-width: 1px;") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-right-width: 1px",
+        rule("border-right-width: 1px;") + ltr("border-left-width: 3px;"),
+      );
+      compiled(
+        "border-inline-end-width: 3px; border-left-width: 1px",
+        rule("border-left-width: 1px;") + ltr("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-end-width: 3px; border-right-width: 1px",
+        rule("border-right-width: 1px;") + rtl("border-left-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start-style: dotted; border-left-style: solid",
+        rule("border-left-style: solid;") + rtl("border-right-style: dotted;"),
+      );
+      compiled(
+        "border-inline-start-color: red; border-left-color: #00f",
+        rule("border-left-color: #00f;") + rtl("border-right-color: red;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: 1px; border-right-width: 1px",
+        rule("border-left-width: 1px; border-right-width: 1px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-inline-end-width: 4px; border-left-width: 1px",
+        rule("border-left-width: 1px;") + ltr("border-right-width: 4px;") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-inline-end-width: 3px; border-left-width: 1px",
+        rule("border-right-width: 3px; border-left-width: 1px;"),
+      );
+
+      // Side shorthands are tracked per sub-property.
+      compiled(
+        "border-inline-start: 3px solid red; border-left: 1px solid #00f",
+        rule("border-left: 1px solid #00f;") + rtl("border-right: 3px solid red;"),
+      );
+      compiled(
+        "border-inline-start: 3px solid red; border-left-width: 1px",
+        rule("border-left-width: 1px;") +
+          ltr("border-left-style: solid; border-left-color: red;") +
+          rtl("border-right: 3px solid red;"),
+      );
+      compiled(
+        "border-inline-start: 3px solid red; border-inline-end: 4px solid red; border-left: 1px solid #00f",
+        rule("border-right-style: solid; border-right-color: red; border-left: 1px solid #00f;") +
+          ltr("border-right-width: 4px;") +
+          rtl("border-right-width: 3px;"),
+      );
+      // All four logical sides set, which otherwise folds into the `border` shorthand.
+      compiled(
+        "border-block-start: 3px solid red; border-block-end: 3px solid red; border-inline-start: 3px solid red; border-inline-end: 5px solid red; border-left-width: 1px",
+        rule(
+          "border-style: solid; border-color: red; border-top-width: 3px; border-bottom-width: 3px; border-left-width: 1px;",
+        ) +
+          ltr("border-right-width: 5px;") +
+          rtl("border-right-width: 3px;"),
+      );
+
+      // Unaffected orders and sides.
+      compiled(
+        "border-inline-start-width: 3px; border-top-width: 1px",
+        rule("border-top-width: 1px;") + ltr("border-left-width: 3px;") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-left-width: 1px; border-inline-start-width: 3px",
+        rule("border-left-width: 1px;") + ltr("border-left-width: 3px;") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: 1px; border-inline-end-width: 2px",
+        rule("border-left-width: 1px;") +
+          ltr("border-right-width: 2px;") +
+          rtl("border-left-width: 2px; border-right-width: 3px;"),
+      );
+      compiled(
+        "border-block-start-width: 3px; border-top-width: 1px",
+        rule("border-top-width: 3px; border-top-width: 1px;"),
+      );
+
+      // Four-side shorthands set both sides.
+      compiled("border-inline-start-width: 3px; border-width: 1px", rule("border-width: 1px;"));
+      compiled(
+        "border-inline-start-width: 3px; border: 1px solid red; border-inline-start-width: 5px",
+        rule("border: 1px solid red;") + ltr("border-left-width: 5px;") + rtl("border-right-width: 5px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-width: 1px; border-inline-start-width: 5px",
+        rule("border-width: 1px;") + ltr("border-left-width: 5px;") + rtl("border-right-width: 5px;"),
+      );
+
+      // Unparsed physical declarations.
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: var(--w)",
+        rule("border-left-width: var(--w);") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left: var(--b)",
+        rule("border-left: var(--b);") + rtl("border-right-width: 3px;"),
+      );
+      compiled("border-inline-start-width: 3px; border: var(--b)", rule("border: var(--b);"));
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: var(--l); border-right-width: var(--r)",
+        rule("border-left-width: var(--l); border-right-width: var(--r);"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: 1px; border-right-width: var(--r)",
+        rule("border-left-width: 1px; border-right-width: var(--r);"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: var(--l); border-inline-start-width: 5px",
+        rule("border-left-width: var(--l);") + ltr("border-left-width: 5px;") + rtl("border-right-width: 5px;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-top-width: var(--t)",
+        rule("border-top-width: var(--t);") + ltr("border-left-width: 3px;") + rtl("border-right-width: 3px;"),
+      );
+
+      // Unparsed logical declarations are held back the same way.
+      compiled(
+        "border-inline-start: var(--b); border-left: 1px solid #00f",
+        rule("border-left: 1px solid #00f;") + rtl("border-right: var(--b);"),
+      );
+      compiled(
+        "border-inline-end-width: var(--w); border-right-width: 1px",
+        rule("border-right-width: 1px;") + rtl("border-left-width: var(--w);"),
+      );
+      compiled(
+        "border-inline-start-width: var(--w); border-left-width: 1px; border-right-width: var(--r)",
+        rule("border-left-width: 1px; border-right-width: var(--r);"),
+      );
+      compiled("border-inline-start-width: var(--w); border: 1px solid red", rule("border: 1px solid red;"));
+      compiled(
+        "border-inline-start: var(--b); border-left: var(--l); border-right: var(--r)",
+        rule("border-left: var(--l); border-right: var(--r);"),
+      );
+      compiled(
+        "border-inline-start-width: var(--w); border-inline-end-width: 4px; border-left-width: 1px",
+        rule("border-left-width: 1px;") + ltr("border-right-width: 4px;") + rtl("border-right-width: var(--w);"),
+      );
+      // An unparsed value can't be split, so a later declaration that only overrides part of it
+      // leaves it in place.
+      compiled(
+        "border-inline-start: var(--b); border-left-width: 1px",
+        rule("border-left-width: 1px;") + ltr("border-left: var(--b);") + rtl("border-right: var(--b);"),
+      );
+      // Two declarations of the same logical property still both come through, in order.
+      compiled(
+        "border-inline-start-width: 3px; border-inline-start-width: var(--w)",
+        ltr("border-left-width: 3px; border-left-width: var(--w);") +
+          rtl("border-right-width: 3px; border-right-width: var(--w);"),
+      );
+      compiled(
+        "border-inline-start-width: var(--a); border-inline-start-width: var(--b)",
+        ltr("border-left-width: var(--a); border-left-width: var(--b);") +
+          rtl("border-right-width: var(--a); border-right-width: var(--b);"),
+      );
+      compiled(
+        "border-inline-start-width: var(--w); border-top-width: 1px",
+        rule("border-top-width: 1px;") + ltr("border-left-width: var(--w);") + rtl("border-right-width: var(--w);"),
+      );
+
+      describe("supported", () => {
+        prefix_test(
+          ".foo { border-inline-start-width: 3px; border-left-width: 1px }",
+          rule("border-inline-start-width: 3px; border-left-width: 1px;"),
+          { chrome: 90 << 16 },
+        );
+      });
+    });
+
+    describe("border-radius", () => {
+      // In ltr text the *-start corners are on the left, in rtl text on the right.
+      for (const [logical, ltrCorner, rtlCorner] of [
+        ["border-start-start-radius", "border-top-left-radius", "border-top-right-radius"],
+        ["border-start-end-radius", "border-top-right-radius", "border-top-left-radius"],
+        ["border-end-start-radius", "border-bottom-left-radius", "border-bottom-right-radius"],
+        ["border-end-end-radius", "border-bottom-right-radius", "border-bottom-left-radius"],
+      ]) {
+        // Physical corners are written out in a fixed order.
+        const [first, second] = [
+          "border-top-left-radius",
+          "border-top-right-radius",
+          "border-bottom-right-radius",
+          "border-bottom-left-radius",
+        ].filter(corner => corner === ltrCorner || corner === rtlCorner);
+
+        compiled(`${logical}: 3px; ${ltrCorner}: 1px`, rule(`${ltrCorner}: 1px;`) + rtl(`${rtlCorner}: 3px;`));
+        compiled(`${logical}: 3px; ${rtlCorner}: 1px`, rule(`${rtlCorner}: 1px;`) + ltr(`${ltrCorner}: 3px;`));
+        compiled(`${logical}: 3px; ${ltrCorner}: 1px; ${rtlCorner}: 1px`, rule(`${first}: 1px; ${second}: 1px;`));
+      }
+
+      compiled(
+        "border-start-start-radius: 3px; border-bottom-left-radius: 1px",
+        rule("border-bottom-left-radius: 1px;") +
+          ltr("border-top-left-radius: 3px;") +
+          rtl("border-top-right-radius: 3px;"),
+      );
+      compiled(
+        "border-top-left-radius: 1px; border-start-start-radius: 3px",
+        rule("border-top-left-radius: 1px;") +
+          ltr("border-top-left-radius: 3px;") +
+          rtl("border-top-right-radius: 3px;"),
+      );
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: 1px; border-start-start-radius: 5px",
+        rule("border-top-left-radius: 1px;") +
+          ltr("border-top-left-radius: 5px;") +
+          rtl("border-top-right-radius: 5px;"),
+      );
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: var(--r)",
+        rule("border-top-left-radius: var(--r);") + rtl("border-top-right-radius: 3px;"),
+      );
+      compiled(
+        "border-start-start-radius: var(--r); border-top-left-radius: 1px",
+        rule("border-top-left-radius: 1px;") + rtl("border-top-right-radius: var(--r);"),
+      );
+      compiled("border-start-start-radius: 3px; border-radius: var(--r)", rule("border-radius: var(--r);"));
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: var(--a); border-top-right-radius: var(--b)",
+        rule("border-top-left-radius: var(--a); border-top-right-radius: var(--b);"),
+      );
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: 1px; border-top-right-radius: var(--b)",
+        rule("border-top-left-radius: 1px; border-top-right-radius: var(--b);"),
+      );
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: var(--a); border-start-start-radius: 5px",
+        rule("border-top-left-radius: var(--a);") +
+          ltr("border-top-left-radius: 5px;") +
+          rtl("border-top-right-radius: 5px;"),
+      );
+      compiled("border-start-start-radius: 3px; border-radius: 1px", rule("border-radius: 1px;"));
+      compiled(
+        "border-start-start-radius: 3px; border-radius: 1px; border-start-start-radius: 5px",
+        rule("border-radius: 1px;") + ltr("border-top-left-radius: 5px;") + rtl("border-top-right-radius: 5px;"),
+      );
+
+      describe("supported", () => {
+        prefix_test(
+          ".foo { border-start-start-radius: 3px; border-top-left-radius: 1px }",
+          rule("border-start-start-radius: 3px; border-top-left-radius: 1px;"),
+          { chrome: 90 << 16 },
+        );
+      });
+    });
+  });
+
   describe("length", () => {
     const properties = [
       "margin-right",

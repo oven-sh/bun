@@ -41,19 +41,21 @@ function pathWithout(name: string, PATH: string | undefined): string {
 }
 
 // Cases that need bunx to install something get a per-test in-process registry
-// serving throwaway packages. What they assert is bunx's own behavior (name ->
-// bin resolution, the bunx cache, argument passthrough); installing real
+// serving throwaway packages: what they assert is bunx's own behavior (name ->
+// bin resolution, the bunx cache, argument passthrough), and installing real
 // packages made the file's cost scale with their dependency trees instead
 // (@angular/cli alone was ~21k files per run to extract and, once the CI runner
-// removes TMPDIR, delete again). Per-test servers also work under it.concurrent,
-// unlike dummy.registry's module-level handler, and `requests` lets a case prove
-// that a second run came from the bunx cache.
+// removes TMPDIR, delete again). dummy.registry's per-test contexts only serve
+// the .tgz files checked in next to it, answer every package name with the same
+// version list, and have no GitHub shape; these generate the tarballs instead,
+// and `requests` lets a case prove that a second run came from the bunx cache.
 
 type FixturePackage = {
   name: string;
   version: string;
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
   /** Contents of the package besides its generated package.json. */
   files: Record<string, string>;
 };
@@ -63,51 +65,24 @@ function echoBin(label: string): string {
   return `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)}, ...process.argv.slice(2));\n`;
 }
 
-function fixturePackage(name: string, version: string, binName: string): FixturePackage {
-  return {
-    name,
-    version,
-    bin: { [binName]: "cli.js" },
-    files: { "cli.js": echoBin(`${binName} ${version}`) },
-  };
-}
-
-function ustarHeader(name: string, size: number, type: "0" | "5"): Buffer {
-  if (Buffer.byteLength(name) >= 100) throw new Error(`tar entry name too long for a ustar header: ${name}`);
-  const header = Buffer.alloc(512);
-  header.write(name, 0);
-  header.write("0000755\0", 100); // mode
-  header.write("0000000\0", 108); // uid
-  header.write("0000000\0", 116); // gid
-  header.write(size.toString(8).padStart(11, "0") + "\0", 124);
-  header.write("00000000000\0", 136); // mtime
-  header.write("        ", 148); // checksum is computed over spaces
-  header.write(type, 156);
-  header.write("ustar\0", 257);
-  header.write("00", 263);
-  let checksum = 0;
-  for (const byte of header) checksum += byte;
-  header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148);
-  return header;
+function fixturePackage(
+  name: string,
+  version: string,
+  binName: string,
+  binScript: string = echoBin(`${binName} ${version}`),
+): FixturePackage {
+  return { name, version, bin: { [binName]: "cli.js" }, files: { "cli.js": binScript } };
 }
 
 /**
- * A .tgz with every entry under `root/`, the layout of both npm tarballs
- * (`package/`) and GitHub's tarballs (`<owner>-<repo>-<commit>/`, which bun
- * install reads back as the resolved commit).
+ * A .tgz with every entry under `root/`: `package/` for npm tarballs,
+ * `<owner>-<repo>-<commit>/` for GitHub's. The directory entry comes first
+ * because bun install reads a GitHub tarball's first entry as that root.
  */
-function tarball(root: string, files: Record<string, string>): Uint8Array<ArrayBuffer> {
-  const blocks = [ustarHeader(`${root}/`, 0, "5")];
-  for (const [path, contents] of Object.entries(files)) {
-    const body = Buffer.from(contents);
-    blocks.push(
-      ustarHeader(`${root}/${path}`, body.length, "0"),
-      body,
-      Buffer.alloc((512 - (body.length % 512)) % 512),
-    );
-  }
-  blocks.push(Buffer.alloc(1024));
-  return Bun.gzipSync(Buffer.concat(blocks));
+function tarball(root: string, files: Record<string, string>): Promise<Uint8Array<ArrayBuffer>> {
+  const entries: Record<string, string> = { [`${root}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${root}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
 }
 
 function fixtureServer(handler: (pathname: string) => Uint8Array<ArrayBuffer> | object | undefined) {
@@ -136,7 +111,7 @@ function fixtureServer(handler: (pathname: string) => Uint8Array<ArrayBuffer> | 
  * An npm registry serving `packages` (the last version listed for a name is its
  * `latest`); point bunx at it with `npm_config_registry: registry.url`.
  */
-function localRegistry(...packages: FixturePackage[]) {
+async function localRegistry(...packages: FixturePackage[]) {
   const manifests = new Map<
     string,
     { name: string; versions: Record<string, object>; "dist-tags": { latest: string } }
@@ -145,10 +120,10 @@ function localRegistry(...packages: FixturePackage[]) {
   const registry = fixtureServer(
     pathname => tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))),
   );
-  for (const { name, version, bin, dependencies, files } of packages) {
+  for (const { name, version, bin, dependencies, scripts, files } of packages) {
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
-    const packageJson = { name, version, bin, dependencies };
-    tarballs.set(tarballPath, tarball("package", { "package.json": JSON.stringify(packageJson), ...files }));
+    const packageJson = { name, version, bin, dependencies, scripts };
+    tarballs.set(tarballPath, await tarball("package", { "package.json": JSON.stringify(packageJson), ...files }));
     const manifest = manifests.get(name) ?? { name, versions: {}, "dist-tags": { latest: version } };
     manifest.versions[version] = { ...packageJson, dist: { tarball: `${registry.url}${tarballPath}` } };
     manifest["dist-tags"].latest = version;
@@ -161,8 +136,8 @@ function localRegistry(...packages: FixturePackage[]) {
  * Stands in for api.github.com (bun install honors `GITHUB_API_URL`): every
  * `/repos/<owner>/<repo>/tarball/<ref>` request gets the one fixture repository.
  */
-function localGithub(owner: string, repo: string, files: Record<string, string>) {
-  const bytes = tarball(`${owner}-${repo}-0123abc`, files);
+async function localGithub(owner: string, repo: string, files: Record<string, string>) {
+  const bytes = await tarball(`${owner}-${repo}-0123abc`, files);
   return fixtureServer(pathname => (pathname.startsWith(`/repos/${owner}/${repo}/tarball/`) ? bytes : undefined));
 }
 
@@ -223,7 +198,7 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
   // two installs extracting the same package there fail with "ENOENT: failed
   // opening cache/package/version dir" roughly half the time, and the real
   // 7.0.0 and 7.1.0 that Windows runs have no dependencies either.
-  using registry = localRegistry(
+  using registry = await localRegistry(
     { name: "lru-cache", version: "1.0.0", files: { "index.js": "" } },
     ...semverVersions.map(version => ({
       ...fixturePackage("semver", version, "semver"),
@@ -275,38 +250,54 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
   );
 });
 
+// Two versions of a package whose bin (`uglifyjs`, as in the real uglify-js) is
+// not named after the package, so bunx has to read the installed package.json to
+// find it. 3.19.3 is `latest`; `latestBin` replaces its bin script.
+function uglifyJs(latestBin?: string): FixturePackage[] {
+  return [
+    fixturePackage("uglify-js", "3.14.1", "uglifyjs"),
+    fixturePackage("uglify-js", "3.19.3", "uglifyjs", latestBin),
+  ];
+}
+
 it.concurrent("should install and run default (latest) version", async () => {
   const { x_dir, env } = setup();
+  using registry = await localRegistry(
+    ...uglifyJs(
+      `#!/usr/bin/env node\nconsole.log("uglifyjs 3.19.3", ...process.argv.slice(2), "stdin:", require("fs").readFileSync(0, "utf8"));\n`,
+    ),
+  );
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: new TextEncoder().encode("console.log(6 * 7);"),
     stderr: "pipe",
-    env,
+    env: { ...env, npm_config_registry: registry.url },
   });
-  const err = await stderr.text();
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
-  const out = await stdout.text();
-  expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
-  expect(await exited).toBe(0);
+  expect(out.trim()).toBe("uglifyjs 3.19.3 --compress stdin: console.log(6 * 7);");
+  expect(registry.requests).toEqual(["/uglify-js", "/uglify-js/-/uglify-js-3.19.3.tgz"]);
+  expect(exitCode).toBe(0);
 });
 
 it.concurrent("should install and run specified version", async () => {
   const { x_dir, env } = setup();
+  using registry = await localRegistry(...uglifyJs());
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
     stderr: "pipe",
-    env,
+    env: { ...env, npm_config_registry: registry.url },
   });
-  const err = await stderr.text();
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
-  const out = await stdout.text();
-  expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
-  expect(await exited).toBe(0);
+  expect(out.trim()).toBe("uglifyjs 3.14.1 -v");
+  expect(registry.requests).toEqual(["/uglify-js", "/uglify-js/-/uglify-js-3.14.1.tgz"]);
+  expect(exitCode).toBe(0);
 });
 
 it.concurrent("should output usage if no arguments are passed", async () => {
@@ -332,7 +323,7 @@ it.concurrent("should work for @scoped packages", async () => {
   const { x_dir, env } = setup();
   // Like @babel/cli -> `babel`: the bin is named after neither the scope nor the
   // package, so bunx has to read the installed package.json to find it.
-  using registry = localRegistry(fixturePackage("@bunx-fixture/cli", "1.2.3", "scoped-cli"));
+  using registry = await localRegistry(fixturePackage("@bunx-fixture/cli", "1.2.3", "scoped-cli"));
   const run = () => {
     const subprocess = spawn({
       cmd: [bunExe(), "--bun", "x", "@bunx-fixture/cli", "--help"],
@@ -375,18 +366,25 @@ console.log(
 7
 )`,
   );
+  // The bin resolves its argument against the directory it was started in.
+  using registry = await localRegistry(
+    ...uglifyJs(
+      `#!/usr/bin/env node\nconsole.log("uglifyjs 3.19.3 read", process.argv[2] + ":", require("fs").readFileSync(process.argv[2], "utf8").replace(/\\s+/g, ""));\n`,
+    ),
+  );
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "--bun", "x", "uglify-js", "test.js", "--compress"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
     stderr: "pipe",
-    env,
+    env: { ...env, npm_config_registry: registry.url },
   });
   const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
+  // bunx installed into its cache dir, not into the directory it was run from
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
-  expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
+  expect(out.trim()).toBe("uglifyjs 3.19.3 read test.js: console.log(6*7)");
   expect(exitCode).toBe(0);
 });
 
@@ -399,7 +397,7 @@ const cowsayRepo = {
 
 it.concurrent("should work for github repository", async () => {
   const { x_dir, env } = setup();
-  using github = localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
   const run = () => {
     const subprocess = spawn({
       cmd: [bunExe(), "x", "github:bunx-fixture/cowsay", "--help"],
@@ -433,7 +431,7 @@ it.concurrent("should work for github repository", async () => {
 
 it.concurrent("should work for github repository with committish", async () => {
   const { x_dir, env } = setup();
-  using github = localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
   const run = (...flags: string[]) => {
     const subprocess = spawn({
       cmd: [bunExe(), "x", ...flags, "github:bunx-fixture/cowsay#HEAD", "hello bun!"],
@@ -503,21 +501,26 @@ it.concurrent("should print the revision and exit", async () => {
 
 it.concurrent("should pass --version to the package if specified", async () => {
   const { x_dir, env } = setup();
+  using registry = await localRegistry(fixturePackage("esbuild", "0.28.2", "esbuild"));
   const subprocess = spawn({
     cmd: [bunExe(), "x", "esbuild", "--version"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
     stderr: "pipe",
-    env,
+    env: {
+      ...env,
+      npm_config_registry: registry.url,
+      // unversioned, so an esbuild already on PATH would be run instead of the fixture
+      PATH: pathWithout("esbuild", env.PATH ?? process.env.PATH),
+    },
   });
 
   let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
-  // esbuild's own version, not bunx's
-  expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
-  expect(out.trim()).not.toBe(Bun.version);
+  // the flag reached the package instead of being taken as bunx's own --version
+  expect(out.trim()).toBe("esbuild 0.28.2 --version");
   expect(exited).toBe(0);
 });
 
@@ -593,7 +596,7 @@ describe("bunx --no-install", () => {
     "`bunx --no-install %s` should find cached packages",
     async pkg => {
       const bin = pkg === "typescript" ? "tsc" : pkg;
-      using registry = localRegistry(fixturePackage(pkg, "1.0.0", bin));
+      using registry = await localRegistry(fixturePackage(pkg, "1.0.0", bin));
       const ctx = setup();
       ctx.env.npm_config_registry = registry.url;
       // An unversioned `bunx <pkg>` runs a matching bin from PATH before it looks
@@ -623,7 +626,7 @@ describe("bunx --no-install", () => {
   );
 
   it.concurrent("when an exact version match is found, should find cached packages", async () => {
-    using registry = localRegistry(fixturePackage("http-server", "14.0.0", "http-server"));
+    using registry = await localRegistry(fixturePackage("http-server", "14.0.0", "http-server"));
     const ctx = setup();
     ctx.env.npm_config_registry = registry.url;
 
@@ -649,9 +652,24 @@ describe("bunx --no-install", () => {
 
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();
-  // Create a symlink to bun called "bunx"
+  // Copies rather than symlinks: bun re-runs its own executable path for the
+  // install (`bunx add`) and for lifecycle scripts (`bunx exec`), and #17076 was
+  // those being taken for packages named "add"/"exec" when that path ends in bunx.
   copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
   copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
+
+  // esbuild is in bun's default trusted dependencies, so its postinstall runs.
+  // The bin reports whether it did.
+  using registry = await localRegistry({
+    name: "esbuild",
+    version: "0.28.2",
+    bin: { esbuild: "cli.js" },
+    scripts: { postinstall: "node postinstall.js" },
+    files: {
+      "postinstall.js": `require("fs").writeFileSync("postinstall-ran", "");\n`,
+      "cli.js": `#!/usr/bin/env node\nconsole.log("esbuild 0.28.2", require("fs").existsSync(__dirname + "/postinstall-ran") ? "after postinstall" : "without postinstall", ...process.argv.slice(2));\n`,
+    },
+  });
 
   const subprocess = spawn({
     cmd: ["bunx", "esbuild@latest", "--version"],
@@ -661,7 +679,8 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
     stderr: "pipe",
     env: {
       ...env,
-      PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+      npm_config_registry: registry.url,
+      PATH: `${x_dir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
     },
   });
 
@@ -669,9 +688,8 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
 
   expect(err).not.toContain("error:");
   expect(err).not.toContain("Cannot find module 'exec'");
-  // esbuild's own version, not bunx's
-  expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
-  expect(out.trim()).not.toBe(Bun.version);
+  expect(out.trim()).toBe("esbuild 0.28.2 after postinstall --version");
+  expect(registry.requests).toEqual(["/esbuild", "/esbuild/-/esbuild-0.28.2.tgz"]);
   expect(exited).toBe(0);
 });
 
@@ -682,7 +700,7 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
 // engines range moved under us twice.
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
-  using registry = localRegistry({
+  using registry = await localRegistry({
     name: "@bunx-fixture/requires-node-24",
     version: "1.0.0",
     bin: { ng: "cli.js" },
@@ -1371,7 +1389,7 @@ describe("package name aliases", () => {
 it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quote", async () => {
   // Installing any package with a bin creates the tsc.exe + tsc.bunx pair; the
   // .bunx contents are overwritten below, so a fixture is as good as the real thing.
-  using registry = localRegistry(fixturePackage("typescript", "5.0.0", "tsc"));
+  using registry = await localRegistry(fixturePackage("typescript", "5.0.0", "tsc"));
   await writeFile(join(x_dir, "package.json"), "{}");
   const subprocess1 = spawn({
     cmd: [bunExe(), "add", "typescript@5.0.0"],

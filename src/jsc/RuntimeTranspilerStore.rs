@@ -262,19 +262,19 @@ impl RuntimeTranspilerStore {
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
-    ) {
+    ) -> Result<(), crate::JsTerminated> {
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
         let first = iter.next();
         if first.is_null() {
-            return;
+            return Ok(());
         }
         // we run just one job first to see if there are more
         // SAFETY: `first` is a live job popped from the intrusive queue.
         if let Err(err) = unsafe { (*first).run_from_js_thread() } {
-            global.report_uncaught_exception_from_error(err);
+            crate::task::report_error_or_terminate(global, err)?;
         }
         loop {
             let job = iter.next();
@@ -283,18 +283,15 @@ impl RuntimeTranspilerStore {
             }
             // if there are more, we need to drain the microtasks from the previous run
             // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
-            {
-                return;
-            }
+            unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }?;
             // SAFETY: `job` is a live job popped from the intrusive queue.
             if let Err(err) = unsafe { (*job).run_from_js_thread() } {
-                global.report_uncaught_exception_from_error(err);
+                crate::task::report_error_or_terminate(global, err)?;
             }
         }
 
         // immediately after this is called, the microtasks will be drained again.
+        Ok(())
     }
 
     pub fn transpile(

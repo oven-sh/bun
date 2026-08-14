@@ -121,6 +121,77 @@ test(
   timeout,
 );
 
+// Regression: RuntimeTranspilerStore::run_from_js_thread reported the
+// TerminationException as an uncaught exception. A worker dynamic-importing
+// in a loop and terminated mid-iteration has an in-flight TranspilerJob whose
+// JS-thread completion (AsyncModule::fulfill -> promise resolve/reject) raises
+// the TerminationException; the old report_uncaught_exception_from_error path
+// then reached Bun__handleUncaughtException -> process->get("_fatalException"),
+// whose static-property reification transitions process's Structure mid-walk
+// and trips ASSERT(object->structure() == this) in Structure::storedPrototype.
+//
+// Modules have a syntax error so the fetch promise rejects: the rejected
+// ModuleLoadTopSettled branch does not call loadModule -> hostLoadImportedModule,
+// whose separate scope.assertNoException() termination bug (WebKit-side) would
+// otherwise also fire here.
+test.skipIf(!isDebug)(
+  "terminate() while dynamic-import transpiler jobs are in flight does not report TerminationException as uncaught",
+  async () => {
+    // w.mjs lives in the temp dir so it can use relative ./modN imports;
+    // main.mjs uses the global Web Worker (no preloads): node:worker_threads
+    // injects a "node:worker_threads" preload whose load_preloads spin uses the
+    // non-termination-aware wait_for_promise and independently hits the WebKit
+    // assertNoException() termination bug.
+    using dir = tempDir("worker-terminate-dynimport", {
+      "mod0.mjs": "export default 0; ++++;",
+      "mod1.mjs": "export default 1; ++++;",
+      "mod2.mjs": "export default 2; ++++;",
+      "mod3.mjs": "export default 3; ++++;",
+      "w.mjs": `
+        postMessage("ready");
+        let k = 0;
+        while (true) {
+          const i = k % 4;
+          try { await import("./mod" + i + ".mjs?v=" + ((k / 4) | 0)); } catch {}
+          k++;
+        }
+      `,
+      "main.mjs": `
+        const rounds = 60;
+        function one(delay) {
+          return new Promise((resolve) => {
+            const w = new Worker(new URL("./w.mjs", import.meta.url).href);
+            w.onerror = () => {};
+            // Key terminate off the ready signal so every round is past
+            // startup and inside the import loop.
+            w.onmessage = () => setTimeout(() => { w.terminate(); setTimeout(resolve, 5); }, delay);
+          });
+        }
+        async function lane(offset) {
+          for (let i = 0; i < rounds; i++) await one((i * 7 + offset) % 30);
+        }
+        await Promise.all([lane(0), lane(3)]);
+        console.log("survived");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: "survived\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout * 2,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

@@ -389,7 +389,7 @@ pub(crate) fn run_task(
         }
         task_tag::RuntimeTranspilerStore => {
             let store = cast!(RuntimeTranspilerStore);
-            store.run_from_js_thread(el.into(), global, vm.into());
+            store.run_from_js_thread(el.into(), global, vm.into())?;
         }
 
         // ── hot-reload (early-returns from the drain loop) ───────────────

@@ -393,170 +393,202 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
-// Expected's entries as a subset of actual's: identity keys fast-path with
-// index reservation so no actual entry is consumed twice; object keys match
-// by partial deep equality.
+enum class Pairing { Open,
+    Complete };
+
+// The expected Set members / Map entries a hash lookup could not settle (copies; the caller
+// rooted them in gcBuffer), claimed one by one while actual is walked once.
+template<typename Entry>
+struct PendingExpected {
+    using Queue = WTF::Vector<Entry, 8>;
+
+    Queue entries;
+    size_t first { 0 };
+    size_t last;
+    // Front guesses keep hitting while actual arrives in expected's order, back guesses while
+    // it arrives reversed; only when both miss is the rest of the window scanned.
+    bool probeFront { true };
+
+    explicit PendingExpected(Queue&& queued)
+        : entries(std::move(queued))
+        , last(entries.size() - 1)
+    {
+        ASSERT(!entries.isEmpty());
+    }
+
+    size_t openCount() const { return last - first + 1; }
+
+    // One actual entry against the open window, in node's order (partialObjectSetEquiv /
+    // partialObjectMapEquiv, down to which entry is claimed when several would do): the front
+    // guess, the back guess, then the rest back to front. A claimed entry is swap-removed so it
+    // is never compared again; Complete means nothing is left to claim. `matches` may throw;
+    // callers RETURN_IF_EXCEPTION after this returns.
+    template<typename Matches>
+    Pairing claimWith(JSC::ThrowScope& scope, const Matches& matches)
+    {
+        size_t scanFrom = first;
+        if (probeFront) {
+            bool hit = matches(entries[first]);
+            RETURN_IF_EXCEPTION(scope, Pairing::Open);
+            if (hit) {
+                if (first == last)
+                    return Pairing::Complete;
+                first++;
+                return Pairing::Open;
+            }
+            if (first == last)
+                return Pairing::Open;
+            probeFront = false;
+            scanFrom++;
+        }
+        bool hit = matches(entries[last]);
+        RETURN_IF_EXCEPTION(scope, Pairing::Open);
+        if (!hit) {
+            probeFront = true;
+            size_t i = last;
+            while (!hit && i > scanFrom) {
+                i--;
+                hit = matches(entries[i]);
+                RETURN_IF_EXCEPTION(scope, Pairing::Open);
+            }
+            if (!hit)
+                return Pairing::Open;
+            entries[i] = entries[last];
+        }
+        if (first == last)
+            return Pairing::Complete;
+        last--;
+        return Pairing::Open;
+    }
+};
+
+struct PendingMapEntry {
+    JSValue key;
+    JSValue value;
+};
+
+// Expected's entries as a subset of actual's (node's mapEquiv + partialObjectMapEquiv). A
+// primitive key is settled by one lookup: actual must hold that key and the values must
+// match, since no other entry can stand in for it. Object keys, identical ones included, are
+// queued and matched structurally, key and value together, while actual is walked once.
 static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSMap* actualMap = uncheckedDowncast<JSC::JSMap>(actual.asCell());
     JSC::JSMap* expectedMap = uncheckedDowncast<JSC::JSMap>(expected.asCell());
 
-    // Materialized lazily, rooted in gcBuffer (keys then values, pairwise).
-    bool materialized = false;
-    size_t entriesStart = 0;
-    size_t entryCount = 0;
-    WTF::Vector<bool, 8> usedIndices;
-    JSC::MarkedArgumentBuffer usedIdentityKeys;
-
-    auto materialize = [&]() -> bool {
-        if (materialized)
-            return true;
-        materialized = true;
-        entriesStart = gcBuffer.size();
-        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
-        if (scope.exception()) [[unlikely]]
-            return false;
-        JSValue key, value;
-        while (iter->nextKeyValue(globalObject, key, value)) {
-            gcBuffer.append(key);
-            gcBuffer.append(value);
-            entryCount++;
-        }
-        usedIndices.fill(false, entryCount);
-        return true;
-    };
-
-    auto identityKeyUsed = [&](JSValue key) -> bool {
-        for (size_t i = 0; i < usedIdentityKeys.size(); i++) {
-            bool same = JSC::sameValue(globalObject, usedIdentityKeys.at(i), key);
-            // sameValue can resolve ropes and throw; plain check because the macro can't live
-            // inside a lambda — callers RETURN_IF_EXCEPTION right after this returns.
-            if (scope.exception()) [[unlikely]]
+    PendingExpected<PendingMapEntry>::Queue queued;
+    {
+        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue expectedKey, expectedValue;
+        while (iter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
+            if (expectedKey.isObject()) {
+                gcBuffer.append(expectedKey);
+                gcBuffer.append(expectedValue);
+                queued.append({ expectedKey, expectedValue });
+                continue;
+            }
+            JSValue actualValue = actualMap->get(globalObject, expectedKey);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (actualValue.isUndefined()) {
+                // get() answers undefined both for a missing key and for a key holding undefined.
+                bool held = actualMap->has(globalObject, expectedKey);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!held)
+                    return false;
+            }
+            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!equal)
                 return false;
-            if (same)
+        }
+    }
+    if (queued.isEmpty())
+        return true;
+
+    PendingExpected<PendingMapEntry> pending(std::move(queued));
+    auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
+    RETURN_IF_EXCEPTION(scope, false);
+    size_t visited = 0;
+    JSValue actualKey, actualValue;
+    while (iter->nextKeyValue(globalObject, actualKey, actualValue)) {
+        visited++;
+        if (actualKey.isObject()) {
+            Pairing pairing = pending.claimWith(scope, [&](const PendingMapEntry& entry) -> bool {
+                bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, actualKey, entry.key);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!keyEqual)
+                    return false;
+                return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, entry.value);
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            if (pairing == Pairing::Complete)
                 return true;
         }
-        return false;
-    };
-
-    auto expectedIter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
-    RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedKey, expectedValue;
-    while (expectedIter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
-        bool consumed = false;
-        bool identityPresent = actualMap->has(globalObject, expectedKey);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool expectedKeyAlreadyUsed = identityKeyUsed(expectedKey);
-        // sameValue can resolve rope strings and throw; the lambda cannot
-        // hold the check macro, so check at every call site.
-        RETURN_IF_EXCEPTION(scope, false);
-        if (identityPresent && !expectedKeyAlreadyUsed) {
-            // Reserve the identity entry's index so the deep-matching loop
-            // below cannot consume it twice.
-            size_t identityIndex = SIZE_MAX;
-            if (materialized) {
-                for (size_t i = 0; i < entryCount; i++) {
-                    bool same = JSC::sameValueZero(globalObject, gcBuffer.at(entriesStart + i * 2), expectedKey);
-                    // Same rope-resolution hazard as identityKeyUsed: bail
-                    // before the next VM-entering call, not after the loop.
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) {
-                        identityIndex = i;
-                        break;
-                    }
-                }
-            }
-            if (identityIndex == SIZE_MAX || !usedIndices[identityIndex]) {
-                JSValue actualValue = actualMap->get(globalObject, expectedKey);
-                RETURN_IF_EXCEPTION(scope, false);
-                bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (equal) {
-                    usedIdentityKeys.append(expectedKey);
-                    if (identityIndex != SIZE_MAX)
-                        usedIndices[identityIndex] = true;
-                    consumed = true;
-                }
-            }
-        }
-        if (consumed)
-            continue;
-        if (!expectedKey.isObject())
-            return false;
-        if (!materialize())
-            return false;
-        RETURN_IF_EXCEPTION(scope, false);
-        bool matched = false;
-        for (size_t i = 0; i < entryCount; i++) {
-            if (usedIndices[i])
-                continue;
-            JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
-            bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (candidateIsUsedIdentity)
-                continue;
-            bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!keyEqual)
-                continue;
-            bool valueEqual = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(entriesStart + i * 2 + 1), expectedValue);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (valueEqual) {
-                usedIndices[i] = true;
-                matched = true;
-                break;
-            }
-        }
-        if (!matched)
+        const size_t size = actualMap->size();
+        const size_t unvisited = size > visited ? size - visited : 0;
+        if (unvisited < pending.openCount())
             return false;
     }
-    return true;
+    return false;
 }
 
-// Expected's items as a subset of actual's; item equality is the partial
-// comparison itself — node matches object items with subset semantics
-// (Set([{a:1,b:2}]) partially contains Set([{a:1}])).
+// Expected's members as a subset of actual's (node's setEquiv + partialObjectSetEquiv). A
+// member actual holds by identity is settled by one lookup, and a primitive it does not hold
+// can match nothing else. The remaining objects are matched with subset semantics
+// (Set([{a:1,b:2}]) partially contains Set([{a:1}])) while actual is walked once; the actual
+// members expected also holds were settled by the lookup and stay reserved for their twin.
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
     JSC::JSSet* expectedSet = uncheckedDowncast<JSC::JSSet>(expected.asCell());
 
-    const size_t itemsStart = gcBuffer.size();
-    size_t itemCount = 0;
+    PendingExpected<JSValue>::Queue queued;
     {
-        auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
+        auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, false);
-        JSValue item;
-        while (iter->next(globalObject, item)) {
-            gcBuffer.append(item);
-            itemCount++;
+        JSValue expectedMember;
+        while (iter->next(globalObject, expectedMember)) {
+            bool held = actualSet->has(globalObject, expectedMember);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (held)
+                continue;
+            if (!expectedMember.isObject())
+                return false;
+            gcBuffer.append(expectedMember);
+            queued.append(expectedMember);
         }
     }
-    WTF::Vector<bool, 8> usedIndices;
-    usedIndices.fill(false, itemCount);
+    if (queued.isEmpty())
+        return true;
 
-    auto expectedIter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
+    PendingExpected<JSValue> pending(std::move(queued));
+    auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedItem;
-    while (expectedIter->next(globalObject, expectedItem)) {
-        bool matched = false;
-        for (size_t i = 0; i < itemCount; i++) {
-            if (usedIndices[i])
-                continue;
-            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);
+    size_t visited = 0;
+    JSValue actualMember;
+    while (iter->next(globalObject, actualMember)) {
+        visited++;
+        if (actualMember.isObject()) {
+            bool reserved = expectedSet->has(globalObject, actualMember);
             RETURN_IF_EXCEPTION(scope, false);
-            if (equal) {
-                usedIndices[i] = true;
-                matched = true;
-                break;
+            if (!reserved) {
+                Pairing pairing = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {
+                    return compareBranch(globalObject, gcBuffer, cycles, scope, actualMember, expectedMember);
+                });
+                RETURN_IF_EXCEPTION(scope, false);
+                if (pairing == Pairing::Complete)
+                    return true;
             }
         }
-        if (!matched)
+        const size_t size = actualSet->size();
+        const size_t unvisited = size > visited ? size - visited : 0;
+        if (unvisited < pending.openCount())
             return false;
     }
-    return true;
+    return false;
 }
 
 // Errors compare name/message/errors leniently: `undefined` (or an empty

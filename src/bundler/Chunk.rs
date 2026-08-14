@@ -22,7 +22,7 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
-use crate::html_import_manifest as HTMLImportManifest;
+use crate::HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
     AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
@@ -520,6 +520,24 @@ impl IntermediateOutput {
         dst
     }
 
+    /// Writes the path that replaces a chunk/asset placeholder. `ascii_only`
+    /// (see `code_with_source_map_shifts`) escapes it the way the printer
+    /// escapes the double-quoted literal it is spliced into.
+    fn write_spliced_path<W: bun_io::Write>(
+        writer: &mut W,
+        path: &[u8],
+        ascii_only: bool,
+    ) -> Result<(), crate::Error> {
+        if ascii_only {
+            bun_js_printer::write_pre_quoted_string_inner::<_, { bun_js_printer::Encoding::Utf8 }>(
+                path, writer, b'"', true, false,
+            )?;
+        } else {
+            writer.write_all(path)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn get_size(&self) -> usize {
         match self {
             IntermediateOutput::Pieces(pieces) => {
@@ -691,6 +709,15 @@ impl IntermediateOutput {
                     &[]
                 };
 
+                // Every placeholder in a JS chunk sits inside a double-quoted string
+                // literal (import paths, asset paths, the HTML import manifest). A
+                // chunk printed for bun starts with `// @bun` (see postProcessJSChunk),
+                // which makes the runtime load it as Latin-1 without re-parsing it, so
+                // the printer escaped it to ASCII; what we splice in has to be too.
+                let ascii_only = chunk.content.is_javascript()
+                    && linker_graph.ast.items_target()[chunk.entry_point.source_index() as usize]
+                        .is_bun();
+
                 for piece in pieces.slice() {
                     count += piece.data.len();
 
@@ -750,15 +777,17 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    count += bun_core::fmt::count(format_args!(
-                                        "{}",
-                                        HTMLImportManifest::format_escaped_json(
-                                            piece.query.index(),
-                                            graph,
-                                            chunks,
-                                            linker_graph,
-                                        )
-                                    ));
+                                    let mut counter = bun_io::DiscardingWriter::new();
+                                    HTMLImportManifest::write_escaped_json(
+                                        piece.query.index(),
+                                        graph,
+                                        linker_graph,
+                                        chunks,
+                                        ascii_only,
+                                        &mut counter,
+                                    )
+                                    .expect("unreachable");
+                                    count += counter.count;
                                     continue;
                                 }
                                 QueryKind::None => unreachable!(),
@@ -777,7 +806,12 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            for part in cheap_normalizer {
+                                let mut counter = bun_io::DiscardingWriter::new();
+                                Self::write_spliced_path(&mut counter, part, ascii_only)
+                                    .expect("unreachable");
+                                count += counter.count;
+                            }
                         }
                         QueryKind::None => {}
                     }
@@ -911,17 +945,20 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    let mut cursor: &mut [u8] = remain;
-                                    let before_len = cursor.len();
-                                    HTMLImportManifest::write_escaped_json(
-                                        piece.query.index(),
-                                        graph,
-                                        linker_graph,
-                                        chunks,
-                                        &mut cursor,
-                                    )
-                                    .expect("unreachable");
-                                    let written = before_len - cursor.len();
+                                    let written = {
+                                        let mut stream =
+                                            bun_io::FixedBufferStream::new_mut(&mut *remain);
+                                        HTMLImportManifest::write_escaped_json(
+                                            piece.query.index(),
+                                            graph,
+                                            linker_graph,
+                                            chunks,
+                                            ascii_only,
+                                            &mut stream,
+                                        )
+                                        .expect("unreachable");
+                                        stream.pos
+                                    };
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         // The placeholder was an HtmlImport unique key, which has
@@ -962,22 +999,18 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
+                            for part in cheap_normalizer {
+                                let written = {
+                                    let mut stream =
+                                        bun_io::FixedBufferStream::new_mut(&mut *remain);
+                                    Self::write_spliced_path(&mut stream, part, ascii_only)
+                                        .expect("unreachable");
+                                    stream.pos
+                                };
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                                    shift.after.advance(&remain[..written]);
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
-                                }
+                                remain = &mut remain[written..];
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

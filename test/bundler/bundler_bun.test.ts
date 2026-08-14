@@ -137,6 +137,31 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+  // Output for bun starts with `// @bun`, which the runtime loads as Latin-1
+  // without re-parsing, so the chunk and asset paths spliced into the printed
+  // code have to be escaped to ASCII like the rest of the file. Spliced in raw,
+  // "./é-<hash>.js" is read back as "./Ã©-<hash>.js".
+  itBundled("bun/NonAsciiChunkAndAssetPaths", {
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import asset from "./dätä.bin";
+        const { value } = await import("./modülé");
+        console.log(value);
+        console.log(await Bun.file(import.meta.dir + "/" + asset).text());
+      `,
+      "/modülé.ts": /* js */ `export const value = "from modülé";`,
+      "/dätä.bin": `asset contents`,
+    },
+    run: { file: "/out/entry.js", stdout: "from modülé\nasset contents" },
+    onAfterBundle(api) {
+      // The output files keep their names; the references to them are escaped.
+      api.expectFile("/out/entry.js").toMatch(/_default = "\.\/[\w\\-]+\.bin";/);
+      api.expectFile("/out/entry.js").toMatch(/import\("\.\/[\w\\-]+\.js"\)/);
+    },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

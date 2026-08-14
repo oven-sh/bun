@@ -34,13 +34,12 @@
 //! that gets embedded directly into the JavaScript output.
 
 use crate::mal_prelude::*;
-use core::fmt;
 
 use bun_ast::Source;
 use bun_collections::AutoBitSet;
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_io::{FmtAdapter, Write};
+use bun_io::Write;
 use bun_js_printer::Encoding;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
@@ -50,30 +49,6 @@ use crate::chunk::{Content, Flags};
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
-
-#[derive(Clone, Copy)]
-pub struct HTMLImportManifest<'a> {
-    pub(crate) index: u32,
-    pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk],
-    pub(crate) linker_graph: &'a LinkerGraph<'a>,
-}
-
-impl<'a> fmt::Display for HTMLImportManifest<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write(
-            self.index,
-            self.graph,
-            self.linker_graph,
-            self.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
 
 fn write_entry_item<W: Write + ?Sized>(
     writer: &mut W,
@@ -126,45 +101,29 @@ fn write_entry_item<W: Write + ?Sized>(
     Ok(())
 }
 
-// Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
+/// Writes the manifest as the body of the double-quoted string literal the
+/// printer emitted around the placeholder (see `generate_server_html_module`).
+/// Extremely unfortunate, but necessary: E.String does not accept pre-escaped
+/// input, and this happens at the very end.
+///
+/// `ascii_only` must match how the surrounding chunk was printed: a chunk that
+/// starts with `// @bun` is loaded as Latin-1 without being re-parsed, so
+/// non-ASCII in it has to be escaped like the printer escapes everything else
+/// there.
 pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
+    ascii_only: bool,
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     let mut bytes: Vec<u8> = Vec::new();
     write(index, graph, linker_graph, chunks, &mut bytes)?;
-    bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
-        &bytes, writer,
+    bun_js_printer::write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
+        &bytes, writer, b'"', ascii_only, true,
     )?;
     Ok(())
-}
-
-/// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
-
-impl<'a> fmt::Display for EscapedJson<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write_escaped_json(
-            self.0.index,
-            self.0.graph,
-            self.0.linker_graph,
-            self.0.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
-
-impl<'a> HTMLImportManifest<'a> {
-    pub(crate) fn format_escaped_json(self) -> EscapedJson<'a> {
-        EscapedJson(self)
-    }
 }
 
 pub(crate) fn write<W: Write + ?Sized>(
@@ -339,43 +298,4 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     writer.write_all(b"]}")?;
     Ok(())
-}
-
-pub mod html_import_manifest {
-    use crate::Graph::Graph;
-    use crate::{LinkerGraph, chunk::Chunk};
-
-    pub use super::{EscapedJson, HTMLImportManifest};
-
-    #[inline]
-    pub(crate) fn format_escaped_json<'a>(
-        index: u32,
-        graph: &'a Graph,
-        chunks: &'a [Chunk],
-        linker_graph: &'a LinkerGraph,
-    ) -> EscapedJson<'a> {
-        super::HTMLImportManifest {
-            index,
-            graph,
-            chunks,
-            linker_graph,
-        }
-        .format_escaped_json()
-    }
-
-    pub(crate) fn write_escaped_json(
-        index: u32,
-        graph: &Graph,
-        linker_graph: &LinkerGraph<'_>,
-        chunks: &[Chunk],
-        w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
-            .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
-        *w = &mut buffer[pos..];
-        Ok(())
-    }
 }

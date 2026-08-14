@@ -446,7 +446,8 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
     return result;
 }
 
-JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
+template<X509_NAME* get_name(const X509*), ncrypto::BIOPointer (ncrypto::X509View::*print)() const>
+static JSValue computeX509Name(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -456,7 +457,7 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
         return jsUndefined();
 
     if (!legacy) {
-        auto bio = view.getSubject();
+        auto bio = (view.*print)();
         if (!bio) {
             throwCryptoOperationFailed(globalObject, scope);
             return {};
@@ -464,12 +465,8 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
         return jsString(vm, toWTFString(bio));
     }
 
-    // For legacy mode, convert to object format
-    X509_NAME* name = X509_get_subject_name(cert);
-    if (!name)
-        return jsUndefined();
-
-    JSObject* obj = GetX509NameObject<X509_get_subject_name>(globalObject, cert);
+    // Reads the entries rather than print(): an empty Name prints as 0 bytes, which print() reports as failure, while Node yields {} for it.
+    JSObject* obj = GetX509NameObject<get_name>(globalObject, cert);
     RETURN_IF_EXCEPTION(scope, {});
     if (!obj)
         return jsUndefined();
@@ -477,22 +474,14 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
     return obj;
 }
 
+JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
+{
+    return computeX509Name<X509_get_subject_name, &ncrypto::X509View::getSubject>(view, globalObject, legacy);
+}
+
 JSValue JSX509Certificate::computeIssuer(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto bio = view.getIssuer();
-    if (!bio) {
-        throwCryptoOperationFailed(globalObject, scope);
-        return {};
-    }
-
-    if (!legacy) {
-        return jsString(vm, toWTFString(bio));
-    }
-
-    RELEASE_AND_RETURN(scope, GetX509NameObject<X509_get_issuer_name>(globalObject, view.get()));
+    return computeX509Name<X509_get_issuer_name, &ncrypto::X509View::getIssuer>(view, globalObject, legacy);
 }
 
 JSString* JSX509Certificate::computeValidFrom(ncrypto::X509View view, JSGlobalObject* globalObject)

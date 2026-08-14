@@ -42,6 +42,26 @@ lGNHf1nq+j8dNaMGmheHKQ==
 -----END CERTIFICATE-----
 `;
 
+// Self-signed, valid until 2126. Subject and issuer are both the empty Name (a SEQUENCE with
+// zero RDNs), subjectAltName: DNS:leaf.test. Shared with the node:tls tests.
+const emptyDnCertPem = readFileSync(path.join(import.meta.dir, "..", "tls", "fixtures", "empty-dn-cert.pem"));
+
+describe("X509Certificate with an empty subject and issuer", () => {
+  const cert = new X509Certificate(emptyDnCertPem);
+
+  test("subject and issuer getters are undefined", () => {
+    expect(cert.subject).toBeUndefined();
+    expect(cert.issuer).toBeUndefined();
+  });
+
+  test("toLegacyObject() reports both names as empty objects", () => {
+    const legacy = cert.toLegacyObject();
+    expect(legacy.subject).toEqual({});
+    expect(legacy.issuer).toEqual({});
+    expect(legacy.subjectaltname).toBe("DNS:leaf.test");
+  });
+});
+
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
   const cnOnly = new X509Certificate(cnOnlyCertPem);

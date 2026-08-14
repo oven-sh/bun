@@ -3,7 +3,7 @@ import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
-import type { Server, TLSSocket } from "node:tls";
+import type { PeerCertificate, Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
 const clientTls = {
@@ -511,6 +511,76 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
     socket?.end();
     server?.close();
   }
+});
+
+// Self-signed; subject and issuer are both the empty Name (zero RDNs), so the only identity in the
+// certificate is its subjectAltName, DNS:leaf.test. Converting it for getPeerCertificate() used to
+// throw ERR_CRYPTO_OPERATION_FAILED because the issuer printed as zero bytes.
+describe("peer certificate whose subject and issuer are empty", () => {
+  const emptyDnTls = {
+    key: readFileSync(join(import.meta.dir, "fixtures", "empty-dn-key.pem"), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "empty-dn-cert.pem"), "utf8"),
+  };
+  const expectedNames = { subject: {}, issuer: {}, subjectaltname: "DNS:leaf.test" };
+
+  it("server-side getPeerCertificate() returns it when a client presents it", async () => {
+    const { promise: peerCertificate, resolve, reject } = Promise.withResolvers<PeerCertificate>();
+
+    await using server = await createTLSServer({
+      key: serverTls.key,
+      cert: serverTls.cert,
+      requestCert: true,
+      rejectUnauthorized: false,
+    });
+    server.server.on("secureConnection", socket => {
+      try {
+        resolve(socket.getPeerCertificate());
+      } catch (err) {
+        reject(err);
+      }
+      socket.end();
+    });
+
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: server.address.port,
+      key: emptyDnTls.key,
+      cert: emptyDnTls.cert,
+      rejectUnauthorized: false,
+    });
+    client.on("error", reject);
+
+    try {
+      const { subject, issuer, subjectaltname } = await peerCertificate;
+      expect({ subject, issuer, subjectaltname }).toEqual(expectedNames);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("tls.connect() to a server presenting it passes the identity check when it is trusted", async () => {
+    const { promise: connection, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+
+    await using server = await createTLSServer({ key: emptyDnTls.key, cert: emptyDnTls.cert });
+    server.server.on("secureConnection", socket => socket.end());
+
+    // servername picks the hostname tls.connect() runs the default checkServerIdentity against.
+    const client = tls.connect(
+      { host: "127.0.0.1", port: server.address.port, servername: "leaf.test", ca: [emptyDnTls.cert] },
+      () => {
+        const { subject, issuer, subjectaltname } = client.getPeerCertificate();
+        resolve({ authorized: client.authorized, subject, issuer, subjectaltname });
+      },
+    );
+    client.on("error", reject);
+    client.on("close", () => reject(new Error("socket closed before secureConnect")));
+
+    try {
+      expect(await connection).toEqual({ authorized: true, ...expectedNames });
+    } finally {
+      client.destroy();
+    }
+  });
 });
 
 it("tls.connect should not accept untrusted certificates", async () => {

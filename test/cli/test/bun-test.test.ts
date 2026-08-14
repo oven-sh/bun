@@ -1655,7 +1655,10 @@ describe("bun test", () => {
             });
             test("a Worker uses node:test", async () => {
               const worker = new Worker(new URL("./worker.ts", import.meta.url));
-              await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+              await new Promise((resolve, reject) => {
+                worker.addEventListener("message", resolve, { once: true });
+                worker.addEventListener("error", e => reject(e.error ?? new Error(e.message)), { once: true });
+              });
               worker.terminate();
             });
           `,

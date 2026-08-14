@@ -551,8 +551,9 @@ describe("css string output parses back to the same color", () => {
 });
 
 // https://drafts.csswg.org/css-color-5/#relative-colors
-// Inside calc() a channel keyword is a <number>, so multiplying it by a
-// <percentage> gives a <percentage>, while adding one to it is a type error.
+// Inside a math function a channel keyword is a <number>, so multiplying it by
+// a <percentage> gives a <percentage>, while adding or comparing it to one is a
+// type error.
 describe("relative color calc() with percentages", () => {
   const origin = "color(srgb .8 .4 .2)";
 
@@ -567,6 +568,9 @@ describe("relative color calc() with percentages", () => {
     ["calc((r + g) * 50%)", ".6"],
     ["min(r * 50%, 30%)", ".3"],
     ["max(r * 50%, 30%)", ".4"],
+    ["round(r * 100%, 30%)", ".9"],
+    ["mod(r * 100%, 30%)", ".2"],
+    ["hypot(r * 100%, 30%)", ".8544"],
   ])("%s is a percentage of the channel", (expr, expected) => {
     expect(color(`color(from ${origin} srgb ${expr} g b)`, "css")).toBe(`color(srgb ${expected} .4 .2)`);
   });
@@ -623,13 +627,22 @@ describe("relative color calc() with percentages", () => {
     expect(color("lch(from lch(50% 20 30) l c min(h, 10))", "css")).toBe("lch(50% 20 10)");
   });
 
+  // A bare keyword is a <number>, and a <number> only combines with a <percentage>
+  // through * and /. lightningcss leaves every one of these unparsed as well.
   test.each([
     "color(from color(srgb .8 .4 .2) srgb calc(r + 50%) g b)",
     "color(from color(srgb .8 .4 .2) srgb calc(50% + r) g b)",
     "color(from color(srgb .8 .4 .2) srgb calc(r * 50% + .1) g b)",
     "color(from color(srgb .8 .4 .2) srgb calc(r * 50% - g) g b)",
+    "color(from color(srgb .8 .4 .2) srgb min(r, 50%) g b)",
+    "color(from color(srgb .8 .4 .2) srgb max(50%, r) g b)",
+    "color(from color(srgb .8 .4 .2) srgb round(r, 30%) g b)",
+    "color(from color(srgb .8 .4 .2) srgb hypot(r, 30%) g b)",
     "color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha + 10%))",
+    "color(from color(srgb .8 .4 .2 / .5) srgb r g b / max(alpha, 30%))",
     "rgb(from rgb(200 100 50 / .5) r g b / calc(alpha + 10%))",
+    "rgb(from rgb(200 100 50 / .5) r g b / calc(alpha - 20%))",
+    "rgb(from rgb(200 100 50 / .5) r g b / min(alpha, 30%))",
     // The same type error outside relative color syntax (not a `none` channel).
     "color(srgb calc(1 + 50%) 0 0)",
     "color(srgb calc(50% + 1) 0 0)",

@@ -215,6 +215,10 @@ describe("css tests", () => {
       ".foo{color:color(srgb .3 .3 .2)}",
     );
     minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb round(r * 100%, 30%) g b) }",
+      ".foo{color:color(srgb .9 .4 .2)}",
+    );
+    minify_test(
       ".foo { color: color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha * 50%)) }",
       ".foo{color:color(srgb .8 .4 .2/.25)}",
     );
@@ -239,9 +243,15 @@ describe("css tests", () => {
     );
     minify_test(".foo { color: lab(from lab(50% 20 30) l max(a, b) min(b, 10)) }", ".foo{color:lab(50% 30 10)}");
 
+    // A bare keyword is a <number>, which only combines with a <percentage>
+    // through * and /; these are invalid and stay as written, as in lightningcss.
     minify_test(
       ".foo { color: color(from red srgb calc(r + 50%) g b) }",
       ".foo{color:color(from red srgb calc(r + 50%)g b)}",
+    );
+    minify_test(
+      ".foo { color: color(from red srgb min(r, 50%) g b) }",
+      ".foo{color:color(from red srgb min(r,50%)g b)}",
     );
     minify_test(
       ".foo { color: color(from red srgb r g b / calc(alpha + 10%)) }",
@@ -249,11 +259,12 @@ describe("css tests", () => {
     );
     // rgb()/hsl() with an alpha that does not parse resolve the channels and keep
     // the alpha as written (the `/ var(--alpha)` path); same output as lightningcss.
-    // The point is that the invalid alpha is not folded into `red`.
+    // The point is that the invalid alpha is not folded into `red` / `#ff00004d`.
     minify_test(
       ".foo { color: rgb(from red r g b / calc(alpha + 10%)) }",
       ".foo{color:rgb(255 0 0/calc(alpha + 10%))}",
     );
+    minify_test(".foo { color: rgb(from red r g b / min(alpha, 30%)) }", ".foo{color:rgb(255 0 0/min(alpha,30%))}");
     minify_test(".foo { color: color(srgb calc(1 + 50%) 0 0) }", ".foo{color:color(srgb calc(1 + 50%)0 0)}");
   });
   describe("calc stack overflow", () => {

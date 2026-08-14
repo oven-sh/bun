@@ -1,26 +1,106 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import path from "node:path";
+import { bunEnv, bunExe, isCI } from "harness";
+import { itBundled } from "./expectBundled";
 
-// Each test writes a small bundler test file into a temp directory and runs `bun test` on it, so
-// what is asserted is what a contributor sees when a test file registers an itBundled() id twice.
+// itBundled registrations belong in files under test/bundler/, and the ones under test here must not
+// land in this file's own run, so this file doubles as its own fixture: spawned with
+// EXPECT_BUNDLED_TEST_CASE set it registers that case and nothing else, and the tests below spawn it
+// that way and assert on what the child printed.
+const CASE = "EXPECT_BUNDLED_TEST_CASE";
+const files = { "/entry.js": /* js */ `console.log("hi");` };
+// Each child loads expectBundled.ts, which alone takes a few seconds in a debug build. In CI the
+// runner's --timeout applies, as it does to the itBundled tests themselves.
+const childTimeout = isCI ? undefined : 30_000;
 
-const fixturePrelude = /* ts */ `
-  import { describe } from "bun:test";
-  import { itBundled } from ${JSON.stringify(path.join(import.meta.dir, "expectBundled.ts"))};
-  const files = { "/entry.js": 'console.log("hi");' };
-`;
+switch (process.env[CASE]) {
+  case "duplicate ids":
+    describe("copy+pasted in one describe block", () => {
+      itBundled("harness/CopyPasted", { files });
+      itBundled("harness/CopyPasted", { files });
+    });
+    for (const backend of ["api", "cli"] as const) {
+      describe(`registered once per ${backend}`, () => {
+        itBundled("harness/NotParameterized", { files, backend });
+      });
+    }
+    describe("registered through a helper", () => {
+      const add = (n: number) => itBundled(`harness/Case${n}`, { files });
+      add(1);
+      add(2);
+      add(2);
+    });
+    describe("itBundled.skip then itBundled", () => {
+      itBundled.skip("harness/Skipped", { files });
+      itBundled("harness/Skipped", { files });
+    });
+    describe("itBundled then itBundled.only", () => {
+      itBundled("harness/Focused", { files });
+      itBundled.only("harness/Focused", { files });
+    });
+    describe("on both sides of an await that does not need the event loop", async () => {
+      itBundled("harness/AroundAwait", { files });
+      await Promise.resolve();
+      itBundled("harness/AroundAwait", { files });
+    });
+    break;
 
-async function runFixture(body: string, ...args: string[]) {
-  using dir = tempDir("expect-bundled-ids", { "ids.test.ts": fixturePrelude + body });
+  case "unique ids":
+    describe("bundler", () => {
+      itBundled("harness/Unique", { files });
+      itBundled.skip("harness/UniqueSkipped", { files });
+      console.log("collected the ids");
+    });
+    break;
+
+  default:
+    describe("itBundled ids must be unique within a test file", () => {
+      test.concurrent(
+        "every id registered twice fails the file, however it was registered",
+        async () => {
+          // The errors are raised while the file is collected; nothing needs to run.
+          const { output, exitCode } = await runBunTest([import.meta.path, "-t", "^$"], { [CASE]: "duplicate ids" });
+          const reported = [...output.matchAll(/^error: itBundled\("(.*?)", \.\.\.\) was registered twice\./gm)].map(
+            m => m[1],
+          );
+          expect(reported).toEqual([
+            "harness/CopyPasted",
+            "harness/NotParameterized",
+            "harness/Case2",
+            "harness/Skipped",
+            "harness/Focused",
+            "harness/AroundAwait",
+          ]);
+          expect(exitCode).toBe(1);
+        },
+        childTimeout,
+      );
+
+      test.concurrent(
+        "--rerun-each registers the same ids again without tripping the check",
+        async () => {
+          const { output, exitCode } = await runBunTest([import.meta.path, "--rerun-each", "3"], {
+            [CASE]: "unique ids",
+          });
+          expect(output).not.toContain("was registered twice");
+          expect(output.match(/collected the ids/g)).toHaveLength(3);
+          expect(exitCode).toBe(0);
+        },
+        childTimeout,
+      );
+    });
+}
+
+async function runBunTest(args: string[], env: Record<string, string>) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "ids.test.ts", ...args],
-    cwd: String(dir),
+    cmd: [bunExe(), "test", ...args],
+    cwd: import.meta.dir,
     env: {
       ...bunEnv,
+      // A developer's shell may carry these; they would change what the child registers.
       BUN_BUNDLER_TEST_FILTER: undefined,
       BUN_BUNDLER_TEST_USE_ESBUILD: undefined,
       BUN_BUNDLER_TEST_DEBUG: undefined,
+      ...env,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -28,82 +108,3 @@ async function runFixture(body: string, ...args: string[]) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { output: stdout + stderr, exitCode };
 }
-
-const registeredTwice = (id: string) => `itBundled("${id}", ...) was registered twice`;
-
-describe("itBundled ids must be unique within a test file", () => {
-  test.concurrent("the same id twice in one describe block fails the file", async () => {
-    const { output, exitCode } = await runFixture(/* ts */ `
-      describe("bundler", () => {
-        itBundled("harness/CopyPasted", { files });
-        itBundled("harness/CopyPasted", { files });
-      });
-    `);
-    expect(output).toContain(registeredTwice("harness/CopyPasted"));
-    expect(exitCode).toBe(1);
-  });
-
-  test.concurrent("the same id from two describe blocks fails the file", async () => {
-    const { output, exitCode } = await runFixture(/* ts */ `
-      for (const backend of ["api", "cli"] as const) {
-        describe(\`bundler/\${backend}\`, () => {
-          itBundled("harness/NotParameterized", { files, backend });
-        });
-      }
-    `);
-    expect(output).toContain(registeredTwice("harness/NotParameterized"));
-    expect(exitCode).toBe(1);
-  });
-
-  test.concurrent("the same id registered through a helper fails the file", async () => {
-    const { output, exitCode } = await runFixture(/* ts */ `
-      const add = (n: number) => itBundled(\`harness/Case\${n}\`, { files });
-      describe("bundler", () => {
-        add(1);
-        add(2);
-        add(2);
-      });
-    `);
-    expect(output).toContain(registeredTwice("harness/Case2"));
-    expect(exitCode).toBe(1);
-  });
-
-  test.concurrent("itBundled.skip takes part in the check", async () => {
-    const { output, exitCode } = await runFixture(/* ts */ `
-      describe("bundler", () => {
-        itBundled.skip("harness/Skipped", { files });
-        itBundled("harness/Skipped", { files });
-      });
-    `);
-    expect(output).toContain(registeredTwice("harness/Skipped"));
-    expect(exitCode).toBe(1);
-  });
-
-  test.concurrent("itBundled.only takes part in the check", async () => {
-    const { output, exitCode } = await runFixture(/* ts */ `
-      describe("bundler", () => {
-        itBundled("harness/Focused", { files });
-        itBundled.only("harness/Focused", { files });
-      });
-    `);
-    expect(output).toContain(registeredTwice("harness/Focused"));
-    expect(exitCode).toBe(1);
-  });
-
-  test.concurrent("--rerun-each re-registers the same ids without tripping the check", async () => {
-    const { output, exitCode } = await runFixture(
-      /* ts */ `
-        describe("bundler", () => {
-          itBundled("harness/First", { files });
-          itBundled.skip("harness/Second", { files });
-          console.log("collected ids");
-        });
-      `,
-      "--rerun-each",
-      "3",
-    );
-    expect(output).not.toContain("was registered twice");
-    expect(output.split("collected ids").length - 1).toBe(3);
-    expect(exitCode).toBe(0);
-  });
-});

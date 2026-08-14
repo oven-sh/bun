@@ -156,10 +156,12 @@ const tempDirectory = mkdtempSync(tempDirectoryTemplate);
  * Ids registered while the current test file is being collected. An id names the test and is also
  * its directory under `tempDirectory`, so one registered twice is a copy+paste mistake.
  *
- * Scoped to one collection pass rather than to the process: this module stays loaded across test
- * files and across `bun test --rerun-each` re-evaluating a file. bun collects a file's describe
- * callbacks without returning to the event loop and evaluates the next file (or the same one again)
- * only after it has, so the setImmediate clears the set between passes.
+ * Cleared by a setImmediate rather than kept for the process: this module stays loaded across test
+ * files and across the re-evaluations `bun test --rerun-each` does, and the runner runs immediates
+ * after each file before evaluating the next one (or the same one again), so every file starts
+ * with an empty set. A file's synchronous describe callbacks (all of them, in test/bundler) are
+ * collected before the immediate fires. A describe callback that awaits the event loop lets it fire
+ * mid-file, and ids registered after that await are only compared with each other.
  */
 let registeredIds: Set<string> | undefined;
 

@@ -4,9 +4,9 @@ import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
 
-describe("bundler", async () => {
+describe("bundler", () => {
   for (let target of ["bun", "node"] as const) {
-    describe(`${target} loader`, async () => {
+    describe(`${target} loader`, () => {
       itBundled(`${target}/loader-yaml-file`, {
         target,
         files: {
@@ -340,9 +340,10 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
+  const moon = fs.readFileSync(
     fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+    "utf8",
+  );
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {

@@ -3964,8 +3964,8 @@ pub mod bv2_impl {
                 pending.extend_from_slice(jsc::builtin_module_dependencies(id));
             }
 
-            // Native modules have no JS source, so `generate_builtin_module_bytecode`
-            // returns `None` for them — as it does for anything that fails to compile.
+            // `None` is a native module (no JS source) or a compile failure; either way it is
+            // simply parsed at runtime, so there is nothing to report here.
             reached
                 .into_iter()
                 .filter_map(|id| Some((id, jsc::generate_builtin_module_bytecode(id)?)))
@@ -4070,8 +4070,6 @@ pub mod bv2_impl {
                     });
                 }
 
-                // Before the chunk bytecode runs, so the JS builtins are compiled on this
-                // thread's bytecode VM rather than racing the linker's pool for one.
                 let builtin_bytecode = if this.transpiler.options.compile_mode.is_executable()
                     && this.transpiler.options.bytecode
                     && this.transpiler.options.compile_target_is_host
@@ -5198,8 +5196,6 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
 
-            // Before the chunk bytecode runs, so the JS builtins are compiled on this
-            // thread's bytecode VM rather than racing the linker's pool for one.
             let builtin_bytecode = if self.transpiler.options.compile_mode.is_executable()
                 && self.transpiler.options.bytecode
                 && self.transpiler.options.compile_target_is_host

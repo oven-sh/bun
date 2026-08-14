@@ -29,20 +29,14 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #endif
 }
 
-// Compiles and runs a JS builtin that acts as a module. Where the source comes from (the
-// linked blob, or the developer's build directory in debug builds) is BuiltinModuleBytecode's
-// concern; see INTERNAL_MODULE_REGISTRY_GENERATE below.
+// Compiles and runs a JS builtin that acts as a module.
 JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, unsigned moduleId)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // Shared with the bytecode cache generator so both sides key the cache on the same
-    // SourceCode; a mismatch here would silently turn every lookup into a miss.
     SourceCode source = builtinModuleSourceCode(SOURCE, moduleName, urlString);
     maybeAddCodeCoverage(vm, source);
 
-    // `bun build --compile --bytecode` embeds a cache entry for every builtin the app can
-    // reach. When it is absent or stale we fall through to parsing, which is what every
-    // other build does.
+    // Only a `--compile --bytecode` executable has entries to decode; everything else parses.
     UnlinkedFunctionExecutable* unlinkedExecutable = decodeBuiltinModuleBytecode(globalObject, vm, source, moduleName, moduleId);
     if (!unlinkedExecutable)
         unlinkedExecutable = createBuiltinModuleExecutable(vm, source, moduleName);
@@ -101,9 +95,6 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     return defaultValue;
 }
 
-// builtinModuleSource() is the blob span in release and the on-disk bundle in debug
-// (BUN_DYNAMIC_JS_LOAD_PATH); the bytecode cache generator reads through the same
-// function, so whatever this build parses is also what its cache entries were keyed on.
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, index, moduleName, urlString) \
     return generateModule(globalObject, vm, builtinModuleSource(index), moduleName, urlString, index)
 

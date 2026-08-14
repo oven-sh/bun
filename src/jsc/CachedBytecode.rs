@@ -161,13 +161,9 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     Some(owned)
 }
 
-/// Link-time entry point for `bun_bundler`. Same thread setup as
-/// [`__bun_jsc_generate_cached_bytecode`], but for one JS builtin: `module_id` indexes
-/// `InternalModuleRegistry`, and the returned blob covers that builtin's top-level
-/// function plus every function nested inside it.
-///
-/// Returns `None` for native modules, out-of-range ids, and any module whose source
-/// fails to compile, which leaves the builtin to be parsed at runtime as usual.
+/// Link-time entry point for `bun_bundler`: [`__bun_jsc_generate_cached_bytecode`] for the
+/// JS builtin with this `InternalModuleRegistry` id. `None` for native modules and for
+/// anything that fails to compile, which leaves that builtin to be parsed at runtime.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_generate_builtin_module_bytecode(module_id: u32) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
@@ -200,11 +196,8 @@ pub(crate) fn __bun_jsc_builtin_module_id_for_specifier(specifier: &[u8]) -> Opt
         .and_then(crate::ResolvedSourceTag::internal_module_id)
 }
 
-/// Link-time entry point for `bun_bundler`. The builtins `module_id` requires directly.
-///
-/// These edges are `@createInternalModuleById(N)` calls the builtin bundler emits for each
-/// `require()` between builtins. They resolve at runtime through `InternalModuleRegistry`,
-/// so they are invisible to the JS bundler — the bytecode cache has to walk them itself.
+/// Link-time entry point for `bun_bundler`. The builtins `module_id` requires directly, from
+/// the require graph `bundle-modules.ts` emits.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_builtin_module_dependencies(module_id: u32) -> &'static [u32] {
     let mut ids: *const u32 = core::ptr::null();

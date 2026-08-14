@@ -136,11 +136,8 @@ public:
 
     static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
 
-    // The one piece of client-data setup a VM needs in order to *compile* Bun's builtins:
-    // registering the `@`-private names with the VM's property table, without which the
-    // builtin-mode lexer rejects `@getInternalField` and friends. For VMs that only ever
-    // generate bytecode and never run it (Zig::vmForBytecodeCache()); such a VM has no Bun
-    // VirtualMachine, so the event-loop half of create() has nothing to attach to.
+    // Registers Bun's `@`-private names with a VM that compiles builtins but never runs
+    // them and so has no Bun VirtualMachine for create() to attach to.
     static void registerBuiltinNames(JSC::VM&);
 
     JSHeapData& heapData() { return *m_heapData; }

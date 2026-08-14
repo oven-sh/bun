@@ -302,10 +302,8 @@ mark("Postprocesss modules");
  * every require() rewritten to a registry lookup, `internalModuleRegistry, <index>`,
  * where the index is the position in `modules`, so the edge list is unambiguous.
  *
- * These edges are resolved at runtime through InternalModuleRegistry and are invisible
- * to the JS bundler, which is why both consumers below need them precomputed: the blob
- * layout wants dependencies adjacent to their dependents, and `--compile --bytecode`
- * has to embed bytecode for everything a requested builtin can transitively reach.
+ * Consumed by the blob layout below and, via the generated table, by the
+ * `--compile --bytecode` builtin bytecode cache.
  */
 function requireGraph(modules: string[], outputs: Map<string, string>): number[][] {
   const requireRe = /internalModuleRegistry, ?(\d+)/g;
@@ -514,11 +512,8 @@ ${moduleSpans
 `,
 );
 
-// Per-index view of the same data for BuiltinModuleBytecode.cpp, which has to get at a
-// builtin by the numeric id InternalModuleRegistry hands it: where its source is, the
-// name/url it is parsed under (these must match createInternalModuleById exactly, since
-// they are part of the bytecode cache key), where to find it on disk in debug builds, and
-// which builtins it requires. The dependency edges are the require graph computed above.
+// The same data indexed by module id, for BuiltinModuleBytecode.cpp. The name and url are
+// part of each module's bytecode cache key, hence the shared helpers with the switch above.
 {
   const dependencyOffsets: number[] = [0];
   const dependencyIds: number[] = [];

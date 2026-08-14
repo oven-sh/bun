@@ -25,8 +25,6 @@ WTF::String builtinModuleSource(unsigned moduleId)
     const auto& module = Builtins::modules[moduleId];
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
-    // Debug builds read the bundled module off disk so that editing src/js does not
-    // require relinking.
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, module.file);
     auto contents = WTF::FileSystemImpl::readEntireFile(file);
     if (!contents) {
@@ -37,8 +35,7 @@ WTF::String builtinModuleSource(unsigned moduleId)
     }
     return WTF::String::fromUTF8(contents.value());
 #else
-    // The sources are linked into the executable as one read-only blob
-    // (bun_internal_modules_data, see the generated InternalModuleRegistryConstants.S).
+    // bun_internal_modules_data is the blob InternalModuleRegistryConstants.S links in.
     return WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + module.sourceOffset, module.sourceLength)));
 #endif
 }
@@ -59,12 +56,11 @@ JSC::UnlinkedFunctionExecutable* createBuiltinModuleExecutable(JSC::VM& vm, cons
         InlineAttribute::None);
 }
 
-// Looks up one entry in the embedded section. Defined in `StandaloneModuleGraph.rs`.
+// Defined in StandaloneModuleGraph.rs.
 extern "C" bool Bun__getBuiltinModuleBytecode(unsigned moduleId, uint8_t** outBytes, size_t* outLength);
 
-// Only a `--compile --bytecode` executable carries builtin bytecode. Every other Bun process
-// compiles its builtins from source, and this is on the path of every one of them, so gate on
-// a plain flag the standalone graph sets at startup rather than calling across into Rust.
+// Set by the standalone graph at startup. Every builtin load in every Bun process passes
+// through decodeBuiltinModuleBytecode(), and almost none of them embed anything.
 static std::atomic<bool> s_hasBuiltinModuleBytecode { false };
 
 extern "C" void Bun__setHasBuiltinModuleBytecode()
@@ -72,8 +68,6 @@ extern "C" void Bun__setHasBuiltinModuleBytecode()
     s_hasBuiltinModuleBytecode.store(true, std::memory_order_relaxed);
 }
 
-// How many builtins have been loaded from the embedded cache rather than parsed. Read by
-// `bun:internal-for-testing` so the `--compile --bytecode` tests can tell the two apart.
 static std::atomic<unsigned> s_builtinsLoadedFromBytecode { 0 };
 
 JSC::UnlinkedFunctionExecutable* decodeBuiltinModuleBytecode(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const JSC::SourceCode& source, const WTF::String& moduleName, unsigned moduleId)
@@ -86,13 +80,11 @@ JSC::UnlinkedFunctionExecutable* decodeBuiltinModuleBytecode(JSC::JSGlobalObject
     if (!Bun__getBuiltinModuleBytecode(moduleId, &bytes, &length) || !length)
         return nullptr;
 
-    // The entry was keyed on an empty code generation mode. A debugger or a profiler changes
-    // what the runtime would generate, so don't reuse bytecode generated without one.
+    // Entries are generated with an empty CodeGenerationMode; a debugger or profiler changes it.
     if (!globalObject->defaultCodeGenerationMode().isEmpty())
         return nullptr;
 
-    // The bytes live in the compiled executable's embedded section for the whole process
-    // lifetime, so nothing frees them when the CachedBytecode goes away.
+    // The bytes are part of the executable image; nothing owns or frees them.
     Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(
         std::span<uint8_t> { bytes, length }, [](const void*) {}, {});
 
@@ -103,9 +95,7 @@ JSC::UnlinkedFunctionExecutable* decodeBuiltinModuleBytecode(JSC::JSGlobalObject
     return executable;
 }
 
-// Generates the cache entry for one builtin. Runs on a bytecode-cache thread with its own
-// VM, never on a JS thread. `cachedBytecodePtr` owns the returned bytes; the caller must
-// release it with CachedBytecode__deref.
+// `*cachedBytecodePtr` owns the returned bytes; the caller releases it with CachedBytecode__deref.
 extern "C" bool Bun__generateBuiltinModuleBytecode(unsigned moduleId, const uint8_t** outBytes, size_t* outLength, JSC::CachedBytecode** cachedBytecodePtr)
 {
     WTF::String source = builtinModuleSource(moduleId);
@@ -145,7 +135,6 @@ BUN_DEFINE_HOST_FUNCTION(Bun__builtinModuleBytecodeDecodedCount, (JSC::JSGlobalO
     return JSValue::encode(jsNumber(s_builtinsLoadedFromBytecode.load(std::memory_order_relaxed)));
 }
 
-// The builtins that `moduleId` requires directly. Empty for native modules.
 extern "C" void Bun__builtinModuleDependencies(unsigned moduleId, const uint32_t** outIds, size_t* outLength)
 {
     *outIds = nullptr;

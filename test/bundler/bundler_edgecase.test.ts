@@ -3243,6 +3243,19 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "transpiled" },
   });
+  // TypeScript drops imports it sees no use of; a use through a define counts.
+  itBundled("edgecase/DefineValueKeepsTypeScriptImportWithoutBundling", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { ns } from "./ns.js";
+        console.log(X);
+      `,
+      "/ns.js": /* js */ `export const ns = { value: "kept" };`,
+    },
+    define: { X: "ns.value" },
+    bundling: false,
+    run: { stdout: "kept" },
+  });
   itBundled("edgecase/DefineValueReferencesImports", {
     files: {
       "/entry.js": /* js */ `

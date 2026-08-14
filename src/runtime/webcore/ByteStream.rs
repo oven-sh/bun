@@ -227,11 +227,16 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the buffered bytes without signalling the producer; the caller
-    /// writes them to the sink before [`Self::signal_drained`].
+    /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
+    /// the producer; the caller writes them to the sink before
+    /// [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        self.offset.set(0);
-        Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()))
+        let consumed = self.offset.replace(0);
+        let mut list = self.buffer.replace(Vec::new());
+        if consumed > 0 {
+            list.drain(..consumed);
+        }
+        Vec::<u8>::move_from_list(list)
     }
 
     /// Called by native fast-paths after wiring `self.sink`. Restores
@@ -690,14 +695,13 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if self.buffer.get().is_empty() {
-            return Vec::<u8>::default();
+        let drained = self.take_buffer();
+        if !drained.is_empty() {
+            // After taking, as in `on_pull`: the producer decides whether to
+            // resume from `buffer.len()`, and anything it emits inline queues
+            // behind these bytes for the next pull.
+            self.signal_drained();
         }
-        let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
-        // Signal after taking, as `on_pull` does: a backpressure-gated
-        // producer checks `buffer.len()` to decide whether to resume, and
-        // anything it emits inline lands in the fresh buffer for the next pull.
-        self.signal_drained();
         drained
     }
 

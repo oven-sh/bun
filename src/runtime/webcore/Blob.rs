@@ -5169,10 +5169,8 @@ pub(crate) fn write_file_internal(
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
                         let promise = unsafe { (*task).promise.value() };
-                        // Signalled last: a producer may resolve the body from
-                        // inside this call, which runs `then_wrap` and replaces
-                        // `*body_value`, so neither `locked` nor `task` may be
-                        // touched afterwards.
+                        // Signalled last (see `PendingValue::on_start_buffering`):
+                        // `then_wrap` may run and `*body_value` be replaced inside.
                         if let Some((on_start_buffering, producer_task)) = producer_hook {
                             on_start_buffering(producer_task);
                         }

@@ -227,14 +227,19 @@ describe("multipart serialization of S3-backed entries", () => {
     secretAccessKey: "secret-key",
   });
 
-  const expectedMessage =
-    'FormData entry "report" is an S3 file, which cannot be read while serializing the body. ' +
-    "Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)";
+  // `quotedName` is the entry name as the message renders it, quotes included.
+  function messageFor(quotedName: string): string {
+    return (
+      `FormData entry ${quotedName} is an S3 file, which cannot be read while serializing the body. ` +
+      "Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)"
+    );
+  }
+  const expectedMessage = messageFor('"report"');
 
-  function formDataWith(entry: Blob): FormData {
+  function formDataWith(entry: Blob, name = "report"): FormData {
     const formData = new FormData();
     formData.append("before", "first");
-    formData.append("report", entry, "reports/2026.csv");
+    formData.append(name, entry, "reports/2026.csv");
     formData.append("after", "last");
     return formData;
   }
@@ -252,12 +257,26 @@ describe("multipart serialization of S3-backed entries", () => {
     ["S3Client.file()", () => s3.file("reports/2026.csv", { type: "text/csv" })],
     ['Bun.file("s3://...")', () => Bun.file("s3://bucket/reports/2026.csv")],
     ["a slice of an S3 file", () => s3.file("reports/2026.csv").slice(0, 16)],
+    // A single-blob File shares the source blob's store instead of copying it.
+    ["new File([s3file], name)", () => new File([s3.file("reports/2026.csv")], "wrapped.csv")],
   ])("new Response(formData) throws for %s", (_label, makeEntry) => {
     const formData = formDataWith(makeEntry());
 
     const error = thrownBy(() => new Response(formData));
     expect(error).toBeInstanceOf(TypeError);
     expect((error as TypeError).message).toBe(expectedMessage);
+  });
+
+  test.each([
+    ["a plain name", "report", '"report"'],
+    ["a non-ASCII name", "レポート ☺", '"レポート ☺"'],
+    ["a name containing a quote", 'quote"name', '"quote\\"name"'],
+    ["a name containing CRLF", "crlf\r\nname", '"crlf\\r\\nname"'],
+  ])("the message quotes %s", (_label, name, quotedName) => {
+    const formData = formDataWith(s3.file("reports/2026.csv"), name);
+
+    const error = thrownBy(() => new Response(formData));
+    expect((error as TypeError).message).toBe(messageFor(quotedName));
   });
 
   // Serializing used to resolve the entry's size as well, which for an S3 blob

@@ -3955,8 +3955,10 @@ impl FormDataContext<'_> {
                             // only be fetched asynchronously. Emitting the part
                             // with an empty body would silently upload nothing.
                             self.failed = true;
+                            let entry_name = name.to_slice();
                             let _ = global_this.throw_type_error(format_args!(
-                                "FormData entry \"{name}\" is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)"
+                                "FormData entry {} is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)",
+                                bun_core::fmt::quote(entry_name.slice()),
                             ));
                         }
                         store::Data::File(file) => {

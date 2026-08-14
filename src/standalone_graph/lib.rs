@@ -7,8 +7,7 @@ pub use error::{Error, Result};
 #[path = "StandaloneModuleGraph.rs"]
 pub mod StandaloneModuleGraph;
 
-/// Runtime binder for `.node` addons statically merged into the Windows
-/// `--compile` exe (`Bun__initLinkedNodeModule`, called from BunProcess.cpp).
+/// In-process binder for the `.node` addons merged into a Windows `--compile` exe.
 #[cfg(windows)]
 #[path = "LinkedNodeModule.rs"]
 pub mod LinkedNodeModule;

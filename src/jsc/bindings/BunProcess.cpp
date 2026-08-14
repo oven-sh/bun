@@ -329,30 +329,18 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 
-// Export pointers returned by Bun__initLinkedNodeModule for a `.node`
-// addon that was statically merged into the exe at `bun build --compile`
-// time. Any field may be null if the addon did not export that symbol.
+// Mirrors `Resolved` in src/standalone_graph/LinkedNodeModule.rs; a null export means the merged addon does not export it.
 struct Bun__LinkedNodeModuleResolved {
     void* napi_register_module_v1;
     void* node_api_module_get_api_version_v1;
     void* bun_plugin_name;
-    // Unique per-addon identity (exe_base + rva_base). Used as the
-    // DLHandleMap / napiDlopenHandle key so two merged addons do not
-    // collide. Not a real HMODULE — never pass it to Win32.
+    // Identity key for DLHandleMap (exe_base + rva_base), not an HMODULE; never pass it to Win32.
     void* handle_token;
-    // True when this call ran bind() (and therefore DllMain), in
-    // which case the binder lock is *still held* across the return
-    // so a concurrent Worker on the cached-hit path cannot reach
-    // DLHandleMap.get() before we .add(). Caller MUST call
-    // Bun__linkedNodeModuleUnlock() exactly once before any
-    // re-entrant user code runs (executePendingNapiModule /
-    // napi_register_module_v1). False on cached-hit / failure paths.
+    // When true the binder lock is still held: release it exactly once via Bun__linkedNodeModuleUnlock()
+    // before any user code runs. See Resolved::did_bind in LinkedNodeModule.rs.
     bool did_bind;
 };
-// Finish linking a statically-merged addon (relocs, IAT, VirtualProtect,
-// RtlAddFunctionTable, DllMain) and hand back its export pointers. Returns
-// false if the path was not merged or the bind failed; caller then falls
-// through to the extract-to-tempfile + LoadLibraryExW path.
+// False when the path is not a merged addon or its bind failed; the caller then takes the tempfile + LoadLibraryExW path.
 extern "C" bool Bun__initLinkedNodeModule(const char* path, size_t path_len, Bun__LinkedNodeModuleResolved* out);
 extern "C" void Bun__linkedNodeModuleUnlock();
 #endif
@@ -502,15 +490,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     bool deleteAfter = false;
     [[maybe_unused]] bool fromEmbedded = false;
 
-    // Handle known yet-to-be-working in Bun.
-    //
-    // Checked before any embedded-file handling so it covers every load
-    // path: a direct filesystem path, an extract-to-tempfile embedded
-    // file (whose name is rewritten to a hash and would not match below
-    // this point), and a statically-merged embedded file (whose in-place
-    // bind would otherwise run DllMain — and with it better_sqlite3's
-    // static node_module_register ctor — before we throw, leaving a
-    // stale entry in m_pendingV8Modules for the next dlopen to pick up).
+    // Handle known yet-to-be-working in Bun. Must run before the in-place bind below: binding runs the addon's
+    // DllMain (better_sqlite3's static ctor registers a module) before we would throw, leaving a stale pending module.
     {
         static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
         static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
@@ -521,10 +502,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
 #if OS(WINDOWS)
-    // If `bun build --compile` statically merged this addon into the exe
-    // as a real PE section, bind and initialise it in place — no temp
-    // file, no LoadLibrary. On any failure fall through to the
-    // extract-to-tempfile path below so behaviour never regresses.
+    // Addons merged into the exe by `bun build --compile` bind in place; any failure falls through to the tempfile path.
     Bun__LinkedNodeModuleResolved linkedResolved {};
     bool usedLinkedAddon = false;
 #endif
@@ -534,13 +512,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             auto utf8_probe = filename.tryGetUTF8(ConversionMode::LenientConversion);
             if (utf8_probe) {
                 usedLinkedAddon = Bun__initLinkedNodeModule(utf8_probe->data(), utf8_probe->length(), &linkedResolved);
-                // A bind can fail *after* DllMain ran (e.g. the addon's
-                // static ctor called napi_module_register and then
-                // DllMain returned FALSE). The tempfile fallback is
-                // about to LoadLibrary a fresh copy whose DllMain will
-                // register again; discard whatever the failed attempt
-                // queued so those registrations are not replayed
-                // against the fallback's handle.
+                // A failed bind may have run DllMain already; drop what it queued, the tempfile fallback's DllMain registers again.
                 if (!usedLinkedAddon && callCountAtStart != globalObject->napiModuleRegisterCallCount) {
                     globalObject->napiModuleRegisterCallCount = callCountAtStart;
                     globalObject->m_pendingNapiModules.clear();
@@ -561,19 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
 #if OS(WINDOWS)
-    // When this thread is the one that ran bind() (did_bind),
-    // LinkedNodeModule.lock is still held so a concurrent Worker on
-    // the cached-hit path is blocked inside init() and cannot reach
-    // DLHandleMap.get() until we have .add()ed. Release exactly
-    // once, after publishing to DLHandleMap and before any
-    // re-entrant user code (executePendingNapiModule /
-    // napi_register_module_v1, which can dlopen another addon and
-    // would deadlock on the non-recursive lock). The scope-exit
-    // below catches early-return / exception-throw paths that never
-    // reach the explicit release — declared here so the
-    // RETURN_IF_EXCEPTION and UTF-8-validation early returns below
-    // are covered from the moment Bun__initLinkedNodeModule hands
-    // the lock back.
+    // The scope exit covers every early return below; the explicit releaseBinderLock() calls only release sooner.
     bool binderLockHeld = usedLinkedAddon && linkedResolved.did_bind;
     const auto releaseBinderLock = [&] {
         if (binderLockHeld) {
@@ -636,28 +596,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #if OS(WINDOWS)
     HMODULE handle;
     if (usedLinkedAddon) {
-        // The addon's code lives in bun.exe's own image; there is no
-        // separate module in the loader's list. Use a per-addon token
-        // (exe_base + rva_base) as the `handle` that flows into
-        // DLHandleMap so two merged addons do not collide on the same
-        // key. GetProcAddress is bypassed below in favour of the
-        // precomputed export RVAs.
+        // Not a real HMODULE (see handle_token); it only serves as the DLHandleMap key.
         handle = reinterpret_cast<HMODULE>(linkedResolved.handle_token);
     } else {
         BunString filename_str = Bun::toString(filename);
         handle = Bun__LoadLibraryBunString(&filename_str);
     }
-    // NapiModuleMeta stores this so JSBundlerPlugin can later
-    // `GetProcAddress` the user-supplied onBeforeParse symbol out of
-    // it. A linked addon's `handle` is an identity token, not
-    // something GetProcAddress can walk (no DOS/PE header at that
-    // address, and the addon is not in the loader's module list), so
-    // pass nullptr there; executePendingNapiModule / the
-    // BUN_PLUGIN_NAME block below then skip attaching the meta and
-    // build.onBeforeParse fails with a clear "not a napi module"
-    // error. Native bundler plugins inside a --compile exe can set
-    // BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1 to take the tempfile
-    // path instead.
+    // No NapiModuleMeta for a merged addon (nothing GetProcAddress can walk): native bundler plugins need BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1.
     void* dlopenHandleForMeta = usedLinkedAddon ? nullptr : handle;
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
@@ -757,11 +702,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
 
 #if OS(WINDOWS)
-        // DLHandleMap is now populated for this handle; a Worker on
-        // the cached-hit path can proceed to .get(). Release before
-        // nm_register_func runs — it is user code and may dlopen
-        // another merged addon, which would deadlock on the
-        // non-recursive lock.
+        // DLHandleMap is published; release before user code (nm_register_func) runs, as it may dlopen another merged addon.
         releaseBinderLock();
 #endif
 
@@ -803,12 +744,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
 #if OS(WINDOWS)
-    // If the binder reached here, the addon did not self-register
-    // (no NAPI_MODULE-macro static ctor), so there is nothing to
-    // publish to DLHandleMap and no loser-thread .get() to order
-    // against. Release before any re-entrant user code below
-    // (napi_register_module_v1, or a cached replay's
-    // nm_register_func on the loser path).
+    // Nothing to publish to DLHandleMap (the addon did not self-register); release before the user code below runs.
     releaseBinderLock();
 #endif
 
@@ -873,9 +809,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     int32_t (*node_api_module_get_api_version_v1)();
 #if OS(WINDOWS)
     if (usedLinkedAddon) {
-        // GetProcAddress(handle, ...) would resolve bun.exe's own exports,
-        // not the addon's — the addon has no entry in the loader's module
-        // list. Use the build-time-captured RVAs instead.
+        // handle is not a module GetProcAddress can walk; use the exports the binder resolved.
         napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(linkedResolved.napi_register_module_v1);
         node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(linkedResolved.node_api_module_get_api_version_v1);
     } else
@@ -943,8 +877,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
 #elif OS(WINDOWS)
-        // See the dlopenHandleForMeta comment above for why a linked
-        // addon is never marked as a native bundler plugin.
+        // See dlopenHandleForMeta above: a merged addon is never a native bundler plugin.
         const char** pointer_to_plugin_name = usedLinkedAddon
             ? nullptr
             : (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");

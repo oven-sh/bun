@@ -175,29 +175,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             if (process.platform !== "win32") {
               expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
             } else {
-              // On Windows addons are statically merged into the exe
-              // where possible, so process.dlopen binds them in place
-              // without touching the filesystem. The merge is
-              // best-effort — bun.exe's PE header has a fixed number
-              // of spare section-header slots, and an addon with real
-              // __declspec(thread) storage is routed to the tempfile
-              // fallback — so with ~11 addons in this fixture we
-              // assert the merge *engaged* (.bunL/.bn0 present) and
-              // *reduced* temp-file extraction, not that every addon
-              // merged.
+              // The merge is best-effort: bun.exe has a fixed number of spare
+              // section-header slots, so with ~11 addons in this fixture assert
+              // that it engaged (.bunL/.bn0 present) and reduced temp-file
+              // extraction below the 5 top-level addons, not that every addon
+              // merged (x64 CI currently leaves 2 unmerged, aarch64 3).
               expect(
                 peHasSection(exe, ".bunL"),
                 ".node addon should be statically linked into the compiled exe",
               ).toBeTrue();
               expect(peHasSection(exe, ".bn0")).toBeTrue();
               const extracted = readdirSync(tmpdir).filter(f => f.endsWith(".node"));
-              // 5 addons are required at top level. Without the merge
-              // all 5 would extract; with it, how many fit is a
-              // function of bun.exe's section-header slack (x64 CI
-              // currently leaves 2 unmerged, aarch64 3). Assert a
-              // strict reduction vs the no-merge baseline rather than
-              // a brittle per-arch count — .bn0 above already proves
-              // at least one bound in-place.
               expect(extracted.length, `extracted to temp: ${JSON.stringify(extracted)}`).toBeLessThan(5);
             }
           },
@@ -207,18 +195,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           30 * 1000,
         );
 
-        // BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK is a no-op on
-        // non-Windows (linkNativeAddonsForWindows only runs on the PE
-        // branch of inject(), and LinkedNodeModule.enabled =
-        // Environment.isWindows), so this test would be byte-for-byte
-        // identical to the one above there.
+        // The flag only affects the Windows PE path; elsewhere this test would
+        // duplicate the one above. It exercises the extract-to-tempfile +
+        // LoadLibraryExW fallback that unmergeable addons also take.
         it.skipIf(!isWindows)(
           "should work with --compile when static addon linking is disabled",
           async () => {
-            // Exercises the fallback used when an addon cannot be merged
-            // (static TLS, malformed PE, or this env var): extract to a
-            // temp file and LoadLibraryExW it.
-            const dir = tempDirWithFiles("napi-app-compile-no-link-" + format, {
+            await using dir = tempDir("napi-app-compile-no-link-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -237,20 +220,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
                 join(__dirname, "napi-app", "main.js"),
               ],
               cwd: dir,
-              // Disable at build time so the exe carries no .bunL section
-              // (and hence has nothing to bind even if the runtime flag
-              // were clear).
               env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
               stdout: "inherit",
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
             expect(peHasSection(exe, ".bunL")).toBeFalse();
-            const tmpdir = tempDirWithFiles("napi-app-no-link-tmp", {});
+            await using tmpdir = tempDir("napi-app-no-link-tmp", {});
             const result = spawnSync({
               cmd: [exe, "self"],
-              // Disable at run time too, in case a future change makes
-              // the build-time flag not imply the run-time behaviour.
               env: { ...bunEnv, BUN_TMPDIR: tmpdir, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
               stdin: "inherit",
               stderr: "inherit",
@@ -259,11 +237,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            // With the merge disabled, every addon takes the tempfile
-            // fallback — complements the .bunL-absent assertion above.
             expect(readdirSync(tmpdir).filter(f => f.endsWith(".node")).length).toBeGreaterThan(0);
           },
-          10 * 1000,
+          // Same --compile workload as the sibling above; see its timeout note.
+          30 * 1000,
         );
       }
 

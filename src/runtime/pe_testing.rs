@@ -1,17 +1,4 @@
-//! Test-only bridge exposing `bun_exe_format::pe`'s linked-addon merge to
-//! `bun:internal-for-testing` (see `src/js/internal-for-testing.ts`).
-//!
-//! Feeds a (possibly hostile) addon PE through `PEFile::add_linked_addon`
-//! against a host PE image. Lets the adversarial-input tests
-//! (`test/bundler/pe-linked-addon-adversarial.test.ts`) run on every
-//! platform without a Windows bun.exe template or a `bun build --compile`
-//! round-trip, and assert that the merge either (a) produces a well-formed
-//! PE or (b) is cleanly skipped — never hangs, never corrupts the host
-//! image.
-//!
-//! Lives in `bun_runtime` (not `bun_exe_format`) because it needs the JSC
-//! types. Registered via `$newRustFunction("exe_format/pe.rs",
-//! "TestingAPIs.linkAddon", 3)` (see `dispatch_js2native.rs`).
+//! `bun:internal-for-testing` hook running `PEFile::add_linked_addon` on caller-supplied images.
 
 use bun_exe_format::pe;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -41,6 +28,15 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         );
         Ok(result)
     };
+    let put_output = |host: &pe::PEFile| -> JsResult<()> {
+        let bytes = host.as_bytes().to_vec().into_boxed_slice();
+        result.put(
+            global,
+            b"output",
+            JSValue::create_buffer_from_box(global, bytes)?,
+        );
+        Ok(())
+    };
 
     let mut host = match pe::PEFile::init(host_buf.byte_slice()) {
         Ok(h) => h,
@@ -52,7 +48,9 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         Err(e) => return put_err("addon", e),
     };
     let Some(linked) = linked else {
+        // Tests compare this against their input to check a skip leaves the host untouched.
         result.put(global, b"skipped", JSValue::js_boolean(true));
+        put_output(&host)?;
         return Ok(result);
     };
 
@@ -65,11 +63,7 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     }
 
     result.put(global, b"skipped", JSValue::js_boolean(false));
-    result.put(
-        global,
-        b"output",
-        JSValue::create_buffer_from_box(global, host.as_bytes().to_vec().into_boxed_slice())?,
-    );
+    put_output(&host)?;
     result.put(
         global,
         b"metadata",

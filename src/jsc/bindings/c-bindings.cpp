@@ -1117,9 +1117,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 static uint64_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
-// .bunL — statically-merged `.node` addon metadata (see pe.rs
-// LinkedAddon). Absent in a non-compiled bun or when no addons were
-// merged; callers treat missing as "fall back to tmpfile LoadLibrary".
+// .bunL holds the merged `.node` addon metadata (pe.rs LinkedAddon); it is absent unless addons were merged.
 static uint64_t* pe_linked_size = nullptr;
 static uint8_t* pe_linked_data = nullptr;
 
@@ -1140,8 +1138,7 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        // Exact 8-byte compare so ".bun\0\0\0\0" does not match ".bunL\0\0\0"
-        // or the per-addon ".bnN" sections.
+        // Exact 8-byte compare so ".bun" does not match ".bunL" or the per-addon ".bnN" sections.
         if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", IMAGE_SIZEOF_SHORT_NAME) == 0) {
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;

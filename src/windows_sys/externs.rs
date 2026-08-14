@@ -903,11 +903,7 @@ pub mod kernel32 {
             lpBaseAddress: LPCVOID,
             dwSize: usize,
         ) -> BOOL;
-        /// `RtlAddFunctionTable` (`winnt.h`) — kernel32 forwards to ntdll.
-        /// `FunctionTable` points at `EntryCount` native RUNTIME_FUNCTION
-        /// entries (12 bytes on x64, 8 on ARM64); declared as a raw
-        /// pointer so one declaration serves both layouts. Returns BOOLEAN
-        /// (u8), not BOOL.
+        /// `winnt.h`; RUNTIME_FUNCTION differs per arch, hence untyped. Returns BOOLEAN, not BOOL.
         pub fn RtlAddFunctionTable(
             FunctionTable: *const c_void,
             EntryCount: DWORD,

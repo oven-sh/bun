@@ -1,6 +1,6 @@
-// Adversarial coverage for pe.PEFile.addLinkedAddon — the part of
-// `bun build --compile` that parses a user-supplied `.node` PE and
-// merges it into the Windows output executable.
+// Adversarial coverage for PEFile::add_linked_addon (src/exe_format/pe.rs),
+// the part of `bun build --compile` that parses a user-supplied `.node` PE
+// and merges it into the Windows output executable.
 //
 // The addon bytes are untrusted (they come from npm packages), so the
 // parser must never hang, overflow, or corrupt the host image on
@@ -9,7 +9,7 @@
 // `{ skipped: true }` / `{ error: ... }` so the runtime can fall back to
 // the temp-file+LoadLibrary path.
 //
-// Runs on every platform via the `peLinkAddon` testing hook — no Windows
+// Runs on every platform via the `peLinkAddon` testing hook; no Windows
 // host or downloaded bun.exe template required.
 
 import { peLinkAddon } from "bun:internal-for-testing";
@@ -182,16 +182,20 @@ function sections(pe: Buffer): string[] {
 
 // Contract: every adversarial input must either merge into a PE that still
 // passes validate(), or be rejected. Never undefined / never a crash. When it
-// *is* rejected the host image must be untouched, so the `.bun` graph can
-// still carry the raw addon bytes for the runtime fallback.
+// is skipped the host image must be untouched, since the real build keeps
+// merging further addons into the same image. Callers that skip must have
+// used an unmodified makeHost(), which is what the output is compared to.
 function expectSafe(res: ReturnType<typeof peLinkAddon>) {
   if (res.error !== undefined) {
     expect(typeof res.error).toBe("string");
     return "error" as const;
   }
-  if (res.skipped === true) return "skipped" as const;
+  if (res.skipped === true) {
+    expect(Buffer.from(res.output!).equals(makeHost()), "a skipped merge must leave the host untouched").toBe(true);
+    return "skipped" as const;
+  }
   expect(res.skipped).toBe(false);
-  // Merge succeeded — the output must be a well-formed PE with the new
+  // Merge succeeded: the output must be a well-formed PE with the new
   // sections actually present (validate() ran in the hook, which
   // rejects overlapping raw ranges and SizeOfImage mismatches).
   expect(res.output).toBeInstanceOf(Uint8Array);
@@ -219,16 +223,9 @@ describe("pe.addLinkedAddon adversarial input", () => {
   });
 
   test("non-PE junk is skipped without touching the host", () => {
-    // The hook rejects before any host mutation; a separate merge of
-    // a *valid* addon against the same host bytes must then produce
-    // exactly the baseline output, proving the first call left the
-    // host unchanged.
-    const host = makeHost();
-    const r = peLinkAddon(host, Buffer.from("not a pe file at all"), "x");
-    expect(r.skipped).toBe(true);
-    expect(r.output).toBeUndefined();
-    const again = peLinkAddon(host, makeAddon(), "B:/~BUN/root/addon.node");
-    expect(expectSafe(again)).toBe("merged");
+    const r = peLinkAddon(makeHost(), Buffer.from("not a pe file at all"), "x");
+    expect(expectSafe(r)).toBe("skipped");
+    expect(r.metadata).toBeUndefined();
   });
 
   test("addon with AddressOfEntryPoint past SizeOfImage is skipped", () => {
@@ -238,7 +235,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x7fffffff, OPTOFF + 16)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("PE32 (not PE32+) is skipped", () => {
@@ -248,7 +245,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       "x",
     );
     // AddonView.init rejects non-PE32+ magic → addLinkedAddon returns null.
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon with IMAGE_FILE_RELOCS_STRIPPED is skipped (cannot rebase)", () => {
@@ -257,7 +254,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt16LE(b.readUInt16LE(PEOFF + 22) | 0x0001, PEOFF + 22)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon with an empty-template TLS directory is merged (MSVC CRT stub)", () => {
@@ -299,7 +296,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon with a nonzero TLS SizeOfZeroFill is skipped", () => {
@@ -313,7 +310,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon with a truncated TLS directory (size < 40) is skipped", () => {
@@ -325,7 +322,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon whose PE machine type differs from the host is skipped", () => {
@@ -340,7 +337,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt16LE(0xaa64, PEOFF + 4)), // IMAGE_FILE_MACHINE_ARM64
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon importing _CxxThrowException is skipped (C++ EH type matching breaks)", () => {
@@ -361,7 +358,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon with SizeOfImage = 0 is skipped", () => {
@@ -370,7 +367,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0, OPTOFF + 56)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("addon section whose VirtualAddress lies past SizeOfImage is skipped", () => {
@@ -379,7 +376,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x80000, SHOFF + 12)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   // Relocation-block attacks — these are the easiest way to get the parser
@@ -414,7 +411,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("unknown reloc type (HIGHLOW on PE32+) is rejected, not applied blindly", () => {
@@ -423,7 +420,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt16LE((3 << 12) | 0x008, FILE_ALIGN + 0x0a0 + 8)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   // Import-directory attacks.
@@ -434,7 +431,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x7ffff000, DDOFF + 1 * 8)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("import descriptor whose DLL-name RVA points past the file is rejected", () => {
@@ -443,7 +440,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x7fffffff, FILE_ALIGN + 0x070 + 12)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("unterminated ILT (no zero thunk before raw-data end) is rejected", () => {
@@ -479,7 +476,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeBigUInt64LE(0x7fffffffn, FILE_ALIGN + 0x030)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("legacy v1 delay-load descriptor (no RVA bit) is rejected", () => {
@@ -497,7 +494,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       }),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   // Export-directory attacks — these must not OOM / over-read.
@@ -607,6 +604,6 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x7fff0000, OPTOFF + 56)),
       "x",
     );
-    expect(r.skipped).toBe(true);
+    expect(expectSafe(r)).toBe("skipped");
   });
 });

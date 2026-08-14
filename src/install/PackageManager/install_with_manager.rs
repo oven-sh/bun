@@ -800,8 +800,8 @@ pub fn install_with_manager(
             break 'install_summary PackageInstallSummary::default();
         }
 
-        // A renamed or removed workspace always shows up as a diff on the root
-        // package; without one the previous and current workspace sets match.
+        // Every workspace is a dependency of the root package, so without a diff
+        // the workspace set is unchanged.
         if had_any_diffs {
             remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }

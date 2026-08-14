@@ -1,13 +1,8 @@
-//! A workspace package is linked into `node_modules/<name>`: the root's, and
-//! that of every workspace depending on it. Both linkers only create or
-//! repoint the links the current lockfile asks for, so when a workspace is
-//! renamed or removed from the project the link under its previous name
-//! survives, still resolving to the workspace folder, even though the install
-//! summary reports the package as removed. This runs after
-//! `Lockfile::clean_with_logger` and before either linker: every workspace
-//! name that was in the previous lockfile and is not in the new one has its
-//! links unlinked, and anything the new lockfile still wants under that name
-//! is recreated by the linker that follows.
+//! Neither linker deletes anything from `node_modules`; each only creates or
+//! repoints the links the current lockfile asks for. The links of a workspace
+//! whose name left the lockfile (renamed, or removed from the project) are
+//! unlinked here instead, before the linker runs, so a name the new lockfile
+//! still places is simply linked again.
 
 use bstr::BStr;
 use bun_paths::AutoAbsPathChecked;
@@ -56,9 +51,8 @@ fn remove_links_named(current: &Lockfile, name: &[u8]) {
     }
 }
 
-/// Unlinks `<package_dir>/node_modules/<name>` if it is a symlink (or, on
-/// Windows, a junction). A real directory or file at that path was not put
-/// there as a workspace link and is left alone.
+/// Unlinks `<package_dir>/node_modules/<name>`. `readlink` doubles as the
+/// symlink/junction check: a real directory or file there is not ours to remove.
 fn remove_link(path: &mut AutoAbsPathChecked, package_dir: &[u8], name: &[u8]) {
     if path.append(package_dir).is_err()
         || path.append(b"node_modules").is_err()
@@ -80,8 +74,7 @@ fn remove_link(path: &mut AutoAbsPathChecked, package_dir: &[u8], name: &[u8]) {
 
     #[cfg(windows)]
     {
-        // Directory symlinks and junctions are removed with rmdir; only a file
-        // symlink needs unlink.
+        // Directory symlinks and junctions need rmdir; a file symlink needs unlink.
         if bun_sys::rmdir(path.slice_z()).is_err() {
             let _ = bun_sys::unlink(path.slice_z());
         }

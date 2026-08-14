@@ -1,10 +1,13 @@
 // Spawned by fetch-leak.test.ts ("Sending <type> does not leak"):
 //   fetch-leak-test-fixture-5.js <server url> <body size in bytes> <body type> <request count>
-// POSTs the requests in batches, checks after every batch that its Response
-// objects and fetch() promises were collected, and prints one JSON line with the
-// RSS growth, whose threshold the parent owns. The growth is measured from after
-// the first batch so one-time allocations (JIT, allocator warm-up, the cached
-// body) are not counted.
+// POSTs the requests in batches, checks that the Response objects and fetch()
+// promises were collected, and prints one JSON line with the RSS growth, whose
+// threshold the parent owns. The growth is measured from after the first batch
+// so one-time allocations (JIT, allocator warm-up, the cached body) are not
+// counted. The counts are checked after the first batch and at the end only: on
+// some lanes (x64-asan, Windows 2019) the native side takes about a second to
+// let go of a finished batch, so checking after every batch cost a second per
+// batch there without catching anything the final check does not.
 import { expectCollected, maxResponsesAlive } from "./fetch-leak-test-helpers.js";
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
@@ -22,9 +25,9 @@ if (!Number.isSafeInteger(BODY_SIZE) || !Number.isSafeInteger(REQUESTS) || REQUE
 }
 // JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
 // module map (fetch/module/load per registry entry) for the life of the
-// process, so the promise count that a collected batch settles at is measured
-// after the first batch instead of being hard-coded; a leaked promise per
-// request then adds a whole batch on top of it.
+// process, so the promise count the process settles at is measured after the
+// first batch instead of being hard-coded; a leaked promise per request then
+// adds the remaining requests (REQUESTS - batch of them) on top of it.
 const promiseSlack = batch / 2;
 
 function getFormData() {
@@ -118,14 +121,17 @@ async function sendBatch() {
 
 // The first batch provides the settled promise count and the RSS baseline.
 await sendBatch();
-let alive = await expectCollected({ Response: maxResponsesAlive, Promise: Infinity }, `the first ${requests} requests`);
-const limits = { Response: maxResponsesAlive, Promise: alive.Promise + promiseSlack };
+const settled = await expectCollected(
+  { Response: maxResponsesAlive, Promise: Infinity },
+  `the first ${requests} requests`,
+);
 const baseline = rss();
 
-while (requests < REQUESTS) {
-  await sendBatch();
-  alive = await expectCollected(limits, `${requests} requests`);
-}
+while (requests < REQUESTS) await sendBatch();
+const alive = await expectCollected(
+  { Response: maxResponsesAlive, Promise: settled.Promise + promiseSlack },
+  `${requests} requests`,
+);
 
 console.log(
   JSON.stringify({

@@ -186,9 +186,10 @@ describe.concurrent.each(["FormData", "Blob", "Buffer", "String", "URLSearchPara
     // Leaking a body per request grows the child by BODY_SIZE per request:
     // measured 280-300 MB for every type with the fixture made to keep its
     // bodies alive. Clean runs under rssEnv measure under 10 MB on Linux release
-    // and under 15 MB on debug+ASAN (quarantine is off, so ASAN needs no bound
-    // of its own); the limit sits about 3x below the leak and leaves the rest of
-    // the distance as headroom for allocator behaviour on the other platforms.
+    // and under 15 MB on debug+ASAN, up to ~25 MB with all seven children on a
+    // loaded box (quarantine is off, so ASAN needs no bound of its own); the
+    // limit sits about 3x below the leak and leaves the rest of the distance as
+    // headroom for allocator behaviour on the other platforms.
     const MAX_RSS_GROWTH_MB = 96;
     // URL-encoding the 2 MB body takes a debug build about 0.25 s per request,
     // i.e. the URLSearchParams child needs 40-50 s there (release: 2-3 s).

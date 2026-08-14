@@ -391,9 +391,11 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     if (img->icc.data != nullptr && img->icc.size > 0) {
         uint8_t* icc_copy = static_cast<uint8_t*>(std::malloc(img->icc.size));
         if (icc_copy == nullptr) {
-            // Pixels are already filled in; treat an ICC OOM as "no profile"
-            // rather than failing the whole decode — jpeg/png do the same.
-            return 0;
+            // Don't degrade to "no profile": that silently reinterprets
+            // P3/Adobe RGB pixels as sRGB (#30197). Fail the decode, the
+            // same refusal-to-swallow the sibling codecs apply to the ICC
+            // dupe.
+            return kAvifDecodeFailed;
         }
         std::memcpy(icc_copy, img->icc.data, img->icc.size);
         *out_icc_ptr = icc_copy;

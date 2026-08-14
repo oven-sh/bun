@@ -816,22 +816,17 @@ describe("random-byte fuzz", () => {
   ];
   if (avifFuzzAvailable) fuzzFormats.push(["avif", tinyAvif]);
   for (const [name, fixture] of fuzzFormats) {
-    // Raise the per-test timeout for AVIF: a handful of flips end up producing
-    // bytes that still decode (some mdat corruption doesn't reach the bit
-    // reader), triggering real AV1 decode at ~40ms each under ASAN. 305 flips
-    // × worst-case ~60% full-decode ratio blows past Jest's 5s default. JPEG/
-    // PNG/WebP flips all reject in parse so they don't need it.
-    const perTestTimeout = name === "avif" ? 30_000 : undefined;
-    test.concurrent(
-      `${name}: single-byte flip at every offset`,
-      async () => {
-        for (let off = 0; off < fixture.length; off++) {
-          const mut = Buffer.from(fixture);
-          mut[off] ^= 0xff;
-          await survives(new Bun.Image(mut).bytes());
-        }
-      },
-      perTestTimeout,
-    );
+    test.concurrent(`${name}: single-byte flip at every offset`, async () => {
+      // Each decode runs on the WorkPool, so fire all flips and await the
+      // batch — serial awaits made the AVIF variant (~40ms per surviving
+      // AV1 decode under ASAN) crawl past the default test budget.
+      const flips: Promise<unknown>[] = [];
+      for (let off = 0; off < fixture.length; off++) {
+        const mut = Buffer.from(fixture);
+        mut[off] ^= 0xff;
+        flips.push(survives(new Bun.Image(mut).bytes()));
+      }
+      await Promise.all(flips);
+    });
   }
 });

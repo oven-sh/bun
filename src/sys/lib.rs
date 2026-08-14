@@ -3028,21 +3028,37 @@ mod posix_impl {
             use core::sync::atomic::{AtomicBool, Ordering};
             static PROCFS_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
             if !PROCFS_UNAVAILABLE.load(Ordering::Relaxed) {
-                let fd = open(path, O::PATH | O::CLOEXEC, 0).map_err(|e| {
-                    Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes())
-                })?;
-                let mut proc = [0u8; 32];
-                let n = {
-                    use std::io::Write as _;
-                    let mut c = std::io::Cursor::new(&mut proc[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-                    c.position() as usize - 1
-                };
-                let r = readlink(ZStr::from_buf(&proc[..], n), &mut buf.0);
-                let _ = close(fd);
-                match r {
-                    Ok(len) => return Ok(&buf.0[..len]),
-                    Err(_) => PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed),
+                match open(path, O::PATH | O::CLOEXEC, 0) {
+                    Ok(fd) => {
+                        let mut proc = [0u8; 32];
+                        let n = {
+                            use std::io::Write as _;
+                            let mut c = std::io::Cursor::new(&mut proc[..]);
+                            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+                            c.position() as usize - 1
+                        };
+                        let r = readlink(ZStr::from_buf(&proc[..], n), &mut buf.0);
+                        let _ = close(fd);
+                        match r {
+                            Ok(len) => return Ok(&buf.0[..len]),
+                            Err(_) => PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed),
+                        }
+                    }
+                    // The lookup errors `realpath(3)` itself reports are final.
+                    Err(e)
+                        if matches!(
+                            e.get_errno(),
+                            E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG | E::EACCES
+                        ) =>
+                    {
+                        return Err(Error::new(e.get_errno(), Tag::realpath)
+                            .with_path(path.as_bytes()));
+                    }
+                    // No `O_PATH` here (old kernel, gVisor, seccomp): use libc.
+                    Err(e) if matches!(e.get_errno(), E::EINVAL | E::ENOSYS | E::EOPNOTSUPP) => {
+                        PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed)
+                    }
+                    Err(_) => {}
                 }
             }
         }

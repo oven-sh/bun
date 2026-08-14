@@ -599,6 +599,7 @@ describe("bundler files option", () => {
       naming: "[dir]/[name].[ext]",
     });
 
+    expect(result.logs).toEqual([]);
     expect(result.success).toBe(true);
     expect(result.outputs.map(o => o.path)).toEqual([join(outdir, "virtual", "nested", "entry.js")]);
   });

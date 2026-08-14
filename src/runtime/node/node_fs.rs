@@ -9060,6 +9060,7 @@ impl NodeFS {
                         return Err(err.with_path(p));
                     }
                 };
+                link_buf[link_len] = 0;
                 let link_target = &link_buf[..link_len];
                 let mut resolved_buf = paths::path_buffer_pool::get();
                 let mut cwd_buf = paths::path_buffer_pool::get();

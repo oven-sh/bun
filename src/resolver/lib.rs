@@ -2127,7 +2127,7 @@ pub mod dir_entry_accessor {
                     let mut joined = bun_paths::path_buffer_pool::get();
                     let abs = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
                         &mut joined[..],
-                        &[entry.dir, &**key],
+                        &[entry.dir, entry.base()],
                     );
                     let mut out = bun_paths::path_buffer_pool::get();
                     // SAFETY: as for `kind()` above.

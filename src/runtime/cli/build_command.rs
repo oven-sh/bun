@@ -421,11 +421,15 @@ impl BuildCommand {
             let abs = bun_resolver::fs::FileSystem::get().abs_buf(&[path], &mut src_root_dir_buf.0);
             match this_transpiler.resolver.read_dir_info(abs) {
                 Ok(Some(dir)) => break 'brk1 dir.real_path(),
-                _ => {
+                Ok(None) => {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r> resolving root directory {}",
                         bun_fmt::quote(path),
                     );
+                    Global::exit(1);
+                }
+                Err(err) => {
+                    Output::err(err, "resolving root directory {}", (bun_fmt::quote(path),));
                     Global::exit(1);
                 }
             }

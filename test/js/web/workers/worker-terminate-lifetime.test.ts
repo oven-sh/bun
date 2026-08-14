@@ -860,3 +860,37 @@ test(
   },
   timeout,
 );
+
+// A worker exiting while a Bun.spawn() child still has a pending pipe-backed stdin (a Blob the child
+// never reads; the default stdin path on Windows, BUN_FEATURE_FLAG_DISABLE_MEMFD elsewhere): the
+// Subprocess finalizer closed that writer, whose close path re-evaluated pending activity and tried to
+// re-root the wrapper it had just marked finalized (debug assert).
+test(
+  "worker exit with a spawned child's Blob stdin still pending",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`
+          const p = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 3000)"], { stdin: new Blob([new Uint8Array(4 << 20)]), stdout: "ignore" });
+          globalThis.keep = p;
+          setTimeout(() => process.exit(0), 50);
+        \`, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", (c) => { console.log("worker exit", c); process.exit(0); });
+      `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("worker exit 0\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

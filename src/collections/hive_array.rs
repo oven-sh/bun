@@ -303,6 +303,12 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         ret
     }
 
+    /// No slot is claimed (a [`Fallback`]'s heap-spilled items are not slots).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.used.find_first_set().is_none()
+    }
+
     pub fn index_of(&self, value: *const T) -> Option<u32> {
         asan::assert_unpoisoned(value.cast::<u8>());
         let start = self.buffer.get().cast::<T>();
@@ -577,8 +583,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
     /// for `MaybeUninit`).
     ///
-    /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime.
+    /// The returned allocation is leaked; the caller reclaims it into a `Box`
+    /// and owns it from there.
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();

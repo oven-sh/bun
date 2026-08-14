@@ -1846,10 +1846,29 @@ static void bsd_v4_mapped_addr(const struct sockaddr_in *in4, struct sockaddr_in
     memcpy(&out->sin6_addr.s6_addr[12], &in4->sin_addr, sizeof(in4->sin_addr));
 }
 
+/* Whether an AF_INET6 socket can address IPv4 peers (through v4-mapped
+ * addresses). Decided up front rather than by attempting the connect, so the
+ * choice does not depend on how each kernel rejects the doomed attempt and the
+ * errno reported for a name with no usable address stays meaningful. */
+static int bsd_inet6_socket_reaches_inet(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in6 *bound) {
+#ifdef IPV6_V6ONLY
+    int v6only = 0;
+    socklen_t len = sizeof(v6only);
+    if (getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &v6only, (socklen_t *) &len) == 0 && v6only) {
+        return 0;
+    }
+#endif
+    /* A socket bound to a real IPv6 address (::1, ...) has no IPv4 source
+     * address to send from; one bound to the wildcard or to a mapped address
+     * does. */
+    return IN6_IS_ADDR_UNSPECIFIED(&bound->sin6_addr) || IN6_IS_ADDR_V4MAPPED(&bound->sin6_addr);
+}
+
 /* `host` may be a name. Its addresses are tried IPv4 first, the order
  * LIBUS_UDP_PREFER_IPV4 binds them in, so a name denotes the same address on
  * both ends of a Bun.udpSocket pair no matter what order the resolver returns.
- * Only addresses the socket's own family can carry are attempted.
+ * Only addresses the socket can reach are attempted, so a socket that cannot
+ * use a name's IPv4 address gets its IPv6 one.
  *
  * Returns 0, a getaddrinfo() error code, or LIBUS_SOCKET_ERROR with
  * errno (WSAGetLastError() on Windows) set. */
@@ -1859,6 +1878,9 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
         return (int)LIBUS_SOCKET_ERROR;
     }
     int socket_is_inet6 = local.mem.ss_family == AF_INET6;
+    int reaches_inet = socket_is_inet6
+        ? bsd_inet6_socket_reaches_inet(fd, (const struct sockaddr_in6 *) &local.mem)
+        : 1;
 
     struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(struct addrinfo));
@@ -1891,10 +1913,15 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
                 if (!socket_is_inet6) {
                     continue;
                 }
-            } else if (socket_is_inet6) {
-                bsd_v4_mapped_addr((const struct sockaddr_in *) rp->ai_addr, &mapped);
-                addr = (const struct sockaddr *) &mapped;
-                addrlen = sizeof(mapped);
+            } else {
+                if (!reaches_inet) {
+                    continue;
+                }
+                if (socket_is_inet6) {
+                    bsd_v4_mapped_addr((const struct sockaddr_in *) rp->ai_addr, &mapped);
+                    addr = (const struct sockaddr *) &mapped;
+                    addrlen = sizeof(mapped);
+                }
             }
 
             attempted = 1;

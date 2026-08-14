@@ -1,9 +1,16 @@
-import { udpSocket } from "bun";
+import { dns, udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+// Whether getaddrinfo(), which is what udpSocket() resolves hostnames with,
+// gives "localhost" an IPv6 address here. Debian, macOS and Windows do;
+// Ubuntu's hosts file maps it to 127.0.0.1 only.
+const localhostHasIPv6 = (await dns.lookup("localhost", { backend: "libc", socketType: "udp" })).some(
+  ({ family }) => family === 6,
+);
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -253,11 +260,12 @@ describe("udpSocket()", () => {
     },
   );
 
-  // "localhost" resolves to both 127.0.0.1 and ::1 on a stock hosts file. A
+  // On most hosts files "localhost" resolves to both 127.0.0.1 and ::1. A
   // datagram goes to exactly one of them, and everything this API creates by
   // default is IPv4 (the default hostname is "0.0.0.0"), so a hostname has to
   // mean its IPv4 address on both the bind and the connect side or the two
-  // ends of a pair silently land on different loopbacks.
+  // ends of a pair silently land on different loopbacks. Where "localhost" is
+  // IPv4-only these cases still hold, they just cannot fail the old way.
   describe("hostname resolves to the same address on both ends", () => {
     type Received = { data: string; port: number; address: string };
 
@@ -307,9 +315,44 @@ describe("udpSocket()", () => {
       }
     });
 
-    // `loopback` is the address the pair meets on: what the server's hostname
-    // bound, and therefore where the server sees the client's datagram from.
-    test.each([
+    type Pairing = {
+      /** What the server binds. */
+      server: string;
+      /** Client options; `connectTo` defaults to the server's hostname. */
+      client: { hostname?: string; flags?: number; connectTo?: string };
+      /** The address the pair meets on: what the server's hostname bound, and
+       * therefore where the server sees the client's datagram come from. */
+      loopback: string;
+      /** The client's view of the same address. */
+      remote: { address: string; family: string };
+    };
+
+    async function expectPairToMeet({
+      server: serverHostname,
+      client: { connectTo = serverHostname, ...clientOptions },
+      loopback,
+      remote,
+    }: Pairing) {
+      const { server, received } = await listen(serverHostname);
+      try {
+        expect(server.address.address).toBe(loopback);
+        const client = await udpSocket({ ...clientOptions, connect: { hostname: connectTo, port: server.port } });
+        try {
+          expect(client.remoteAddress).toEqual({ ...remote, port: server.port });
+          expect(await sendUntilReceived(received, () => client.send("hello"))).toEqual({
+            data: "hello",
+            port: client.port,
+            address: loopback,
+          });
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    }
+
+    test.each<Pairing & { label: string }>([
       {
         label: "default client connected to the server's hostname",
         server: "localhost",
@@ -334,41 +377,35 @@ describe("udpSocket()", () => {
         remote: { address: "::ffff:127.0.0.1", family: "IPv6" },
       },
       {
-        // A socket bound to ::1 cannot carry the mapped IPv4 address, so the
-        // connect falls through to the hostname's IPv6 address.
-        label: "client bound to ::1 connected to a hostname",
+        label: "dual-stack client connected to an IPv6 literal",
+        server: "::1",
+        client: { hostname: "::", connectTo: "::1" },
+        loopback: "::1",
+        remote: { address: "::1", family: "IPv6" },
+      },
+    ])("$label", expectPairToMeet);
+
+    // These clients cannot address IPv4 peers at all, so the hostname's IPv4
+    // address is skipped in favor of its IPv6 one. That needs a hostname that
+    // has one, which "localhost" does not everywhere.
+    test.skipIf(!localhostHasIPv6).each<Pairing & { label: string }>([
+      {
+        label: "client bound to ::1 connected to a hostname gets its IPv6 address",
         server: "::1",
         client: { hostname: "::1", connectTo: "localhost" },
         loopback: "::1",
         remote: { address: "::1", family: "IPv6" },
       },
-    ])(
-      "$label",
-      async ({
-        server: serverHostname,
-        client: { connectTo = serverHostname, ...clientOptions },
-        loopback,
-        remote,
-      }) => {
-        const { server, received } = await listen(serverHostname);
-        try {
-          expect(server.address.address).toBe(loopback);
-          const client = await udpSocket({ ...clientOptions, connect: { hostname: connectTo, port: server.port } });
-          try {
-            expect(client.remoteAddress).toEqual({ ...remote, port: server.port });
-            expect(await sendUntilReceived(received, () => client.send("hello"))).toEqual({
-              data: "hello",
-              port: client.port,
-              address: loopback,
-            });
-          } finally {
-            client.close();
-          }
-        } finally {
-          server.close();
-        }
+      {
+        // `flags` is the usockets option word node:dgram's `ipv6Only` sets;
+        // 8 is LIBUS_SOCKET_IPV6_ONLY.
+        label: "IPv6-only client connected to a hostname gets its IPv6 address",
+        server: "::1",
+        client: { hostname: "::", flags: 8, connectTo: "localhost" },
+        loopback: "::1",
+        remote: { address: "::1", family: "IPv6" },
       },
-    );
+    ])("$label", expectPairToMeet);
 
     test("a server bound by hostname receives datagrams sent to 127.0.0.1", async () => {
       const { server, received } = await listen("localhost");
@@ -389,10 +426,14 @@ describe("udpSocket()", () => {
       }
     });
 
-    test("the default (IPv4) socket cannot connect to an IPv6 address", async () => {
+    test.each([
+      ["the default (IPv4) socket", "::1", {}],
+      ["a socket bound to ::1", "127.0.0.1", { hostname: "::1" }],
+      ["an IPv6-only socket", "127.0.0.1", { hostname: "::", flags: 8 }],
+    ])("%s cannot connect to %s", async (_, hostname, options) => {
       let error: any;
       try {
-        (await udpSocket({ connect: { hostname: "::1", port: 1 } })).close();
+        (await udpSocket({ ...options, connect: { hostname, port: 1 } })).close();
       } catch (e) {
         error = e;
       }

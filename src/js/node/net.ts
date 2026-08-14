@@ -2390,9 +2390,7 @@ function attachServerTLSEngine(self, connection, tls) {
   self._handle = result;
 }
 
-// A failed adoption owns both sockets: the wrap reports the failure, and the
-// connection dies with it (mirrors the client 'connect' path; nothing else
-// holds a connection wrapped inline).
+// The wrap reports the error and the connection dies with it: an inline-wrapped connection has no other owner.
 function failServerAdoption(self, connection, err) {
   self._handle = null;
   connection.destroy();

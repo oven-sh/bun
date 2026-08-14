@@ -48,6 +48,7 @@
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
+#include "EventLoopDomain.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -547,6 +548,53 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
     return JSValue::encode(jsString(vm, sourceOrigin.string()));
 }
 
+// Scheduling-domain testing hooks (see EventLoopDomain.h).
+//
+// runInDomainForTesting(thunk) -> [domainId, result]
+//   Enter a fresh domain, call thunk, drain that domain's microtasks, restore.
+JSC_DECLARE_HOST_FUNCTION(functionRunInDomainForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionRunInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thunk = callFrame->argument(0);
+    auto callData = JSC::getCallData(thunk);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(globalObject, scope, "runInDomainForTesting expects a function"_s);
+
+    uint32_t domain = Bun::allocateDomain(globalObject);
+    JSValue previous = Bun::enterDomain(globalObject, domain);
+    EnsureStillAliveScope keepPrevious(previous);
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, thunk, callData, jsUndefined(), ArgList());
+    if (scope.exception()) [[unlikely]] {
+        Bun::restoreContext(globalObject, previous);
+        return {};
+    }
+    EnsureStillAliveScope keepResult(result);
+    Bun::drainMicrotasksInDomain(globalObject, domain);
+    Bun::restoreContext(globalObject, previous);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSArray* tuple = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    tuple->putDirectIndex(globalObject, 0, jsNumber(domain));
+    tuple->putDirectIndex(globalObject, 1, result);
+    return JSValue::encode(tuple);
+}
+
+// currentDomainForTesting() -> [contextDomain, activeRunDomain]
+JSC_DECLARE_HOST_FUNCTION(functionCurrentDomainForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionCurrentDomainForTesting, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* tuple = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    tuple->putDirectIndex(globalObject, 0, jsNumber(Bun::currentDomain(globalObject)));
+    tuple->putDirectIndex(globalObject, 1, jsNumber(Bun::activeRunDomain(globalObject)));
+    return JSValue::encode(tuple);
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 JSC_DEFINE_HOST_FUNCTION(functionNoFTL,
     (JSGlobalObject*, CallFrame* callFrame))
@@ -1017,7 +1065,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 38);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1052,6 +1100,8 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
+    putNativeFn(Identifier::fromString(vm, "runInDomainForTesting"_s), functionRunInDomainForTesting);
+    putNativeFn(Identifier::fromString(vm, "currentDomainForTesting"_s), functionCurrentDomainForTesting);
 
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);

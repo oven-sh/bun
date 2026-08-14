@@ -27,6 +27,7 @@
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
 #include "StrongRootBlock.h"
+#include "EventLoopDomain.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -53,6 +54,7 @@ JSHeapData::~JSHeapData() = default;
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
+    , m_eventLoopDomains(makeUnique<Bun::EventLoopDomains>())
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)

@@ -22,6 +22,13 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
+// One pair is not an AsyncLocalStorage: the runtime may put `[sentinel, domainId]` (a private Symbol
+// and an int32) at the *front* of the array to record the scheduling domain of a scoped event-loop
+// run (see EventLoopDomain.h). Every operation in here copies before mutating and either appends or
+// edits pairs in place, so that pair stays at the front without this module having to know about it.
+// The second tuple field is the "domain slot": undefined, the sentinel Symbol, or - while a scoped
+// run is active - the run's base context array `[sentinel, activeDomain, ...]`.
+//
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -49,13 +56,26 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage,
-      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
+      array[i] instanceof AsyncLocalStorage || (i === 0 && typeof array[0] === "symbol" && typeof array[1] === "number"),
+      `Even indexes in AsyncContextData should be AsyncLocalStorage (or the domain sentinel at 0)\nIndex %s was %s`,
       i,
       array[i],
     );
   }
   return true;
+}
+
+// While a scoped run is active, a context installed wholesale (snapshot(), bind(),
+// AsyncResource) that was captured before the run names no scheduling domain. Work
+// scheduled under it is nevertheless a consequence of the run, so give it the active
+// run's domain pair; otherwise the run would park that work and could never finish.
+function withActiveRunDomain(contextValue: ReadonlyArray<any> | undefined) {
+  const slot = $getInternalField($asyncContext, 1);
+  if (!$isJSArray(slot)) return contextValue;
+  const sentinel = slot[0];
+  if (contextValue === undefined) return [sentinel, slot[1]];
+  if (contextValue[0] === sentinel) return contextValue;
+  return [sentinel, slot[1]].concat(contextValue);
 }
 
 // Only run during debug
@@ -75,6 +95,7 @@ function get(): ReadonlyArray<any> | undefined {
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
+  contextValue = withActiveRunDomain(contextValue);
   $assert(assertValidAsyncContextArray(contextValue));
   $debug("set", debugFormatContextValue(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);

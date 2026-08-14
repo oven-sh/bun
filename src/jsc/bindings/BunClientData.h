@@ -60,6 +60,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+class EventLoopDomains;
 }
 
 namespace WebCore {
@@ -168,6 +169,9 @@ public:
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Scheduling-domain state for scoped event-loop runs (see EventLoopDomain.h).
+    Bun::EventLoopDomains& eventLoopDomains() { return *m_eventLoopDomains; }
+
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
     // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
@@ -202,6 +206,7 @@ private:
 
     BunBuiltinNames m_builtinNames;
     std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
+    std::unique_ptr<Bun::EventLoopDomains> m_eventLoopDomains;
 
     // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
     // members below so it is destroyed *after* them (members destruct in

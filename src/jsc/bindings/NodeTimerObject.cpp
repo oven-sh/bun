@@ -13,6 +13,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+#include "EventLoopDomain.h"
 namespace Bun {
 using namespace JSC;
 
@@ -28,7 +29,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         callbackValue = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        asyncContextData->putInternalField(vm, 0, Bun::contextForInvocation(globalObject, wrapper->context.get()));
     }
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {

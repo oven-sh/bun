@@ -7,6 +7,7 @@
 #include <JavaScriptCore/GetterSetter.h>
 
 #include "JSNextTickQueue.h"
+#include "EventLoopDomain.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
@@ -94,13 +95,16 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     if (!isEmpty()) {
         RETURN_IF_EXCEPTION(throwScope, );
         if (mustResetContext) {
-            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, Bun::baseContext(globalObject));
             RETURN_IF_EXCEPTION(throwScope, );
         }
         auto* drainFn = internalField(2).get().getObject();
         if (!drainFn)
             return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
+        // processTicksAndRejections(activeRunDomain): inside a scoped run only that
+        // domain's ticks run; the rest are parked and requeued in order.
+        drainArgs.append(jsNumber(vm.microtaskDrainDomain()));
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );
     }

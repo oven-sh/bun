@@ -62,6 +62,7 @@
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
+#include "EventLoopDomain.h"
 #include "BunClientData.h"
 #include "BunIDLConvert.h"
 #include "BunObject.h"
@@ -408,7 +409,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, Bun::baseContext(globalObject));
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);

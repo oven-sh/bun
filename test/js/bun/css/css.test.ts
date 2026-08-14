@@ -7559,10 +7559,11 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
-  // Expected strings are lightningcss 1.30.2 output. Achromatic colors sit on the reference
-  // white axis, so lab() gives exactly a = b = 0 (and lch() c = 0, so no made-up hue). The D50
-  // reference white used to be rounded one f32 ulp away from where the D65 -> D50 adaptation
-  // puts them, leaving lab(53.585% -.0000298023 .0000119209) and lch(53.585% .0000320981 158.199).
+  // Expected strings are lightningcss 1.30.2 output. These achromatic colors divide out against
+  // the D50 reference white exactly, so lab() gives a = b = 0 and lch() gives c = 0 with no made-up
+  // hue. The reference white used to be rounded one f32 ulp away from where the D65 -> D50
+  // adaptation puts greys, which biased every grey by about that much: gray came out as
+  // lab(53.585% -.0000298023 .0000119209) and lch(53.585% .0000320981 158.199).
   describe("achromatic colors converted to lab() and lch()", () => {
     minify_test(".foo { color: lab(from gray l a b) }", ".foo{color:lab(53.585% 0 0)}");
     minify_test(".foo { color: lab(from white l a b) }", ".foo{color:lab(100% 0 0)}");

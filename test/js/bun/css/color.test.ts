@@ -540,9 +540,9 @@ describe("css string output parses back to the same color", () => {
     }
   });
 
-  // A grey lies on the reference white axis, so a and b are exactly 0, as in lightningcss. The
-  // D50 white point used to be rounded one f32 ulp away from where the D65 -> D50 adaptation puts
-  // greys, which printed #808080 as lab(53.585022% -0.000029802322 0.000011920929).
+  // These greys come out as exactly a = b = 0, as they do in lightningcss. The D50 white point
+  // used to be rounded one f32 ulp away from where the D65 -> D50 adaptation puts greys, which
+  // biased all of them: #808080 printed as lab(53.585022% -0.000029802322 0.000011920929).
   test.each(["#000000", "#212121", "#808080", "#bdbdbd", "#ffffff"])("lab of grey %s has a = b = 0", input => {
     expect(color(input, "lab")).toMatch(/^lab\(\d+(\.\d+)?% 0 0\)$/);
   });

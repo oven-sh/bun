@@ -1,5 +1,7 @@
+import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { basename } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -581,5 +583,78 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // A server-side build importing an in-memory HTML file gets a manifest of the
+  // HTML's browser bundle, just like it does for an HTML file on disk. Each
+  // case below resolves the import on a different path: the bulk resolution
+  // pass, the one-at-a-time resolver behind a declining onResolve callback,
+  // and a path returned by onResolve.
+  describe("HTML import from a server-side build", () => {
+    const htmlImportFiles = {
+      "/page.html": `<!DOCTYPE html><html><head><script src="./page.js"></script></head><body></body></html>`,
+      "/page.js": `console.log("page script");`,
+    };
+
+    async function buildHtmlImport(specifier: string, plugins: BunPlugin[]) {
+      const result = await Bun.build({
+        entrypoints: ["/server.js"],
+        target: "bun",
+        files: {
+          ...htmlImportFiles,
+          "/server.js": `import manifest from "${specifier}"; console.log(manifest.index);`,
+        },
+        plugins,
+        throw: false,
+      });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+
+      const outputNames = result.outputs.map(output => basename(output.path));
+      expect(outputNames.filter(name => name.endsWith(".html"))).toEqual(["page.html"]);
+
+      const serverOutput = await result.outputs.find(output => basename(output.path) === "server.js")!.text();
+      // The import is replaced by the inlined manifest, not left for the runtime to resolve.
+      expect(serverOutput).not.toContain("import manifest");
+      const manifests = [...serverOutput.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
+        JSON.parse(JSON.parse('"' + match[1] + '"')),
+      );
+      expect(manifests).toHaveLength(1);
+      const [manifest] = manifests;
+      expect(basename(manifest.index)).toBe("page.html");
+      expect(manifest.files.map((file: any) => file.loader).sort()).toEqual(["html", "js"]);
+
+      // The HTML's script is bundled for the browser, not for the server target.
+      const scriptPath = manifest.files.find((file: any) => file.loader === "js").path;
+      const scriptOutput = await result.outputs.find(output => basename(output.path) === basename(scriptPath))!.text();
+      expect(scriptOutput).toContain("page script");
+      expect(scriptOutput).not.toContain("// @bun");
+    }
+
+    test("without plugins", async () => {
+      await buildHtmlImport("./page.html", []);
+    });
+
+    test("with an onResolve plugin that declines the import", async () => {
+      await buildHtmlImport("./page.html", [
+        {
+          name: "decline-relative-imports",
+          setup(build) {
+            build.onResolve({ filter: /^\.\// }, () => undefined);
+          },
+        },
+      ]);
+    });
+
+    test("with an onResolve plugin that resolves to the in-memory HTML file", async () => {
+      await buildHtmlImport("app:page", [
+        {
+          name: "resolve-to-html",
+          setup(build) {
+            build.onResolve({ filter: /^app:page$/ }, () => ({ path: "/page.html" }));
+          },
+        },
+      ]);
+    });
   });
 });

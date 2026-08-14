@@ -2286,6 +2286,21 @@ pub mod bv2_impl {
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
+                        if self.is_server_html_import(loader, target) {
+                            // Fills the map slot reserved by `get_or_put` above with the
+                            // manifest module; `value_ptr` is not used on this path.
+                            let manifest_source_index = self
+                                .enqueue_server_html_import(&file_map_result, &path_primary, target)
+                                .expect("oom");
+                            let record: &mut ImportRecord =
+                                &mut self.graph.ast.items_import_records_mut()
+                                    [import_record.importer_source_index as usize]
+                                    .as_mut_slice()
+                                    [import_record.import_record_index as usize];
+                            record.source_index = Index::init(manifest_source_index);
+                            record.kind = ImportKind::HtmlManifest;
+                            return;
+                        }
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -2529,8 +2544,18 @@ pub mod bv2_impl {
                     break 'brk path
                         .loader(unsafe { &(*transpiler).options.loaders })
                         .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
                 };
+                if self.is_server_html_import(loader, target) {
+                    let manifest_source_index = self
+                        .enqueue_server_html_import(&resolve_result, &path, target)
+                        .expect("oom");
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    record.source_index = Index::init(manifest_source_index);
+                    record.kind = ImportKind::HtmlManifest;
+                    return;
+                }
                 let mut tmp_source = bun_ast::Source {
                     path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -4724,6 +4749,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    let mut is_html_manifest = false;
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
                         // allocations are moved into `this.free_list` below (in the
@@ -4774,84 +4800,116 @@ pub mod bv2_impl {
                                 .expect("oom");
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
-
-                            // We need to parse this
-                            let source_index =
-                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            unsafe { *value_ptr = source_index.get() };
-                            out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             let loader = path
                                 .loader(&this.transpiler.options.loaders)
                                 .unwrap_or(Loader::File);
 
-                            this.graph
-                                .input_files
-                                .append(crate::Graph::InputFile {
-                                    source: bun_ast::Source {
-                                        // Shim to the field-identical `bun_paths::fs::Path<'static>`.
-                                        path: path_as_static(&path),
-                                        contents: std::borrow::Cow::Borrowed(&b""[..]),
-                                        index: bun_ast::Index(source_index.get()),
+                            if resolve.import_record.kind != ImportKind::EntryPointBuild
+                                && this.is_server_html_import(
+                                    loader,
+                                    resolve.import_record.original_target,
+                                )
+                            {
+                                let resolve_result = _resolver::Result {
+                                    path_pair: _resolver::PathPair {
+                                        primary: path,
                                         ..Default::default()
                                     },
-                                    loader,
-                                    side_effects: bun_ast::SideEffects::HasSideEffects,
                                     ..Default::default()
-                                })
-                                .expect("unreachable");
-                            let task_val = ParseTask {
-                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
-                                // outlives the task.
-                                ctx: Some(unsafe {
-                                    bun_ptr::ParentRef::from_raw_mut(
-                                        std::ptr::from_mut::<BundleV2>(this)
-                                            .cast::<BundleV2<'static>>(),
+                                };
+                                // Fills the map slot reserved by `get_or_put` above with
+                                // the manifest module; `value_ptr` is not used on this path.
+                                let manifest_source_index = this
+                                    .enqueue_server_html_import(
+                                        &resolve_result,
+                                        &path,
+                                        resolve.import_record.original_target,
                                     )
-                                }),
-                                path,
-                                // unknown at this point:
-                                contents_or_fd: parse_task::ContentsOrFd::Fd {
-                                    dir: bun_sys::Fd::INVALID,
-                                    file: bun_sys::Fd::INVALID,
-                                },
-                                side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
-                                source_index: bun_ast::Index::init(source_index.get()),
-                                module_type: options::ModuleType::Unknown,
-                                loader: Some(loader),
-                                tree_shaking: this.linker.options.tree_shaking,
-                                known_target: resolve.import_record.original_target,
-                                ..Default::default()
-                            };
-                            // Arena-owned.
-                            // SAFETY: arena outlives the bundle pass.
-                            let task: &mut ParseTask = this.arena_create(task_val);
-                            task.task.node.next = core::ptr::null_mut();
-                            task.io_task.node.next = core::ptr::null_mut();
-                            this.increment_scan_counter();
+                                    .expect("oom");
+                                out_source_index = Some(Index::init(manifest_source_index));
+                                is_html_manifest = true;
+                            } else {
+                                // We need to parse this
+                                let source_index = Index::init(
+                                    u32::try_from(this.graph.ast.len()).expect("int cast"),
+                                );
+                                // SAFETY: map slot from `get_or_put` above; map not mutated since.
+                                unsafe { *value_ptr = source_index.get() };
+                                out_source_index = Some(source_index);
+                                let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
 
-                            if !this.enqueue_on_load_plugin_if_needed(task) {
-                                if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut bun_alloc::AstVec<
-                                        crate::AdditionalFile,
-                                    > = &mut this.graph.input_files.items_additional_files_mut()
-                                        [source_index.get() as usize];
-                                    additional_files.push(crate::AdditionalFile::SourceIndex(
-                                        task.source_index.get(),
-                                    ));
-                                    this.graph.input_files.items_side_effects_mut()
-                                        [source_index.get() as usize] =
-                                        bun_ast::SideEffects::NoSideEffectsPureData;
-                                    this.graph.estimated_file_loader_count += 1;
+                                this.graph
+                                    .input_files
+                                    .append(crate::Graph::InputFile {
+                                        source: bun_ast::Source {
+                                            // Shim to the field-identical `bun_paths::fs::Path<'static>`.
+                                            path: path_as_static(&path),
+                                            contents: std::borrow::Cow::Borrowed(&b""[..]),
+                                            index: bun_ast::Index(source_index.get()),
+                                            ..Default::default()
+                                        },
+                                        loader,
+                                        side_effects: bun_ast::SideEffects::HasSideEffects,
+                                        ..Default::default()
+                                    })
+                                    .expect("unreachable");
+                                let task_val = ParseTask {
+                                    // SAFETY: `from_mut(this)` is the live bundle (write provenance);
+                                    // outlives the task.
+                                    ctx: Some(unsafe {
+                                        bun_ptr::ParentRef::from_raw_mut(
+                                            std::ptr::from_mut::<BundleV2>(this)
+                                                .cast::<BundleV2<'static>>(),
+                                        )
+                                    }),
+                                    path,
+                                    // unknown at this point:
+                                    contents_or_fd: parse_task::ContentsOrFd::Fd {
+                                        dir: bun_sys::Fd::INVALID,
+                                        file: bun_sys::Fd::INVALID,
+                                    },
+                                    side_effects: bun_ast::SideEffects::HasSideEffects,
+                                    jsx: this
+                                        .transpiler_for_target(
+                                            resolve.import_record.original_target,
+                                        )
+                                        .options
+                                        .jsx
+                                        .clone(),
+                                    source_index: bun_ast::Index::init(source_index.get()),
+                                    module_type: options::ModuleType::Unknown,
+                                    loader: Some(loader),
+                                    tree_shaking: this.linker.options.tree_shaking,
+                                    known_target: resolve.import_record.original_target,
+                                    ..Default::default()
+                                };
+                                // Arena-owned.
+                                // SAFETY: arena outlives the bundle pass.
+                                let task: &mut ParseTask = this.arena_create(task_val);
+                                task.task.node.next = core::ptr::null_mut();
+                                task.io_task.node.next = core::ptr::null_mut();
+                                this.increment_scan_counter();
+
+                                if !this.enqueue_on_load_plugin_if_needed(task) {
+                                    if loader.should_copy_for_bundling() {
+                                        let additional_files: &mut bun_alloc::AstVec<
+                                            crate::AdditionalFile,
+                                        > = &mut this
+                                            .graph
+                                            .input_files
+                                            .items_additional_files_mut()
+                                            [source_index.get() as usize];
+                                        additional_files.push(crate::AdditionalFile::SourceIndex(
+                                            task.source_index.get(),
+                                        ));
+                                        this.graph.input_files.items_side_effects_mut()
+                                            [source_index.get() as usize] =
+                                            bun_ast::SideEffects::NoSideEffectsPureData;
+                                        this.graph.estimated_file_loader_count += 1;
+                                    }
+
+                                    this.graph.pool().schedule(task);
                                 }
-
-                                this.graph.pool().schedule(task);
                             }
                         } else {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
@@ -4899,6 +4957,9 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
+                                if is_html_manifest {
+                                    import_record.kind = ImportKind::HtmlManifest;
+                                }
                             }
                         }
                     }
@@ -6183,6 +6244,12 @@ pub mod bv2_impl {
                             continue;
                         }
 
+                        let is_html_entrypoint =
+                            self.is_server_html_import(import_record_loader, target);
+                        if is_html_entrypoint {
+                            import_record.kind = ImportKind::HtmlManifest;
+                        }
+
                         let resolve_entry =
                             resolve_queue.get_or_put(path_primary.text).expect("oom");
                         if resolve_entry.found_existing {
@@ -6215,7 +6282,11 @@ pub mod bv2_impl {
                             ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
                         // SAFETY: arena outlives the bundle pass.
                         let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
+                        resolve_task.known_target = if is_html_entrypoint {
+                            Target::Browser
+                        } else {
+                            target
+                        };
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = match transpiler.options.force_node_env {
@@ -6229,6 +6300,13 @@ pub mod bv2_impl {
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
+
+                        if is_html_entrypoint {
+                            import_record.source_index = Index::init(
+                                self.generate_server_html_module(&path_primary, target)
+                                    .expect("unreachable"),
+                            );
+                        }
                         continue;
                     }
                 }
@@ -6545,9 +6623,7 @@ pub mod bv2_impl {
                 };
                 import_record.loader = Some(import_record_loader);
 
-                let is_html_entrypoint = import_record_loader == Loader::Html
-                    && target.is_server_side()
-                    && self.dev_server.is_none();
+                let is_html_entrypoint = self.is_server_html_import(import_record_loader, target);
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
@@ -6610,8 +6686,10 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
-                    self.generate_server_html_module(path, target, import_record, path.text)
-                        .expect("unreachable");
+                    import_record.source_index = Index::init(
+                        self.generate_server_html_module(path, target)
+                            .expect("unreachable"),
+                    );
                 }
             }
 
@@ -6632,8 +6710,8 @@ pub mod bv2_impl {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
-            // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
+            // ParseTask.ctx and (b) scope the map borrow to the get_or_put so later
+            // `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
                 Some(unsafe {
@@ -6641,7 +6719,6 @@ pub mod bv2_impl {
                         std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
                     )
                 });
-            let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
@@ -6653,8 +6730,7 @@ pub mod bv2_impl {
                         .loader(&self.transpiler.options.loaders)
                         .unwrap_or(Loader::File)
                 });
-                let is_html_entrypoint =
-                    loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+                let is_html_entrypoint = self.is_server_html_import(loader, target);
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {
@@ -6840,16 +6916,17 @@ pub mod bv2_impl {
             }
         }
 
+        /// Creates the module a server-side import of the HTML file at `path`
+        /// binds to, and registers it under `path` in `target`'s graph. Its AST
+        /// is a lazy export of a unique key that the linker replaces with the
+        /// manifest of the HTML entry point's outputs (see `HTMLImportManifest`);
+        /// the HTML file itself is bundled separately, as an entry point of the
+        /// browser graph. Returns the new module's source index.
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,
             target: options::Target,
-            import_record: &mut ImportRecord,
-            path_text: &[u8],
-        ) -> Result<(), Error> {
-            // 1. Create the ast right here
-            // 2. Create a separate "virutal" module that becomes the manifest later on.
-            // 3. Add it to the graph
+        ) -> Result<IndexInt, Error> {
             // Re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
@@ -6924,16 +7001,64 @@ pub mod bv2_impl {
             self.graph.input_files.append(fake_input_file)?;
             let _ = self.graph.ast.append(ast_for_html_entrypoint); // OOM/capacity: fire-and-forget
 
-            import_record.source_index = Index::init(fake_source_index.0);
-            let _ = self
-                .path_to_source_index_map(target)
-                .put(path_text, fake_source_index.0); // OOM-only Result
+            self.path_to_source_index_map(target)
+                .put(path.text, fake_source_index.0)?;
             self.graph
                 .html_imports
                 .server_source_indices
                 .push(fake_source_index.0);
             self.ensure_client_transpiler();
-            Ok(())
+            Ok(fake_source_index.0)
+        }
+
+        /// Whether an import record resolving to a file bundled with `loader`
+        /// from a graph targeting `target` is an HTML import in the sense of
+        /// [`Self::generate_server_html_module`]. Under the dev server, HTML
+        /// files are routes it owns, never modules of the server graph.
+        fn is_server_html_import(&self, loader: Loader, target: options::Target) -> bool {
+            loader == Loader::Html && target.is_server_side() && self.dev_server.is_none()
+        }
+
+        /// The counterpart of what `resolve_import_records` + `process_resolve_queue`
+        /// do for an HTML import on the bulk resolution path, for the paths that
+        /// enqueue a resolved import record one at a time (`run_resolver` and
+        /// `on_resolve`): the server graph gets the manifest module, and the HTML
+        /// file is parsed once as a browser entry point, however many server files
+        /// import it and whether or not it is also a user-specified entry point.
+        /// `path` must already have its `pretty` initialized. Returns the manifest
+        /// module's source index, which is what the import record binds to.
+        fn enqueue_server_html_import(
+            &mut self,
+            resolve_result: &_resolver::Result,
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> Result<IndexInt, Error> {
+            let manifest_source_index = self.generate_server_html_module(path, target)?;
+
+            if self
+                .path_to_source_index_map(Target::Browser)
+                .get(path.text)
+                .is_none()
+            {
+                let mut html_source = bun_ast::Source {
+                    path: path_as_static(path),
+                    contents: std::borrow::Cow::Borrowed(&b""[..]),
+                    ..Default::default()
+                };
+                let html_source_index = self.enqueue_parse_task(
+                    resolve_result,
+                    &mut html_source,
+                    Loader::Html,
+                    Target::Browser,
+                )?;
+                self.path_to_source_index_map(Target::Browser)
+                    .put(path.text, html_source_index)?;
+                self.graph
+                    .entry_points
+                    .push(bun_ast::Index(html_source_index));
+            }
+
+            Ok(manifest_source_index)
         }
     }
 

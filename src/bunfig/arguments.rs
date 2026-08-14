@@ -248,8 +248,8 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
     while let Some(parent) = bun_paths::dirname(anc) {
         anc = parent;
         if let PackageJson::Workspaces(patterns) = read_package_json(anc) {
-            let rel_start =
-                anc.len() + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)));
+            let rel_start = anc.len()
+                + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)));
             let mut rel: Vec<u8> = nearest[rel_start..].to_vec();
             if cfg!(windows) {
                 for c in &mut rel {

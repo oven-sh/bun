@@ -258,5 +258,4 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     expect(realpathSync(nodeBin)).toBe(realpathSync(node));
     expect(result.success).toBeTrue();
   });
-
 });

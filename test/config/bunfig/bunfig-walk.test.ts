@@ -91,10 +91,7 @@ test.concurrent("bun test from a workspace member applies root [test] config", a
     "packages/pkg1/basic.test.ts": `import { test, expect } from "bun:test";\ntest("ok", () => expect(1).toBe(1));\n`,
   });
 
-  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "packages", "pkg1"), [
-    "test",
-    "basic.test.ts",
-  ]);
+  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "packages", "pkg1"), ["test", "basic.test.ts"]);
 
   expect(stdout).toContain("test setup executed!");
   expect(stderr).toContain("1 pass");
@@ -109,10 +106,7 @@ test.concurrent("bun build from a workspace member applies root define", async (
     "packages/pkg1/index.ts": `console.log(BUILD_MARK);\n`,
   });
 
-  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "packages", "pkg1"), [
-    "build",
-    "index.ts",
-  ]);
+  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "packages", "pkg1"), ["build", "index.ts"]);
 
   expect(stdout).toContain("from-bunfig");
   expect(stderr).not.toContain("error");
@@ -144,9 +138,7 @@ test.concurrent("a cwd inside node_modules does not inherit", async () => {
     "node_modules/dep/postinstall.ts": `console.log("postinstall ran");\n`,
   });
 
-  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "node_modules", "dep"), [
-    "postinstall.ts",
-  ]);
+  const [stdout, stderr, exitCode] = await runIn(join(String(dir), "node_modules", "dep"), ["postinstall.ts"]);
 
   expect(stdout).toBe("postinstall ran\n");
   expect(stderr).toBe("");
@@ -157,12 +149,7 @@ test.concurrent("a cwd inside node_modules does not inherit", async () => {
 test.concurrent("run --cwd with a trailing slash still walks", async () => {
   using dir = tempDir("bunfig-walk-cwd-slash", workspaceFiles(["packages/*"]));
 
-  const [stdout, stderr, exitCode] = await runIn(String(dir), [
-    "run",
-    "--cwd",
-    "packages/pkg1/",
-    "src/index.ts",
-  ]);
+  const [stdout, stderr, exitCode] = await runIn(String(dir), ["run", "--cwd", "packages/pkg1/", "src/index.ts"]);
 
   expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
   expect(stderr).toBe("");
@@ -200,13 +187,7 @@ test.concurrent("a compiled executable reads config from its run directory only"
   });
   const exe = join(String(dir), "sub", process.platform === "win32" ? "app.exe" : "app");
 
-  const [, buildErr, buildCode] = await runIn(String(dir), [
-    "build",
-    "--compile",
-    "app.ts",
-    "--outfile",
-    exe,
-  ]);
+  const [, buildErr, buildCode] = await runIn(String(dir), ["build", "--compile", "app.ts", "--outfile", exe]);
   expect(buildErr).not.toContain("error");
   expect(buildCode).toBe(0);
 
@@ -218,11 +199,7 @@ test.concurrent("a compiled executable reads config from its run directory only"
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("compiled app\n");
   expect(stderr).toBe("");

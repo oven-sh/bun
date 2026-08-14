@@ -683,6 +683,41 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
+// Paths of the unix sockets internal/debugger.ts is listening on: one per
+// ws+unix:// URL, and --inspect and BUN_INSPECT can each supply one. Only the
+// debugger thread appends; the list is read by whichever thread replaces the
+// process (the file watcher, the JS thread, or the crash handler), so the head is
+// published through an atomic and entries are never freed.
+struct InspectorUnixSocket {
+    CString path;
+    InspectorUnixSocket* next;
+};
+static std::atomic<InspectorUnixSocket*> inspectorUnixSockets { nullptr };
+
+extern "C" void Bun__unlink(const char*, size_t);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String path = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    inspectorUnixSockets.store(new InspectorUnixSocket { path.utf8(), inspectorUnixSockets.load() });
+    return JSValue::encode(jsUndefined());
+}
+
+// A watch-mode reload execs over this process: that closes the listening sockets
+// but leaves their files behind, and the reloaded process inherits the same
+// --inspect / BUN_INSPECT values, so it would bind the same paths and fail with
+// EADDRINUSE. Same cleanup Server.stop() does for a unix listener.
+extern "C" void BunDebugger__willReloadProcess()
+{
+    for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)
+        Bun__unlink(socket->path.data(), socket->path.length());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);

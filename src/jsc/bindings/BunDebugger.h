@@ -12,4 +12,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_postNodeInspectorControl);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_closeNodeInspector);
 
+// Called by src/js/internal/debugger.ts once it is listening on a ws+unix://
+// socket, so a watch-mode reload can remove the socket file before exec'ing.
+JSC_DECLARE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath);
+
 } // namespace Bun

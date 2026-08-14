@@ -68,4 +68,67 @@ describe("tsconfig compilerOptions.jsx", () => {
       expect(exitCode).toBe(0);
     }
   });
+
+  test("the tsconfig nearest to the file applies, not the cwd's", async () => {
+    using dir = tempDir("jsx-tsconfig-nearest", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "rootFactory" } }),
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "appFactory" } }),
+      "app/m.tsx": `
+        const rootFactory = (tag: string) => "root:" + tag;
+        const appFactory = (tag: string) => "app:" + tag;
+        console.log(<div />);
+      `,
+    });
+
+    // bun run
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "app/m.tsx"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "app:div", exitCode: 0 });
+    }
+
+    // bun build, which already picked the file's own tsconfig
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "app/m.tsx"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain('appFactory("div"');
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // The file's own tsconfig picks dev vs. production too, except that an
+  // explicit NODE_ENV still outranks every tsconfig (react's production
+  // jsx-dev-runtime exports no jsxDEV, so NODE_ENV=production must never emit it).
+  test.each([
+    [{}, "dev jsxDEV"],
+    [{ NODE_ENV: "production" }, "prod jsx"],
+  ])('nested "react-jsxdev" under a "react-jsx" cwd with env %o', async (env, runStdout) => {
+    using dir = tempDir("jsx-tsconfig-nearest-dev", {
+      ...shimFiles,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "shim" } }),
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsxdev", jsxImportSource: "shim" } }),
+      "app/m.jsx": shimFiles["m.jsx"],
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "app/m.jsx"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: runStdout, exitCode: 0 });
+  });
 });

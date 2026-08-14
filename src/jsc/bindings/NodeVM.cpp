@@ -388,9 +388,13 @@ struct EmbeddedFunctionBody {
 // JSC only lexes "#!" as a comment at offset 0 of the source, and the body is embedded after the "(function (...) {\n" prefix.
 static EmbeddedFunctionBody embedFunctionBody(const String& body)
 {
-    if (body.startsWith("#!"_s))
-        return { "//"_s, StringView(body).substring(2) };
-    return { ""_s, body };
+    if (!body.startsWith("#!"_s))
+        return { ""_s, body };
+    StringView rest = StringView(body).substring(2);
+    // Unlike a hashbang, a "//" comment honors "# sourceURL=" and "@ sourceURL=" directives; blank the marker so it cannot become one.
+    if (rest.startsWith('#') || rest.startsWith('@'))
+        return { "// "_s, rest.substring(1) };
+    return { "//"_s, rest };
 }
 
 // Helper function to create an anonymous function expression with parameters

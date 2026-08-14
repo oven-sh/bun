@@ -58,3 +58,5 @@ bun audit --json
 ### Exit code
 
 `bun audit` exits with code `0` if no vulnerabilities are found and `1` if the report lists any, including when `--json` is passed.
+
+It also exits with code `1`, after printing an error, when the registry's response is not an advisory report (for example, a registry or proxy that answers the audit request with an HTML page or an error object). A response that cannot be read never counts as a clean audit.

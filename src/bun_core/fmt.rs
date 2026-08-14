@@ -3325,6 +3325,57 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+pub struct EscapeControlChars<'a>(pub(crate) &'a [u8]);
+
+/// For text that came over the network (registry metadata, advisory titles)
+/// and is about to be printed on a terminal. Control characters are written
+/// as `\n` / `\u001b` escapes, so the text can neither emit escape sequences
+/// nor overwrite or forge lines of the surrounding report. Escaped: C0
+/// (`0x00..=0x1F`), DEL, and C1 (U+0080..=U+009F, UTF-8 `C2 80..=C2 9F`),
+/// which terminals such as xterm also accept as CSI/OSC introducers.
+/// Everything else, including invalid UTF-8, is printed as [`bstr::BStr`]
+/// prints it.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<'_> {
+    EscapeControlChars(text)
+}
+
+impl Display for EscapeControlChars<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let text = self.0;
+        let mut run_start = 0;
+        let mut i = 0;
+        while i < text.len() {
+            let (code_point, len) = match text[i] {
+                byte @ (0x00..=0x1F | 0x7F) => (byte as u16, 1),
+                0xC2 if matches!(text.get(i + 1), Some(0x80..=0x9F)) => (text[i + 1] as u16, 2),
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            write!(f, "{}", bstr::BStr::new(&text[run_start..i]))?;
+            match code_point {
+                0x08 => f.write_str("\\b")?,
+                0x09 => f.write_str("\\t")?,
+                0x0A => f.write_str("\\n")?,
+                0x0C => f.write_str("\\f")?,
+                0x0D => f.write_str("\\r")?,
+                _ => {
+                    f.write_str("\\u")?;
+                    write_bytes(f, &hex_u16::<true>(code_point))?;
+                }
+            }
+            i += len;
+            run_start = i;
+        }
+        write!(f, "{}", bstr::BStr::new(&text[run_start..]))
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

@@ -1767,6 +1767,8 @@ impl CronJob {
         );
     }
 
+    /// The tick's callback runs here as a top-level call (what it throws
+    /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
@@ -1809,39 +1811,23 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire.set(true);
-        let result = match cb.call(&this_ref.global, js_this, &[]) {
-            Ok(v) => {
-                this_ref.in_fire.set(false);
-                v
-            }
-            Err(_) => {
-                this_ref.in_fire.set(false);
-                if let Some(err) = this_ref.global.try_take_exception() {
-                    // terminate() arriving mid-callback leaves the TerminationException
-                    // pending (tryClearException refuses to clear it) while JSC clears
-                    // hasTerminationRequest on VMEntryScope exit. Reporting it would
-                    // enter a DeferTermination scope and assert; match setTimeout's
-                    // Bun__reportUnhandledError and drop it.
-                    if err.is_termination_exception() {
-                        Self::self_stop(this, vm);
-                        return;
-                    }
-                    let global_ref = vm.global();
-                    // SAFETY: single JS thread; `&mut` derived via the thread-local
-                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get()
-                        .as_mut()
-                        .uncaught_exception(global_ref, err, false);
-                }
-                Self::schedule_next(this, vm);
-                return;
-            }
-        };
+        // A top-level call: what the tick throws is reported here (before the
+        // job is re-armed, so an `uncaughtException` handler's `stop()` is
+        // observed by `schedule_next`), and does not stop the job — as with a
+        // rejected tick.
+        let result =
+            vm.event_loop_mut()
+                .run_callback_with_result(cb, &this_ref.global, js_this, &[]);
+        this_ref.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
         // without touching the timer heap or JS state the teardown path owns.
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             Self::self_stop(this, vm);
+            return;
+        }
+        if result.is_empty() {
+            Self::schedule_next(this, vm);
             return;
         }
 

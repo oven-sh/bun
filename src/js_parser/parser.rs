@@ -358,6 +358,8 @@ pub mod Runtime {
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
+            // Bun.Transpiler-only (like `replace_exports`), so never set on a cached parse.
+            debug_assert!(!self.remove_unused_declarations);
 
             let bools: [bool; 17] = [
                 self.top_level_await,

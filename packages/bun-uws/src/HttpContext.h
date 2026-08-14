@@ -35,6 +35,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <cerrno>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -1069,6 +1070,24 @@ public:
         }
 
         return socket;
+    }
+
+    /* Accept on an already-bound fd; the returned listen socket owns it, on failure (nullptr) the caller still does. */
+    us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        int error = 0;
+        auto* socket = us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, 512, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
+        if (socket) {
+            // we dont depend on libuv ref for keeping it alive
+            us_socket_unref(&socket->s);
+            return socket;
+        }
+#ifndef _WIN32
+        /* Bun.serve's listen-failure path reads errno (see us_socket_group_listen). */
+        if (error) {
+            errno = error;
+        }
+#endif
+        return nullptr;
     }
 };
 

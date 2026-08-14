@@ -231,8 +231,9 @@ function queryServer(worker, message) {
   if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   const kSharedOnlyHint =
-    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
-    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+    "tls, https and http servers in cluster workers accept natively, so they can only share a listening socket, " +
+    "while under SCHED_RR the primary hands a net server its connections one by one; " +
+    "the two kinds cannot share one address:port (use different ports, or cluster.schedulingPolicy = cluster.SCHED_NONE)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;

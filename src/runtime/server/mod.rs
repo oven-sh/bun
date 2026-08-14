@@ -1723,10 +1723,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        if let server_config::Address::Unix(path) = &self.config.address {
-            let bytes = path.as_bytes();
-            if !bytes.is_empty() && bytes[0] != 0 {
-                let _ = bun_sys::unlink(path.as_zstr());
+        // A shared socket's file is unlinked by whoever bound it (the cluster primary).
+        if self.config.listen_fd.is_none() {
+            if let server_config::Address::Unix(path) = &self.config.address {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
             }
         }
 
@@ -1990,6 +1993,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_listen_failed(&mut self) {
         self.listener = None;
         let global = self.global_this();
+
+        if self.config.listen_fd.is_some() {
+            // HttpContext::listen_fd left the cause in errno; EINVAL is node's answer for an unusable fd.
+            let errno = match bun_sys::get_errno(-1i32) {
+                bun_sys::E::SUCCESS => bun_sys::E::EINVAL,
+                e => e,
+            };
+            let err = jsc::SystemError::from(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::listen).to_system_error(),
+            );
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
 
         let error_instance = match &self.config.address {
             server_config::Address::Tcp {
@@ -3001,11 +3017,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(uws_sys::LIBUS_SOCKET_DESCRIPTOR),
         }
         let (addr, http1, options) = {
             let cfg = &this_ref.get().config;
-            let addr = match &cfg.address {
-                server_config::Address::Tcp { port, hostname } => {
+            let addr = match (cfg.listen_fd, &cfg.address) {
+                (Some(fd), _) => Addr::Fd(fd),
+                (None, server_config::Address::Tcp { port, hostname }) => {
                     let mut host: *const c_char = core::ptr::null();
                     if let Some(existing) = hostname.as_deref() {
                         let bytes = existing.as_bytes();
@@ -3020,7 +3038,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     Addr::Tcp { port: *port, host }
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
+                (None, server_config::Address::Unix(unix)) => Addr::Unix {
                     ptr: unix.as_ptr().cast(),
                     len: unix.as_bytes().len(),
                 },
@@ -3029,6 +3047,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         match addr {
+            Addr::Fd(fd) => {
+                // No H3 listener to pair with it: `from_js` rejects http3 together with a descriptor.
+
+                // SAFETY: app is a live uws handle owned by this server. No
+                // `&*this` is live across this call; the trampoline's
+                // `&mut *this` is the sole borrow while it runs.
+                unsafe {
+                    (*app).listen_fd(
+                        Some(trampoline::on_listen::<SSL, DEBUG>),
+                        this.cast::<c_void>(),
+                        fd,
+                        options,
+                    );
+                }
+            }
             Addr::Tcp { port, host } => {
                 // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may

@@ -55,6 +55,8 @@ pub struct ServerConfig {
     pub(crate) websocket: Option<WebSocketServerContext>,
 
     pub(crate) reuse_port: bool,
+    /// Accept on this already-bound descriptor instead of binding `address` (which still describes it).
+    pub(crate) listen_fd: Option<uws::LIBUS_SOCKET_DESCRIPTOR>,
     pub(crate) id: Box<[u8]>,
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
@@ -88,6 +90,7 @@ impl Default for ServerConfig {
             on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
+            listen_fd: None,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
@@ -274,6 +277,7 @@ impl ServerConfig {
             on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
+            listen_fd: self.listen_fd,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
@@ -621,6 +625,21 @@ impl ServerConfig {
 }
 
 // ─── from_js + JS-side parsing ───────────────────────────────────────────────
+
+/// POSIX fd, or (like `Bun.listen({ fd })`) the raw SOCKET value on Windows.
+fn listen_fd_from_number(number: f64) -> Option<uws::LIBUS_SOCKET_DESCRIPTOR> {
+    if !(number >= 0.0 && number.fract() == 0.0) {
+        return None;
+    }
+    #[cfg(not(windows))]
+    {
+        (number <= i32::MAX as f64).then(|| number as uws::LIBUS_SOCKET_DESCRIPTOR)
+    }
+    #[cfg(windows)]
+    {
+        (number < (1u64 << 53) as f64).then(|| number as u64 as uws::LIBUS_SOCKET_DESCRIPTOR)
+    }
+}
 
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller
@@ -1355,6 +1374,21 @@ impl ServerConfig {
                 )));
             }
             args.on_node_http_request = on_request_;
+
+            // `fd` is not a public Bun.serve() option: only node:http servers get to pass one.
+            if let Some(fd) = arg.get(global, "fd")? {
+                let Some(fd) = fd.get_number().and_then(listen_fd_from_number) else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Expected fd to be a non-negative integer"
+                    )));
+                };
+                args.listen_fd = Some(fd);
+                // A `--hot` reload reusing the old server by address would drop the descriptor.
+                args.allow_hot = false;
+            }
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1467,6 +1501,11 @@ impl ServerConfig {
         if !args.http1 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
+            )));
+        }
+        if args.http3 && args.listen_fd.is_some() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot combine http3 with an inherited listen fd"
             )));
         }
 

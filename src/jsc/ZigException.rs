@@ -13,7 +13,10 @@ use crate::{JSErrorCode, JSRuntimeType, ZigStackFrame, ZigStackTrace};
 // SAFETY (safe fn): `ZigException` is a `#[repr(C)]` out-param the C++ side
 // fills in-place.
 unsafe extern "C" {
-    pub(crate) safe fn ZigException__collectSourceLines(exception: &mut ZigException, top_frame: u8);
+    pub(crate) safe fn ZigException__collectSourceLines(
+        exception: &mut ZigException,
+        top_frame: u8,
+    );
 }
 
 /// Represents a JavaScript exception with additional information

@@ -6135,7 +6135,8 @@ impl VirtualMachine {
                 }
 
                 let frames = exception.stack.frames();
-                let top_frame: Option<&crate::ZigStackFrame> = frames.get(self.preview_frame(frames).0);
+                let top_frame: Option<&crate::ZigStackFrame> =
+                    frames.get(self.preview_frame(frames).0);
 
                 let trimmed = source.trimmed_text();
 

@@ -90,3 +90,23 @@ test("scryptSync reads its buffers only after every argument has been coerced", 
   expect(passwordBytes.byteLength).toBe(0);
   expect(key).toStrictEqual(scryptSync("", "salt", 16, { N: 1024 }));
 });
+
+test.each([
+  [
+    "keylen",
+    () => scryptSync("password", "salt", "x" as any),
+    `The "keylen" argument must be of type number. Received type string ('x')`,
+  ],
+  [
+    "N",
+    () => scryptSync("password", "salt", 16, { N: "x" as any }),
+    `The "N" argument must be of type number. Received type string ('x')`,
+  ],
+  [
+    "cost",
+    () => scryptSync("password", "salt", 16, { cost: 1n as any }),
+    `The "cost" argument must be of type number. Received type bigint (1n)`,
+  ],
+])("scryptSync reports a non-numeric %s with node's ERR_INVALID_ARG_TYPE message", (_, fn, message) => {
+  expect(fn).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message }));
+});

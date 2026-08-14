@@ -309,6 +309,78 @@ describe("parseArgs", () => {
     );
   });
 
+  describe("ERR_INVALID_ARG_TYPE messages match Node", () => {
+    // Expected messages are Node v26.3.0's. Top-level config keys are
+    // "arguments", dotted option paths are "properties", and a bad array
+    // element reports the element, not the array.
+    test.each([
+      ["args", { args: "x" }, `The "args" argument must be an instance of Array. Received type string ('x')`],
+      [
+        "strict",
+        { args: [], strict: "yes" },
+        `The "strict" argument must be of type boolean. Received type string ('yes')`,
+      ],
+      ["options", { args: [], options: 1 }, `The "options" argument must be of type object. Received type number (1)`],
+      [
+        "options (array)",
+        { args: [], options: [] },
+        `The "options" argument must be of type object. Received an instance of Array`,
+      ],
+      [
+        "options.alpha",
+        { args: [], options: { alpha: 1 } },
+        `The "options.alpha" property must be of type object. Received type number (1)`,
+      ],
+      [
+        "options.alpha.type (missing)",
+        { args: [], options: { alpha: {} } },
+        `The "options.alpha.type" property must be ('string|boolean'). Received undefined`,
+      ],
+      [
+        "options.alpha.type (unknown)",
+        { args: [], options: { alpha: { type: "nope" } } },
+        `The "options.alpha.type" property must be ('string|boolean'). Received type string ('nope')`,
+      ],
+      [
+        "options.alpha.short",
+        { args: [], options: { alpha: { type: "string", short: 1 } } },
+        `The "options.alpha.short" property must be of type string. Received type number (1)`,
+      ],
+      [
+        "options.alpha.multiple",
+        { args: [], options: { alpha: { type: "string", multiple: "yes" } } },
+        `The "options.alpha.multiple" property must be of type boolean. Received type string ('yes')`,
+      ],
+      [
+        "options.alpha.default (boolean)",
+        { args: [], options: { alpha: { type: "boolean", default: "x" } } },
+        `The "options.alpha.default" property must be of type boolean. Received type string ('x')`,
+      ],
+      [
+        "options.alpha.default (string)",
+        { args: [], options: { alpha: { type: "string", default: null } } },
+        `The "options.alpha.default" property must be of type string. Received null`,
+      ],
+      [
+        "options.alpha.default (array expected)",
+        { args: [], options: { alpha: { type: "string", multiple: true, default: "x" } } },
+        `The "options.alpha.default" property must be an instance of Array. Received type string ('x')`,
+      ],
+      [
+        "options.alpha.default[1] (string element)",
+        { args: [], options: { alpha: { type: "string", multiple: true, default: ["a", 1] } } },
+        `The "options.alpha.default[1]" property must be of type string. Received type number (1)`,
+      ],
+      [
+        "options.alpha.default[1] (boolean element)",
+        { args: [], options: { alpha: { type: "boolean", multiple: true, default: [true, "no"] } } },
+        `The "options.alpha.default[1]" property must be of type boolean. Received type string ('no')`,
+      ],
+    ])("%s", (_, config, message) => {
+      expectToThrowErrorMatching(() => parseArgs(config), { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+    });
+  });
+
   // Test strict mode
 
   test("unknown long option --bar", () => {

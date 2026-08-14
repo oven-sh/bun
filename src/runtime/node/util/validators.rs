@@ -1,17 +1,6 @@
 use core::fmt;
 
-use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
-
-fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
-    let js_type = value.js_type();
-    if js_type.is_array() {
-        return ZigString::static_("array");
-    }
-    value
-        .js_type_string(global_object)
-        .get_zig_string(global_object)
-}
 
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
@@ -33,9 +22,9 @@ pub(crate) fn throw_err_invalid_arg_type_with_message(
         .throw()
 }
 
-// Callers pass the
-// already-formatted name as anything `Display`-able (e.g. `&str` or
-// `format_args!(...)`) and we embed it via `{}`.
+/// Node's `ERR_INVALID_ARG_TYPE(name, type, value)`. `name` is anything
+/// `Display`-able (`&str` or `format_args!("options.{}", key)`); it is only
+/// rendered on this cold path.
 #[cold]
 pub(crate) fn throw_err_invalid_arg_type(
     global_this: &JSGlobalObject,
@@ -43,14 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
-    throw_err_invalid_arg_type_with_message(
-        global_this,
-        format_args!(
-            "The \"{}\" property must be of type {}, got {}",
-            name, expected_type, actual_type
-        ),
-    )
+    global_this.throw_invalid_argument_type_value(name.to_string(), expected_type, value)
 }
 
 #[cold]
@@ -395,13 +377,10 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
-        return Err(throw_err_invalid_arg_type_with_message(
-            global_this,
-            format_args!(
-                "The \"{}\" property must be an instance of Array, got {}",
-                name, actual_type
-            ),
+        return Err(global_this.throw_invalid_argument_type_value2(
+            name.to_string(),
+            "an instance of Array",
+            value,
         ));
     }
     if let Some(min_length) = min_length {
@@ -429,7 +408,7 @@ pub(crate) fn validate_string_array(
                 global_this,
                 format_args!("{}[{}]", name, i),
                 "string",
-                value,
+                item,
             ));
         }
         i += 1;
@@ -451,7 +430,7 @@ pub(crate) fn validate_boolean_array(
                 global_this,
                 format_args!("{}[{}]", name, i),
                 "boolean",
-                value,
+                item,
             ));
         }
         i += 1;
@@ -474,12 +453,14 @@ pub(crate) fn validate_function(
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.
 pub(crate) trait StringEnum: Sized {
-    /// `|`-joined list of variant names.
+    /// `|`-joined list of variant names, in the order Node lists the union.
     const VALUES_INFO: &'static str;
     /// Match `s` against variant names exactly.
     fn from_bun_string(s: &bun_core::String) -> Option<Self>;
 }
 
+/// Node's `validateUnion(value, name, [...])`, whose error renders the union as
+/// `must be ('a|b')`.
 pub(crate) fn validate_string_enum<T: StringEnum>(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -492,8 +473,9 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
         return Ok(v);
     }
 
-    Err(throw_err_invalid_arg_type_with_message(
-        global_this,
-        format_args!("{} must be one of: {}", name, T::VALUES_INFO),
+    Err(global_this.throw_invalid_argument_type_value2(
+        name.to_string(),
+        format!("('{}')", T::VALUES_INFO),
+        value,
     ))
 }

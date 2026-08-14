@@ -40,6 +40,54 @@ describe("path", () => {
     }
   });
 
+  test("error messages match Node", () => {
+    // Node v26.3.0 output for the same calls: join() names every argument
+    // "path", resolve() uses paths[i], basename()'s second argument is "suffix".
+    const received = [
+      [1, "type number (1)"],
+      [2n, "type bigint (2n)"],
+      [true, "type boolean (true)"],
+      [null, "null"],
+      [undefined, "undefined"],
+      [{}, "an instance of Object"],
+      [[], "an instance of Array"],
+    ];
+
+    function expectThrows(fn, name, expected, specific) {
+      assert.throws(fn, {
+        code: "ERR_INVALID_ARG_TYPE",
+        name: "TypeError",
+        message: `The "${name}" argument must be ${expected}. Received ${specific}`,
+      });
+    }
+
+    for (const namespace of [path.posix, path.win32]) {
+      for (const [value, specific] of received) {
+        const string = (fn, name) => expectThrows(fn, name, "of type string", specific);
+        string(() => namespace.join(value), "path");
+        string(() => namespace.join("foo", value), "path");
+        string(() => namespace.resolve(value), "paths[0]");
+        string(() => namespace.resolve("foo", value), "paths[1]");
+        string(() => namespace.normalize(value), "path");
+        string(() => namespace.isAbsolute(value), "path");
+        string(() => namespace.dirname(value), "path");
+        string(() => namespace.basename(value), "path");
+        string(() => namespace.extname(value), "path");
+        string(() => namespace.parse(value), "path");
+        string(() => namespace.relative(value, "foo"), "from");
+        string(() => namespace.relative("foo", value), "to");
+        // Undefined is a valid value as the second argument to basename
+        if (value !== undefined) {
+          string(() => namespace.basename("foo", value), "suffix");
+        }
+        // {} is a valid pathObject
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          expectThrows(() => namespace.format(value), "pathObject", "of type object", specific);
+        }
+      }
+    }
+  });
+
   test("path.sep", () => {
     // path.sep tests
     // windows

@@ -576,7 +576,7 @@ pub(crate) fn basename(
     };
 
     if let Some(_suffix_ptr) = suffix_ptr {
-        validate_string(global_object, _suffix_ptr, format_args!("ext"))?;
+        validate_string(global_object, _suffix_ptr, format_args!("suffix"))?;
     }
 
     let path_ptr: JSValue = if args_len > 0 {
@@ -1561,18 +1561,10 @@ pub(crate) fn join(
     // allocating; only non-ASCII triggers a transcode allocation.
     let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
 
-    for (i, &path_ptr) in args.iter().enumerate() {
-        // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
-        // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
-        // every iteration otherwise).
-        if !path_ptr.is_string() {
-            #[cold]
-            #[inline(never)]
-            fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {
-                validate_string(g, v, format_args!("paths[{}]", i)).unwrap_err()
-            }
-            return Err(not_a_string(global_object, path_ptr, i));
-        }
+    for &path_ptr in args {
+        // Node's join() reports every argument as "path" (resolve() is the one
+        // that uses `paths[i]`).
+        validate_string(global_object, path_ptr, "path")?;
         let path_zstr = path_ptr.get_zig_string(global_object)?;
         if path_zstr.len == 0 {
             continue;

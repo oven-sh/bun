@@ -131,12 +131,13 @@ pub mod task_tag {
 #[derive(Copy, Clone)]
 pub struct Task {
     pub tag: TaskTag,
-    /// Scheduling domain the task is attributed to: the domain run
-    /// active when it was created/enqueued on a JS thread, that thread's root
-    /// domain when none was, or 0 when it was created on a thread with no VM
-    /// (provenance unknown). Fits in the padding after `tag`. See
-    /// `bun_runtime::domain_run`.
-    pub domain: u32,
+    /// Birth epoch (`bun_io::run_epoch`), assigned by the door the task enters
+    /// its loop through: `EventLoop::enqueue_task` on the JS thread stamps "now",
+    /// a `Ticket` stamps the birth of the operation it completes, an owner that
+    /// posts on behalf of a JS object stamps that object's birth. Anything else
+    /// (a post from another thread with no such knowledge) stays 0, which every
+    /// domain run holds until it exits.
+    pub birth: u32,
     pub ptr: *mut (),
 }
 
@@ -182,11 +183,7 @@ impl TaskTag {
 impl Task {
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
-        Task {
-            tag,
-            domain: 0,
-            ptr,
-        }
+        Task { tag, birth: 0, ptr }
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
@@ -196,7 +193,7 @@ impl Task {
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
         Task {
             tag: T::TAG,
-            domain: crate::current_task_domain(),
+            birth: 0,
             ptr: ptr.cast::<()>(),
         }
     }

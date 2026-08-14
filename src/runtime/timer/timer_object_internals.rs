@@ -310,7 +310,7 @@ impl TimerObjectInternals {
             };
             // Immediates never enter the timer heap; record who queued this one here.
             // SAFETY: `parent` is the live container of `self`.
-            unsafe { (*parent).event_loop_timer.domain = bun_event_loop::current_task_domain() };
+            unsafe { (*parent).event_loop_timer.birth = bun_io::run_epoch::birth() };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
             // (PORTING.md §Dispatch); `__bun_run_immediate_task` casts it back
             // to `*mut ImmediateObject`.

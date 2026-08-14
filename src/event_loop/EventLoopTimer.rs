@@ -53,10 +53,10 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
-    /// Scheduling domain that armed the timer (`crate::current_task_domain()` at
-    /// insert). While a domain run turns the loop, a due timer of another domain
-    /// is held out of the heap until the run exits (`Tag::is_domain_gated`).
-    pub domain: u32,
+    /// Birth epoch (`bun_io::run_epoch`) at insert. While a domain run turns the
+    /// loop, a due timer born before the run started is parked until the run
+    /// exits (`Tag::is_run_gated`).
+    pub birth: u32,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -75,10 +75,10 @@ pub enum InHeap {
     None,
     Regular,
     Fake,
-    /// Due during a domain run it did not belong to: held by
-    /// `bun_runtime::domain_run` (out of every heap, still `ACTIVE`) until the
-    /// run exits and reinserts it into `Regular`.
-    DeferredByRun,
+    /// Due during a domain run it is foreign to: in `All::parked` (still
+    /// `ACTIVE`) until the run exits and it is reinserted with its original
+    /// deadline. `All::remove` knows to look there.
+    Parked,
 }
 
 impl EventLoopTimer {
@@ -89,7 +89,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
-            domain: 0,
+            birth: 0,
         }
     }
 
@@ -214,13 +214,16 @@ pub enum Tag {
 }
 
 impl Tag {
-    /// Whether a domain run holds this timer while it is due but foreign to the
-    /// run (see `EventLoopTimer::domain`): everything whose firing is observable
-    /// to the code that armed it. Runtime housekeeping keeps running.
-    pub fn is_domain_gated(self) -> bool {
+    /// Whether a domain run parks this timer while it is due but foreign to the
+    /// run (see `EventLoopTimer::birth`): everything whose firing is observable
+    /// to script or acts on behalf of a particular owner. The exceptions are the
+    /// loop's own housekeeping, which serve whoever is turning it.
+    pub fn is_run_gated(self) -> bool {
+        // WTFTimer is deliberately gated: it drives JSC's DeferredWorkTimer, whose
+        // work items settle promises and run FinalizationRegistry callbacks.
         !matches!(
             self,
-            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
+            Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
         )
     }
 

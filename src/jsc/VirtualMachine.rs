@@ -2363,7 +2363,7 @@ impl VirtualMachine {
         jsc::mark_binding();
         // Work this thread creates outside a domain run is the root
         // domain's from now on (see `bun_event_loop::current_task_domain`).
-        bun_event_loop::mark_js_thread();
+        bun_io::run_epoch::mark_js_thread();
 
         let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
@@ -3948,7 +3948,7 @@ impl VirtualMachine {
         worker: &crate::web_worker::WebWorker,
         opts: Options,
     ) -> crate::CrateResult<*mut VirtualMachine> {
-        bun_event_loop::mark_js_thread();
+        bun_io::run_epoch::mark_js_thread();
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,

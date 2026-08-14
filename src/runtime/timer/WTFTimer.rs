@@ -265,7 +265,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
                 state: EventLoopTimerState::CANCELLED,
                 heap: IntrusiveField::default(),
                 in_heap: InHeap::None,
-                domain: 0,
+                birth: 0,
             },
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             repeat: false,

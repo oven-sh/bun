@@ -306,7 +306,7 @@ impl TimerHeap {
     /// `v` is a valid, exclusively-owned node not currently in any heap
     /// (its `IntrusiveField` links are null).
     #[inline]
-    pub(crate) unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
+    unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.insert(v) };
     }
@@ -623,6 +623,11 @@ pub(crate) struct All {
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
+    /// Timers that came due while a domain run they are foreign to was turning
+    /// the loop (`crate::domain_run`): out of `timers` so the poll timeout
+    /// ignores them, still `ACTIVE`, reinserted with their original deadlines
+    /// when the run exits (`unpark_after_run`).
+    parked: TimerHeap,
     pub(crate) maps: Maps,
     pub(crate) date_header_timer: DateHeaderTimer,
     pub(crate) wtf_timers: Guarded<TimerHeap>,
@@ -645,6 +650,7 @@ impl All {
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
+            parked: TimerHeap::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),
@@ -667,7 +673,7 @@ impl All {
         debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
         // Whoever arms (or re-arms) a timer owns its firing.
         // SAFETY: as above.
-        unsafe { (*timer).domain = bun_event_loop::current_task_domain() };
+        unsafe { (*timer).birth = bun_io::run_epoch::birth() };
 
         // Bump the global epoch into the per-timer flags so equal-deadline JS
         // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
@@ -698,25 +704,36 @@ impl All {
         }
     }
 
-    /// A domain run has ended: put the timers it held back with their original
-    /// deadlines and epochs, so their order relative to each other and to timers
-    /// that never left is unchanged.
-    ///
-    /// # Safety
-    /// Every pointer is a live node this heap handed to `domain_run` and that is
-    /// in no heap now.
-    pub(crate) unsafe fn reinsert_after_run(&mut self, timers: &[*mut EventLoopTimer]) {
-        for &timer in timers {
-            // SAFETY: per fn contract.
+    /// A domain run has ended and `outer_start` is now the innermost run's start
+    /// epoch (0 if none): put back every parked timer that is not still foreign
+    /// to that outer run, with its original deadline and epoch, so its order
+    /// relative to other timers is unchanged.
+    pub(crate) fn unpark_after_run(&mut self, outer_start: u32) {
+        self.assert_js_thread();
+        let mut still_parked: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut any = false;
+        while let Some(timer) = self.parked.delete_min() {
+            // SAFETY: parked nodes are live (owners cancel through `remove`).
             unsafe {
-                self.timers.insert(timer);
-                (*timer).in_heap = InHeap::Regular;
+                if outer_start != 0 && (*timer).birth < outer_start {
+                    still_parked.push(timer);
+                } else {
+                    self.timers.insert(timer);
+                    (*timer).in_heap = InHeap::Regular;
+                    any = true;
+                }
             }
         }
+        for timer in still_parked {
+            // SAFETY: just removed from `parked`; links are null.
+            unsafe { self.parked.insert(timer) };
+        }
         #[cfg(windows)]
-        if !timers.is_empty() {
+        if any {
             self.ensure_uv_timer();
         }
+        #[cfg(not(windows))]
+        let _ = any;
     }
 
     /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
@@ -851,7 +868,8 @@ impl All {
             InHeap::Regular => unsafe { self.timers.remove(timer) },
             // SAFETY: timer is in `self.fake_timers.timers` per `in_heap`
             InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
-            InHeap::DeferredByRun => crate::domain_run::forget_deferred_timer(timer),
+            // SAFETY: timer is in `self.parked` per `in_heap`
+            InHeap::Parked => unsafe { self.parked.remove(timer) },
         }
         // SAFETY: `timer` is still a valid live EventLoopTimer.
         unsafe {
@@ -1064,10 +1082,10 @@ impl All {
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     ///
-    /// During a domain run, a due timer that belongs to another domain is
-    /// handed to `domain_run` instead of being returned (see
-    /// `defer_timer_if_foreign`), and the scan continues with the next node.
+    /// During a domain run, a due timer that is foreign to the run is parked
+    /// instead of being returned, and the scan continues with the next node.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
+        let run_start = bun_io::run_epoch::active_run_start();
         loop {
             let timer = self.timers.peek()?;
             if !*has_set_now {
@@ -1088,7 +1106,18 @@ impl All {
             let deleted = self.timers.delete_min().expect("peek succeeded");
             debug_assert!(core::ptr::eq(deleted, timer));
             // SAFETY: `timer` was just popped and is live.
-            if unsafe { crate::domain_run::defer_timer_if_foreign(timer) } {
+            let foreign = unsafe { (*timer).birth < run_start && (*timer).tag.is_run_gated() };
+            if run_start != 0 && foreign {
+                // SAFETY: just popped; links are null.
+                unsafe {
+                    self.parked.insert(timer);
+                    (*timer).in_heap = InHeap::Parked;
+                }
+                bun_core::scoped_log!(
+                    crate::domain_run::DomainRun,
+                    "parked foreign timer {:p}",
+                    timer
+                );
                 continue;
             }
             return Some(timer);
@@ -1239,7 +1268,13 @@ impl All {
         let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
         // SAFETY: fn contract.
-        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        let roots = unsafe {
+            [
+                (*this).timers.0.root,
+                (*this).fake_timers.timers.0.root,
+                (*this).parked.0.root,
+            ]
+        };
         for root in roots {
             if !root.is_null() {
                 stack.push(root);
@@ -1286,7 +1321,13 @@ impl All {
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
         // SAFETY: `this` is the live per-thread `All` (JS thread only).
-        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        let roots = unsafe {
+            [
+                (*this).timers.0.root,
+                (*this).fake_timers.timers.0.root,
+                (*this).parked.0.root,
+            ]
+        };
         for root in roots {
             if !root.is_null() {
                 stack.push(root);

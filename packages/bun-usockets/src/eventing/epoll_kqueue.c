@@ -56,6 +56,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
+    us_free(loop->data.held_polls);
     us_internal_loop_data_free(loop);
     close(loop->fd);
     us_free(loop);
@@ -71,6 +72,9 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
 
 /* Todo: this one should be us_internal_poll_free */
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
+    if (UNLIKELY(p->held)) {
+        us_internal_held_poll_forget(loop, p);
+    }
     loop->num_polls--;
     us_free(p);
 }
@@ -84,6 +88,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type
     p->state.fd = fd;
     p->state.poll_type = poll_type;
     p->bun_epoch = Bun__runEpoch();
+    p->held = 0;
 }
 
 __attribute__((always_inline)) int us_poll_events(struct us_poll_t *p) {
@@ -272,7 +277,13 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int fr
             const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : 0;
             events &= us_poll_events(poll);
             if (events || error || eof) {
-                us_internal_dispatch_ready_poll(poll, error, eof, events);
+                if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
+                    continue;
+                }
+                if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
+                continue;
+            }
+            us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
     }
@@ -637,6 +648,11 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
  * dispatcher masks its readable bit out via us_poll_events (no reads). */
 void us_internal_kqueue_socket_arm_read_sentinel(struct us_socket_t *s) {
     struct us_loop_t *loop = s->group->loop;
+    if (UNLIKELY(s->p.held)) {
+        /* Put back level-triggered for read when released; the pending FIN reports then. */
+        s->p.state.poll_type |= POLL_TYPE_POLLING_IN;
+        return;
+    }
     struct kevent64_s event;
     EV_SET64(&event, us_poll_fd(&s->p), EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void *)&s->p, 0, 0);
     int ret;
@@ -661,6 +677,12 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     loop->num_polls++;
     
     int events = us_poll_events(p);
+    if (UNLIKELY(p->held)) {
+        /* Out of the kernel set: nothing to re-point there; the run now holds new_p. */
+        us_internal_held_poll_moved(loop, p, new_p);
+        p->held = 0;
+        return new_p;
+    }
 #ifdef LIBUS_USE_EPOLL
     /* Hack: forcefully update poll by stripping away already set events */
     new_p->state.poll_type = us_internal_poll_type(new_p);
@@ -713,16 +735,11 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
 
-/* Stop `p` reporting without touching what it polls for (its POLLING_IN/OUT
- * bits stay as they are, so the owner's own us_poll_change/us_poll_stop keep
- * working): epoll takes the fd out of the set — an empty mask would still report
- * EPOLLHUP and a hung-up socket parked by a domain run must not spin the loop;
- * a later CTL_MOD by the owner falls back to CTL_ADD. kqueue disables the
- * filters in place. Pending entries for `p` in the current ready batch are
- * dropped either way. us_internal_poll_rearm undoes it; readiness that is
- * still pending is level-triggered and reports again. */
-void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop) {
-    int events = us_poll_events(p);
+/* Take `p` out of the kernel set without touching what it polls for (its
+ * POLLING_IN/OUT bits stay as they are). Idempotent. Pending entries for `p` in
+ * the current ready batch are dropped. Undone by us_poll_start_rc with
+ * us_poll_events(p); readiness still pending is level-triggered and reports again. */
+static void us_internal_poll_remove_from_kernel(struct us_poll_t *p, struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
     int rc;
@@ -730,43 +747,107 @@ void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop) {
         rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
 #else
-    struct kevent64_s change_list[2];
-    EV_SET64(&change_list[0], p->state.fd, EVFILT_READ, EV_DISABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
-    EV_SET64(&change_list[1], p->state.fd, EVFILT_WRITE, EV_DISABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    /* One change per call: FreeBSD stops applying a changelist at the first
+     * error, and either filter may legitimately be absent (ENOENT). */
+    struct kevent64_s change;
     int rc;
+    EV_SET64(&change, p->state.fd, EVFILT_READ, EV_DELETE, 0, 0, (uint64_t)(void*)p, 0, 0);
     do {
-        /* Filters that are not registered come back ENOENT in the receipts; fine. */
-        rc = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+        rc = kevent64(loop->fd, &change, 1, &change, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
+    EV_SET64(&change, p->state.fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    do {
+        rc = kevent64(loop->fd, &change, 1, &change, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(rc));
 #endif
-    us_internal_loop_update_pending_ready_polls(loop, p, 0, events, 0);
+    us_internal_loop_update_pending_ready_polls(loop, p, 0, us_poll_events(p), 0);
 }
 
-void us_internal_poll_rearm(struct us_poll_t *p, struct us_loop_t *loop, int readd_writable) {
-    int events = us_poll_events(p);
-#ifdef LIBUS_USE_EPOLL
-    (void) readd_writable;
-    struct epoll_event event;
-    /* Same mask us_poll_change would compute (HUP/ERR are implicit). */
-    event.events = events ? events : (EPOLLHUP | EPOLLERR);
-    event.data.ptr = p;
-    int rc;
-    do {
-        rc = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
-    } while (IS_EINTR(rc));
-    /* EEXIST: the owner re-registered it during the run (adopted); leave theirs. */
-#else
-    (void) events;
-    struct kevent64_s change_list[2];
-    EV_SET64(&change_list[0], p->state.fd, EVFILT_READ, EV_ENABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
-    /* Socket write interest is one-shot (kqueue_change): if that is what fired,
-     * the knote is gone and enabling it would find nothing. */
-    EV_SET64(&change_list[1], p->state.fd, EVFILT_WRITE, readd_writable ? (EV_ADD | EV_ONESHOT) : EV_ENABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
-    int rc;
-    do {
-        rc = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
-    } while (IS_EINTR(rc));
-#endif
+/* ---- Domain runs: held polls (see us_poll_t.held) ---- */
+
+static void us_internal_held_polls_push(struct us_loop_t *loop, struct us_poll_t *p) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    if (d->held_polls_len == d->held_polls_cap) {
+        d->held_polls_cap = d->held_polls_cap ? d->held_polls_cap * 2 : 16;
+        d->held_polls = us_realloc(d->held_polls, d->held_polls_cap * sizeof(*d->held_polls));
+    }
+    d->held_polls[d->held_polls_len++] = p;
+}
+
+/* `p` is no longer the run's to put back (stopped, freed, or adopted by the run). */
+void us_internal_held_poll_forget(struct us_loop_t *loop, struct us_poll_t *p) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    p->held = 0;
+    for (unsigned int i = d->held_polls_len; i-- > 0;) {
+        if (d->held_polls[i] == p) {
+            memmove(&d->held_polls[i], &d->held_polls[i + 1], (d->held_polls_len - i - 1) * sizeof(*d->held_polls));
+            d->held_polls_len--;
+            return;
+        }
+    }
+}
+
+void us_internal_held_poll_moved(struct us_loop_t *loop, struct us_poll_t *from, struct us_poll_t *to) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    for (unsigned int i = d->held_polls_len; i-- > 0;) {
+        if (d->held_polls[i] == from) {
+            d->held_polls[i] = to;
+            return;
+        }
+    }
+}
+
+int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t *p) {
+    if (LIKELY(!us_internal_epoch_is_foreign(loop, p->bun_epoch))) {
+        return 0;
+    }
+    switch (us_internal_poll_type(p)) {
+    case POLL_TYPE_CALLBACK:
+        /* The loop's own wakeup/async fds: infrastructure, nobody's callback. */
+        return 0;
+    case POLL_TYPE_SEMI_SOCKET:
+        if (!(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_permissive) {
+            /* A listen socket, and this run keeps accepting: a new connection is an
+             * external event, and a run that fetches from a server created outside
+             * it must not deadlock. */
+            return 0;
+        }
+        break;
+    default:
+        /* Sockets, UDP sockets: their handlers are outer code. */
+        break;
+    }
+    if (UNLIKELY(p->held)) {
+        /* Surfaced although held: something re-registered the fd meanwhile (an
+         * owner-side EV_ADD/CTL_ADD path). Take it out again rather than spin. */
+        us_internal_poll_remove_from_kernel(p, loop);
+        return 1;
+    }
+    p->held = 1;
+    us_internal_held_polls_push(loop, p);
+    us_internal_poll_remove_from_kernel(p, loop);
+    return 1;
+}
+
+void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    unsigned int kept = 0;
+    for (unsigned int i = 0; i < d->held_polls_len; i++) {
+        struct us_poll_t *p = d->held_polls[i];
+        if (outer_start_epoch && p->bun_epoch < outer_start_epoch) {
+            /* Still foreign to the enclosing run: stays held. */
+            d->held_polls[kept++] = p;
+            continue;
+        }
+        p->held = 0;
+        us_poll_start_rc(p, loop, us_poll_events(p));
+    }
+    d->held_polls_len = kept;
+    if (!kept && d->held_polls_cap > 64) {
+        us_free(d->held_polls);
+        d->held_polls = NULL;
+        d->held_polls_cap = 0;
+    }
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -774,6 +855,11 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     if (old_events != events) {
 
         p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+        if (UNLIKELY(p->held)) {
+            /* Out of the kernel set while a run holds it: the new interest takes
+             * effect when it is put back. */
+            return;
+        }
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
@@ -805,6 +891,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int old_events = us_poll_events(p);
     int new_events = 0;
+    if (UNLIKELY(p->held)) {
+        us_internal_held_poll_forget(loop, p);
+        return; /* already out of the kernel set and the ready batch */
+    }
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
     int rc;

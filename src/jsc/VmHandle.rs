@@ -200,17 +200,17 @@ impl Shared {
 pub struct Ticket {
     shared: Arc<Shared>,
     kind: LoopKind,
-    /// Scheduling domain that started the operation (`current_task_domain()` on
-    /// the JS thread when the ticket was taken; inherited by clones): its
-    /// completion is that domain's, whichever thread posts it.
-    domain: u32,
+    /// Birth epoch of the operation (`bun_io::run_epoch::birth()` on the JS
+    /// thread when the ticket was taken; inherited by clones): its completion is
+    /// born then, whichever thread posts it.
+    birth: u32,
     #[cfg(debug_assertions)]
     id: u64,
 }
 
 impl Ticket {
     #[track_caller]
-    fn issue(shared: &Arc<Shared>, kind: LoopKind, domain: u32) -> Ticket {
+    fn issue(shared: &Arc<Shared>, kind: LoopKind, birth: u32) -> Ticket {
         shared.tickets.fetch_add(1, Ordering::SeqCst);
         #[cfg(debug_assertions)]
         let id = {
@@ -223,16 +223,10 @@ impl Ticket {
         Ticket {
             shared: Arc::clone(shared),
             kind,
-            domain,
+            birth,
             #[cfg(debug_assertions)]
             id,
         }
-    }
-
-    /// The domain that started the operation (see the field).
-    #[inline]
-    pub fn domain(&self) -> u32 {
-        self.domain
     }
 
     /// Queue `task` on the loop this ticket was taken for and wake it. Any
@@ -243,15 +237,9 @@ impl Ticket {
     /// the ticket out of the work's struct first, post, then drop it.
     pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
         test_gate::before_ticket_post(self);
-        // A completion built off the JS thread has no domain of its own; it is
-        // the starting domain's (see `Task::domain`).
+        // The completion is the operation's, whichever thread built it (`Task::birth`).
         // SAFETY: `task` is a live carrier not yet posted; ours until `deliver`.
-        unsafe {
-            let inner = &mut (*task.as_ptr()).task;
-            if inner.domain == 0 {
-                inner.domain = self.domain;
-            }
-        }
+        unsafe { (*task.as_ptr()).task.birth = self.birth };
         debug_assert!(
             self.shared.state() != State::Closed,
             "ticket post after its VM closed (a ticket was created after the wait)"
@@ -285,7 +273,7 @@ impl Clone for Ticket {
     /// One more ticket for the same VM and loop (any thread).
     #[track_caller]
     fn clone(&self) -> Ticket {
-        Ticket::issue(&self.shared, self.kind, self.domain)
+        Ticket::issue(&self.shared, self.kind, self.birth)
     }
 }
 
@@ -537,7 +525,7 @@ impl VirtualMachine {
         Ticket::issue(
             &h.0,
             self.current_loop_kind(),
-            bun_event_loop::current_task_domain(),
+            bun_event_loop::birth_epoch(),
         )
     }
 }

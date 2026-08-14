@@ -1152,6 +1152,11 @@ impl JSGlobalObject {
     }
 
     pub fn handle_rejected_promises(&self) {
+        // Inside a domain run the outer frame is mid-job and may still attach
+        // handlers; its unhandled-rejection processing waits for its own checkpoint.
+        if bun_event_loop::active_run_start() != 0 {
+            return;
+        }
         // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
         // own exceptions; the only thing that escapes is a TerminationException
         // (worker terminate() or process.exit()), and the request flag may

@@ -1,4 +1,4 @@
-// Scheduling domains and domain runs.
+// Domain runs.
 //
 // A domain run turns Bun's one event loop from inside a synchronous frame while
 // admitting only the work that frame caused; everything else that surfaces is
@@ -11,8 +11,9 @@
 //          during the run, and observes them afterwards in the same relative
 //          order and with unchanged deadlines.
 //
-// Driven through bun:jsc testing hooks; skipped on builds whose JSC lacks
-// domain drains.
+// Driven through bun:jsc testing hooks (a permissive run around a thunk);
+// skipped on builds whose JSC lacks domain drains. spawnSync's strict runs are
+// covered in test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -20,14 +21,13 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const jsc = require("bun:jsc");
-const hasDomains = typeof jsc.runInDomainForTesting === "function";
-const { runInDomainForTesting, runUntilInDomainForTesting, currentDomainForTesting } = jsc as {
-  runInDomainForTesting: <T>(thunk: () => T) => [number, T];
-  runUntilInDomainForTesting: <T>(thunk: () => Promise<T>) => Promise<T>;
+const hasDomains = typeof jsc.runUntilInDomainForTesting === "function";
+const { runUntilInDomainForTesting, currentDomainForTesting } = jsc as {
+  runUntilInDomainForTesting: <T>(thunk: () => Promise<T>, timeoutMs?: number) => Promise<T>;
   currentDomainForTesting: () => [number, number];
 };
 
-/** Turn the loop for a fresh domain until `thunk`'s promise settles; returns it settled. */
+/** Turn the loop inside a fresh (permissive) run until `thunk`'s promise settles; returns it settled. */
 function runUntil<T>(thunk: () => Promise<T>): Promise<T> {
   const p = runUntilInDomainForTesting(thunk);
   // The run only returns once the promise is no longer pending.
@@ -41,12 +41,10 @@ async function untilExists(file: string) {
   while (!existsSync(file)) await sleep(2);
 }
 
-const tick = () => new Promise<void>(resolve => setImmediate(resolve));
-
-describe.skipIf(!hasDomains)("microtask domains", () => {
-  test("inner: everything the domain queues runs before the drain returns", () => {
+describe.skipIf(!hasDomains)("domain runs: microtasks", () => {
+  test("inner: everything the run queues runs before it returns, through every promise shape", () => {
     const log: string[] = [];
-    const [domain] = runInDomainForTesting(() => {
+    const result = runUntil(async () => {
       log.push("thunk");
       queueMicrotask(() => {
         log.push("qm1");
@@ -55,36 +53,47 @@ describe.skipIf(!hasDomains)("microtask domains", () => {
       Promise.resolve()
         .then(() => log.push("then1"))
         .then(() => log.push("then2"));
-      (async () => {
-        await null;
-        log.push("await1");
-        await new Promise<void>(r => queueMicrotask(r));
-        log.push("await2");
-        // Pass-through hops (no handler on the fired side) must not stall the chain.
-        await Promise.resolve(1).catch(() => {});
-        log.push("await3");
-        await Promise.reject(new Error("x"))
-          .then(() => {})
-          .catch(() => {});
-        log.push("await4");
-        // Combinators resolve through context-less internal jobs.
-        await Promise.all([Promise.resolve(1), (async () => 2)()]);
-        log.push("all");
-        await Promise.race([new Promise(r => queueMicrotask(() => r(1)))]);
-        log.push("race");
-        await Promise.allSettled([Promise.reject(1), Promise.resolve(2)]);
-        log.push("allSettled");
-        await Promise.any([Promise.reject(1), Promise.resolve(2)]);
-        log.push("any");
-        try {
-          await Promise.resolve().finally(() => {});
-        } finally {
-          log.push("finally");
-        }
-      })();
+      await null;
+      log.push("await1");
+      await new Promise<void>(r => queueMicrotask(r));
+      log.push("await2");
+      // Pass-through hops (no handler on the fired side) must not stall the chain.
+      await Promise.resolve(1).catch(() => {});
+      log.push("await3");
+      await Promise.reject(new Error("x"))
+        .then(() => {})
+        .catch(() => {});
+      log.push("await4");
+      // Combinators resolve through context-less internal jobs.
+      await Promise.all([Promise.resolve(1), (async () => 2)()]);
+      log.push("all");
+      await Promise.race([new Promise(r => queueMicrotask(() => r(1)))]);
+      log.push("race");
+      await Promise.allSettled([Promise.reject(1), Promise.resolve(2)]);
+      log.push("allSettled");
+      await Promise.any([Promise.reject(1), Promise.resolve(2)]);
+      log.push("any");
+      try {
+        await Promise.resolve().finally(() => {});
+      } finally {
+        log.push("finally");
+      }
+      // A thenable, an async generator, and a sync iterable that rejects under for-await:
+      // their continuations are queued by JSC without a captured context.
+      log.push("thenable:" + (await { then: (r: (v: number) => void) => r(7) }));
+      async function* gen() {
+        yield 1;
+        yield 2;
+      }
+      for await (const v of gen()) log.push("gen:" + v);
+      try {
+        for await (const v of [Promise.resolve("ok"), Promise.reject(new Error("no"))]) log.push("sync-iter:" + v);
+      } catch (e: any) {
+        log.push("sync-iter-threw:" + e.message);
+      }
+      return "done";
     });
-    expect(domain).toBeGreaterThan(0);
-    // Nothing above is pending: the drain ran it all synchronously.
+    expect(Bun.peek(result)).toBe("done");
     expect(log).toEqual([
       "thunk",
       "qm1",
@@ -100,146 +109,118 @@ describe.skipIf(!hasDomains)("microtask domains", () => {
       "allSettled",
       "any",
       "finally",
+      "thenable:7",
+      "gen:1",
+      "gen:2",
+      "sync-iter:ok",
+      "sync-iter-threw:no",
     ]);
   });
 
-  test("outer: reactions queued before the drain do not run inside it, and run FIFO afterwards", async () => {
+  test("outer: reactions queued before the run do not run inside it, and run FIFO afterwards", async () => {
     const log: string[] = [];
     queueMicrotask(() => log.push("outer-qm1"));
     Promise.resolve().then(() => {
       log.push("outer-then1");
       queueMicrotask(() => log.push("outer-then1.qm"));
     });
+    // Pass-through jobs queued before the run are the outer program's too.
+    Promise.all([1, 2]).then(() => log.push("outer-all"));
     let resolveOuter!: () => void;
     const outerPromise = new Promise<void>(r => (resolveOuter = r));
     outerPromise.then(() => log.push("outer-resolved-by-inner"));
 
-    runInDomainForTesting(() => {
+    runUntil(async () => {
       queueMicrotask(() => log.push("inner-qm"));
-      Promise.resolve().then(() => {
+      await Promise.resolve().then(() => {
         log.push("inner-then");
-        // Settling an outer promise from inside is allowed; its (outer) reaction still waits.
+        // A reaction the run itself makes ready is one of its consequences: it runs
+        // inside, like anything else the run's code queues.
         resolveOuter();
       });
     });
-    log.push("after-drain");
-    expect(log).toEqual(["inner-qm", "inner-then", "after-drain"]);
+    log.push("after-run");
+    expect(log).toEqual(["inner-qm", "inner-then", "outer-resolved-by-inner", "after-run"]);
 
-    await tick();
+    await immediate();
     expect(log).toEqual([
       "inner-qm",
       "inner-then",
-      "after-drain",
+      "outer-resolved-by-inner",
+      "after-run",
       "outer-qm1",
       "outer-then1",
-      "outer-resolved-by-inner",
       "outer-then1.qm",
+      "outer-all",
     ]);
   });
 
-  test("nothing is lost: an inner await on something the outer world settles later resumes later", async () => {
-    const log: string[] = [];
-    let resolveLater!: (v: string) => void;
-    const settledLater = new Promise<string>(r => (resolveLater = r));
-    let innerDone!: Promise<void>;
-
-    runInDomainForTesting(() => {
-      innerDone = (async () => {
-        log.push("inner-start");
-        const v = await settledLater;
-        log.push("inner-resumed:" + v);
-      })();
-    });
-    // The drain returned with the inner function still suspended on an unsettled promise.
-    expect(log).toEqual(["inner-start"]);
-
-    resolveLater("ok");
-    await innerDone;
-    expect(log).toEqual(["inner-start", "inner-resumed:ok"]);
-  });
-
-  test("nested drains defer to the innermost domain and unwind in order", async () => {
+  test("nested runs: the inner run completes; the outer run's queued reactions wait for it", () => {
     const log: string[] = [];
     queueMicrotask(() => log.push("root"));
-    const [outer] = runInDomainForTesting(() => {
-      queueMicrotask(() => log.push("outer-1"));
-      const [inner] = runInDomainForTesting(() => {
-        queueMicrotask(() => {
-          log.push("inner-1");
-          queueMicrotask(() => log.push("inner-1.1"));
-        });
+    const outer = runUntil(async () => {
+      await null;
+      const gate = Promise.withResolvers<void>();
+      gate.promise.then(() => log.push("outer-reaction"));
+      const inner = runUntil(async () => {
+        await null;
+        gate.resolve(); // outer's reaction is queued now, and is not the inner run's
+        queueMicrotask(() => log.push("inner-1"));
+        await immediate();
+        log.push("inner-2");
+        return currentDomainForTesting()[1];
       });
-      // The inner drain ran only inner work; outer-1 is still queued.
-      log.push("inner-drained:" + (inner > 0));
-      queueMicrotask(() => log.push("outer-2"));
+      log.push("inner-returned");
+      await gate.promise;
+      log.push("outer-after-gate");
+      return [currentDomainForTesting()[1], await inner];
     });
-    log.push("outer-drained:" + (outer > 0));
-    expect(log).toEqual(["inner-1", "inner-1.1", "inner-drained:true", "outer-1", "outer-2", "outer-drained:true"]);
-    await tick();
-    expect(log.at(-1)).toBe("root");
-  });
-
-  test("the context domain follows entry and restore", () => {
-    expect(currentDomainForTesting()).toEqual([0, 0]);
-    let inside!: [number, number];
-    let insideMicrotask!: [number, number];
-    const [domain] = runInDomainForTesting(() => {
-      inside = currentDomainForTesting();
-      queueMicrotask(() => (insideMicrotask = currentDomainForTesting()));
-    });
-    expect(inside).toEqual([domain, 0]);
-    expect(insideMicrotask).toEqual([domain, 0]);
+    const [outerId, innerId] = Bun.peek(outer) as [number, number];
+    expect(innerId).toBeGreaterThan(outerId);
+    expect(log).toEqual(["inner-1", "inner-2", "inner-returned", "outer-reaction", "outer-after-gate"]);
     expect(currentDomainForTesting()).toEqual([0, 0]);
   });
 
-  test("AsyncLocalStorage values are unaffected by the domain pair", async () => {
+  test("AsyncLocalStorage: the run's own code inherits the caller's store; the pair never leaks", async () => {
     const als = new AsyncLocalStorage<string>();
     const seen: Array<string | undefined> = [];
-
-    als.run("outer", () => {
-      runInDomainForTesting(() => {
-        // Inherited into the domain...
+    await als.run("outer", async () => {
+      runUntil(async () => {
         seen.push(als.getStore());
         queueMicrotask(() => seen.push(als.getStore()));
-        // ...and nestable inside it.
-        als.run("inner", () => {
+        await als.run("inner", async () => {
           seen.push(als.getStore());
-          Promise.resolve().then(() => seen.push(als.getStore()));
+          await null;
+          seen.push(als.getStore());
         });
         seen.push(als.getStore());
+        // enterWith inside a run does not leak the domain pair out of it.
+        new AsyncLocalStorage<number>().enterWith(1);
       });
-      // Restored on exit.
       seen.push(als.getStore());
     });
-    // sync: inherited, nested, restored; drained: microtask (outer), reaction (inner); after exit.
-    expect(seen).toEqual(["outer", "inner", "outer", "outer", "inner", "outer"]);
+    expect(seen).toEqual(["outer", "inner", "outer", "inner", "outer", "outer"]);
     expect(als.getStore()).toBeUndefined();
-
-    // enterWith inside a domain does not leak the domain pair out of it.
-    const als2 = new AsyncLocalStorage<number>();
-    runInDomainForTesting(() => {
-      als2.enterWith(1);
-      expect(als2.getStore()).toBe(1);
-    });
     expect(currentDomainForTesting()).toEqual([0, 0]);
-    await tick();
+    await immediate();
     expect(currentDomainForTesting()).toEqual([0, 0]);
   });
 
-  test("an exception thrown by an inner microtask is reported, not swallowed, and the drain continues", async () => {
+  test("an exception thrown by a microtask inside a run is reported, not swallowed, and the run continues", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const { runInDomainForTesting } = require("bun:jsc");
+        const { runUntilInDomainForTesting } = require("bun:jsc");
         process.on("uncaughtException", err => console.log("uncaught:" + err.message));
-        runInDomainForTesting(() => {
+        runUntilInDomainForTesting(async () => {
           queueMicrotask(() => {
             console.log("a");
             throw new Error("boom");
           });
           queueMicrotask(() => console.log("b"));
+          await new Promise(r => setImmediate(r));
         });
         console.log("after");
         `,

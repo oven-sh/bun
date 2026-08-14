@@ -347,27 +347,32 @@ export function initializeNextTickQueue(
     queue = new FixedQueue();
     tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
-    // A frame that carries a scheduling domain is `[sentinel, domainId, ...alsPairs]`
-    // (see EventLoopDomain.h); anything else belongs to the root (0).
+    // A frame that carries a domain is `[sentinel, startEpoch, ...alsPairs]` (see
+    // EventLoopDomain.h); anything else predates every run (0).
     function domainOfFrame(frame, sentinel) {
       return frame !== undefined && frame.length >= 2 && frame[0] === sentinel ? frame[1] : 0;
     }
 
-    // `activeDomain` is non-zero inside a domain run: then only that domain's ticks
-    // run. Ticks of other domains (including the root's, queued before the run
-    // began) are parked in arrival order and put back once this domain's ticks and
-    // microtasks are exhausted, so the code that queued them observes them later,
-    // in the same order, as if the run had not happened. (One loop for both cases:
-    // a helper per tick would add a frame to every nextTick callback's stack.)
+    // `activeDomain` is non-zero inside a domain run (its start epoch): then only
+    // ticks queued since the run started run. Older ticks are parked in arrival
+    // order and put back once the run's ticks and microtasks are exhausted, so the
+    // code that queued them observes them later, in the same order, as if the run
+    // had not happened.
     function processTicksAndRejections(activeDomain) {
-      // During a run, field 1 is the run's bare frame: [sentinel, activeDomain].
-      const sentinel = activeDomain ? $getInternalField($asyncContext, 1)[0] : undefined;
+      // During a run that executes code of its own, field 1 is its bare frame
+      // [sentinel, activeDomain]; a run that executes none has stamped no frames,
+      // so every queued tick predates it.
+      var sentinel;
+      if (activeDomain) {
+        const slot = $getInternalField($asyncContext, 1);
+        sentinel = $isJSArray(slot) ? slot[0] : null;
+      }
       var parked: any[] | undefined;
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
           var frame = tock.frame;
-          if (activeDomain && domainOfFrame(frame, sentinel) !== activeDomain) {
+          if (activeDomain && domainOfFrame(frame, sentinel) < activeDomain) {
             (parked ??= []).push(tock);
             continue;
           }

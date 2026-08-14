@@ -2470,9 +2470,10 @@ pub(crate) struct ThreadSafeFunction {
     /// cannot be something the VM waits for.
     pub(crate) handle: bun_jsc::VmHandle,
     pub(crate) loop_kind: bun_jsc::LoopKind,
-    /// Domain that created the threadsafe function: its calls are that domain's
-    /// callbacks, not whichever domain run is turning the loop when they arrive.
-    pub(crate) task_domain: u32,
+    /// Birth epoch of the threadsafe function (`bun_io::run_epoch`): its calls
+    /// are its creator's callbacks, not whichever domain run is turning the loop
+    /// when they arrive.
+    pub(crate) birth: u32,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2865,7 +2866,7 @@ impl ThreadSafeFunction {
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
                 // SAFETY: `ct` is a live carrier not yet posted.
-                unsafe { (*ct.as_ptr()).task.domain = self.task_domain };
+                unsafe { (*ct.as_ptr()).task.birth = self.birth };
                 if let bun_jsc::vm_handle::Posted::Refused(ct) =
                     self.handle.post(self.loop_kind, ct)
                 {
@@ -3160,7 +3161,7 @@ extern "C" fn napi_create_threadsafe_function(
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
         handle: vm.handle(),
         loop_kind: vm.current_loop_kind(),
-        task_domain: bun_event_loop::current_task_domain(),
+        birth: bun_event_loop::birth_epoch(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,

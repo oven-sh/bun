@@ -253,7 +253,8 @@ describe.concurrent("spawnSync on the real loop holds everything that predates i
         const log = [];
         let during = false;
         const note = what => log.push(what + ":" + (during ? "during" : "after"));
-        const watcher = fs.watch(${JSON.stringify(String(dir))}, () => note("watch"));
+        let watched = false;
+        const watcher = fs.watch(${JSON.stringify(String(dir))}, () => { if (!watched) { watched = true; note("watch"); } });
         fs.readFile(__filename, () => note("readFile"));
         require("zlib").gzip("abc", () => note("gzip"));
         const signal = AbortSignal.timeout(1);
@@ -265,7 +266,7 @@ describe.concurrent("spawnSync on the real loop holds everything that predates i
         Bun.spawnSync({ cmd: [process.execPath, "-e", "const fs=require('fs'); fs.writeFileSync(" + JSON.stringify(${JSON.stringify(join(String(dir), "touched"))}) + ", ''); Bun.sleepSync(20);"] });
         during = false;
         log.push("returned");
-        setTimeout(() => { console.log(JSON.stringify([...new Set(log)].sort())); watcher.close(); worker.terminate(); }, 50);
+        setTimeout(() => { console.log(JSON.stringify(log.sort())); watcher.close(); worker.terminate(); }, 50);
       `);
       expect(JSON.parse(out)).toEqual([
         "abort:after",
@@ -278,6 +279,95 @@ describe.concurrent("spawnSync on the real loop holds everything that predates i
       expect(exitCode).toBe(0);
     },
   );
+
+  test.skipIf(process.platform === "win32")(
+    "a response's buffered write flushed while spawnSync waits does not pull that connection's handlers into it",
+    async () => {
+      // res.write() registers an auto-flush that runs at the next checkpoint — i.e.
+      // inside execSync. That flush is outer housekeeping, not the child's doing:
+      // the request's later 'data'/'end' events still wait for execSync to return.
+      using dir = tempDir("spawnsync-http", {
+        "server.js": `
+          const http = require("node:http");
+          const { execSync } = require("node:child_process");
+          const log = [];
+          let during = false;
+          const server = http.createServer((req, res) => {
+            req.on("data", d => {
+              log.push("data:" + d + ":" + (during ? "during" : "after"));
+              if (String(d) === "first") {
+                res.write("partial");
+                during = true;
+                execSync(process.execPath + " -e 'Bun.sleepSync(200)'");
+                during = false;
+                log.push("returned");
+              }
+            });
+            req.on("end", () => { res.end(); server.close(); console.log(JSON.stringify(log)); });
+          });
+          server.listen(0, () => {
+            // A client in this process would have its own writes parked; drive it from a child.
+            Bun.spawn([process.execPath, "client.js", String(server.address().port)], { stdio: ["ignore", "inherit", "inherit"] });
+          });
+        `,
+        "client.js": `
+          const s = require("node:net").connect(Number(process.argv[2]), "127.0.0.1", () => {
+            s.write("POST / HTTP/1.1\\r\\nHost: a\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n5\\r\\nfirst\\r\\n");
+            setTimeout(() => s.write("6\\r\\nsecond\\r\\n"), 50);
+            setTimeout(() => s.write("0\\r\\n\\r\\n"), 100);
+          });
+          s.on("data", () => {});
+          s.on("close", () => process.exit(0));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "server.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(out.trim())).toEqual(["data:first:after", "returned", "data:second:after"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a UDP message that arrives during spawnSync is delivered after it",
+    async () => {
+      const { out, exitCode } = await run(`
+      const dgram = require("node:dgram");
+      const log = [];
+      let during = false;
+      const sock = dgram.createSocket("udp4");
+      sock.on("message", m => { log.push("message:" + m + ":" + (during ? "during" : "after")); sock.close(); console.log(JSON.stringify(log)); });
+      sock.bind(0, "127.0.0.1", () => {
+        const { port } = sock.address();
+        during = true;
+        // The child sends while we are blocked, then lingers so the datagram is surely queued.
+        Bun.spawnSync({ cmd: [process.execPath, "-e", "const d = require('node:dgram').createSocket('udp4'); d.send('hi', " + port + ", '127.0.0.1', () => { d.close(); Bun.sleepSync(100); });"] });
+        during = false;
+        log.push("returned");
+      });
+    `);
+      expect(JSON.parse(out)).toEqual(["returned", "message:hi:after"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")("promise jobs keep FIFO order across spawnSync", async () => {
+    const { out, exitCode } = await run(`
+      const log = [];
+      (async () => { await null; log.push("a1"); await null; log.push("a2"); })();
+      (async () => { await 0; log.push("b1"); await 0; log.push("b2"); })();
+      Promise.all([1, 2]).then(() => log.push("all"));
+      Bun.spawnSync({ cmd: [process.execPath, "-e", "1"] });
+      setTimeout(() => console.log(JSON.stringify(log)));
+    `);
+    expect(JSON.parse(out)).toEqual(["a1", "b1", "a2", "b2", "all"]);
+    expect(exitCode).toBe(0);
+  });
 
   test.skipIf(process.platform === "win32")(
     "a rejection handled right after spawnSync is not reported as unhandled during it",

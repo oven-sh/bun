@@ -301,13 +301,32 @@ pub(crate) fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-/// spawnSync waits by turning the real event loop inside a strict domain run of
-/// its own (`crate::domain_run`): the child's pipes and exit are dispatched on
-/// Bun's one loop while JS timers, immediates, microtasks, nextTicks, other
-/// connections and I/O that predate the call are held until it returns. Windows
-/// keeps the isolated `SpawnSyncEventLoop` until its FilePoll/uv paths carry
-/// run epochs.
-const SPAWN_SYNC_USES_DOMAIN_RUN: bool = cfg!(unix);
+/// How spawnSync blocks. On POSIX it turns the real event loop inside a strict
+/// domain run (`crate::domain_run`): the child's pipes and exit are ordinary
+/// polls on Bun's one loop while everything that predates the call is held until
+/// it returns. libuv-backed polls carry no birth epoch, so Windows waits on the
+/// isolated `SpawnSyncEventLoop`.
+enum SyncWait<'a> {
+    Run(crate::domain_run::DomainRun),
+    Isolated(&'a mut bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop),
+}
+
+impl SyncWait<'_> {
+    const USES_RUN: bool = cfg!(unix);
+
+    /// One turn, sleeping no later than `deadline`; `done` lets a run skip a
+    /// poll it no longer needs.
+    fn turn(&mut self, deadline: Option<&Timespec>, done: impl FnOnce() -> bool) -> TickState {
+        match self {
+            // SAFETY: the run is the innermost one, entered on this thread.
+            SyncWait::Run(run) => match unsafe { run.turn(deadline, done) } {
+                true => TickState::Timeout,
+                false => TickState::Completed,
+            },
+            SyncWait::Isolated(sync_loop) => sync_loop.tick_with_timeout(deadline),
+        }
+    }
+}
 
 fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
@@ -1069,19 +1088,19 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
     // Enter the domain run before spawning so everything created from here on
-    // (the child's pipes, its process poll, its exit task) is the run's own.
+    // (the child's pipes, its process poll, its exit task) is born inside it.
     // SAFETY: `bun_vm_ptr()` is the live per-thread VM; the run is dropped
     // below (or on any early return), on this thread.
-    let domain_run = (IS_SYNC && SPAWN_SYNC_USES_DOMAIN_RUN).then(|| unsafe {
-        crate::domain_run::DomainRun::enter_new(
+    let mut domain_run = (IS_SYNC && SyncWait::USES_RUN).then(|| unsafe {
+        crate::domain_run::DomainRun::enter(
             global_this.bun_vm_ptr(),
-            crate::domain_run::Policy::STRICT,
+            crate::domain_run::Policy::Strict,
         )
     });
     // For IS_SYNC without a domain run, use the isolated loop's `event_loop`
     // (created by `SpawnSyncEventLoop::init`) so stdio readers/writers register
     // on it instead of the main loop and JavaScript timers cannot fire.
-    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN {
+    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC && !SyncWait::USES_RUN {
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
@@ -1107,7 +1126,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
-        if IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN {
+        if IS_SYNC && !SyncWait::USES_RUN {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
@@ -1930,13 +1949,18 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
 
-        let mut sync_loop = (IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN).then(|| {
-            // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
-            let vm = unsafe { &mut *jsc_vm_ptr };
-            // SAFETY: as above.
-            vm.rare_data()
-                .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
-        });
+        let mut wait = match domain_run.take() {
+            Some(run) => SyncWait::Run(run),
+            None => {
+                // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
+                let vm = unsafe { &mut *jsc_vm_ptr };
+                // SAFETY: as above.
+                SyncWait::Isolated(
+                    vm.rare_data()
+                        .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr }),
+                )
+            }
+        };
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -1979,22 +2003,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             };
-            let tick_state = if let Some(run) = &domain_run {
-                // SAFETY: `run` is the innermost domain run, entered above on this thread.
-                let deadline_passed =
-                    unsafe { run.turn(deadline, || !subprocess.compute_has_pending_activity()) };
-                if deadline_passed {
-                    TickState::Timeout
-                } else {
-                    TickState::Completed
-                }
-            } else {
-                sync_loop
-                    .as_mut()
-                    .expect("isolated loop when not on a domain run")
-                    .tick_with_timeout(deadline)
-            };
-            match tick_state {
+            match wait.turn(deadline, || !subprocess.compute_has_pending_activity()) {
                 TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::ForceRealTime);
@@ -2054,9 +2063,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 subprocess.close_readable_pipes();
             }
         }
+        // The wait is over: hand parked timers, immediates, tasks and I/O back to the loop.
+        drop(wait);
     }
-    // The wait is over: hand parked timers, immediates, tasks and I/O back to the loop.
-    drop(domain_run);
+    drop(domain_run); // only still held if the sync wait was never reached
     if global_this.has_exception() {
         // e.g. a termination exception.
         return Ok(JSValue::ZERO);

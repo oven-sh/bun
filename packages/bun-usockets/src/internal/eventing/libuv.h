@@ -45,8 +45,9 @@ struct us_poll_t {
   uv_poll_t *uv_p;
   LIBUS_SOCKET_DESCRIPTOR fd;
   unsigned char poll_type;
-  /* See epoll_kqueue.h; not consulted on the libuv backend yet. */
-  unsigned int bun_epoch;
+  /* See epoll_kqueue.h. libuv-backed polls are not gated (spawnSync waits on an isolated loop there); present so shared code compiles. */
+  unsigned int bun_epoch : 31;
+  unsigned int held : 1;
 };
 
 #endif // LIBUV_H

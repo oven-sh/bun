@@ -1,18 +1,15 @@
 #include "root.h"
 #include "EventLoopDomain.h"
 
-#include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/VM.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/SymbolImpl.h>
 
 namespace Bun {
 
@@ -25,11 +22,26 @@ EventLoopDomains::EventLoopDomains()
 {
 }
 
-EventLoopDomains::~EventLoopDomains() = default;
-
-EventLoopDomains& eventLoopDomains(VM& vm)
+void EventLoopDomains::push(DomainRunEntry&& entry)
 {
-    return WebCore::clientData(vm)->eventLoopDomains();
+    m_activeStart = entry.start;
+    m_runs.append(WTF::move(entry));
+}
+
+DomainRunEntry EventLoopDomains::pop()
+{
+    DomainRunEntry entry = m_runs.takeLast();
+    m_activeStart = m_runs.isEmpty() ? 0 : m_runs.last().start;
+    return entry;
+}
+
+const DomainRunEntry* EventLoopDomains::innermostWithContext() const
+{
+    for (size_t i = m_runs.size(); i-- > 0;) {
+        if (m_runs[i].permissive)
+            return &m_runs[i];
+    }
+    return nullptr;
 }
 
 static inline InternalFieldTuple* asyncContextData(JSGlobalObject* globalObject)
@@ -37,39 +49,22 @@ static inline InternalFieldTuple* asyncContextData(JSGlobalObject* globalObject)
     return globalObject->m_asyncContextData.get();
 }
 
-// Field 1 of the async-context tuple is the "domain slot" builtins read:
-//   undefined       – no domain has ever been entered on this global
-//   Symbol          – the sentinel; no domain run is active
-//   [sentinel, D]   – the active run's bare context (so JS can read both the sentinel
-//                     and the active run domain with one field load)
+// Field 1 of the async-context tuple is the "domain slot" builtins read: during a
+// permissive run, that run's bare `[sentinel, start]` (so JS reads the sentinel
+// and the active domain with one field load); otherwise the Symbol once one has
+// been needed on this global, else undefined.
 Symbol* domainSentinel(JSGlobalObject* globalObject)
 {
     auto* tuple = asyncContextData(globalObject);
     JSValue slot = tuple->getInternalField(1);
     if (slot.isSymbol())
         return asSymbol(slot);
-    if (auto* runContext = dynamicDowncast<JSArray>(slot))
-        return asSymbol(runContext->getIndexQuickly(0));
+    if (auto* bare = dynamicDowncast<JSArray>(slot))
+        return asSymbol(bare->getIndexQuickly(0));
     VM& vm = globalObject->vm();
     Symbol* sentinel = Symbol::create(vm, eventLoopDomains(vm).sentinelUid());
     tuple->putInternalField(vm, 1, sentinel);
     return sentinel;
-}
-
-static void updateDomainSlot(JSGlobalObject* globalObject)
-{
-    Symbol* sentinel = domainSentinel(globalObject);
-    auto& runs = eventLoopDomains(globalObject->vm()).runs();
-    asyncContextData(globalObject)->putInternalField(globalObject->vm(), 1, runs.isEmpty() ? JSValue(sentinel) : runs.last().bareContext.get());
-}
-
-extern "C" uint32_t Bun__Domain__allocateGlobal();
-
-uint32_t allocateDomain(JSGlobalObject*)
-{
-    // One process-wide counter (kept in Rust, which also allocates each JS
-    // thread's root domain from it) so ids never alias across Workers.
-    return Bun__Domain__allocateGlobal();
 }
 
 uint32_t domainOfContext(JSGlobalObject* globalObject, JSValue context)
@@ -80,18 +75,6 @@ uint32_t domainOfContext(JSGlobalObject* globalObject, JSValue context)
 uint32_t currentDomain(JSGlobalObject* globalObject)
 {
     return domainOfContext(globalObject, asyncContextData(globalObject)->getInternalField(0));
-}
-
-uint32_t activeRunDomain(JSGlobalObject* globalObject)
-{
-    return globalObject->vm().microtaskDrainDomain();
-}
-
-uint32_t domainOfCallback(JSGlobalObject* globalObject, JSValue callback)
-{
-    if (auto* frame = dynamicDowncast<AsyncContextFrame>(callback))
-        return domainOfContext(globalObject, frame->context.get());
-    return 0;
 }
 
 JSValue contextWithDomain(JSGlobalObject* globalObject, JSValue context, uint32_t domain)
@@ -120,115 +103,92 @@ JSValue contextWithDomain(JSGlobalObject* globalObject, JSValue context, uint32_
     return result;
 }
 
-JSValue enterDomain(JSGlobalObject* globalObject, uint32_t domain)
+JSValue baseContextSlow(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
-    // From here on native APIs must wrap the callbacks they store in an
-    // AsyncContextFrame so the callbacks carry their scheduling domain.
-    globalObject->setAsyncContextTrackingEnabled(true);
-    auto* tuple = asyncContextData(globalObject);
-    JSValue previous = tuple->getInternalField(0);
-    tuple->putInternalField(vm, 0, contextWithDomain(globalObject, previous, domain));
-    return previous;
+    if (const auto* run = eventLoopDomains(globalObject->vm()).innermostWithContext())
+        return run->bareContext.get();
+    return jsUndefined();
 }
 
-void restoreContext(JSGlobalObject* globalObject, JSValue previous)
+JSValue contextForInvocationSlow(JSGlobalObject* globalObject, JSValue captured)
 {
-    asyncContextData(globalObject)->putInternalField(globalObject->vm(), 0, previous);
-}
-
-JSValue baseContext(JSGlobalObject* globalObject)
-{
-    auto& runs = eventLoopDomains(globalObject->vm()).runs();
-    if (runs.isEmpty()) [[likely]]
-        return jsUndefined();
-    return runs.last().bareContext.get();
-}
-
-JSValue contextForInvocation(JSGlobalObject* globalObject, JSValue captured)
-{
-    uint32_t active = activeRunDomain(globalObject);
-    if (!active) [[likely]]
+    const auto* run = eventLoopDomains(globalObject->vm()).innermost();
+    ASSERT(run);
+    if (!run->permissive) {
+        // A strict run dispatches nothing on others' behalf that reaches JS.
         return captured;
+    }
     if (captured.isUndefinedOrNull() || captured.isEmpty())
-        return baseContext(globalObject);
-    if (domainOfContext(globalObject, captured))
-        return captured;
-    return contextWithDomain(globalObject, captured, active);
+        return run->bareContext.get();
+    return contextWithDomain(globalObject, captured, run->start);
 }
 
-void enterDomainRun(JSGlobalObject* globalObject, uint32_t domain, bool admitsLoaderJobs)
+void enterDomainRun(JSGlobalObject* globalObject, uint32_t start, bool permissive)
 {
     VM& vm = globalObject->vm();
     auto& domains = eventLoopDomains(vm);
-    globalObject->setAsyncContextTrackingEnabled(true);
-    auto* tuple = asyncContextData(globalObject);
-    JSValue saved = tuple->getInternalField(0);
-    JSValue bare = contextWithDomain(globalObject, jsUndefined(), domain);
-    domains.runs().append(DomainRunEntry {
-        domain,
-        vm.microtaskDrainDomain(),
-        vm.microtaskDrainAdmitsLoaderJobs(),
-        Strong<Unknown>(vm, saved),
-        Strong<Unknown>(vm, bare),
-    });
-    // While the loop turns, ambient context is the bare domain: callbacks the run
-    // dispatches on others' behalf (a request accepted meanwhile) must not inherit
-    // the entering frame's AsyncLocalStorage values. The frame's own continuation
-    // runs under callInEntryContext.
-    tuple->putInternalField(vm, 0, bare);
-    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), domain, admitsLoaderJobs);
-    updateDomainSlot(globalObject);
+    auto& queue = vm.defaultMicrotaskQueue();
+    queue.setDomainSentinel(domains.sentinelUid());
+    // A permissive run may await an import() and so admits module-loader jobs.
+    queue.beginDomainDrain(start, permissive);
+
+    DomainRunEntry entry { start, permissive, {}, {}, {} };
+    if (permissive) {
+        // Its own code runs under the bare context, so what that code registers and
+        // queues carries the run; native APIs must wrap stored callbacks from now on.
+        globalObject->setAsyncContextTrackingEnabled(true);
+        auto* tuple = asyncContextData(globalObject);
+        JSValue bare = contextWithDomain(globalObject, jsUndefined(), start);
+        entry.savedContext.set(vm, tuple->getInternalField(0));
+        entry.savedDomainSlot.set(vm, tuple->getInternalField(1));
+        entry.bareContext.set(vm, bare);
+        tuple->putInternalField(vm, 0, bare);
+        tuple->putInternalField(vm, 1, bare);
+    }
+    domains.push(WTF::move(entry));
+}
+
+void exitDomainRun(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    DomainRunEntry entry = eventLoopDomains(vm).pop();
+    vm.defaultMicrotaskQueue().endDomainDrain();
+    if (entry.permissive) {
+        auto* tuple = asyncContextData(globalObject);
+        tuple->putInternalField(vm, 0, entry.savedContext.get());
+        tuple->putInternalField(vm, 1, entry.savedDomainSlot.get());
+    }
 }
 
 JSValue callInEntryContext(JSGlobalObject* globalObject, JSValue function)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& runs = eventLoopDomains(vm).runs();
-    ASSERT(!runs.isEmpty());
+    const auto* run = eventLoopDomains(vm).innermost();
+    ASSERT(run && run->permissive);
     auto* tuple = asyncContextData(globalObject);
     JSValue ambient = tuple->getInternalField(0);
-    // The entering frame's values plus the run's domain.
-    tuple->putInternalField(vm, 0, contextWithDomain(globalObject, runs.last().savedContext.get(), runs.last().domain));
+    tuple->putInternalField(vm, 0, contextWithDomain(globalObject, run->savedContext.get(), run->start));
     JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), jsUndefined(), ArgList());
     tuple->putInternalField(vm, 0, ambient);
     RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
-void exitDomainRun(JSGlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto& domains = eventLoopDomains(vm);
-    DomainRunEntry entry = domains.runs().takeLast();
-    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), entry.outerRunDomain, entry.outerAdmitsLoaderJobs);
-    updateDomainSlot(globalObject);
-    restoreContext(globalObject, entry.savedContext.get());
-}
-
-void drainMicrotasksInDomain(JSGlobalObject* globalObject, uint32_t domain)
-{
-    VM& vm = globalObject->vm();
-    vm.drainMicrotasksInDomain(&eventLoopDomains(vm).sentinelUid(), domain, true);
-}
-
 } // namespace Bun
 
-using namespace JSC;
-
-extern "C" void Bun__Domain__enterRun(JSGlobalObject* globalObject, uint32_t domain, bool admitsLoaderJobs)
+extern "C" void Bun__Domain__enterRun(JSC::JSGlobalObject* globalObject, uint32_t start, bool permissive)
 {
-    Bun::enterDomainRun(globalObject, domain, admitsLoaderJobs);
+    Bun::enterDomainRun(globalObject, start, permissive);
 }
 
-extern "C" void Bun__Domain__exitRun(JSGlobalObject* globalObject)
+extern "C" void Bun__Domain__exitRun(JSC::JSGlobalObject* globalObject)
 {
     Bun::exitDomainRun(globalObject);
 }
 
 // Empty iff an exception was thrown.
-extern "C" EncodedJSValue Bun__Domain__callInEntryContext(JSGlobalObject* globalObject, EncodedJSValue function)
+extern "C" JSC::EncodedJSValue Bun__Domain__callInEntryContext(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue function)
 {
-    return JSValue::encode(Bun::callInEntryContext(globalObject, JSValue::decode(function)));
+    return JSC::JSValue::encode(Bun::callInEntryContext(globalObject, JSC::JSValue::decode(function)));
 }

@@ -343,11 +343,7 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
-        // WeakRef targets observed this job stay alive to its end; a checkpoint
-        // inside a domain run is not the end of the outer frame's job.
-        if bun_event_loop::active_run_domain() == 0 {
-            jsc_vm.release_weak_refs();
-        }
+        jsc_vm.release_weak_refs();
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             drain_result::SUCCESS => {}
@@ -357,9 +353,13 @@ impl EventLoop {
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
+        // Auto-flushes act for their sinks' owners; a strict domain run runs
+        // nothing on an outer owner's behalf (`bun_io::run_epoch`).
+        if !bun_event_loop::active_run_is_strict() {
+            vm.is_inside_deferred_task_queue.set(true);
+            self.deferred_tasks.run();
+            vm.is_inside_deferred_task_queue.set(false);
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -674,9 +674,7 @@ impl EventLoop {
                 }
                 refills += 1;
                 self.tick_concurrent();
-                if bun_event_loop::active_run_domain() == 0 {
-                    self.global_ref().handle_rejected_promises();
-                }
+                self.global_ref().handle_rejected_promises();
             }
             if self
                 .drain_microtasks_with_global(global, global_vm)
@@ -702,11 +700,7 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        // Inside a domain run the outer frame is mid-job and may still attach
-        // rejection handlers; its unhandled-rejection processing waits for it.
-        if bun_event_loop::active_run_domain() == 0 {
-            self.global_ref().handle_rejected_promises();
-        }
+        self.global_ref().handle_rejected_promises();
 
         self.entered_event_loop_count -= 1;
     }
@@ -737,10 +731,9 @@ impl EventLoop {
             unsafe { __bun_release_task_unrun(task) };
             return;
         }
-        if task.domain == 0 {
-            // Attribute to whoever is enqueuing (the active domain run, else the
-            // root), so a run can tell other domains' tasks from its own.
-            task.domain = bun_event_loop::current_task_domain();
+        if task.birth == 0 {
+            // `Task::new` on the JS thread: born now.
+            task.birth = bun_event_loop::birth_epoch();
         }
         let _ = self.tasks.write_item(task);
     }
@@ -827,9 +820,12 @@ impl EventLoop {
     }
 
     /// See [`EventLoop::yield_tasks`].
-    pub fn enqueue_task_after_yield(&mut self, task: Task) {
+    pub fn enqueue_task_after_yield(&mut self, mut task: Task) {
         if self.closed_for_tasks {
             return self.enqueue_task(task);
+        }
+        if task.birth == 0 {
+            task.birth = bun_event_loop::birth_epoch();
         }
         self.yield_tasks.push(task);
     }

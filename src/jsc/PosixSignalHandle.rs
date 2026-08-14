@@ -106,7 +106,7 @@ impl PosixSignalHandle {
             );
             // A signal is delivered to the program, never to whichever domain run
             // happens to be turning the loop when it arrives.
-            task.domain = bun_event_loop::root_domain();
+            task.birth = bun_event_loop::PRIMORDIAL_EPOCH;
             event_loop.enqueue_task(task);
         }
     }

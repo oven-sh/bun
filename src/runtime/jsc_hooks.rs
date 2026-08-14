@@ -959,30 +959,21 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
-    unsafe { auto_tick_impl(vm, None) }
+    unsafe { auto_tick_bounded(vm, None, true) }
 }
 
-/// [`auto_tick`] for a domain run's turn (`domain_run::DomainRun::turn`): the
-/// run has already done the leading immediates pass (and checked its exit
-/// condition after it, so a condition satisfied by an immediate does not sit
-/// through a poll), and the poll must not sleep past the run's `deadline`.
+/// [`auto_tick`], but the poll sleeps no later than `poll_deadline`, and the
+/// leading immediates pass can be skipped by a caller that has just done it
+/// (`domain_run::DomainRun::turn`, which checks its exit condition in between so
+/// a condition satisfied by an immediate does not sit through a poll).
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-pub(crate) unsafe fn auto_tick_for_domain_run(
+pub(crate) unsafe fn auto_tick_bounded(
     vm: *mut VirtualMachine,
-    deadline: Option<&bun_core::Timespec>,
+    poll_deadline: Option<&bun_core::Timespec>,
+    run_leading_immediates: bool,
 ) {
-    // SAFETY: per fn contract.
-    unsafe { auto_tick_impl(vm, Some(deadline)) }
-}
-
-/// `domain_run`: `None` for an ordinary tick; `Some(deadline)` when a domain run
-/// is turning the loop (leading immediates already done, poll capped by `deadline`).
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn auto_tick_impl(vm: *mut VirtualMachine, domain_run: Option<Option<&bun_core::Timespec>>) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -994,7 +985,7 @@ unsafe fn auto_tick_impl(vm: *mut VirtualMachine, domain_run: Option<Option<&bun
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
-    if domain_run.is_none() {
+    if run_leading_immediates {
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
         unsafe { (*el).tick_immediate_tasks(vm) };
     }
@@ -1110,8 +1101,7 @@ unsafe fn auto_tick_impl(vm: *mut VirtualMachine, domain_run: Option<Option<&bun
                     &mut now,
                 )
             };
-            // A domain run turning the loop must not sleep past its caller's deadline.
-            if let Some(Some(deadline)) = domain_run {
+            if let Some(deadline) = poll_deadline {
                 let now = *now.get_or_insert_with(|| {
                     bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 });
@@ -1153,12 +1143,8 @@ unsafe fn auto_tick_impl(vm: *mut VirtualMachine, domain_run: Option<Option<&bun
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
-    // Unhandled-rejection processing is the outer frame's: code after the run
-    // may still attach handlers in the same synchronous job.
-    if domain_run.is_none() {
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
-    }
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as

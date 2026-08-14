@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/Strong.h>
 #include <wtf/Vector.h>
 #include <wtf/text/SymbolImpl.h>
@@ -13,31 +14,31 @@ class VM;
 
 namespace Bun {
 
-// Scheduling domains and domain runs.
+// Domain runs, JS side.
 //
-// Every schedulable item is attributed to a *domain*: a process-unique integer
-// naming the domain run that was current when the item was scheduled (contexts
-// name no domain during ordinary, root, execution). Attribution rides in the
-// async-context slot that AsyncLocalStorage uses: a context array that carries a
-// domain is `[sentinel, domainId, ...alsPairs]`, where `sentinel` is a Symbol
-// over a per-VM private uid that user code can never obtain. Because promise
-// reactions, awaits, queueMicrotask, nextTick and every AsyncContextFrame-wrapped
-// native callback already capture the current context at registration, they
-// carry their domain with no further plumbing.
+// A *domain run* turns Bun's one event loop from inside a synchronous frame while
+// admitting only work born since the run started (the driver and the model are
+// in src/runtime/domain_run.rs and src/io/run_epoch.rs). A run is named by its
+// start epoch. Microtasks and nextTicks learn theirs from the async context they
+// capture — the slot AsyncLocalStorage uses: a context array that carries a
+// domain is `[sentinel, startEpoch, ...alsPairs]`, where `sentinel` is a Symbol
+// over a per-VM private uid user code can never obtain — and JSC's microtask
+// queue stamps every task queued during a run (MicrotaskQueue::DomainDrain).
 //
-// A *domain run* of domain D turns Bun's one event loop while admitting only D's
-// items; everything else that surfaces is parked and handed back in order when
-// the run exits (the driver is src/runtime/domain_run.rs). Runs nest as a stack;
-// the innermost run's domain is the *active run domain* (0 when no run is
-// active), which is also what `vm.drainMicrotasks()` consults so that every
-// checkpoint is run-aware.
+// A *strict* run (spawnSync) executes no JavaScript of its own, so it sets up
+// no context at all: everything queued before it is simply older than it. A
+// *permissive* run executes arbitrary code of its own; its ambient context is
+// the bare `[sentinel, start]`, so what that code registers and queues carries
+// the run, and callbacks it dispatches on others' behalf are overlaid with it
+// (contextForInvocation).
 
 struct DomainRunEntry {
-    uint32_t domain;
-    uint32_t outerRunDomain;
-    bool outerAdmitsLoaderJobs;
-    JSC::Strong<JSC::Unknown> savedContext; // context current when the run was entered (restored on exit)
-    JSC::Strong<JSC::Unknown> bareContext; // [sentinel, domain]: the run's domain and nothing else
+    uint32_t start;
+    bool permissive;
+    // Permissive runs only:
+    JSC::Strong<JSC::Unknown> savedContext; // ambient context at entry, restored on exit
+    JSC::Strong<JSC::Unknown> savedDomainSlot; // tuple field 1 at entry, restored on exit
+    JSC::Strong<JSC::Unknown> bareContext; // [sentinel, start]
 };
 
 class EventLoopDomains {
@@ -45,62 +46,69 @@ class EventLoopDomains {
 
 public:
     EventLoopDomains();
-    ~EventLoopDomains();
 
     WTF::SymbolImpl& sentinelUid() { return m_sentinelUid.get(); }
-    Vector<DomainRunEntry, 4>& runs() { return m_runs; }
+    // Start epoch of the innermost run (0 = none); mirrors runs().last() so the
+    // no-run fast paths below are two loads.
+    uint32_t activeStart() const { return m_activeStart; }
+
+    void push(DomainRunEntry&&);
+    DomainRunEntry pop();
+    const DomainRunEntry* innermost() const { return m_runs.isEmpty() ? nullptr : &m_runs.last(); }
+    // Innermost run that has a context of its own (permissive), if any.
+    const DomainRunEntry* innermostWithContext() const;
 
 private:
     Ref<WTF::SymbolImpl> m_sentinelUid;
     Vector<DomainRunEntry, 4> m_runs;
+    uint32_t m_activeStart { 0 };
 };
 
-EventLoopDomains& eventLoopDomains(JSC::VM&);
+inline EventLoopDomains& eventLoopDomains(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->eventLoopDomains();
+}
 
-// The per-global Symbol cell over the VM's sentinel uid. Lives in field 1 of the
-// global's async-context tuple so builtins can read it as
-// `$getInternalField($asyncContext, 1)`.
+// The per-global Symbol cell over the VM's sentinel uid.
 JSC::Symbol* domainSentinel(JSC::JSGlobalObject*);
-
-uint32_t allocateDomain(JSC::JSGlobalObject*);
 uint32_t domainOfContext(JSC::JSGlobalObject*, JSC::JSValue context);
 // Domain named by the context that is current right now (0 if none).
 uint32_t currentDomain(JSC::JSGlobalObject*);
-// Innermost domain run's domain (0 if no run is active).
-uint32_t activeRunDomain(JSC::JSGlobalObject*);
-// `callback` is what a native API stored: an AsyncContextFrame (→ its captured
-// context's domain) or a bare function (→ 0).
-uint32_t domainOfCallback(JSC::JSGlobalObject*, JSC::JSValue callback);
+// Innermost run's start epoch (0 if no run is active).
+inline uint32_t activeRunDomain(JSC::VM& vm) { return eventLoopDomains(vm).activeStart(); }
 
-// A copy of `context` whose domain pair names `domain` (added at the front if
-// absent). `context` itself when it already names `domain`.
+// A copy of `context` whose domain pair names `domain` (replacing an existing pair).
 JSC::JSValue contextWithDomain(JSC::JSGlobalObject*, JSC::JSValue context, uint32_t domain);
-// Make `domain` the current context's domain; returns the previous context for restoreContext().
-JSC::JSValue enterDomain(JSC::JSGlobalObject*, uint32_t domain);
-void restoreContext(JSC::JSGlobalObject*, JSC::JSValue previous);
 
-// What "no particular context" means right now: undefined outside a run, the bare
-// `[sentinel, activeRunDomain]` inside one (the run's domain, none of the entering
-// frame's AsyncLocalStorage values). Used wherever the context is reset wholesale.
-JSC::JSValue baseContext(JSC::JSGlobalObject*);
-// The context to install when invoking a callback that captured `captured`: during
-// a run, a captured context that names no domain is overlaid with the active run's
-// domain, because a callback the run dispatches is one of the run's consequences
-// and whatever it schedules must be admitted by the run.
-JSC::JSValue contextForInvocation(JSC::JSGlobalObject*, JSC::JSValue captured);
+// What "no particular context" means right now: the innermost permissive run's
+// bare `[sentinel, start]`, else undefined. Used wherever the context is reset
+// wholesale.
+JSC::JSValue baseContextSlow(JSC::JSGlobalObject*);
+inline JSC::JSValue baseContext(JSC::JSGlobalObject* globalObject)
+{
+    if (!activeRunDomain(globalObject->vm())) [[likely]]
+        return JSC::jsUndefined();
+    return baseContextSlow(globalObject);
+}
 
-// `admitsLoaderJobs`: whether module-loader microtasks (which cannot be attributed)
-// run inside this run — a run that may await an import needs them; a run that
-// cannot depend on one (spawnSync) keeps them out.
-void enterDomainRun(JSC::JSGlobalObject*, uint32_t domain, bool admitsLoaderJobs);
+// The context to install when invoking a callback that captured `captured`.
+// During a permissive run the callback is being dispatched by the run — it is
+// one of the run's consequences — so it runs under the run's domain and whatever
+// it schedules is admitted, whichever domain (if any) it was registered under.
+JSC::JSValue contextForInvocationSlow(JSC::JSGlobalObject*, JSC::JSValue captured);
+inline JSC::JSValue contextForInvocation(JSC::JSGlobalObject* globalObject, JSC::JSValue captured)
+{
+    if (!activeRunDomain(globalObject->vm())) [[likely]]
+        return captured;
+    return contextForInvocationSlow(globalObject, captured);
+}
+
+void enterDomainRun(JSC::JSGlobalObject*, uint32_t start, bool permissive);
 void exitDomainRun(JSC::JSGlobalObject*);
-// Call `function` (no arguments) under the innermost run's entry context: what was
-// current when the run was entered, plus the run's domain — for the entering
-// frame's own continuation, as opposed to callbacks dispatched on others' behalf.
-// Returns the empty value iff the call threw.
+// Call `function` (no arguments) under the innermost (permissive) run's entry
+// context: what was current when the run was entered plus the run's domain — for
+// the entering frame's own continuation, as opposed to callbacks dispatched on
+// others' behalf. Returns the empty value iff the call threw.
 JSC::JSValue callInEntryContext(JSC::JSGlobalObject*, JSC::JSValue function);
-
-// Drain this domain's microtasks (and, transitively, whatever they queue for it).
-void drainMicrotasksInDomain(JSC::JSGlobalObject*, uint32_t domain);
 
 } // namespace Bun

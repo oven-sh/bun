@@ -104,9 +104,14 @@ struct us_internal_loop_data_t {
      * (0 = none); mirrored here by Bun on run enter/exit so the ready-poll
      * dispatch reads it without a call. See us_poll_t.bun_epoch. */
     unsigned int run_start_epoch;
-    /* Whether the innermost domain run keeps accepting on listen sockets that
-     * predate it (see us_internal_defer_foreign_ready_poll). */
-    int run_admits_accepts;
+    /* A permissive run executes arbitrary code of its own and so keeps accepting
+     * on older listen sockets and adopts older sockets it writes to; a strict one
+     * (spawnSync) admits nothing that predates it. */
+    int run_permissive;
+    /* Polls the active run(s) hold (see us_poll_t.held), in the order they surfaced. */
+    struct us_poll_t **held_polls;
+    unsigned int held_polls_len;
+    unsigned int held_polls_cap;
 };
 
 #endif // LOOP_DATA_H

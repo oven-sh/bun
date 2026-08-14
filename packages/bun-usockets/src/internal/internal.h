@@ -320,13 +320,6 @@ struct us_socket_t {
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
-  /* Domain runs (see us_poll_t.bun_epoch): the socket became ready during a run
-   * it is foreign to and was taken out of the kernel poll set (its own polling
-   * bits untouched); us_internal_run_ended puts it back. rearm_writable: that
-   * readiness included kqueue's one-shot EVFILT_WRITE, which must be re-added
-   * rather than re-enabled. */
-  unsigned char disarmed_by_run : 1;
-  unsigned char rearm_writable : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -357,33 +350,42 @@ _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 /* Domain runs — see us_poll_t.bun_epoch. The epoch counter lives in Rust
  * (bun_io::run_epoch); it is a plain relaxed atomic load from here. */
 extern unsigned int Bun__runEpochCounter;
-#define Bun__runEpoch() __atomic_load_n(&Bun__runEpochCounter, __ATOMIC_RELAXED)
+#define Bun__runEpoch() (__atomic_load_n(&Bun__runEpochCounter, __ATOMIC_RELAXED) & 0x7fffffffu)
 
 /* Is `epoch` older than the domain run active on this loop's thread (if any)? */
 static inline int us_internal_epoch_is_foreign(struct us_loop_t *loop, unsigned int epoch) {
     unsigned int run_start = loop->data.run_start_epoch;
-    /* (This header is also compiled as C++, where the UNLIKELY macro's _Bool is not a type.) */
     return __builtin_expect(run_start != 0, 0) && epoch < run_start;
 }
 
-void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch);
 #ifndef LIBUS_USE_LIBUV
-void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop);
-void us_internal_poll_rearm(struct us_poll_t *p, struct us_loop_t *loop, int readd_writable);
+/* Called by the ready-poll dispatch only while a run is active: hold `p` if its
+ * readiness is not the run's to dispatch. Nonzero = held (skip it). */
+int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t *p);
+/* Owner-side poll operations on a held poll (kernel state is "removed"). */
+void us_internal_held_poll_forget(struct us_loop_t *loop, struct us_poll_t *p);
+void us_internal_held_poll_moved(struct us_loop_t *loop, struct us_poll_t *from, struct us_poll_t *to);
 #endif
-/* `s` is being written by whatever code is running now: if that is a domain run
- * the socket predates, the socket (and the reply on it) becomes the run's —
- * back into the poll set if the run had already parked it. */
+/* A run on this loop's thread exited; `outer_start_epoch` is the enclosing
+ * run's start (0 if none). Put every held poll that is not still foreign to the
+ * enclosing run back into the kernel set; pending readiness reports again. */
+void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch);
+
+/* A permissive run's own code is writing to `s`: if `s` predates the run, the
+ * socket (and the reply on it) becomes the run's. Strict runs execute no code
+ * of their own that could write to an older socket; writes that happen while
+ * one is active are outer housekeeping (cork/auto-flush) and change nothing. */
 static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
 #ifndef LIBUS_USE_LIBUV
-    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && !us_socket_is_closed(s)) {
+    if (__builtin_expect(loop->data.run_permissive, 0) && us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && !us_socket_is_closed(s)) {
         s->p.bun_epoch = Bun__runEpoch();
-        if (s->disarmed_by_run) {
-            s->disarmed_by_run = 0;
-            us_internal_poll_rearm(&s->p, loop, s->rearm_writable);
-            s->rearm_writable = 0;
+        if (s->p.held) {
+            us_internal_held_poll_forget(loop, &s->p);
+            us_poll_start_rc(&s->p, loop, us_poll_events(&s->p));
         }
     }
+#else
+    (void) s; (void) loop;
 #endif
 }
 

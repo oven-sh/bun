@@ -472,11 +472,14 @@ impl FilePoll {
     }
 
     #[inline]
-    fn forget_run_disarm(&mut self) {
+    /// Returns whether the poll was disarmed (and so, on epoll, is out of the set).
+    fn forget_run_disarm(&mut self) -> bool {
         if self.flags.contains(Flags::DisarmedByRun) {
             self.flags.remove(Flags::DisarmedByRun);
             crate::run_epoch::forget_disarmed(self);
+            return true;
         }
+        false
     }
 
     /// The kernel filters this poll is registered for, as `register` flags.
@@ -631,12 +634,19 @@ impl FilePoll {
         {
             let (first, second) = self.registered_directions();
             if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::KqueueDispatch) {
-                // The knote left with the event; add it back as it was.
+                // The knote left with the event; add it back as it was (its birth included:
+                // this is the exiting run re-arming it, not its owner).
                 let epoch = self.epoch;
                 if let Some(flag) = first.or(second) {
-                    let _ = self.register_with_fd(loop_, flag, OneShotFlag::OneShot, self.fd);
+                    let _ = self.register_with_fd_impl(
+                        loop_,
+                        flag,
+                        OneShotFlag::OneShot,
+                        self.fd,
+                        false,
+                    );
                 }
-                self.epoch = epoch; // re-arming on the run's behalf is not use by the run
+                self.epoch = epoch;
             } else {
                 for flag in [first, second].into_iter().flatten() {
                     let _ = kevent_enable(loop_.fd, self, flag, true);
@@ -854,17 +864,28 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        // (Re)arming a poll during a domain run is active use by the code the run
-        // is executing: from here on its readiness is that run's to dispatch.
-        self.forget_run_disarm();
-        self.epoch = crate::run_epoch::current();
+        // (Re)arming a poll is active use by whatever code is running: inside a
+        // permissive domain run that is the run's own code, and the poll's
+        // readiness is from here on the run's to dispatch. (A strict run runs no
+        // code that could re-arm an outer poll; keep the birth it had.)
+        let was_disarmed = self.forget_run_disarm();
+        if !crate::run_epoch::active_run_is_strict() {
+            self.epoch = crate::run_epoch::current();
+        }
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        return self.register_with_fd_impl(loop_, flag, one_shot, fd, was_disarmed);
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        )))]
+        let _ = was_disarmed;
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -889,6 +910,7 @@ impl FilePoll {
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
+        #[allow(unused_variables)] was_disarmed: bool,
     ) -> sys::Result<()> {
         let watcher_fd = loop_.fd;
 
@@ -946,22 +968,17 @@ impl FilePoll {
                 u64: Pollable::init(self).ptr() as u64,
             };
 
-            let op: c_int = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
+            // A disarmed poll was taken out of the set (`disarm_for_run`): re-add.
+            let op: c_int = if !was_disarmed
+                && (self.is_registered() || self.flags.contains(Flags::NeedsRearm))
+            {
                 EPOLL::CTL_MOD
             } else {
                 EPOLL::CTL_ADD
             };
 
             // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let mut ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
-            // Taken out of the set behind the owner's back (`disarm_for_run`, or the
-            // kernel dropping a closed fd): re-add rather than fail the re-arm.
-            if op == EPOLL::CTL_MOD && sys::get_errno(ctl) == sys::E::ENOENT {
-                // SAFETY: as above.
-                ctl = unsafe {
-                    linux::epoll_ctl(watcher_fd, EPOLL::CTL_ADD, fd.native(), &raw mut event)
-                };
-            }
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);

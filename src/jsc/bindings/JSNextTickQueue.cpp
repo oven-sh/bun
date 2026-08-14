@@ -102,9 +102,9 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         if (!drainFn)
             return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
-        // processTicksAndRejections(activeRunDomain): inside a domain run only that
-        // domain's ticks run; the rest are parked and requeued in order.
-        drainArgs.append(jsNumber(vm.microtaskDrainDomain()));
+        // processTicksAndRejections(activeRunDomain): inside a domain run only ticks
+        // queued since it started run; the rest are parked and requeued in order.
+        drainArgs.append(jsNumber(Bun::activeRunDomain(vm)));
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );
     }

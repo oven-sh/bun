@@ -699,7 +699,8 @@ declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: numbe
 /**
  * Schedules a callback to be invoked as a microtask.
  */
-declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
+/** Queue `callback(arg0, arg1)` as a microtask, run under the current async context. */
+declare function $enqueueJob(callback: (arg0?: any, arg1?: any) => any, arg0?: any, arg1?: any): void;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

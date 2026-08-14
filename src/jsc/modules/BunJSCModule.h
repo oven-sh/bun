@@ -548,44 +548,12 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
     return JSValue::encode(jsString(vm, sourceOrigin.string()));
 }
 
-// Scheduling-domain testing hooks (see EventLoopDomain.h).
+// Domain runs (src/runtime/domain_run.rs), testing hooks.
 //
-// runInDomainForTesting(thunk) -> [domainId, result]
-//   Enter a fresh domain, call thunk, drain that domain's microtasks, restore.
-JSC_DECLARE_HOST_FUNCTION(functionRunInDomainForTesting);
-JSC_DEFINE_HOST_FUNCTION(functionRunInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thunk = callFrame->argument(0);
-    auto callData = JSC::getCallData(thunk);
-    if (callData.type == CallData::Type::None)
-        return throwVMTypeError(globalObject, scope, "runInDomainForTesting expects a function"_s);
-
-    uint32_t domain = Bun::allocateDomain(globalObject);
-    JSValue previous = Bun::enterDomain(globalObject, domain);
-    EnsureStillAliveScope keepPrevious(previous);
-    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, thunk, callData, jsUndefined(), ArgList());
-    if (scope.exception()) [[unlikely]] {
-        Bun::restoreContext(globalObject, previous);
-        return {};
-    }
-    EnsureStillAliveScope keepResult(result);
-    Bun::drainMicrotasksInDomain(globalObject, domain);
-    Bun::restoreContext(globalObject, previous);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSArray* tuple = constructEmptyArray(globalObject, nullptr, 2);
-    RETURN_IF_EXCEPTION(scope, {});
-    tuple->putDirectIndex(globalObject, 0, jsNumber(domain));
-    tuple->putDirectIndex(globalObject, 1, result);
-    return JSValue::encode(tuple);
-}
-
-// runUntilInDomainForTesting(thunk) -> promise
-//   Enter a fresh domain run, call thunk (which returns a promise created under
-//   that domain), turn the whole loop for the domain until the promise settles.
-extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk);
+// runUntilInDomainForTesting(thunk[, timeoutMs = 30000]) -> promise
+//   Enter a permissive domain run, call thunk under it (it returns a promise the
+//   run created) and turn the whole loop for the run until the promise settles.
+extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk, uint32_t timeoutMs);
 JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);
 JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -594,7 +562,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * g
     JSValue thunk = callFrame->argument(0);
     if (!thunk.isCallable())
         return throwVMTypeError(globalObject, scope, "runUntilInDomainForTesting expects a function"_s);
-    RELEASE_AND_RETURN(scope, Bun__Domain__runUntilInDomainForTesting(globalObject, JSValue::encode(thunk)));
+    uint32_t timeoutMs = 30000;
+    if (callFrame->argument(1).isUInt32())
+        timeoutMs = callFrame->argument(1).asUInt32();
+    RELEASE_AND_RETURN(scope, Bun__Domain__runUntilInDomainForTesting(globalObject, JSValue::encode(thunk), timeoutMs));
 }
 
 // currentDomainForTesting() -> [contextDomain, activeRunDomain]
@@ -606,7 +577,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCurrentDomainForTesting, (JSGlobalObject * glob
     JSArray* tuple = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
     tuple->putDirectIndex(globalObject, 0, jsNumber(Bun::currentDomain(globalObject)));
-    tuple->putDirectIndex(globalObject, 1, jsNumber(Bun::activeRunDomain(globalObject)));
+    tuple->putDirectIndex(globalObject, 1, jsNumber(Bun::activeRunDomain(vm)));
     return JSValue::encode(tuple);
 }
 
@@ -1080,7 +1051,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 39);
+    INIT_NATIVE_MODULE(BunJSC, 38);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1115,7 +1086,6 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
-    putNativeFn(Identifier::fromString(vm, "runInDomainForTesting"_s), functionRunInDomainForTesting);
     putNativeFn(Identifier::fromString(vm, "runUntilInDomainForTesting"_s), functionRunUntilInDomainForTesting);
     putNativeFn(Identifier::fromString(vm, "currentDomainForTesting"_s), functionCurrentDomainForTesting);
 

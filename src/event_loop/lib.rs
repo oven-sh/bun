@@ -27,75 +27,12 @@ pub mod SpawnSyncEventLoop;
 pub mod any_event_loop;
 
 // ─── domain runs ──────────────────────────────────────────────────
-// The run driver lives in `bun_runtime::domain_run` (it needs the timer heap
-// and the VM); the one piece of state lower tiers need — which run is innermost
-// on this thread — is mirrored here so `Task` stamping and the gates are a
-// single TLS load with no upward call.
-/// Domain ids are process-unique so a task posted from one JS thread to another
-/// never aliases a domain of the receiving thread. 0 = unattributed.
-static NEXT_DOMAIN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
-
-/// Allocate a fresh scheduling domain id (never 0).
-#[inline]
-pub fn allocate_domain() -> u32 {
-    let id = NEXT_DOMAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    assert!(id != 0, "scheduling domain ids exhausted");
-    id
-}
-
-/// `EventLoopDomain.cpp` allocates through this so C++ and Rust share one counter.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Domain__allocateGlobal() -> u32 {
-    allocate_domain()
-}
-
-thread_local! {
-    static ACTIVE_RUN_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
-    /// This JS thread's root domain (0 on threads that own no VM).
-    static ROOT_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
-}
-
-/// The innermost domain run's domain on this thread; 0 when none.
-#[inline]
-pub fn active_run_domain() -> u32 {
-    ACTIVE_RUN_DOMAIN.get()
-}
-
-/// `bun_runtime::domain_run` only: entering/exiting a run.
-#[inline]
-pub fn set_active_run_domain(domain: u32) {
-    ACTIVE_RUN_DOMAIN.set(domain)
-}
-
-/// This thread owns a JS VM (main thread or a Worker): give it a root domain,
-/// so work it creates while no domain run is active belongs to *its* root rather
-/// than to nobody. Idempotent.
-#[inline]
-pub fn mark_js_thread() {
-    if ROOT_DOMAIN.get() == 0 {
-        ROOT_DOMAIN.set(allocate_domain());
-    }
-}
-
-/// This JS thread's root domain id (0 on a thread that owns no VM). A [`Task`]
-/// stamped with it was created by root-domain code here; during a domain run
-/// it is foreign like any other domain's, outside one it is nothing special.
-#[inline]
-pub fn root_domain() -> u32 {
-    ROOT_DOMAIN.get()
-}
-
-/// What a task created right now, on this thread, is attributed to: the active
-/// run's domain; else this thread's root domain; else 0 (created on a thread
-/// with no VM: provenance unknown — such a task is admitted by any run, since
-/// its observable continuations are microtasks, which are gated).
-#[inline]
-pub fn current_task_domain() -> u32 {
-    match ACTIVE_RUN_DOMAIN.get() {
-        0 => ROOT_DOMAIN.get(),
-        domain => domain,
-    }
-}
+// Attribution lives in the lowest tier (`bun_io::run_epoch`); re-exported so
+// task producers here and above stamp births without naming `bun_io`.
+pub use bun_io::run_epoch::{
+    PRIMORDIAL as PRIMORDIAL_EPOCH, active_run_is_strict, active_run_start, birth as birth_epoch,
+    is_foreign as is_foreign_birth,
+};
 
 // ─── public surface ─────────────────────────────────────────────────────────
 

@@ -470,8 +470,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->disarmed_by_run = 0;
-    s->rearm_writable = 0;
     s->fin_deferred = 0;
     s->connect_state = NULL;
 
@@ -505,7 +503,9 @@ void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) {
 
 int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     if (s->ssl) {
-        us_internal_socket_touch_epoch(s, s->group->loop);
+        if (!us_socket_is_closed(s)) {
+            us_internal_socket_touch_epoch(s, s->group->loop);
+        }
         return us_internal_ssl_write(s, data, length);
     }
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {

@@ -115,9 +115,7 @@ pub enum Version {
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
     ///
-    /// Same content as v1. Only preserved on a lockfile that was loaded at v2;
-    /// a new lockfile is stamped v1 so Bun releases that predate v2 can read it
-    /// (see `Stringifier::version_to_write`).
+    /// Same content as v1; only ever preserved, never stamped on a new lockfile.
     V2 = 2,
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
@@ -184,46 +182,25 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    /// Pick the `lockfileVersion` to stamp. The stamp is the lowest version whose
-    /// readers understand the content being written, so a `bun.lock` keeps
-    /// loading in every Bun release that can read it:
-    ///
-    /// - A lockfile loaded as v1 or v2 keeps its version. v1→v2 only added
-    ///   parse-time strictness on identical content, so neither is upgraded or
-    ///   downgraded on re-save.
-    /// - A lockfile with no prior version is stamped v1. `text_lockfile_version`
-    ///   holds the parsed version when the lockfile was loaded from text and is
-    ///   left at `Version::CURRENT` otherwise (a fresh install, or a migration
-    ///   from another lockfile format); both land in the v3 arm below. Stamping
-    ///   v2 there would lock out the releases that predate v2 without changing a
-    ///   byte of content.
-    /// - v0 is floored to v1: v0→v1 changed the content (v1 stopped listing a
-    ///   workspace package's dependencies as a trailing object) and the writer
-    ///   only emits the v1+ single-element `["name@workspace:path"]` form, which
-    ///   a v0 stamp would make the next parse reject ("Missing dependencies
-    ///   object").
-    /// - Scoped overrides (parent-scoped or `name@range` rules) are content an
-    ///   older reader would silently ignore, so while any exist the lockfile is
-    ///   stamped v3 whatever version was loaded; once they are gone a v3 lockfile
-    ///   drops back to v1 like a fresh one.
-    ///
-    /// v3 implies the v2 parse checks, and the parser evaluates the integrity
-    /// check against the *reader's* registries, so before stamping v3 the package
-    /// tree is walked the same way the writer serializes it (only packages that
-    /// reach the written `packages` object count; migration can leave
-    /// unreferenced entries in `pkg_resolutions`). A row some reader could reject
-    /// at v2+ (an off-registry npm tarball without a supported integrity, an
-    /// unsafe git `.bun-tag`) holds the lockfile at v1 with the override objects
-    /// written as-is: the parser reads those at every version, so the file still
-    /// round-trips everywhere instead of depending on the writer's `~/.npmrc`.
+    /// The lowest `lockfileVersion` whose readers understand the content being
+    /// written: v1 and v2 are the same content and pre-v2 readers reject the v2
+    /// stamp, so a new lockfile is v1; v3 is stamped only while scoped overrides
+    /// (which older readers would silently drop) exist.
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
         if !lockfile.overrides.has_scoped() {
             return match lockfile.text_lockfile_version {
                 loaded @ (Version::V1 | Version::V2) => loaded,
+                // v0: the writer only emits the v1+ workspace entry shape. v3: a
+                // lockfile that was never loaded sits at `Version::CURRENT`.
                 Version::V0 | Version::V3 => Version::V1,
             };
         }
 
+        // v3 implies the v2 parse checks, which a reader evaluates against its
+        // own registry config. Any serialized row that some reader could reject
+        // holds the file at v1 instead; the override objects parse at every
+        // version. Walk the tree rather than `pkg_resolutions`, which migration
+        // can leave holding entries the writer never emits.
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
@@ -251,29 +228,19 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the tarball
-                        // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary_inner`). An empty
-                        // URL never sets the parser's `npm_url_needs_integrity`,
-                        // so that round-trips for any reader. A URL under a
-                        // configured-but-not-default scope is written verbatim,
-                        // and the parser's integrity check is evaluated against
-                        // the *reader's* scope config, so it is not
-                        // config-independent: a writer with a private `@scope`
-                        // registry could stamp v3 on a lockfile a teammate
-                        // without that scope then fails to parse. Stay at v1 for
-                        // those so the file keeps loading everywhere.
+                        // Only a default-registry URL is config-independent: the
+                        // writer serializes it as `""`, which never trips the
+                        // parser's `npm_url_needs_integrity`. A URL under one of
+                        // the writer's own scopes is written verbatim and a reader
+                        // without that scope would reject it.
                         let url = res.npm().url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Version::V1;
                         }
                     }
                     ResolutionTag::Git => {
-                        // An unsafe git `.bun-tag` is only rejected at v2+, so
-                        // staying at v1 keeps it loading. (A `github` tag is
-                        // rejected at every version, so no lockfile version can
-                        // round-trip an unsafe one — nothing to gate here.)
+                        // A `github` tag is rejected at every version, so there is
+                        // nothing to gate for it.
                         if !crate::repository::is_safe_resolved_tag(
                             res.repository().resolved.slice(buf),
                         ) {

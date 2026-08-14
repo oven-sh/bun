@@ -1595,13 +1595,28 @@ test.skipIf(isWindows)("Bun.build does not wait for unrelated thread-pool work",
     "run.js": `
       const { join } = require("path");
       const dir = process.argv[2];
-      require("child_process").execFileSync("mkfifo", [join(dir, "fifo")]);
+      const fs = require("fs");
+      const fifo = join(dir, "fifo");
+      require("child_process").execFileSync("mkfifo", [fifo]);
       await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
-      require("fs").readFile(join(dir, "fifo"), () => {}); // parks one pool thread in read() for good
-      await Bun.sleep(50);
+      let readDone = false;
+      fs.readFile(fifo, () => { readDone = true; }); // a pool thread blocks opening/reading the FIFO
+      // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
+      // waits for the pool thread to be in there and, by staying open without writing, keeps it
+      // parked in read() until we close it below.
+      let writer;
+      for (const deadline = Date.now() + 10_000; ; ) {
+        try { writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); break; } catch (e) {
+          if (e.code !== "ENXIO" || Date.now() > deadline) throw e;
+          await Bun.sleep(5);
+        }
+      }
       const t = performance.now();
       const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
-      console.log(result.success, result.outputs.length > 0, performance.now() - t < 10_000);
+      console.log(result.success, result.outputs.length > 0, performance.now() - t < 10_000, readDone);
+      fs.closeSync(writer); // EOF for the reader: let the pool thread go before exiting
+      for (const deadline = Date.now() + 10_000; !readDone && Date.now() < deadline; ) await Bun.sleep(5);
+      console.log(readDone);
       process.exit(0);
     `,
   });
@@ -1614,6 +1629,6 @@ test.skipIf(isWindows)("Bun.build does not wait for unrelated thread-pool work",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("true true true\n");
+  expect(stdout).toBe("true true true false\ntrue\n");
   expect(exitCode).toBe(0);
 }, 30_000);

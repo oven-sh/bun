@@ -112,7 +112,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     });
                     // Capacity pre-reserved → push never reallocates → ptr stays stable.
                     let task = tasks.last_mut().unwrap();
-                    batch.push(ThreadPoolLib::Batch::from(task.task.as_task_ptr()));
+                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
                 }
             }
             debug_assert_eq!(tasks.len(), total_count);
@@ -194,7 +194,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
-                                combined_part_ranges.last_mut().unwrap().task.as_task_ptr(),
+                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                             ));
                         }
                     }
@@ -214,7 +214,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
-                                combined_part_ranges.last_mut().unwrap().task.as_task_ptr(),
+                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                             ));
                         }
                     }
@@ -233,7 +233,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             },
                         });
                         batch.push(ThreadPoolLib::Batch::from(
-                            combined_part_ranges.last_mut().unwrap().task.as_task_ptr(),
+                            &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                         ));
                     }
                 }

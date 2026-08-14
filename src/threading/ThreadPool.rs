@@ -28,7 +28,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -199,8 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
-    is_running: AtomicBool,
     stats: PoolStats,
 }
 
@@ -233,7 +231,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            is_running: AtomicBool::new(false),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
                 // measured from pool creation. Skip the syscall when stats are
@@ -325,7 +322,8 @@ pub struct Task {
 /// task too (unboundedly, if one of them blocks). Embed this where you would embed `Task`
 /// (it is `repr(C)` with `task` first, so a `*mut Task` handed to `run` is also the
 /// `*mut CountedTask` and container-of over the embedding field still works), schedule
-/// [`as_task_ptr`](Self::as_task_ptr), then `wait()` on the group.
+/// `&raw mut outer.counted.task` — a raw place projection through the *outer* struct, so the
+/// callback's container-of keeps provenance over its sibling fields — then `wait()` on the group.
 #[repr(C)]
 pub struct CountedTask {
     pub task: Task,
@@ -336,6 +334,7 @@ pub struct CountedTask {
 // SAFETY: as `Task`; `group` is only touched through `WaitGroup::finish_raw`, which any
 // thread may call.
 unsafe impl Send for CountedTask {}
+// SAFETY: as for `Send` — nothing is reachable through `&CountedTask` but the `Sync` `WaitGroup`.
 unsafe impl core::marker::Sync for CountedTask {}
 
 impl CountedTask {
@@ -350,10 +349,6 @@ impl CountedTask {
             run,
             group: core::ptr::from_ref(group),
         }
-    }
-
-    pub fn as_task_ptr(&mut self) -> *mut Task {
-        core::ptr::addr_of_mut!(self.task)
     }
 
     unsafe fn run_and_finish(task: *mut Task) {
@@ -603,7 +598,7 @@ impl ThreadPool {
         // Push to the Vec first (no realloc: capacity reserved), then take
         // stable addresses.
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(runner_task.task.as_task_ptr()));
+            batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
         group.wait();
@@ -741,8 +736,6 @@ impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
-        // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        self.is_running.store(true, Ordering::Relaxed);
         let target = count.min((self.max_threads & 0x3FFF) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
@@ -779,7 +772,6 @@ impl ThreadPool {
 
     #[inline(never)]
     fn notify_slow(&self, is_waking: bool) {
-        self.is_running.store(true, Ordering::Relaxed);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);

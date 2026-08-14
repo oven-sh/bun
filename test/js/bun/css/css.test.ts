@@ -7242,8 +7242,20 @@ describe("css tests", () => {
     minify_test(".foo { rotate: y 10deg }", ".foo{rotate:y 10deg}");
     minify_test(".foo { rotate: 0 1 0 10deg }", ".foo{rotate:y 10deg}");
     minify_test(".foo { rotate: 1 1 1 10deg }", ".foo{rotate:1 1 1 10deg}");
-    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:none}");
+    // A zero rotation is not `none`: unlike `none` it still creates a stacking
+    // context and a containing block, the same as `transform: rotate(0)`.
+    minify_test(".foo { rotate: 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0turn }", ".foo{rotate:0turn}");
+    minify_test(".foo { rotate: z 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: x 0deg }", ".foo{rotate:x 0deg}");
     minify_test(".foo { rotate: none }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: NONE }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: none; rotate: 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0deg; rotate: none }", ".foo{rotate:none}");
+    // When folded into a preceding `transform`, `none` and `0deg` are both the identity rotation.
+    minify_test(".foo { transform: translate(1px); rotate: none }", ".foo{transform:translate(1px)rotate(0)}");
+    minify_test(".foo { transform: translate(1px); rotate: 0deg }", ".foo{transform:translate(1px)rotate(0)}");
     minify_test(".foo { scale: 1 }", ".foo{scale:1}");
     minify_test(".foo { scale: 1 1 }", ".foo{scale:1}");
     minify_test(".foo { scale: 1 1 1 }", ".foo{scale:1}");

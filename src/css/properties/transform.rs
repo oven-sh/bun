@@ -746,16 +746,25 @@ impl Translate {
 }
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
+///
+/// `none` is not the same as a zero angle: like a non-`none` `transform`, any
+/// rotation (even `0deg`) creates a stacking context and containing block.
 #[derive(Copy, Clone, PartialEq)]
-pub struct Rotate {
-    /// Rotation around the x axis.
-    pub(crate) x: f32,
-    /// Rotation around the y axis.
-    pub(crate) y: f32,
-    /// Rotation around the z axis.
-    pub(crate) z: f32,
-    /// The angle of rotation.
-    pub(crate) angle: Angle,
+pub enum Rotate {
+    /// The "none" keyword.
+    None,
+
+    /// A rotation of `angle` around the `x y z` axis.
+    Xyz {
+        /// The x component of the axis.
+        x: f32,
+        /// The y component of the axis.
+        y: f32,
+        /// The z component of the axis.
+        z: f32,
+        /// The angle of rotation.
+        angle: Angle,
+    },
 }
 
 impl Rotate {
@@ -764,41 +773,36 @@ impl Rotate {
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
-            return Ok(Rotate {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-                angle: Angle::Deg(0.0),
-            });
+            return Ok(Rotate::None);
         }
 
         let angle = input.try_parse(Angle::parse);
 
-        struct Xyz {
+        struct Axis {
             x: f32,
             y: f32,
             z: f32,
         }
 
-        let xyz = match input.try_parse(|i| -> Result<Xyz> {
+        let axis = match input.try_parse(|i| -> Result<Axis> {
             let location = i.current_source_location();
             let ident = i.expect_ident_cloned()?;
             crate::match_ignore_ascii_case! { ident, {
-                b"x" => Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 }),
-                b"y" => Ok(Xyz { x: 0.0, y: 1.0, z: 0.0 }),
-                b"z" => Ok(Xyz { x: 0.0, y: 0.0, z: 1.0 }),
+                b"x" => Ok(Axis { x: 1.0, y: 0.0, z: 0.0 }),
+                b"y" => Ok(Axis { x: 0.0, y: 1.0, z: 0.0 }),
+                b"z" => Ok(Axis { x: 0.0, y: 0.0, z: 1.0 }),
                 _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
             }}
         }) {
             Ok(v) => v,
             Err(_) => input
-                .try_parse(|i| -> Result<Xyz> {
+                .try_parse(|i| -> Result<Axis> {
                     let x = CSSNumberFns::parse(i)?;
                     let y = CSSNumberFns::parse(i)?;
                     let z = CSSNumberFns::parse(i)?;
-                    Ok(Xyz { x, y, z })
+                    Ok(Axis { x, y, z })
                 })
-                .unwrap_or(Xyz {
+                .unwrap_or(Axis {
                     x: 0.0,
                     y: 0.0,
                     z: 1.0,
@@ -810,34 +814,34 @@ impl Rotate {
             Err(_) => Angle::parse(input)?,
         };
 
-        Ok(Rotate {
-            x: xyz.x,
-            y: xyz.y,
-            z: xyz.z,
+        Ok(Rotate::Xyz {
+            x: axis.x,
+            y: axis.y,
+            z: axis.z,
             angle: final_angle,
         })
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
-            dest.write_str("none")?;
-            return Ok(());
-        }
+        let (x, y, z, angle) = match self {
+            Rotate::None => return dest.write_str("none"),
+            Rotate::Xyz { x, y, z, angle } => (*x, *y, *z, angle),
+        };
 
-        if self.x == 1.0 && self.y == 0.0 && self.z == 0.0 {
+        if x == 1.0 && y == 0.0 && z == 0.0 {
             dest.write_str("x ")?;
-        } else if self.x == 0.0 && self.y == 1.0 && self.z == 0.0 {
+        } else if x == 0.0 && y == 1.0 && z == 0.0 {
             dest.write_str("y ")?;
-        } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
-            CSSNumberFns::to_css(self.x, dest)?;
+        } else if !(x == 0.0 && y == 0.0 && z == 1.0) {
+            CSSNumberFns::to_css(x, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.y, dest)?;
+            CSSNumberFns::to_css(y, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.z, dest)?;
+            CSSNumberFns::to_css(z, dest)?;
             dest.write_char(b' ')?;
         }
 
-        self.angle.to_css(dest)
+        angle.to_css(dest)
     }
 }
 
@@ -846,11 +850,14 @@ impl Rotate {
 impl Rotate {
     /// Converts the rotation to a transform function.
     fn to_transform(&self, _bump: &Bump) -> Transform {
-        Transform::Rotate3d {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-            angle: self.angle,
+        match *self {
+            Rotate::None => Transform::Rotate3d {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+                angle: Angle::Deg(0.0),
+            },
+            Rotate::Xyz { x, y, z, angle } => Transform::Rotate3d { x, y, z, angle },
         }
     }
 

@@ -14,8 +14,7 @@ class StackFrame;
 
 namespace Bun {
 
-/// The class whose constructor JSC synthesized because it declared none (that constructor's own
-/// source() is the URL-less "(function () { })" template), or null for any other executable.
+/// The class of a constructor JSC synthesized (its own source() is the URL-less "(function () { })" template), else null.
 JSC::SourceCode defaultClassConstructorClassSource(JSC::ScriptExecutable* executable);
 
 /// Position of the `class` keyword `classSource` starts at; frames of its default constructor go there, as in V8.

@@ -540,11 +540,8 @@ pub(crate) fn write_output_files_to_disk(
 
         let output_kind = if matches!(chunk.content, Content::Css(_)) {
             options::OutputKind::Asset
-        } else if chunk.entry_point.is_entry_point() {
-            c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                .output_kind()
         } else {
-            options::OutputKind::Chunk
+            chunk.entry_point_kind(&c.graph).output_kind()
         };
 
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {

@@ -272,6 +272,27 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// The entry point kind this chunk is named and classified by.
+    ///
+    /// A stylesheet only gets a JS chunk because it is `import()`ed (see `compute_chunks`), so
+    /// that chunk is a dynamic import chunk even when the user also passed the stylesheet as an
+    /// entry point: the entry point name and kind belong to its CSS chunk.
+    pub(crate) fn entry_point_kind(
+        &self,
+        linker_graph: &LinkerGraph<'_>,
+    ) -> crate::entry_point::Kind {
+        if !self.entry_point.is_entry_point() {
+            return crate::entry_point::Kind::None;
+        }
+        let source_index = self.entry_point.source_index() as usize;
+        if matches!(self.content, Content::Javascript(_))
+            && linker_graph.ast.items_css()[source_index].is_some()
+        {
+            return crate::entry_point::Kind::DynamicImport;
+        }
+        linker_graph.files.items_entry_point_kind()[source_index]
+    }
+
     /// Returns the HTML closing tag that must be escaped when this chunk's content
     /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
     pub(crate) fn closing_tag_for_content(&self) -> &'static [u8] {

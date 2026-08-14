@@ -1,7 +1,8 @@
+import type { BuildArtifact } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -9,6 +10,12 @@ const env = {
   // Deflake these tests that check import evaluation order is consistent.
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
 };
+
+function outputKinds(outputs: BuildArtifact[]) {
+  return outputs
+    .map(output => ({ file: basename(output.path), kind: output.kind }))
+    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
 
 describe("bundler", () => {
   itBundled("splitting/DynamicImportCSSFile", {
@@ -414,12 +421,12 @@ describe("bundler", () => {
     ],
   });
 
-  // A stylesheet that is both a user-specified entry point and import()ed only
-  // gets its CSS output (entry point kinds are exclusive), so the import() is
-  // still rewritten to the .css output (or, with --css-chunking, to whatever
-  // chunk is at index 0) instead of a JS chunk exporting the class map.
+  // A stylesheet that is both a user-specified entry point and import()ed keeps
+  // its entry-point-named CSS output and additionally gets the same hashed JS
+  // chunk an import()-only stylesheet gets, which is what the import() resolves
+  // to. Previously the stylesheet's entry point kind alone decided whether the
+  // JS chunk exists, so the import() was rewritten to the .css output.
   itBundled("splitting/DynamicImportOfUserSpecifiedCSSEntryPoint", {
-    todo: true,
     files: {
       "/entry.js": `
         const mod = await import('./styles.module.css');
@@ -430,8 +437,30 @@ describe("bundler", () => {
     entryPoints: ["/entry.js", "/styles.module.css"],
     splitting: true,
     outdir: "/out",
+    metafile: true,
+    onAfterApiBundle(build) {
+      expect(outputKinds(build.outputs)).toEqual([
+        { file: "entry.css", kind: "asset" },
+        { file: "entry.js", kind: "entry-point" },
+        { file: expect.stringMatching(/^styles\.module-[a-z0-9]+\.js$/), kind: "chunk" },
+        { file: "styles.module.css", kind: "asset" },
+      ]);
+    },
     onAfterBundle(api) {
-      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/styles\.module[^"]*\.js"\)/);
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
+      expect(api.readFile("/out/styles.module.css")).toContain("color: red");
+
+      const { outputs } = JSON.parse(api.readFile("/metafile.json"));
+      const stylesheetOutputs = Object.keys(outputs).filter(file => outputs[file].entryPoint === "styles.module.css");
+      expect(stylesheetOutputs.map(file => basename(file)).sort()).toEqual([
+        expect.stringMatching(/^styles\.module-[a-z0-9]+\.js$/),
+        "styles.module.css",
+      ]);
+      const chunk = stylesheetOutputs.find(file => file.endsWith(".js"))!;
+      expect(outputs[chunk]).toMatchObject({
+        exports: ["default", "foo"],
+        cssBundle: stylesheetOutputs.find(file => file.endsWith(".css")),
+      });
     },
     run: {
       file: "/out/entry.js",
@@ -440,7 +469,34 @@ describe("bundler", () => {
     },
   });
 
-  // A stylesheet the user passes as an entry point still only produces CSS.
+  // The same build with the stylesheet listed first (so it has entry point id 0)
+  // and kept in memory, which classifies the outputs on a separate code path.
+  test("splitting/DynamicImportOfUserSpecifiedCSSEntryPointInMemory", async () => {
+    using dir = tempDir("splitting-user-css-entry-in-memory", {
+      "entry.js": `import('./styles.module.css').then(mod => console.log(mod.foo));`,
+      "styles.module.css": `.foo { color: red; }`,
+    });
+    const root = String(dir);
+
+    const build = await Bun.build({
+      entrypoints: [join(root, "styles.module.css"), join(root, "entry.js")],
+      splitting: true,
+      naming: { chunk: "[name]-[hash].[ext]" },
+    });
+    expect(build.logs).toEqual([]);
+    expect(outputKinds(build.outputs)).toEqual([
+      { file: "entry.css", kind: "asset" },
+      { file: "entry.js", kind: "entry-point" },
+      { file: expect.stringMatching(/^styles\.module-[a-z0-9]+\.js$/), kind: "chunk" },
+      { file: "styles.module.css", kind: "asset" },
+    ]);
+
+    const entry = build.outputs.find(output => output.kind === "entry-point")!;
+    expect(await entry.text()).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
+  });
+
+  // A stylesheet the user passes as an entry point without import()ing it
+  // anywhere still only produces CSS.
   itBundled("splitting/UserSpecifiedCSSEntryPointHasNoJSChunk", {
     files: {
       "/entry.js": `console.log('entry')`,
@@ -503,6 +559,60 @@ describe("bundler", () => {
     expect(runOut).toBe("default,foo true\n");
     expect(runExit).toBe(0);
   });
+
+  // The user-specified variant of the above: the stylesheet's own CSS chunk is
+  // the one shared with the importing entry point (named after whichever entry
+  // point comes first), and the import() must point at the stylesheet's JS chunk.
+  // It used to be rewritten to the shared CSS output when the stylesheet came
+  // first, and to the importing entry point itself (chunk 0) when it came second.
+  const stylesheetChunk = expect.stringMatching(/^styles\.module-[a-z0-9]+\.js$/);
+  test.each([
+    { entryPoints: ["./entry.js", "./styles.module.css"], outputs: ["entry.css", "entry.js", stylesheetChunk] },
+    { entryPoints: ["./styles.module.css", "./entry.js"], outputs: ["entry.js", stylesheetChunk, "styles.module.css"] },
+  ])(
+    "splitting/DynamicImportOfUserSpecifiedCSSEntryPointWithCSSChunking $entryPoints",
+    async ({ entryPoints, outputs }) => {
+      using dir = tempDir("splitting-css-chunking-user-css-entry", {
+        "entry.js": `
+          import('./styles.module.css').then(mod => console.log(Object.keys(mod).join(','), /^foo_/.test(mod.foo)));
+        `,
+        "styles.module.css": `.foo { color: red; }`,
+      });
+      const root = String(dir);
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--splitting", "--css-chunking", "--outdir", "out", ...entryPoints],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildOut, buildErr, buildExit] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildErr).toBe("");
+      expect(buildOut).toMatch(/styles\.module-[a-z0-9]+\.js\s+\S+ bytes\s+\(chunk\)/);
+      expect(buildExit).toBe(0);
+
+      expect(readdirSync(join(root, "out")).sort()).toEqual(outputs);
+      expect(readFileSync(join(root, "out", "entry.js"), "utf8")).toMatch(
+        /import\("\.\/styles\.module-[a-z0-9]+\.js"\)/,
+      );
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), join(root, "out", "entry.js")],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("default,foo true\n");
+      expect(runExit).toBe(0);
+    },
+  );
 
   itBundled("splitting/CircularDynamicImportsWithCSS", {
     files: {

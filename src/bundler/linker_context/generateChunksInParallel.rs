@@ -436,8 +436,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             writeln!(&mut msg, "Multiple files share the same output path")?;
 
-            let kinds = c.graph.files.items_entry_point_kind();
-
             for (key, dup) in duplicates_map
                 .keys()
                 .iter()
@@ -446,9 +444,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
                 for chunk in dup.sources.iter() {
                     if chunk.entry_point.is_entry_point() {
-                        if kinds[chunk.entry_point.source_index() as usize]
-                            == EntryPoint::Kind::UserSpecified
-                        {
+                        if chunk.entry_point_kind(&c.graph) == EntryPoint::Kind::UserSpecified {
                             entry_naming = Some(&chunk.template.data);
                         } else {
                             chunk_naming = Some(&chunk.template.data);
@@ -1219,11 +1215,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let output_kind = if matches!(chunk.content, crate::chunk::Content::Css(_)) {
                 options::OutputKind::Asset
-            } else if chunk.entry_point.is_entry_point() {
-                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                    .output_kind()
             } else {
-                options::OutputKind::Chunk
+                chunk.entry_point_kind(&c.graph).output_kind()
             };
 
             let chunk_index =

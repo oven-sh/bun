@@ -2738,7 +2738,11 @@ impl<'a> LinkerContext<'a> {
             }
 
             // An import()ed stylesheet has its own JS chunk; walk its parts like an entry point's.
-            if ctx.entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
+            if !self
+                .graph
+                .dynamically_imported_files
+                .is_set(source_index as usize)
+            {
                 return;
             }
         }

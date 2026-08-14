@@ -187,9 +187,12 @@ pub(crate) fn compute_chunks(
                 };
             }
 
-            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk.
-            if this.graph.files.items_entry_point_kind()[source_index as usize]
-                != crate::EntryPoint::Kind::DynamicImport
+            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk
+            // (whether or not the user also passed the stylesheet as an entry point).
+            if !this
+                .graph
+                .dynamically_imported_files
+                .is_set(source_index as usize)
             {
                 continue;
             }
@@ -567,7 +570,6 @@ pub(crate) fn compute_chunks(
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
     // slices below hold disjoint immutable borrows into `this.graph`.
     let bv2: &mut BundleV2 = unsafe { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
-    let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
     // re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
     let ast_targets = this.graph.ast.items_target();
@@ -597,8 +599,7 @@ pub(crate) fn compute_chunks(
 
         if chunk.entry_point.is_entry_point()
             && (matches!(chunk.content, chunk::Content::Html)
-                || (kinds[chunk.entry_point.source_index() as usize]
-                    == crate::EntryPoint::Kind::UserSpecified
+                || (chunk.entry_point_kind(&this.graph) == crate::EntryPoint::Kind::UserSpecified
                     && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming

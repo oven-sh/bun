@@ -654,8 +654,6 @@ impl Config {
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
-    /// Transferred to the promise by `finish`; released with the task on
-    /// every other path (a log with messages, a VM gone before `then`).
     pub output_code: OwnedString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,

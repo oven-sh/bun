@@ -4427,9 +4427,6 @@ impl StatOrNotFound {
     }
 }
 
-/// The string is owned until `to_js` transfers it; a result dropped
-/// undelivered (its worker was gone before the completion could run)
-/// releases it.
 pub enum StringOrUndefined {
     String(OwnedString),
     None,
@@ -4508,9 +4505,7 @@ pub mod ret {
         Files,
     }
 
-    /// The entries are owned until `to_js` hands them to JS; whatever it did
-    /// not hand over (a conversion that failed part-way, a result dropped
-    /// undelivered because its worker was gone) is released by `Drop`.
+    /// `to_js` converts in place; `Drop` releases whatever it did not hand over.
     pub enum Readdir {
         WithFileTypes(Box<[Dirent]>),
         Buffers(Box<[Buffer]>),

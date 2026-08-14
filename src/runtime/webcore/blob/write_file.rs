@@ -30,10 +30,7 @@ pub enum WriteFileResultType {
     Err(Box<SystemError>),
 }
 
-/// The JS side of a file write: the promise `Bun.write()` handed to script. A
-/// `WriteFile` job carries it as its `Js` half, so a write whose VM goes away
-/// first is released with the VM's other live jobs, on the JS thread, instead
-/// of staying rooted; `WriteFileWindows` holds it as a field until it finishes.
+/// The promise `Bun.write()` returned: a `WriteFile` job's JS half, or a `WriteFileWindows` field.
 #[derive(bun_jsc::JsAffine)]
 pub struct WriteFilePromise {
     promise: jsc::JSPromiseStrong,
@@ -70,16 +67,12 @@ impl WriteFilePromise {
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// SAFETY: the two blobs are native values holding store refs (atomic counts)
-// and the rest is io-loop registration state — nothing thread-affine. The
-// promise lives in the job's JS side (`WriteFilePromise`), never here.
+// SAFETY: the two blobs hold store refs (atomic counts) and the rest is io-loop
+// registration state; the promise lives on the job's JS side, never here.
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {
     type OffThread = Self;
-    /// Settled by `then`, or dropped when the VM releases the JS sides of its
-    /// live jobs at teardown (a refused or unrun write then frees only the
-    /// off-thread part).
     type Js = WriteFilePromise;
     fn run(
         this: &mut Self,
@@ -101,8 +94,7 @@ impl bun_jsc::JobContext for WriteFile {
 
 #[cfg(not(windows))]
 impl WriteFile {
-    /// JS thread: hand a prepared `WriteFile` and the promise it settles to the
-    /// work pool (the job is its one heap allocation).
+    /// JS thread: hand the write and the promise it settles to the work pool.
     pub(crate) fn schedule(this: WriteFile, promise: WriteFilePromise, global: &JSGlobalObject) {
         bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, promise);
     }
@@ -348,8 +340,7 @@ impl WriteFile {
             Some(err) => WriteFileResultType::Err(Box::new(err)),
             None => WriteFileResultType::Result(this.total_written as SizeType),
         };
-        // Both blobs' store refs go with the drop (`StoreRef::drop`); there is
-        // nothing to detach by hand.
+        // Releases both blobs' store refs; nothing to detach by hand.
         drop(this);
         promise.settle(global, result)
     }
@@ -573,8 +564,7 @@ mod windows_impl {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
         pub(crate) bytes_blob: Blob,
-        /// `Some` until the write finishes; a `WriteFileWindows` freed before
-        /// then drops it, unrooting the promise.
+        /// `Some` until `run_from_js_thread` settles it.
         pub(crate) promise: Option<WriteFilePromise>,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
@@ -613,8 +603,7 @@ mod windows_impl {
     }
 
     impl WriteFileWindows {
-        /// Starts the write. `Err(WriteFileWindowsDeinitialized)` means it
-        /// failed before returning and `promise` has already been rejected.
+        /// `Err(WriteFileWindowsDeinitialized)`: failed synchronously, `promise` already rejected.
         pub(crate) fn create(
             event_loop: *mut EventLoop,
             file_blob: Blob,

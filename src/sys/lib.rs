@@ -3044,6 +3044,38 @@ mod posix_impl {
             }
         }
 
+        // macOS: same idea via `F_GETPATH` — open resolves the path once and
+        // the vnode's name is read back, instead of `realpath$DARWIN_EXTSN`'s
+        // `getattrlist` per component. `open` needs read permission on the
+        // file (there is no `O_PATH`) and can fail on sockets and some
+        // devices where `realpath(3)` would not, so any open failure other
+        // than the lookup errors realpath itself reports falls back to libc.
+        #[cfg(target_os = "macos")]
+        {
+            match open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY | O::CLOEXEC, 0) {
+                Ok(fd) => {
+                    buf.0[0] = 0;
+                    let r = fcntl(fd, libc::F_GETPATH, buf.0.as_mut_ptr() as isize);
+                    let _ = close(fd);
+                    if r.is_ok() && buf.0[0] != 0 {
+                        // SAFETY: F_GETPATH wrote a NUL-terminated path into `buf`
+                        // (MAXPATHLEN bytes, which `PathBuffer` is).
+                        let len = unsafe { libc::strlen(buf.0.as_ptr().cast()) };
+                        return Ok(&buf.0[..len]);
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.get_errno(),
+                        E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG
+                    ) =>
+                {
+                    return Err(Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes()));
+                }
+                Err(_) => {}
+            }
+        }
+
         // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
         // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
         let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };

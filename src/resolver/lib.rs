@@ -1434,8 +1434,9 @@ pub mod fs {
             let mut path = bun_paths::path_buffer_pool::get();
             let len =
                 join_abs_string_buf_z::<platform::Auto>(real_dir, &mut path[..], &[base]).len();
-            // Linux resolves the whole chain in three syscalls; see `bun_sys::realpath`.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            // The kernel resolves the whole chain in three syscalls here; see
+            // `bun_sys::realpath`.
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 let mut out = bun_paths::path_buffer_pool::get();
                 let real = bun_sys::realpath(ZStr::from_buf(&path[..], len), &mut out)?;
@@ -1443,7 +1444,7 @@ pub mod fs {
                     FilenameStore::instance().append_slice(real)?,
                 ));
             }
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
             {
                 let known_real = common_dir_prefix_len(real_dir, &path[..len]);
                 let (len, _kind) = resolve_symlinks_after(&mut path, len, known_real, true)?;

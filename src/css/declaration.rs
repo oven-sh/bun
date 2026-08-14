@@ -72,9 +72,8 @@ impl<'bump> DeclarationBlock<'bump> {
             hndlr: &mut DeclarationHandler<'bump>,
             important: bool,
         ) {
+            ctx.is_important = important;
             for prop in decls.iter_mut() {
-                ctx.is_important = important;
-
                 let handled = hndlr.handle_property(prop, ctx);
 
                 if !handled {
@@ -96,7 +95,11 @@ impl<'bump> DeclarationBlock<'bump> {
         );
         handle(&mut self.declarations, context, handler, false);
 
+        // Flushing in `finalize` stages logical-property rules too, so the flag
+        // has to follow the handler being finalized.
+        context.is_important = false;
         handler.finalize(context);
+        context.is_important = true;
         important_handler.finalize(context);
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).

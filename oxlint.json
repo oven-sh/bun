@@ -68,6 +68,12 @@
     "test/js/node/module/extensions-fixture", // these files are not meant to be linted
     "test/cli/run/module-type-fixture",
     "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
+    "test/bundler/transpiler/react-compiler-fixtures", // React Compiler inputs, some are Flow
+    "test/bundler/transpiler/fixtures/lots-of-for-loop.js", // 9 MB stress fixture; oxlint overflows its stack on it
+    "test/integration/vite-build/the-test-app/src/app.d.ts", // third-party app fixture (TS1038)
+    // Top-level `for await` in .ts files with no import/export, which oxlint parses as scripts
+    "test/js/bun/console/console-iterator-run.ts",
+    "test/regression/issue/18239/18239.fixture.ts",
 
     // TODO: fix these
     "src/js/node/http2.ts",
@@ -104,6 +110,16 @@
         // the property (and any getter/Proxy trap) twice. Destructure or
         // cache the value in a local instead.
         "bun/no-duplicate-conditional-property-access": "error"
+      }
+    },
+    {
+      "files": ["test/**"],
+      "rules": {
+        // `expect(x);` / `expect(a, b);` / `expect(x).toBeTruthy;` assert
+        // nothing. `bun lint` runs test/ with `-A all`, so this plugin rule is
+        // the only thing checked there (the built-in rules are not clean on
+        // test/ yet).
+        "bun/no-unused-expect": "error"
       }
     }
   ]

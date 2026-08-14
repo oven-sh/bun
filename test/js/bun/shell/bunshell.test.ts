@@ -251,10 +251,7 @@ describe("bunshell", () => {
       const shellvar = "$FOO";
       await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`\\$FOO\n`).run();
       const buf = new Uint8Array(1);
-
-      expect(async () => {
-        await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
-      });
+      await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
     });
 
     test("in command position", async () => {

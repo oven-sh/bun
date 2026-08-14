@@ -856,7 +856,7 @@ it("#3480", async () => {
 
     const response = await fetch("http://" + server.hostname + ":" + server.port);
     expect(await response.text()).toBe("Hello world!");
-    expect(response.ok);
+    expect(response.ok).toBeTrue();
   }
 });
 

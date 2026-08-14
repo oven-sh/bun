@@ -124,7 +124,7 @@ describe("Glob.match", () => {
     expect(glob.match("a/b/")).toBeTrue();
 
     glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
-    expect(glob.match("a/c/d/one/two/three.test.ts"));
+    expect(glob.match("a/c/d/one/two/three.test.ts")).toBeTrue();
 
     glob = new Glob("{a,{d,e}b}/c");
     expect(glob.match("a/c")).toBeTrue();

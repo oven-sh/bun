@@ -1,4 +1,5 @@
 #include "NodeVMModule.h"
+#include "../vm/NodeVMTimeout.h"
 #include "BunClientData.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
@@ -9,7 +10,6 @@
 #include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 
@@ -45,8 +45,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
     return array;
 }
-
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -89,35 +87,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
-            std::optional<double> oldLimit;
-            if (timeout != 0)
-                setupWatchdog(vm, timeout, &oldLimit.emplace(), nullptr);
+            NodeVMTimeout timer(vm, timeout ? std::optional<double>(timeout) : std::nullopt);
             nodeVmGlobalObject->drainOwnMicrotasks();
-            if (timeout != 0)
-                vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-            // The drain may legitimately leave the termination exception
-            // pending (watchdog fired mid-checkpoint); observe it so the
-            // exception-check validator is satisfied before the TOP scope
-            // below, then convert it to ERR_SCRIPT_EXECUTION_*.
+            // The drain may leave the termination exception pending (timed out mid-checkpoint); observe it so the
+            // exception-check validator is satisfied before the TOP scope inside takeOwnTermination.
             std::ignore = scope.exception();
-            if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-                // The VM itself is being stopped; not ours to consume. Propagate the termination.
-                if (!vm.hasPendingTerminationException())
-                    vm.throwTerminationException();
+            if (timer.takeOwnTermination(globalObject, nodeVmGlobalObject, scope, *this))
                 return {};
-            }
-            if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                vm.clearHasTerminationRequest();
-                if (getSigintReceived()) {
-                    setSigintReceived(false);
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else {
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-                }
-                return {};
-            }
+            // Somebody else's termination (worker.terminate(), an enclosing run's timeout): keep unwinding.
+            if (vm.hasTerminationRequest() && !vm.hasPendingTerminationException())
+                vm.throwTerminationException();
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return m_evaluationResult.get();
     }
@@ -221,12 +201,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     };
 
     setSigintReceived(false);
-
-    std::optional<double> oldLimit, newLimit;
-
-    if (timeout != 0) {
-        setupWatchdog(vm, timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
+    NodeVMTimeout timer(vm, timeout ? std::optional<double>(timeout) : std::nullopt);
 
     if (breakOnSigint) {
         auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
@@ -237,36 +212,15 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         drainAfterEvaluate();
     }
 
-    if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending
-    // — a regular one is rethrown by VM_RETURN_IF_EXCEPTION below, a
-    // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
-    // so the exception-check validator is satisfied before the TOP scope.
+    // Evaluation (or the afterEvaluate drain) may leave an exception pending: our own timeout/SIGINT becomes
+    // ERR_SCRIPT_EXECUTION_* here, anything else (including somebody else's termination) is rethrown by
+    // VM_RETURN_IF_EXCEPTION below. Observe it so the exception-check validator is satisfied before the TOP scope
+    // inside takeOwnTermination.
     std::ignore = scope.exception();
-    if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-        // The VM itself is being stopped; not ours to consume. Propagate the termination.
-        if (!vm.hasPendingTerminationException())
-            vm.throwTerminationException();
+    if (timer.takeOwnTermination(globalObject, nodeVmGlobalObject, scope, *this))
         return {};
-    }
-    if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
-        }
-    } else {
-        setSigintReceived(false);
-    }
+    if (vm.hasTerminationRequest() && !vm.hasPendingTerminationException())
+        vm.throwTerminationException();
 
     VM_RETURN_IF_EXCEPTION(scope, {});
 

@@ -166,6 +166,8 @@ public:
     // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
     const unsigned char* vmHandleState { nullptr };
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
+    // node:vm runs on this thread that currently have a `timeout` armed (Bun::NodeVMTimeout).
+    unsigned nodeVMTimeoutsArmed { 0 };
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles

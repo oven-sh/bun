@@ -1484,3 +1484,97 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
 });
+
+describe("timeout", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const busy = `(ms) => { const end = Date.now() + ms; while (Date.now() < end); }`;
+
+  // A run that ends before its `timeout` must leave nothing armed behind: the
+  // program that follows it (here 300ms of CPU, several times the timeout) has
+  // to keep running. Previously the watchdog stayed armed and terminated the
+  // outer program once it had used `timeout` ms of CPU, and the process hung.
+  test.concurrent.each([
+    ["returns early", `vm.runInNewContext("1 + 1", {}, { timeout: 20 })`],
+    ["throws early", `try { vm.runInNewContext("throw new Error('x')", {}, { timeout: 20 }) } catch {}`],
+    ["times out", `try { vm.runInNewContext("for (;;) {}", {}, { timeout: 20 }) } catch (e) { console.log(e.code) }`],
+    [
+      "runInThisContext",
+      `try { new vm.Script("for (;;) {}").runInThisContext({ timeout: 20 }) } catch (e) { console.log(e.code) }`,
+    ],
+  ])("a run that %s does not stop the program afterwards", async (_, call) => {
+    const { stdout, exitCode } = await run(`
+      const vm = require("node:vm");
+      const busy = ${busy};
+      for (let i = 0; i < 3; i++) { ${call}; busy(100); }
+      busy(300);
+      console.log("still running");
+    `);
+    expect(stdout.split("\n").at(-1)).toBe("still running");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is wall-clock time, so a script that blocks without using CPU times out too", async () => {
+    const { stdout, exitCode } = await run(`
+      const vm = require("node:vm");
+      try {
+        console.log(vm.runInNewContext("Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); 'returned'", {}, { timeout: 30 }));
+      } catch (e) {
+        console.log(e.code);
+      }
+    `);
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+    expect(exitCode).toBe(0);
+  });
+
+  // Nested runs each own their timeout: the run whose timer fired reports
+  // ERR_SCRIPT_EXECUTION_TIMEOUT, an inner run it interrupted just unwinds.
+  test.concurrent("an outer timeout interrupts an inner run that has none", async () => {
+    const { stdout, exitCode } = await run(`
+      const vm = require("node:vm");
+      try {
+        vm.runInNewContext("inner()", { inner: () => vm.runInNewContext("for (;;) {}", {}) }, { timeout: 30 });
+      } catch (e) {
+        console.log("outer:", e.code);
+      }
+      console.log("done");
+    `);
+    expect(stdout).toBe("outer: ERR_SCRIPT_EXECUTION_TIMEOUT\ndone");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an outer timeout wins over a longer inner one", async () => {
+    const { stdout, exitCode } = await run(`
+      const vm = require("node:vm");
+      const inner = () => { try { return vm.runInNewContext("for (;;) {}", {}, { timeout: 2000 }) } catch (e) { return "inner: " + e.code } };
+      try {
+        console.log(vm.runInNewContext("inner()", { inner }, { timeout: 30 }));
+      } catch (e) {
+        console.log("outer:", e.code);
+      }
+    `);
+    expect(stdout).toBe("outer: ERR_SCRIPT_EXECUTION_TIMEOUT");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an inner timeout is an ordinary error for the outer run", async () => {
+    const { stdout, exitCode } = await run(`
+      const vm = require("node:vm");
+      const busy = ${busy};
+      const inner = () => vm.runInNewContext("for (;;) {}", {}, { timeout: 20 });
+      console.log(vm.runInNewContext("let code; try { inner() } catch (e) { code = e.code } busy(200); code", { inner, busy }, { timeout: 5000 }));
+      busy(200);
+      console.log("done");
+    `);
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\ndone");
+    expect(exitCode).toBe(0);
+  });
+});

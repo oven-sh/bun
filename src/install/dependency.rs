@@ -1164,6 +1164,14 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
+/// The specifier inside a version literal: a package.json value may carry leading whitespace
+/// (`" npm:foo@^1"`), which is not part of the specifier. Every path that classifies
+/// (`Tag::infer`) or parses a literal must look at these bytes, never at the raw literal.
+#[inline]
+pub fn trim_literal(literal: &[u8]) -> &[u8] {
+    strings::trim_left(literal, b" \t\n\r")
+}
+
 #[inline]
 pub fn parse<'a, 'b>(
     alias: String,
@@ -1173,7 +1181,7 @@ pub fn parse<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1194,7 +1202,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1217,6 +1225,8 @@ pub(crate) fn parse_with_tag(
     log_: Option<&mut bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
+    // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the stored literal untrimmed.
+    let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
             let mut input = dependency;
@@ -1282,7 +1292,7 @@ pub(crate) fn parse_with_tag(
             Some(result)
         }
         Tag::DistTag => {
-            let mut tag_to_use = sliced.value();
+            let mut tag_to_use = sliced.sub(dependency).value();
 
             let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
                 // npm:@foo/bar@latest
@@ -1467,7 +1477,7 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
                 value: Value {
                     tarball: TarballInfo {
-                        uri: URI::Local(sliced.value()),
+                        uri: URI::Local(sliced.sub(dependency).value()),
                         package_name: String::default(),
                     },
                 },
@@ -1584,7 +1594,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    folder: sliced.value(),
+                    folder: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Folder,
                 literal: sliced.value(),
@@ -1604,7 +1614,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    symlink: sliced.value(),
+                    symlink: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Symlink,
                 literal: sliced.value(),

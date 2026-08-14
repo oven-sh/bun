@@ -72,6 +72,11 @@ new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_M
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
+// Test suite only, builds with debug assertions: `draining` or `closed`. A
+// worker VM holds each cross-thread post until its teardown has reached that
+// state, so the "arrived during teardown" paths run deterministically
+// (bun_jsc::vm_handle::test_gate).
+new!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: string, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.
@@ -206,10 +211,6 @@ pub mod feature_flag {
     // Run the full VM teardown when the main thread exits (workers always do).
     // The CI runner turns it on for LeakSanitizer-validated files on ASAN.
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
-    // Test suite only, builds with debug assertions: a worker VM holds every
-    // cross-thread completion until its teardown is waiting, so the "arrived
-    // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
-    new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});

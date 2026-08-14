@@ -4381,7 +4381,7 @@ pub fn maybe_handle_panic_during_process_reload() {
 }
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
-/// `BunDebugger__willReloadProcess` removes the inspector's unix socket file, which the
+/// `BunDebugger__willReloadProcess` removes the inspector's unix socket files, which the
 /// reloaded process binds again. `on_before_reload_process_posix` clears CLOEXEC on
 /// stdio/IPC and resets caught signal dispositions on all POSIX; the close_range sweep is
 /// Linux/BSD only.

@@ -712,6 +712,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject 
 // but leaves their files behind, and the reloaded process inherits the same
 // --inspect / BUN_INSPECT values, so it would bind the same paths and fail with
 // EADDRINUSE. Same cleanup Server.stop() does for a unix listener.
+//
+// Not synchronized with a bind in progress on the debugger thread: a reload landing
+// in the microseconds between that bind and its registration (startup only) leaves
+// that file behind and that one reload fails as before. Waiting for that thread here
+// is not worth it, and this also runs from the crash handler.
 extern "C" void BunDebugger__willReloadProcess()
 {
     for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)

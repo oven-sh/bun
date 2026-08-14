@@ -503,8 +503,8 @@ describe.skipIf(isWindows).concurrent("ws+unix:// inspector under --watch", () =
     const notifySocket = join(String(dir), "notify.sock");
     const { args, env, sockets } = configure(String(dir));
 
-    // One connection per incarnation, made once its inspector servers are listening (a process
-    // with both an environment and a flag inspector notifies once, after both are up).
+    // One connection per incarnation: the first inspector to come up notifies and clears the
+    // variable for the second one.
     const listening = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     let incarnation = 0;
     using notify = Bun.listen({

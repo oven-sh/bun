@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -211,5 +214,98 @@ describe("css", () => {
       const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
       expect(css).toContain(`.${betaOwn}`);
     },
+  });
+
+  // Whether `composes` is allowed is decided per style rule. Parsing a rule
+  // nested in the body used to leave that rule's "disallowed" verdict behind,
+  // so every `composes` written after it was rejected with the nested-selector
+  // warning and dropped from the export.
+  itBundled("css-module/ComposesAfterNestedRule", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.module.css";
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .base { color: red; }
+        .other { cursor: pointer; }
+        .button {
+          .icon { color: green; }
+          composes: base;
+          @media (min-width: 1px) { padding: 1px; }
+          composes: other;
+          color: blue;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          base: "base_-MSaAA",
+          other: "other_-MSaAA",
+          button: "base_-MSaAA other_-MSaAA button_-MSaAA",
+          icon: "icon_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
+});
+
+describe.concurrent("css modules composes with nested rules", () => {
+  async function build(entrypoint: string, files: Record<string, string>) {
+    using dir = tempDir("css-module-composes-nested", files);
+    return await Bun.build({
+      entrypoints: [join(String(dir), entrypoint)],
+      throw: false,
+    });
+  }
+
+  // `.button` and the class it composes both set `color`, which the bundler
+  // reports. It can only do so if the `composes` was recorded and the
+  // properties of `.button` were tracked; a nested rule anywhere in the body
+  // used to break one or the other, and a nested rule before the `composes`
+  // additionally produced the nested-selector warning. The exact log list
+  // checks all of that.
+  const conflict = ["The value of color in the class button is undefined."];
+  test.each([
+    ["before", `.icon { color: green; } color: blue; composes: other from "./other.module.css";`],
+    ["after", `color: blue; composes: other from "./other.module.css"; .icon { color: green; }`],
+  ])("nested rule %s the composes: it is recorded and the class's properties are tracked", async (_, body) => {
+    const result = await build("entry.js", {
+      "entry.js": `
+        import styles from "./styles.module.css";
+        console.log(styles);
+      `,
+      "styles.module.css": `.button { ${body} }`,
+      "other.module.css": `.other { color: red; }`,
+    });
+    expect(result.logs.map(log => log.message)).toEqual(conflict);
+    expect(result.success).toBe(true);
+  });
+
+  test("composes is still rejected inside rules nested in a style rule", async () => {
+    const result = await build("styles.module.css", {
+      "styles.module.css": `
+        .base { color: red; }
+        .a { .icon { composes: base; } }
+        .b { @media (min-width: 1px) { composes: base; } }
+        .c .d { .icon { color: green; } composes: base; }
+      `,
+    });
+    // `.c .d` is rejected for its own selector; it used to get the nested-selector
+    // warning left behind by `.icon`. Printing a rejected `composes` also fails
+    // the build with an error, which is not what this checks.
+    expect(result.logs.filter(log => log.level !== "error").map(log => log.message)).toEqual([
+      '"composes" is not allowed inside nested selectors',
+      '"composes" is not allowed inside nested selectors',
+      '"composes" only works inside single class selectors',
+    ]);
   });
 });

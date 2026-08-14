@@ -1589,7 +1589,7 @@ impl PublishCommand {
 
         let mut iter = DirIterator::iterate(workspace_dir);
         while let Some(entry) = iter.next().ok().flatten() {
-            if entry.kind == bun_sys::EntryKind::Directory {
+            if pack::entry_kind(workspace_dir, &entry) == bun_sys::EntryKind::Directory {
                 continue;
             }
             // Entry names are UTF-8 on every platform.
@@ -1861,7 +1861,7 @@ impl PublishCommand {
                             ..Default::default()
                         });
 
-                        if entry.kind == bun_sys::EntryKind::Directory {
+                        if pack::entry_kind(dir, &entry) == bun_sys::EntryKind::Directory {
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;

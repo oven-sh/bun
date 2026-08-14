@@ -476,8 +476,9 @@ fn iterate_included_project_tree(
         });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
+        'next_entry: while let Some(mut entry) = dir_iter.next().ok().flatten() {
             // On iterator error, treat as end of iteration.
+            entry.kind = entry_kind(dir.fd, &entry);
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -713,7 +714,8 @@ fn add_entire_tree(
         }
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = iter.next().ok().flatten() {
+        'next_entry: while let Some(mut entry) = iter.next().ok().flatten() {
+            entry.kind = entry_kind(dir.fd, &entry);
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -790,6 +792,20 @@ fn add_entire_tree(
     }
 
     Ok(())
+}
+
+/// Some filesystems (FUSE, NFS, XFS formatted with `ftype=0`) do not report
+/// entry types from readdir: every entry comes back as `Unknown`. Ask `lstat`
+/// instead, which reports what `d_type` would have (a symlink is still a
+/// symlink, so it is still not packed).
+pub(crate) fn entry_kind(dir: Fd, entry: &DirIterator::IteratorResult) -> bun_sys::FileKind {
+    if entry.kind != bun_sys::FileKind::Unknown {
+        return entry.kind;
+    }
+    match bun_sys::lstatat(dir, &ZBox::from_bytes(entry.name.slice_u8())) {
+        Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+        Err(_) => bun_sys::FileKind::Unknown,
+    }
 }
 
 fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
@@ -885,7 +901,7 @@ fn iterate_bundled_deps(
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
     while let Some(entry) = iter.next().ok().flatten() {
-        if entry.kind != bun_sys::FileKind::Directory {
+        if entry_kind(dir.fd, &entry) != bun_sys::FileKind::Directory {
             continue;
         }
 
@@ -1022,7 +1038,8 @@ fn add_bundled_dep(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        while let Some(entry) = iter.next().ok().flatten() {
+        while let Some(mut entry) = iter.next().ok().flatten() {
+            entry.kind = entry_kind(dir.fd, &entry);
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1284,7 +1301,8 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
+        'next_entry: while let Some(mut entry) = dir_iter.next().ok().flatten() {
+            entry.kind = entry_kind(dir.fd, &entry);
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }

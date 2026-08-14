@@ -1619,9 +1619,19 @@ pub mod fs {
         let mut kind = EntryKind::Dir;
         let mut hops: u32 = 0;
         loop {
-            let i = skip_seps(&path[..len], known_real);
+            let mut i = skip_seps(&path[..len], known_real);
             if i == len {
                 return Ok((known_real, kind));
+            }
+            if cfg!(not(windows)) {
+                // Exactly one separator between the resolved prefix and the
+                // next component, however the input or a link target spelled it.
+                let want = known_real + sep_after(&path[..known_real]).len();
+                if i > want {
+                    path.copy_within(i..len, want);
+                    len -= i - want;
+                    i = want;
+                }
             }
             let j = component_end(&path[..len], i);
             if j >= path.len() {

@@ -88,6 +88,95 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
+  it("follows structuredClone, except that Blob and net.BlockList arrive as empty objects", async () => {
+    // This is the contract documented in docs/runtime/child-process.mdx and the
+    // `ipc` / `send()` JSDoc: values structuredClone clones keep their types,
+    // values it rejects make send() throw, and the two non-transferable Bun
+    // classes degrade to {} (the same thing Node.js delivers for them).
+    const childSource = [
+      `const net = require("node:net");`,
+      `const blockList = new net.BlockList();`,
+      `blockList.addAddress("1.2.3.4");`,
+      `const rejected = {};`,
+      `for (const [name, value] of Object.entries({ url: new URL("http://example.com/"), fn: { f() {} } })) {`,
+      `  try { process.send({ value }); rejected[name] = "sent"; } catch (e) { rejected[name] = e.name; }`,
+      `}`,
+      `process.send({`,
+      `  kind: "from-child",`,
+      `  blob: new Blob(["hi"]),`,
+      `  file: Bun.file(process.execPath),`,
+      `  blockList,`,
+      `  nested: { blob: new Blob(["hi"]) },`,
+      `  date: new Date(0),`,
+      `  map: new Map([["k", 1]]),`,
+      `  bytes: new Uint8Array([1, 2, 3]),`,
+      `  rejected,`,
+      `});`,
+      `process.on("message", message => {`,
+      `  if (message === "bye") process.exit(0);`,
+      `  process.send({`,
+      `    kind: "from-parent",`,
+      `    blobConstructor: message.blob.constructor.name,`,
+      `    blobKeys: Object.keys(message.blob),`,
+      `    bytes: message.bytes,`,
+      `  });`,
+      `});`,
+    ].join("\n");
+
+    let onMessage: (message: any) => void = () => {};
+    const nextMessage = () => new Promise<any>(resolve => (onMessage = resolve));
+    const { promise: exitedEarly, reject } = Promise.withResolvers<never>();
+    exitedEarly.catch(() => {});
+
+    const fromChild = nextMessage();
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      ipc(message) {
+        onMessage(message);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before the test finished`));
+      },
+    });
+
+    const received = await Promise.race([fromChild, exitedEarly]);
+    expect(received).toEqual({
+      kind: "from-child",
+      blob: {},
+      file: {},
+      blockList: {},
+      nested: { blob: {} },
+      date: new Date(0),
+      map: new Map([["k", 1]]),
+      bytes: new Uint8Array([1, 2, 3]),
+      rejected: { url: "DataCloneError", fn: "DataCloneError" },
+    });
+    expect([received.blob, received.file, received.blockList, received.nested.blob].map(v => v.constructor)).toEqual([
+      Object,
+      Object,
+      Object,
+      Object,
+    ]);
+
+    expect(() => child.send({ url: new URL("http://example.com/") })).toThrow(
+      expect.objectContaining({ name: "DataCloneError" }),
+    );
+
+    const fromParent = nextMessage();
+    child.send({ blob: new Blob(["hi"]), bytes: new Uint8Array([4, 5]) });
+    expect(await Promise.race([fromParent, exitedEarly])).toEqual({
+      kind: "from-parent",
+      blobConstructor: "Object",
+      blobKeys: [],
+      bytes: new Uint8Array([4, 5]),
+    });
+
+    child.send("bye");
+    expect(await child.exited).toBe(0);
+  });
+
   it("unwraps the Buffer envelope before cmd dispatch", async () => {
     // A cmd-bearing message whose payload holds a Buffer travels as the
     // [message, buffers] envelope. The receiver's cmd fast-path reads

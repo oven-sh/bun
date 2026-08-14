@@ -8,6 +8,7 @@ pub mod FetchRequestMode;
 pub mod Method;
 pub mod URLPath;
 pub mod h2;
+pub mod mime_sniff;
 pub mod mime_type_list_enum;
 pub use ETag::wtf;
 

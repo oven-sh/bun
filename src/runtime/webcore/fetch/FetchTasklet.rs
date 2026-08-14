@@ -860,13 +860,11 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
-            let body: *mut BodyValue = response.get_body_value();
+            let body: &mut BodyValue = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so
             // the defer still drops the bytes.
-            // SAFETY: just obtained from live `response`.
-            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+            if !matches!(body, BodyValue::Locked(_)) {
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
@@ -876,8 +874,7 @@ impl FetchTasklet {
                     core::mem::take(&mut self.scheduled_response_buffer.list);
                 // done resolve body
                 let old = core::mem::replace(
-                    // SAFETY: just obtained from live `response`; uniquely accessed here.
-                    unsafe { &mut *body },
+                    body,
                     BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
                         was_string: false,
@@ -886,8 +883,7 @@ impl FetchTasklet {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
-                    // SAFETY: see above.
-                    match unsafe { &*body } {
+                    match &*body {
                         BodyValue::InternalBlob(b) => b.bytes.len(),
                         _ => 0,
                     }
@@ -898,16 +894,9 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
                     // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                     // now; narrow back to the real `JsTerminated` here.
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
+                    BodyValue::resolve(&mut old, body, &self.global_this)
                         .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }

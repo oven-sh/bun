@@ -874,29 +874,17 @@ impl BlobExt for Blob {
     ) -> Blob {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
-        let store = Store::init(converter.buf);
-        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
-            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
-                // The bare tag, *without* `;charset=UTF-8` (charset promotion is
-                // Compact::to_mime_type's job, applied when read).
-                bun_http_types::MimeType::Table::from_mime_literal(
-                    "application/x-www-form-urlencoded",
-                ),
-            )
-            .to_mime_type();
-        }
-        let content_type = BlobContentType::from_mime(&store.mime_type);
-
-        let blob = Blob::init_with_store(store, global_this);
-        blob.content_type.set(content_type);
+        let blob = Blob::init_with_store(Store::init(converter.buf), global_this);
+        blob.content_type.set(BlobContentType::Static(
+            b"application/x-www-form-urlencoded;charset=UTF-8",
+        ));
         blob.content_type_was_set.set(true);
         blob
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
-        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+        // Must be lowercase: `Blob.type` reads back ASCII-lowercased, and the boundary travels in it.
+        const BOUNDARY_PREFIX: &[u8; 17] = b"----formdata-bun-";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
         let boundary: &[u8] = {
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -2073,6 +2061,10 @@ impl BlobExt for Blob {
 
     fn get_name_string(&self) -> Option<BunString> {
         if self.name.get().tag() != bun_core::Tag::Dead {
+            // An explicitly empty name on a plain Blob (`blob()` results) hides the store's file name.
+            if self.name.get().is_empty() && !self.is_jsdom_file.get() {
+                return None;
+            }
             return Some(self.name.get());
         }
         if let Some(path) = self.get_file_name() {
@@ -4295,6 +4287,22 @@ pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
         return BunString::from_bytes(filename);
     }
     BunString::empty()
+}
+
+/// Blob-constructor `type` rules minus the interned-MIME canonicalization; `[ptr, ptr+len)` must be readable.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Blob__setType(this: &Blob, ptr: *const u8, len: usize) {
+    // SAFETY: caller guarantees [ptr, ptr+len) is valid (BunStreamConsumers.cpp
+    // passes a `WTF::CString` that outlives this call).
+    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    if is_valid_blob_type(slice) {
+        this.content_type
+            .set(BlobContentType::from_lowercased(slice));
+        this.content_type_was_set.set(true);
+    } else {
+        this.content_type.set(BlobContentType::default());
+        this.content_type_was_set.set(false);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -307,6 +307,10 @@ impl BodyMixin for Response {
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Response::get_form_data_encoding(self)
     }
+    #[inline]
+    fn get_content_type(&self) -> bun_jsc::JsResult<Option<ZigStringSlice>> {
+        Response::get_content_type(self)
+    }
 }
 
 impl Response {
@@ -461,7 +465,9 @@ impl Response {
             return Ok(None);
         };
         // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
+        let Some(encoding) =
+            crate::webcore::form_data::encoding_from_header(content_type_slice.slice())
+        else {
             return Ok(None);
         };
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
@@ -630,10 +636,6 @@ mod _jsc_host_fns {
 } // mod _jsc_host_fns
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code

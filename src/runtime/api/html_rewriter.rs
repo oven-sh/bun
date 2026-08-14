@@ -1424,7 +1424,9 @@ impl RewriterPipe {
                 was_string: false,
             }),
         );
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
+        if let Err(err) = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global) {
+            self.global.report_uncaught_exception_from_error(err);
+        }
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,

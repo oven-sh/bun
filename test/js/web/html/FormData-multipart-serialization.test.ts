@@ -22,7 +22,7 @@ describe("multipart serialization (new Response(formData))", () => {
 
     const response = new Response(formData);
     const contentType = response.headers.get("Content-Type")!;
-    expect(contentType).toMatch(/^multipart\/form-data; boundary=----WebKitFormBoundary[0-9a-f]{32}$/);
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=----formdata-bun-[0-9a-f]{32}$/);
     const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
 
     const text = await response.text();

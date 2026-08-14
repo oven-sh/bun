@@ -35,6 +35,15 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+fn exit_could_not_change_directory(cwd_arg: &[u8], err: bun_sys::Error) -> ! {
+    Output::err(
+        err,
+        "Could not change directory to \"{}\"\n",
+        format_args!("{}", BStr::new(cwd_arg)),
+    );
+    Global::exit(1)
+}
+
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
@@ -828,27 +837,34 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = PathBuffer::uninit();
+        let mut base_buf = PathBuffer::uninit();
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            let len = bun_sys::getcwd(&mut *outbuf)?;
-            &outbuf[..len]
+            let len = bun_sys::getcwd(&mut *base_buf)?;
+            &base_buf[..len]
         };
-        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
-            Output::err(
-                err,
-                "Could not change directory to \"{}\"\n",
-                format_args!("{}", BStr::new(cwd_arg)),
-            );
-            Global::exit(1);
+        // argv can hold a path far longer than any the OS accepts; the unchecked
+        // joins (`join_abs` & co.) abort when the result overflows their buffer.
+        let mut out = bun_paths::path_buffer_pool::get();
+        let out_cap = out.len() - 1;
+        let out_len = match resolve_path::join_abs_string_buf_checked::<platform::Loose>(
+            base,
+            &mut out[..out_cap],
+            &[cwd_arg],
+        ) {
+            Some(joined) => joined.len(),
+            None => exit_could_not_change_directory(
+                cwd_arg,
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir),
+            ),
+        };
+        out[out_len] = 0;
+        let out_z = bun_core::ZStr::from_buf(&out[..], out_len);
+        if let bun_sys::Result::Err(err) = bun_sys::chdir(out_z) {
+            exit_could_not_change_directory(cwd_arg, err);
         }
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.

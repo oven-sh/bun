@@ -356,7 +356,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    /// Synthetic `#__N = void <expr>` class-body field at a lowered private's position.
+    /// Emit the `__privateAdd(this, storage[, init])` that installs a lowered
+    /// private. Static ones run from a static block. Instance method brands
+    /// (`init` is `None`) are collected in `method_brands`, which the caller
+    /// places ahead of every field, as InitializeInstanceElements does;
+    /// instance field brands carry their initializer and stay at their source
+    /// position in `fields`.
+    fn emit_private_add(
+        &mut self,
+        is_static: bool,
+        storage_ref: Ref,
+        init: Option<Expr>,
+        loc: bun_ast::Loc,
+        used: &mut HashMap<&'a [u8], ()>,
+        counter: &mut usize,
+        static_blocks: &mut BumpVec<'a, Property>,
+        method_brands: &mut BumpVec<'a, Property>,
+        fields: &mut BumpVec<'a, Property>,
+    ) {
+        let target = self.new_expr(E::This {}, loc);
+        let storage = self.use_ref(storage_ref, loc);
+        let is_field = init.is_some();
+        let call = match init {
+            Some(v) => self.call_rt(loc, b"__privateAdd", &[target, storage, v]),
+            None => self.call_rt(loc, b"__privateAdd", &[target, storage]),
+        };
+        if is_static {
+            static_blocks.push(self.make_static_block(call, loc));
+        } else {
+            let field = self.inline_brand_field(used, counter, call, loc);
+            if is_field { fields } else { method_brands }.push(field);
+        }
+    }
+
+    /// Synthetic `#__N = void <expr>` class-body field.
     fn inline_brand_field(
         &mut self,
         used: &mut HashMap<&'a [u8], ()>,
@@ -1404,6 +1437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
+        let mut instance_method_brands = BumpVec::<Property>::new_in(bump);
 
         // Pre-scan: determine if all private members need lowering.
         let mut lower_all_private = false;
@@ -1541,19 +1575,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // __privateAdd (once per name)
                         if !emitted_private_adds.contains_key(&npriv_inner) {
                             emitted_private_adds.insert(npriv_inner, ());
-                            let t = p.new_expr(E::This {}, loc);
-                            let s = p.use_ref(ws_ref, loc);
-                            let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
-                            if prop.flags.contains(Flags::Property::IsStatic) {
-                                static_private_add_blocks.push(p.make_static_block(call, loc));
-                            } else {
-                                new_properties.push(p.inline_brand_field(
-                                    &mut class_private_names,
-                                    &mut brand_field_counter,
-                                    call,
-                                    loc,
-                                ));
-                            }
+                            p.emit_private_add(
+                                prop.flags.contains(Flags::Property::IsStatic),
+                                ws_ref,
+                                None,
+                                loc,
+                                &mut class_private_names,
+                                &mut brand_field_counter,
+                                &mut static_private_add_blocks,
+                                &mut instance_method_brands,
+                                &mut new_properties,
+                            );
                         }
                         continue;
                     } else {
@@ -1567,19 +1599,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let init_val = prop
                             .initializer
                             .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                        let this_e = p.new_expr(E::This {}, loc);
-                        let wm_e = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_private_add_blocks.push(p.make_static_block(call, loc));
-                        } else {
-                            new_properties.push(p.inline_brand_field(
-                                &mut class_private_names,
-                                &mut brand_field_counter,
-                                call,
-                                loc,
-                            ));
-                        }
+                        p.emit_private_add(
+                            prop.flags.contains(Flags::Property::IsStatic),
+                            wm_ref,
+                            Some(init_val),
+                            loc,
+                            &mut class_private_names,
+                            &mut brand_field_counter,
+                            &mut static_private_add_blocks,
+                            &mut instance_method_brands,
+                            &mut new_properties,
+                        );
                         continue;
                     }
                 }
@@ -2017,19 +2047,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 if !emitted_private_adds.contains_key(&priv_inner2) {
                     emitted_private_adds.insert(priv_inner2, ());
-                    let t = p.new_expr(E::This {}, loc);
-                    let s = p.use_ref(private_storage_ref.unwrap(), loc);
-                    let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
-                    if prop.flags.contains(Flags::Property::IsStatic) {
-                        static_private_add_blocks.push(p.make_static_block(call, loc));
-                    } else {
-                        new_properties.push(p.inline_brand_field(
-                            &mut class_private_names,
-                            &mut brand_field_counter,
-                            call,
-                            loc,
-                        ));
-                    }
+                    p.emit_private_add(
+                        prop.flags.contains(Flags::Property::IsStatic),
+                        private_storage_ref.unwrap(),
+                        None,
+                        loc,
+                        &mut class_private_names,
+                        &mut brand_field_counter,
+                        &mut static_private_add_blocks,
+                        &mut instance_method_brands,
+                        &mut new_properties,
+                    );
                 }
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     static_non_field_elements.push(element);
@@ -2047,6 +2075,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     instance_non_field_elements.push(element);
                 }
             }
+        }
+
+        if !instance_method_brands.is_empty() {
+            instance_method_brands.extend(new_properties.drain(..));
+            new_properties = instance_method_brands;
         }
 
         // ── Phase 5: Rewrite private accesses ────────────

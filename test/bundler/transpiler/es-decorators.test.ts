@@ -1450,6 +1450,28 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("lowered #-method and #-getter brands are installed before any field, while #-field brands keep source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        class C {
+          @dec y;
+          a = (log.push("a"), this.#m() + this.#g);
+          #f = (log.push("f"), 10);
+          b = (log.push("b"), this.#f);
+          #m() { return 1; }
+          get #g() { return 100; }
+          @dec #dm() { return 1000; }
+          c = this.#dm();
+        }
+        const o = new C();
+        console.log(log.join(","), o.a, o.b, o.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,f,b 101 10 1000\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("undecorated field, accessor and #-field initializers may read a WeakMap-lowered #-private directly", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(v) { return v; }

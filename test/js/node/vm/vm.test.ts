@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  createScript,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -11,6 +12,14 @@ import {
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
+
+// Node names a script whose caller gave no filename "evalmachine.<anonymous>"
+// (lib/vm.js). Only the column is JSC-specific.
+const EVALMACHINE_FRAME = /^\s+at evalmachine\.<anonymous>:1:\d+$/;
+// First "at ..." line of the stack returned by running `new Error().stack;`.
+function firstFrame(stack: string) {
+  return stack.split("\n")[1];
+}
 
 describe("vm", () => {
   describe("runInContext()", () => {
@@ -428,6 +437,50 @@ describe("Script", () => {
     expect(header(() => new Script("%%", ""))).toEqual([":1", "%%", "^", ""]);
   });
 
+  test("the source itself is named evalmachine.<anonymous> when no filename is given", () => {
+    // The default is the compiled source's name, not only the arrow header's:
+    // stack frames and CallSites read it too. Node names all of these
+    // evalmachine.<anonymous> (lib/vm.js destructuring default).
+    const code = "new Error().stack;";
+    const frames = [undefined, {}, { filename: undefined }].map(options =>
+      firstFrame(new Script(code, options).runInThisContext()),
+    );
+    expect(frames).toEqual([
+      expect.stringMatching(EVALMACHINE_FRAME),
+      expect.stringMatching(EVALMACHINE_FRAME),
+      expect.stringMatching(EVALMACHINE_FRAME),
+    ]);
+    expect(firstFrame(createScript(code).runInThisContext())).toMatch(EVALMACHINE_FRAME);
+
+    // A provided filename still wins in both option forms, "" included.
+    expect(firstFrame(new Script(code, "named.js").runInThisContext())).toMatch(/^\s+at named\.js:1:\d+$/);
+    expect(firstFrame(new Script(code, "").runInThisContext())).not.toContain("evalmachine");
+    expect(firstFrame(new Script(code, { filename: "" }).runInThisContext())).not.toContain("evalmachine");
+
+    // What CallSite-based tooling sees; Node returns the same string.
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = (_, callSites) => callSites[0].getFileName();
+    try {
+      expect(new Script(code).runInThisContext()).toBe("evalmachine.<anonymous>");
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+
+    // Compile-time SyntaxErrors name the source in their frames as well. All
+    // three shapes are thrown from this one call site, so the whole stacks,
+    // not just the headers pinned above, must be identical.
+    const compileErrorStacks = [undefined, {}, { filename: undefined }].map(options => {
+      try {
+        new Script("%%", options);
+      } catch (e: any) {
+        return e.stack as string;
+      }
+      expect.unreachable();
+    });
+    expect(compileErrorStacks[0]).toStartWith("evalmachine.<anonymous>:1\n");
+    expect(compileErrorStacks).toEqual([compileErrorStacks[0], compileErrorStacks[0], compileErrorStacks[0]]);
+  });
+
   test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
     // Building the error materializes its stack, running a user
     // prepareStackTrace; if that throws, the SyntaxError must still be what is
@@ -598,6 +651,13 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       });
       expect(result).toContain("foo.js");
     });
+    test("defaults the filename to evalmachine.<anonymous> like Node", () => {
+      const context = createContext({});
+      expect(firstFrame(fn("new Error().stack;", context))).toMatch(EVALMACHINE_FRAME);
+      expect(firstFrame(fn("new Error().stack;", context, { filename: undefined }))).toMatch(EVALMACHINE_FRAME);
+      // An explicitly empty filename is not replaced by the default.
+      expect(firstFrame(fn("new Error().stack;", context, { filename: "" }))).not.toContain("evalmachine");
+    });
   } else {
     test("can access global context", () => {
       const props = randomProps(2);
@@ -666,6 +726,12 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
         filename: "foo.js",
       });
       expect(result).toContain("foo.js");
+    });
+    test("defaults the filename to evalmachine.<anonymous> like Node", () => {
+      expect(firstFrame(fn("new Error().stack;"))).toMatch(EVALMACHINE_FRAME);
+      expect(firstFrame(fn("new Error().stack;", { filename: undefined }))).toMatch(EVALMACHINE_FRAME);
+      // An explicitly empty filename is not replaced by the default.
+      expect(firstFrame(fn("new Error().stack;", { filename: "" }))).not.toContain("evalmachine");
     });
   }
   test.todo("can specify filename", () => {

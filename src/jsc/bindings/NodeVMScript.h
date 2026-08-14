@@ -12,7 +12,12 @@ public:
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
 
-    using BaseVMOptions::BaseVMOptions;
+    // Node's `new Script(code)` default (lib/vm.js); a filename the caller
+    // passes replaces it, "" included. compileFunction has no such default.
+    ScriptOptions()
+        : BaseVMOptions("evalmachine.<anonymous>"_s)
+    {
+    }
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer);
 };

@@ -615,10 +615,6 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     if (stack.isNull())
         return;
 
-    // `url` is resolved by the caller: `new Script` substitutes
-    // evalmachine.<anonymous> only when no filename was provided, while
-    // compileFunction has no such default. An explicit "" renders as ":<line>".
-
     // parseError.line() is already lineOffset-adjusted (JSC parses against a
     // SourceCode whose start position carries the offset), but JSC clamps a
     // negative provider start line to zero, so a negative offset comes back as
@@ -1448,7 +1444,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     JSValue optionsArg = callFrame->argument(2);
     JSValue scriptDynamicImportCallback;
 
-    ScriptOptions options(optionsArg.toWTFString(globalObject), OrdinalNumber::fromZeroBasedInt(0), OrdinalNumber::fromZeroBasedInt(0));
+    ScriptOptions options;
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1498,7 +1494,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     JSValue importer;
 
     JSValue optionsArg = callFrame->argument(1);
-    ScriptOptions options(optionsArg.toWTFString(globalObject), OrdinalNumber::fromZeroBasedInt(0), OrdinalNumber::fromZeroBasedInt(0));
+    ScriptOptions options;
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -1928,13 +1924,6 @@ BaseVMOptions::BaseVMOptions(String filename)
 {
 }
 
-BaseVMOptions::BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset)
-    : filename(WTF::move(filename))
-    , lineOffset(lineOffset)
-    , columnOffset(columnOffset)
-{
-}
-
 bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
 {
     JSObject* options = nullptr;
@@ -1951,14 +1940,11 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             if (filenameOpt.isString()) {
                 this->filename = filenameOpt.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
-                this->filenameProvided = true;
                 any = true;
             } else if (!filenameOpt.isUndefined()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
                 return false;
             }
-        } else {
-            this->filename = "evalmachine.<anonymous>"_s;
         }
 
         auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));
@@ -2066,13 +2052,6 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
     this->parsingContext = globalObject;
     bool any = BaseVMOptions::fromJS(globalObject, vm, scope, optionsArg);
     RETURN_IF_EXCEPTION(scope, false);
-
-    // Node's compileFunction defaults filename to the empty string, unlike
-    // `new Script` which defaults to "evalmachine.<anonymous>" (the default
-    // BaseVMOptions::fromJS applies). Reset so both compileFunction call
-    // shapes (with and without an options object) render the same origin.
-    if (!this->filenameProvided)
-        this->filename = String();
 
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);

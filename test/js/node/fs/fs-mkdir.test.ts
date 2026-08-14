@@ -317,11 +317,7 @@ describe.skipIf(isWindows)("fs.mkdir - recursive with a trailing separator", () 
   });
 
   afterEach(() => {
-    try {
-      fs.rmSync(tmpdir, { recursive: true, force: true });
-    } catch (err) {
-      // Ignore cleanup errors
-    }
+    fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 
   it("returns the path as spelled when it is the directory created", () => {

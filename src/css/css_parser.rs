@@ -564,7 +564,12 @@ fn parse_nested_block<T>(
     }
 
     parser.input.nesting_depth += 1;
-    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+    // The depth limit alone is not enough: a level of nesting costs several
+    // times more stack in debug/ASan builds than in release, and bundler
+    // worker threads run on `DEFAULT_THREAD_STACK_SIZE` (4 MB on POSIX).
+    if parser.input.nesting_depth > MAX_NESTING_DEPTH
+        || !parser.input.stack_check.is_safe_to_recurse()
+    {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
         let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
@@ -3814,6 +3819,7 @@ pub struct ParserInput<'a> {
     pub(crate) tokenizer: Tokenizer<'a>,
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
+    stack_check: bun_core::StackCheck,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is
     /// truncated somewhere inside that block. Everything from
@@ -3858,6 +3864,7 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            stack_check: bun_core::StackCheck::init(),
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,

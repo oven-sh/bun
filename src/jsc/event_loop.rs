@@ -766,19 +766,35 @@ impl EventLoop {
     /// JSC heap alive, children joined): called on every turn of the wait, and
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
-        self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
-        let _ = self.promote_yield_tasks();
-        self.releasing_tasks = true;
-        // Also reads what the releases themselves enqueue (`enqueue_task`).
-        while let Some(task) = self.tasks.read_item() {
+        // R-2 noalias mitigation — see `run_callback` above. `&mut self` is
+        // `noalias` and `__bun_release_task_unrun` receives nothing derived
+        // from it, but a release re-enters this loop through
+        // `vm.event_loop_mut()`: `enqueue_task` reads the two flags stored
+        // below and, while we are draining, pushes onto `tasks`, which the next
+        // `read_item` must observe. So everything here goes through a
+        // laundered pointer, re-escaped after every release.
+        let mut this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; every access through
+        // it is a short-lived borrow that ends before a release runs.
+        unsafe {
+            (*this).closed_for_tasks = true;
+            (*this).take_concurrent_tasks();
+            let _ = (*this).promote_yield_tasks();
+            (*this).releasing_tasks = true;
+        }
+        // SAFETY: as above.
+        while let Some(task) = unsafe { (*this).tasks.read_item() } {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
             unsafe { __bun_release_task_unrun(task) };
+            this = core::hint::black_box(this);
         }
-        self.releasing_tasks = false;
-        // Pending immediates likewise: cancelling one drops its keep-alive on
-        // this thread's loop, so it happens now, not after the loop is gone.
-        self.release_pending_immediates();
+        // SAFETY: as above. Pending immediates likewise: cancelling one drops
+        // its keep-alive on this thread's loop, so it happens now, not after
+        // the loop is gone.
+        unsafe {
+            (*this).releasing_tasks = false;
+            (*this).release_pending_immediates();
+        }
     }
 
     /// Cancel (never run) every queued ImmediateObject; each cancel drops the

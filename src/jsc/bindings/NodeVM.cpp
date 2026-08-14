@@ -1593,16 +1593,17 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Create the source origin
     SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };
 
-    // Process contextExtensions if they exist
-    JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
+    // globalScope() is the global lexical environment (script-level let/const/
+    // class bindings), which precedes the global object in every ordinary scope
+    // chain; a chain starting at the global object itself cannot see them.
+    JSScope* functionScope = options.parsingContext->globalScope();
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
         auto* contextExtensionsArray = dynamicDowncast<JSArray>(options.contextExtensions);
         unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
         if (length > 0) {
-            // Get the global scope from the parsing context
-            JSScope* currentScope = options.parsingContext->globalScope();
+            JSScope* currentScope = functionScope;
 
             // Create JSWithScope objects for each context extension
             for (unsigned i = 0; i < length; i++) {

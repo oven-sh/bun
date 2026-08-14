@@ -2234,8 +2234,11 @@ it("releases the connection when the deferred adoption refuses the options", asy
     conn.on("close", connClosed.resolve);
     wrapped = new TLSSocket(conn, { isServer: true, secureContext: { context: {} } as any });
     const failed = Promise.withResolvers<Error>();
+    const closed = Promise.withResolvers<void>();
     wrapped.on("error", failed.resolve);
+    wrapped.on("close", closed.resolve);
     expect((await failed.promise).message).toContain("SecureContext");
+    await closed.promise;
     await connClosed.promise;
     expect(conn.destroyed).toBe(true);
   } finally {

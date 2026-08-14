@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { once } from "node:events";
-import http, { type Server } from "node:http";
+import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { join } from "path";
 
@@ -122,60 +122,20 @@ test("'connection' and 'clientError' callbacks survive GC", async () => {
 });
 
 test("'request' and 'clientError' still dispatch on a connection that outlives server.close() and a GC", async () => {
-  // A connection that is mid-request when close() runs is not idle, so it
-  // survives close() (like Node) and can still complete requests or hit parse
-  // errors afterwards. Nothing in JS references the native server's wrapper
-  // once close() has run, so the open connection itself has to keep the
-  // wrapper (the only GC root of both callbacks) alive until it is gone.
-  async function round() {
-    let server: Server | null = http.createServer((req, res) => {
-      res.writeHead(200, { "Content-Length": 2 });
-      res.end("ok");
-    });
-    const clientErrors: string[] = [];
-    server.on("clientError", (err: any, sock) => {
-      clientErrors.push(err.code);
-      sock.destroy();
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const accepted = once(server, "connection");
-    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
-    let received = "";
-    let closed = false;
-    let waiter = Promise.withResolvers<void>();
-    const next = () => waiter.promise.then(() => (waiter = Promise.withResolvers()));
-    client.setEncoding("latin1").on("data", chunk => {
-      received += chunk;
-      waiter.resolve();
-    });
-    client
-      .on("error", () => {})
-      .on("close", () => {
-        closed = true;
-        waiter.resolve();
-      });
-    await once(client, "connect");
-    // Written before waiting for 'connection': with TCP_DEFER_ACCEPT (Linux)
-    // the accept is only reported once the first bytes arrive.
-    client.write("GET / HTTP/1.1\r\nHost: a\r\n");
-    await accepted;
-
-    server.close();
-    server = null;
-    await new Promise(resolve => setImmediate(resolve));
-    Bun.gc(true);
-    await new Promise(resolve => setImmediate(resolve));
-
-    client.write("\r\n");
-    while (!closed && !received.endsWith("\r\n\r\nok")) await next();
-    if (!closed) client.write("GET / HTTP/1.1\r\nBad Header\r\n\r\n");
-    while (!closed) await next();
-    return { status: received.split("\r\n")[0], clientErrors };
-  }
-
-  const results = [];
-  for (let i = 0; i < 3; i++) results.push(await round());
-  expect(results).toEqual(
-    Array.from({ length: 3 }, () => ({ status: "HTTP/1.1 200 OK", clientErrors: ["HPE_INVALID_HEADER_TOKEN"] })),
-  );
+  // The fixture also runs under `node --expose-gc` and prints the same result.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-server-close-gc-fixture.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    results: Array.from({ length: 3 }, () => ({
+      statuses: ["HTTP/1.1 200 OK", "HTTP/1.1 200 OK"],
+      clientErrors: ["HPE_INVALID_HEADER_TOKEN"],
+    })),
+    stderr: "",
+    exitCode: 0,
+  });
 });

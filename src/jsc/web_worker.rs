@@ -1093,12 +1093,9 @@ impl WebWorker {
         // process.exit() from an exit handler does not re-arm the trap.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
-            // Same request as a parent's terminate(): nothing more enters script
-            // (Node's `Stop(env)` on the worker's own exit), and the loop is
-            // woken. The wake matters on the loop's own thread too: called from
-            // an immediate we are inside `auto_tick_active` ahead of its poll,
-            // and `spin()` re-reads `requested_terminate` only after that poll
-            // returns, which nothing else may ever make it do.
+            // The wake is needed even on the loop's own thread: from an
+            // immediate this runs ahead of the turn's poll, which `spin()`
+            // waits out before it re-reads `requested_terminate`.
             // SAFETY: this thread's live VM.
             unsafe { (*vm_ptr).handle_ref().request_termination() };
         }
@@ -1252,16 +1249,8 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, make the same request as exit()/terminate(): close the gate
-    // (native→JS entries still reached this tick refuse), arm the JSC
-    // termination trap so any further JS halts at the next safepoint, and
-    // wake the loop, since an immediate throws ahead of the poll. Then let
-    // the stack unwind normally back to `spin()`, whose loop observes
-    // `requested_terminate` and reaches the single `shutdown()` call at its
-    // bottom with no live JSC frames above it. The promise-rejection path in
-    // `spin()` (line ~1044) gets there even sooner: `uncaught_exception`
-    // returns `handled == false`, so `spin()` calls `return self.shutdown()`
-    // directly — same observable ordering.
+    // Instead, request the stop as `exit()` does and unwind back to `spin()`,
+    // which reaches the single `shutdown()` call with no live JSC frames above it.
     vm.handle_ref().request_termination();
 }
 

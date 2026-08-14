@@ -225,9 +225,9 @@ pub(crate) fn select_targets(
 
     let targets: Vec<WorkspaceTarget> = candidates
         .into_iter()
-        .zip(selection.selected)
-        .filter(|(_, selected)| *selected)
-        .map(|((target, _), _)| target)
+        .enumerate()
+        .filter(|&(i, _)| selection.selected.is_set(i))
+        .map(|(_, (target, _))| target)
         .collect();
 
     if targets.is_empty() {
@@ -528,6 +528,8 @@ impl PendingWrite {
                 &mut manager.updating_packages,
                 core::mem::take(&mut pending.updating),
             );
+            let summary_workspace =
+                core::mem::replace(&mut manager.workspace_name_hash, pending.target.name_hash);
             let mut root = fetch_entry_root(manager, &pending.target);
             let mut slice: &mut [UpdateRequest] = &mut updates[..kept];
             let result = add_catalog::edit_target(
@@ -540,6 +542,7 @@ impl PendingWrite {
                     ..Default::default()
                 },
             );
+            manager.workspace_name_hash = summary_workspace;
             pending.updating = core::mem::replace(&mut manager.updating_packages, outer);
             result?;
             store_entry(manager, &pending.target, root);

@@ -1377,7 +1377,10 @@ impl Diff {
                     if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
                         missing_workspaces.push(from_resolutions[i]);
                     }
-                    if pm.options.enable.frozen_lockfile() {
+                    if pm.options.enable.frozen_lockfile()
+                        && !summary.overrides_changed
+                        && !summary.catalogs_changed
+                    {
                         if pm.options.log_level.is_verbose() {
                             bun_core::note!(
                                 "skipping workspace \"{}\": listed in bun.lock but not on disk",

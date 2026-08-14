@@ -36,10 +36,17 @@ pub struct PlannedFix {
     pub from: Box<[u8]>,
     pub to: Box<[u8]>,
     pub to_version: Semver::Version,
-    pub dep_ids: Vec<DependencyID>,
+    pub edges: Vec<PlannedEdge>,
     pub downgrade: bool,
     pub too_recent: bool,
     pub edits: Vec<PackageJsonEdit>,
+}
+
+/// `dep_id` is only valid against the pre-install lockfile; the differ re-appends an importer's dependency rows, so `parent` is used to find the live row.
+#[derive(Clone, Copy)]
+pub struct PlannedEdge {
+    pub dep_id: DependencyID,
+    pub parent: PackageID,
 }
 
 pub struct Blocker {
@@ -112,6 +119,7 @@ pub struct FixOutcome {
 
 struct Edge {
     dep_id: DependencyID,
+    parent: PackageID,
     range: Option<dependency::Version>,
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
@@ -398,6 +406,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 }
                 instances[instance as usize].edges.push(Edge {
                     dep_id: dep_id as DependencyID,
+                    parent,
                     range: crate::dedupe::effective_npm_range(
                         lockfile,
                         dep_id as DependencyID,
@@ -589,7 +598,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         for &c in &chosen {
             let candidate = &candidates[c];
             let to = fmt_version(candidate.version, manifest_buf);
-            let mut dep_ids: Vec<DependencyID> = Vec::new();
+            let mut edges: Vec<PlannedEdge> = Vec::new();
             let mut edits: Vec<PackageJsonEdit> = Vec::new();
             for (edge, _) in inst
                 .edges
@@ -598,7 +607,10 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 .filter(|(_, t)| **t == Some(c))
             {
                 match &edge.pin {
-                    None => dep_ids.push(edge.dep_id),
+                    None => edges.push(PlannedEdge {
+                        dep_id: edge.dep_id,
+                        parent: edge.parent,
+                    }),
                     Some(pin) => {
                         if !edits.iter().any(|edit| edit.same_site(pin)) {
                             let mut edit = pin.clone();
@@ -620,7 +632,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     patch: candidate.version.patch,
                     ..Default::default()
                 },
-                dep_ids,
+                edges,
                 downgrade: candidate.downgrade,
                 too_recent: age_limit.is_some_and(|limit| {
                     PackageManifest::is_package_version_too_recent(
@@ -929,7 +941,7 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
     manager.audit_fix_pins = plan
         .fixes
         .iter()
-        .filter(|fix| !fix.dep_ids.is_empty())
+        .filter(|fix| !fix.edges.is_empty())
         .cloned()
         .collect();
 
@@ -949,32 +961,49 @@ pub fn enqueue_planned_fixes(manager: &mut PackageManager) -> crate::Result<()> 
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
 
     for pin in &pins {
-        for &dep_id in &pin.dep_ids {
-            let target = manager.lockfile.buffers.resolutions[dep_id as usize];
-            if target == invalid_package_id {
+        for edge in &pin.edges {
+            let Some((live_dep_id, pkg_name)) = live_edge(&manager.lockfile, pin, *edge) else {
                 continue;
-            }
-            let target = target as usize;
-            {
-                let lockfile = &*manager.lockfile;
-                let res = lockfile.packages.items_resolution();
-                if target >= res.len()
-                    || res[target].tag != ResolutionTag::Npm
-                    || lockfile.packages.items_name_hash()[target] != pin.name_hash
-                    || fmt_version(
-                        res[target].npm().version,
-                        lockfile.buffers.string_bytes.as_slice(),
-                    )[..]
-                        != pin.from[..]
-                {
-                    continue;
-                }
-            }
-            enqueue_pinned(manager, dep_id, pin.to_version)?;
+            };
+            enqueue_pinned_as(manager, live_dep_id, pkg_name, pin.to_version)?;
             manager.summary.update += 1;
         }
     }
     Ok(())
+}
+
+fn live_edge(
+    lockfile: &Lockfile,
+    pin: &PlannedFix,
+    edge: PlannedEdge,
+) -> Option<(DependencyID, Semver::String)> {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let target = *lockfile.buffers.resolutions.get(edge.dep_id as usize)? as usize;
+    let res = lockfile.packages.items_resolution().get(target)?;
+    if res.tag != ResolutionTag::Npm
+        || lockfile.packages.items_name_hash()[target] != pin.name_hash
+        || fmt_version(res.npm().version, lockfile.buffers.string_bytes.as_slice())[..]
+            != pin.from[..]
+    {
+        return None;
+    }
+    let pkg_name = lockfile.packages.items_name()[target];
+    let Some(&slice) = lockfile
+        .packages
+        .items_dependencies()
+        .get(edge.parent as usize)
+    else {
+        return Some((edge.dep_id, pkg_name));
+    };
+    if slice.contains(edge.dep_id) {
+        return Some((edge.dep_id, pkg_name));
+    }
+    let planned = &deps[edge.dep_id as usize];
+    let live = slice
+        .get(deps)
+        .iter()
+        .position(|dep| dep.name_hash == planned.name_hash && dep.behavior == planned.behavior)?;
+    Some((slice.off + live as DependencyID, pkg_name))
 }
 
 /// Re-resolves the edge `dep_id` (which must currently resolve to an npm package) to exactly `to_version`.
@@ -984,8 +1013,17 @@ pub(crate) fn enqueue_pinned(
     to_version: Semver::Version,
 ) -> crate::Result<()> {
     let target = manager.lockfile.buffers.resolutions[dep_id as usize];
-    let row = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     let pkg_name = manager.lockfile.packages.items_name()[target as usize];
+    enqueue_pinned_as(manager, dep_id, pkg_name, to_version)
+}
+
+fn enqueue_pinned_as(
+    manager: &mut PackageManager,
+    dep_id: DependencyID,
+    pkg_name: Semver::String,
+    to_version: Semver::Version,
+) -> crate::Result<()> {
+    let row = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     let pinned = Dependency {
         name: row.name,
         name_hash: row.name_hash,

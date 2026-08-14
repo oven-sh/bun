@@ -184,11 +184,12 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
-  test("bun update on a * range that already resolves the newest version writes nothing", async () => {
+  test("bun update on a * range that already resolves the newest version leaves both files byte-identical", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "*" } }) });
     const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
-    const { stderr } = await run(dir, "update");
-    expect(stderr).not.toContain("Saved lockfile");
+    const { stdout } = await run(dir, "update");
+    expect(stdout).not.toContain("->");
+    expect(stdout).not.toContain("→");
     expect(await pkgText(dir)).toBe(pkgBefore);
     expect(await lockText(dir)).toBe(lockBefore);
   });

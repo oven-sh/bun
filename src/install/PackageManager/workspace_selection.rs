@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 
 use bstr::BStr;
-use bun_collections::HashMap;
-use bun_core::{Global, Output, strings};
+use bun_collections::{DynamicBitSet, HashMap};
+use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
 use crate::bun_fs::FileSystem;
+use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
 use crate::resolution::Tag as ResolutionTag;
@@ -25,7 +26,7 @@ pub enum RootSelection {
 }
 
 pub struct Selection {
-    pub selected: Vec<bool>,
+    pub selected: DynamicBitSet,
     pub unmatched_patterns: Vec<usize>,
 }
 
@@ -156,9 +157,20 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
     }
 }
 
-fn walk(graph: &WorkspaceGraph, sel: &Selector, base: &[bool]) -> Vec<bool> {
-    let n = base.len();
-    let mut reached = vec![false; n];
+fn bitset(n: usize) -> DynamicBitSet {
+    DynamicBitSet::init_empty(n).unwrap_or_oom()
+}
+
+/// `unreachable` is the root under `RootSelection::ExplicitOnly`: edges never select it, but it still seeds the walk when named.
+fn walk(
+    graph: &WorkspaceGraph,
+    sel: &Selector,
+    base: &DynamicBitSet,
+    unreachable: Option<usize>,
+) -> DynamicBitSet {
+    let n = base.bit_length();
+    let mut reached = bitset(n);
+    let mut visited = bitset(n);
     let mut queue: VecDeque<u32> = VecDeque::new();
 
     for adjacency in [
@@ -168,27 +180,32 @@ fn walk(graph: &WorkspaceGraph, sel: &Selector, base: &[bool]) -> Vec<bool> {
     .into_iter()
     .flatten()
     {
-        let mut visited = vec![false; n];
-        queue.clear();
-        queue.extend((0..n).filter(|&i| base[i]).map(|i| i as u32));
+        base.copy_into(&mut visited);
+        if let Some(i) = unreachable {
+            visited.set(i);
+        }
+        let mut seeds = base.iterator::<true, true>();
+        while let Some(i) = seeds.next() {
+            queue.push_back(i as u32);
+        }
         while let Some(u) = queue.pop_front() {
             for &v in &adjacency[u as usize] {
-                let v_index = v as usize;
-                if !visited[v_index] {
-                    visited[v_index] = true;
-                    reached[v_index] = true;
+                if !visited.is_set(v as usize) {
+                    visited.set(v as usize);
                     queue.push_back(v);
                 }
             }
         }
+        reached.unmanaged.set_union(&visited.unmanaged);
     }
 
-    for (reached, &in_base) in reached.iter_mut().zip(base) {
-        if sel.exclude_self {
-            *reached &= !in_base;
-        } else {
-            *reached |= in_base;
-        }
+    if sel.exclude_self {
+        reached.unmanaged.set_exclude(&base.unmanaged);
+    } else {
+        reached.unmanaged.set_union(&base.unmanaged);
+    }
+    if let Some(i) = unreachable.filter(|&i| !base.is_set(i)) {
+        reached.unset(i);
     }
     reached
 }
@@ -209,52 +226,50 @@ pub fn select(
 ) -> Selection {
     let n = candidates.len();
     let explicit_root_only = root == RootSelection::ExplicitOnly && n > 1;
-    let mut include = vec![false; n];
-    let mut exclude = vec![false; n];
+    let root_index = explicit_root_only
+        .then(|| candidates.iter().position(|c| c.is_root))
+        .flatten();
+    let mut include = bitset(n);
+    let mut exclude = bitset(n);
     let mut any_positive = false;
     let mut unmatched_patterns: Vec<usize> = Vec::new();
     let mut path_buf = path_buffer_pool::get();
 
     for (index, raw) in patterns.iter().enumerate() {
         let sel = parse(raw, original_cwd, &mut path_buf.0);
-        let mut set: Vec<bool> = candidates
-            .iter()
-            .map(|c| base_matches(&sel.base, c, explicit_root_only))
-            .collect();
+        let mut set = bitset(n);
+        for (i, c) in candidates.iter().enumerate() {
+            if base_matches(&sel.base, c, explicit_root_only) {
+                set.set(i);
+            }
+        }
         if sel.dependencies || sel.dependents {
             debug_assert!(graph.is_some());
             if let Some(graph) = graph {
-                set = walk(graph, &sel, &set);
+                set = walk(graph, &sel, &set, root_index);
             }
         }
         if sel.negated {
-            for (excluded, &hit) in exclude.iter_mut().zip(&set) {
-                *excluded |= hit;
-            }
+            exclude.unmanaged.set_union(&set.unmanaged);
         } else {
             any_positive = true;
-            if !set.iter().any(|&hit| hit) {
+            if set.count() == 0 {
                 unmatched_patterns.push(index);
             }
-            for (included, &hit) in include.iter_mut().zip(&set) {
-                *included |= hit;
-            }
+            include.unmanaged.set_union(&set.unmanaged);
         }
     }
 
     if !any_positive {
-        for (included, c) in include.iter_mut().zip(candidates) {
-            *included = !(c.is_root && explicit_root_only);
+        include.unmanaged.set_all(true);
+        if let Some(i) = root_index {
+            include.unset(i);
         }
     }
 
-    let selected = include
-        .iter()
-        .zip(&exclude)
-        .map(|(&included, &excluded)| included && !excluded)
-        .collect();
+    include.unmanaged.set_exclude(&exclude.unmanaged);
     Selection {
-        selected,
+        selected: include,
         unmatched_patterns,
     }
 }
@@ -279,7 +294,9 @@ impl WorkspaceGraph {
         let pkg_resolutions = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
         let res_lists = lockfile.packages.items_resolutions();
+        let dep_lists = lockfile.packages.items_dependencies();
         let resolutions = lockfile.buffers.resolutions.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
 
         let candidate_of: Vec<u32> = pkg_resolutions
             .iter()
@@ -299,7 +316,12 @@ impl WorkspaceGraph {
             if from == u32::MAX {
                 continue;
             }
-            for &dep_pkg in res_lists[pkg_id].get(resolutions) {
+            let deps = dep_lists[pkg_id].get(dependencies);
+            for (dep, &dep_pkg) in deps.iter().zip(res_lists[pkg_id].get(resolutions)) {
+                // The root's `workspaces` entries are not dependencies on the workspaces.
+                if dep.behavior == Behavior::WORKSPACE {
+                    continue;
+                }
                 let Some(&to) = candidate_of.get(dep_pkg as usize) else {
                     continue;
                 };
@@ -417,9 +439,9 @@ pub(crate) fn select_lockfile_workspaces(
     } = select(patterns, original_cwd, &candidates, graph.as_ref(), root);
     let ids: Vec<PackageID> = ids
         .into_iter()
-        .zip(selected)
-        .filter(|(_, selected)| *selected)
-        .map(|(pkg_id, _)| pkg_id)
+        .enumerate()
+        .filter(|&(i, _)| selected.is_set(i))
+        .map(|(_, pkg_id)| pkg_id)
         .collect();
     LockfileSelection {
         ids,

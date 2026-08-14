@@ -1217,14 +1217,16 @@ test.concurrent("a workspace member's own range moves up when run from the membe
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// dep-with-tags' `latest` tag is 3.0.0, so a fresh range would resolve there too; pin 3.0.1 first, then widen.
 test.concurrent("ranges collapse onto the version a dist-tag resolved to", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
-  const lockfile = await installTwice(
-    packageDir,
+  await write(
     packageJson,
-    { name: "foo", dependencies: { "dwt": "npm:dep-with-tags@>=1.0.0" } },
-    { name: "foo", dependencies: { "dwt": "npm:dep-with-tags@>=1.0.0", "dep-with-tags": "latest" } },
+    JSON.stringify({ name: "foo", dependencies: { "dwt": "npm:dep-with-tags@3.0.1", "dep-with-tags": "latest" } }),
   );
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await widen(packageDir, packageJson, "dwt", "npm:dep-with-tags@>=1.0.0");
+  const lockfile = await lock(packageDir);
   expect(lockfile).toContain('"dep-with-tags@3.0.0"');
   expect(lockfile).toContain('"dep-with-tags@3.0.1"');
 
@@ -1245,18 +1247,17 @@ test.concurrent("ranges collapse onto the version a dist-tag resolved to", async
 // The patched version pins root's now-ranged direct edge, so the transitive edge collapses down onto it.
 test.concurrent("a patched version wins over keeping the direct dependency's higher version", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
-  await Promise.all([
-    write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" },
-        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
-      }),
-    ),
-    write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch),
-  ]);
-  await runBunInstall(installEnv(packageDir), packageDir);
+  await write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch);
+  await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "one-range-dep": "1.0.0" } },
+    {
+      name: "foo",
+      dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" },
+      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+    },
+  );
   await widen(packageDir, packageJson, "no-deps", "^1.0.0");
   const lockfile = await lock(packageDir);
   expect(lockfile).toContain('"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"');
@@ -1285,12 +1286,12 @@ test.concurrent("a version that is the only way to reach a patched package is ke
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch);
   const patched = { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" };
-  const lockfile = await installTwice(
+  await installTwice(
     packageDir,
     packageJson,
     {
       name: "foo",
-      dependencies: { "one-fixed-dep": "1.0.0", "dwt": "npm:dep-with-tags@>=1.0.0" },
+      dependencies: { "one-fixed-dep": "1.0.0", "dwt": "npm:dep-with-tags@3.0.1" },
       patchedDependencies: patched,
     },
     {
@@ -1298,12 +1299,14 @@ test.concurrent("a version that is the only way to reach a patched package is ke
       dependencies: {
         "one-fixed-dep": ">=1.0.0",
         "ofd2": "npm:one-fixed-dep@2.0.0",
-        "dwt": "npm:dep-with-tags@>=1.0.0",
+        "dwt": "npm:dep-with-tags@3.0.1",
         "dep-with-tags": "latest",
       },
       patchedDependencies: patched,
     },
   );
+  await widen(packageDir, packageJson, "dwt", "npm:dep-with-tags@>=1.0.0");
+  const lockfile = await lock(packageDir);
   for (const label of [
     '"one-fixed-dep@1.0.0"',
     '"one-fixed-dep@2.0.0"',

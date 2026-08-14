@@ -525,7 +525,11 @@ fn is_empty_bulk_body(body: &[u8]) -> bool {
 fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
     let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
     let Some(first) = non_empty.next() else {
-        return Box::default();
+        return bodies
+            .iter()
+            .find(|body| !body.trim_ascii().is_empty())
+            .cloned()
+            .unwrap_or_default();
     };
     let Some(second) = non_empty.next() else {
         return first.clone();

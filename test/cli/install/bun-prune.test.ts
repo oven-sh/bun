@@ -1386,10 +1386,11 @@ test.concurrent.each(linkers)(
     const storeJunk = linker === "isolated" ? plant(dir, "node_modules/.bun/junk@1.0.0/node_modules/junk") : null;
     const shown = (ws: string, name: string) =>
       linker === "hoisted" ? `- node_modules/${ws}/node_modules/${name}` : `- packages/${ws}/node_modules/${name}`;
+    // Removals print in byte order of their displayed path.
     const listing = (removed: string[], verb: string) =>
       [
         "bun prune <version> (<revision>)",
-        ...removed,
+        ...removed.toSorted(),
         `${verb} ${removed.length} package${removed.length === 1 ? "" : "s"}`,
       ].join("\n");
     // The shared area is swept whole-repo under --filter: the isolated store, and under hoisted the root folder itself.

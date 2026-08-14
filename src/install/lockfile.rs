@@ -376,6 +376,13 @@ impl<'a> LoadResult<'a> {
         }
     }
 
+    pub(crate) fn migrated_from_pnpm(&self) -> bool {
+        match self {
+            LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
+            _ => false,
+        }
+    }
+
     pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
         match self {
             LoadResult::NotFound => {

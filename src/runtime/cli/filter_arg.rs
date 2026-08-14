@@ -246,9 +246,9 @@ pub(crate) fn select_packages(
     );
     let packages = discovered
         .into_iter()
-        .zip(selection.selected)
-        .filter(|(_, keep)| *keep)
-        .map(|(p, _)| p)
+        .enumerate()
+        .filter(|&(i, _)| selection.selected.is_set(i))
+        .map(|(_, p)| p)
         .collect();
     Ok(SelectedPackages { root_dir, packages })
 }

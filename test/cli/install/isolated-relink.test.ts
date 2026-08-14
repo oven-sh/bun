@@ -22,7 +22,7 @@ async function install(dir: string): Promise<[stdout: string, stderr: string, ex
     stdout: "pipe",
     stderr: "pipe",
   });
-  return Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
 // Store entry names may carry hash suffixes, so reach one-range-dep's store node_modules through the top-level link.

@@ -115,11 +115,11 @@ type RegistryOptions = {
   rewriteTime?: Record<string, Record<string, string>>;
 };
 
-// Answers the bulk-advisory endpoint itself and proxies everything else to verdaccio.
+// Answers the bulk-advisory endpoint itself and proxies everything else to verdaccio, pointing manifest tarball URLs back at itself.
 function startRegistry(advisories: Record<string, Advisory[]>, options: RegistryOptions = {}) {
   return Bun.serve({
     port: 0,
-    async fetch(req) {
+    async fetch(req, proxy) {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname === "/-/npm/v1/security/advisories/bulk") {
         if (options.bulkStatus) return new Response("registry exploded", { status: options.bulkStatus });
@@ -147,16 +147,14 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
         method: req.method,
         headers: { accept: req.headers.get("accept") ?? "*/*" },
       });
-      const time = options.rewriteTime?.[packageName];
-      if (time && up.ok) {
-        const manifest = await up.json();
-        manifest.time = { ...manifest.time, ...time };
-        return Response.json(manifest);
+      const contentType = up.headers.get("content-type") ?? "application/octet-stream";
+      if (!up.ok || !contentType.includes("json")) {
+        return new Response(up.body, { status: up.status, headers: { "content-type": contentType } });
       }
-      return new Response(up.body, {
-        status: up.status,
-        headers: { "content-type": up.headers.get("content-type") ?? "application/octet-stream" },
-      });
+      const manifest = JSON.parse((await up.text()).replaceAll(verdaccio.registryUrl(), proxy.url.href));
+      const time = options.rewriteTime?.[packageName];
+      if (time) manifest.time = { ...manifest.time, ...time };
+      return Response.json(manifest, { status: up.status });
     },
   });
 }

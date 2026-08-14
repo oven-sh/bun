@@ -110,7 +110,8 @@ function trimCatalogLine(lock: string, name: string, spec: string): string {
     if (start === -1) continue;
     const end = lock.indexOf("\n  },", start);
     expect(end).toBeGreaterThan(start);
-    const block = lock.slice(start, end);
+    // Keep the closing line's leading newline so the block's last entry still ends in "\n".
+    const block = lock.slice(start, end + 1);
     const matches = block.match(new RegExp(line.source, "gm")) ?? [];
     removed += matches.length;
     trimmed = trimmed.replace(block, block.replace(line, ""));
@@ -1219,10 +1220,11 @@ describe("hoisted", () => {
     expect(lock).not.toContain('"packages/other"');
   });
 
+  // A new edge to a package bun.lock already hoists is invisible to the frozen tree comparison even without pruning, so the change here has to bring in a new package.
   test.concurrent("verbatim lockfile with a hook still fails on a real change", async () => {
     const tree = withApp({ scripts: { postinstall: "echo ok" } });
     const { packageDir, full } = await verbatimScenario("hoisted", tree, survivors);
-    await editApp(packageDir, app => (app.dependencies["left-pad"] = "1.0.0"));
+    await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
     await frozen(packageDir, "hoisted", 1);
 

@@ -1580,7 +1580,11 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
             })
         }
-        Tag::Uninitialized => None,
+        Tag::Uninitialized => Some(Version {
+            tag: Tag::Uninitialized,
+            literal: sliced.value(),
+            value: Value::default(),
+        }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {

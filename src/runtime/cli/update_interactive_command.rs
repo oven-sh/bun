@@ -484,8 +484,11 @@ impl UpdateInteractiveCommand {
                     GetJsonResult::Entry(entry) => entry,
                 };
 
-            // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
+            edit_catalog_definitions(
+                &mut updates_for_workspace[..],
+                &mut package_json.root,
+                &package_json.json_arena,
+            )?;
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -2144,27 +2147,16 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
-/// Edit catalog definitions in package.json
-// No `manager` parameter: a local `Bump` is used instead
-// (`E::Object::put` ignores its allocator arg), which keeps
-// `update_catalog_definitions` borrowck-clean.
+// `bump` is the cache entry's `json_arena`: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
 fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
+    bump: &Bump,
 ) -> crate::Result<()> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    // `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
-    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
-    // toggling the parser-tier disabler is a no-op for these allocations.
-    let bump = Bump::new();
-
     for update in updates.iter() {
         if let Some(catalog_name) = &update.catalog_name {
             update_named_catalog(
-                &bump,
+                bump,
                 current_package_json,
                 catalog_name,
                 &update.package_name,
@@ -2172,7 +2164,7 @@ fn edit_catalog_definitions(
             )?;
         } else {
             update_default_catalog(
-                &bump,
+                bump,
                 current_package_json,
                 &update.package_name,
                 &update.new_version,
@@ -2255,7 +2247,7 @@ fn update_default_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2278,7 +2270,7 @@ fn update_default_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(fresh_obj, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_obj, Loc::EMPTY),
                 };
                 ws_obj
                     .put(bump, b"catalog", expr)
@@ -2297,7 +2289,11 @@ fn update_default_catalog(
     // `workspaces.catalog` key exists.
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
+            .put(
+                bump,
+                b"catalog",
+                Expr::allocate(bump, fresh_obj, Loc::EMPTY),
+            )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
@@ -2349,7 +2345,7 @@ fn update_named_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2360,7 +2356,7 @@ fn update_named_catalog(
                 .put(
                     bump,
                     leak_dup(catalog_name),
-                    Expr::init(fresh_catalog, Loc::EMPTY),
+                    Expr::allocate(bump, fresh_catalog, Loc::EMPTY),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
@@ -2380,7 +2376,7 @@ fn update_named_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(fresh_catalogs, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
                 };
                 ws_obj
                     .put(bump, b"catalogs", expr)
@@ -2397,7 +2393,11 @@ fn update_named_catalog(
     }
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
+            .put(
+                bump,
+                b"catalogs",
+                Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
+            )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())

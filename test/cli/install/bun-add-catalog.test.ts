@@ -770,24 +770,63 @@ describe.concurrent("bun add --catalog", () => {
         await dir.installSavesNothing();
       });
 
-      // Plain `bun add <tarball>` on this fixture appends a second `no-deps` key, hence the key count.
-      test("a name the target already declares is left alone instead of being duplicated", async () => {
+      // The name is only known after both rows resolved, so this is refused before anything is written; `name@url` binds the declaration instead.
+      describe("a name the target already declares", () => {
         const pkg1 = { name: "pkg1", dependencies: { "no-deps": "^1.0.0" } };
-        const dir = await createDir(workspacesObject({ catalog: {} }), pkg1);
 
-        const result = await dir.add(dir.pkg1Dir, tarball(), "--catalog");
-        expect(result.stderr).toContain(
-          `note: no-deps in pkg1 keeps "^1.0.0" because the catalog entry is "${tarball()}"`,
-        );
-        expect(await dir.pkg1()).toEqual(pkg1);
-        expect((await dir.pkg1Text()).match(/"no-deps"/g)).toHaveLength(1);
-        expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": tarball() });
-        expect((await dir.lock()).catalog).toEqual({ "no-deps": tarball() });
-        expect(result.exitCode).toBe(0);
+        for (const { title, args } of [
+          { title: "alone", args: () => [tarball()] },
+          { title: "next to a named package", args: () => ["a-dep", tarball()] },
+        ]) {
+          test(`is refused without writing anything (${title})`, async () => {
+            const root = pretty(workspacesObject({ catalog: {} }));
+            const pkg1Text = pretty(pkg1);
+            const dir = await createDir(root, pkg1Text);
 
-        await dir.install();
-        expect((await dir.installed("no-deps")).version).toBe("1.1.0");
-        await dir.installSavesNothing();
+            const { stderr, exitCode } = await dir.add(dir.pkg1Dir, ...args(), "--catalog");
+
+            expect(stderr).toContain(
+              `error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps; run \`bun add no-deps@${tarball()} --catalog\` to move that declaration into the catalog`,
+            );
+            expect(await dir.rootText()).toBe(root);
+            expect(await dir.pkg1Text()).toBe(pkg1Text);
+            expect(await dir.lockExists()).toBeFalse();
+            expect(await dir.installedExists("no-deps")).toBeFalse();
+            expect(await dir.installedExists("a-dep")).toBeFalse();
+            expect(exitCode).toBe(1);
+          });
+        }
+
+        test("--filter refuses the whole command when one selected member declares it", async () => {
+          const root = pretty(workspacesObject({ catalog: {} }));
+          const dir = await createDir(root, pretty(pkg1), withPkg2());
+          const pkg2Before = await dir.pkg2Text();
+
+          const { stderr, exitCode } = await dir.add(dir.packageDir, tarball(), "--catalog", "--filter", "pkg*");
+
+          expect(stderr).toContain(`error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps;`);
+          expect(await dir.rootText()).toBe(root);
+          expect(await dir.pkg1Text()).toBe(pretty(pkg1));
+          expect(await dir.pkg2Text()).toBe(pkg2Before);
+          expect(await dir.lockExists()).toBeFalse();
+          expect(exitCode).toBe(1);
+        });
+
+        test("the suggested name@url spelling moves the declaration into the catalog", async () => {
+          const dir = await createDir(workspacesObject({ catalog: {} }), pkg1);
+
+          expectOk(await dir.add(dir.pkg1Dir, `no-deps@${tarball()}`, "--catalog"));
+
+          expect(await dir.pkg1()).toEqual({ name: "pkg1", dependencies: { "no-deps": "catalog:" } });
+          expect((await dir.pkg1Text()).match(/"no-deps"/g)).toHaveLength(1);
+          expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": tarball() });
+          const lock = await dir.lock();
+          expect(lock.catalog).toEqual({ "no-deps": tarball() });
+          expect(lock.workspaces["packages/pkg1"].dependencies).toEqual({ "no-deps": "catalog:" });
+          expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+
+          await dir.installSavesNothing();
+        });
       });
 
       test("an absolute local tarball path", async () => {
@@ -997,7 +1036,8 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.root()).workspaces.catalog).toEqual({ foo: literal });
       expect((await dir.pkg1()).dependencies).toEqual({ foo: "catalog:" });
       expect((await dir.lock()).catalog).toEqual({ foo: literal });
-      expect(await dir.installed("foo")).toMatchObject({ name: "foo", version: "1.0.0" });
+      // Folder dependencies of a workspace are linked under that workspace's node_modules, not hoisted.
+      expect(await dir.memberInstalled("pkg1", "foo")).toMatchObject({ name: "foo", version: "1.0.0" });
     });
   });
 

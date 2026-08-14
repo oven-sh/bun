@@ -251,6 +251,11 @@ fn request_literal(request: &UpdateRequest) -> &[u8] {
     request.version.literal.slice(request.version_buf())
 }
 
+/// `bun add foo` parses as a DistTag with an empty literal, so the tag alone cannot tell a bare name from `foo@latest`.
+fn has_explicit_version(request: &UpdateRequest) -> bool {
+    request.version.tag != dependency::Tag::Uninitialized && !request_literal(request).is_empty()
+}
+
 fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
     let Some(container) = catalogs_container(root) else {
         return;
@@ -372,9 +377,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
         let Some(entry_text) = q.expr.as_utf8_string_literal() else {
             continue;
         };
-        if request.version.tag == dependency::Tag::Uninitialized
-            || request_literal(request) == entry_text
-        {
+        if !has_explicit_version(request) || request_literal(request) == entry_text {
             manager.catalog_add.auto_use.push(request.name_hash);
         }
     }
@@ -432,7 +435,7 @@ fn record_add(
         });
     };
 
-    if request.version.tag != dependency::Tag::Uninitialized {
+    if has_explicit_version(request) {
         if find_add(&mut state.adds, request.name_hash, group).is_none() {
             push(
                 &mut state.adds,
@@ -512,7 +515,26 @@ fn drop_already_cataloged(
     }
 }
 
-/// Positional without a name (`bun add <url> --catalog`): the entry is whatever plain add just wrote for the resolved name.
+fn keys_named(package_json: &Expr, dependency_list: &[u8], name: &[u8]) -> usize {
+    package_json
+        .get(dependency_list)
+        .and_then(|list| list.data.e_object())
+        .map_or(0, |list| {
+            list.properties
+                .slice()
+                .iter()
+                .filter(|property| {
+                    property
+                        .key
+                        .as_ref()
+                        .and_then(|key| key.data.e_string())
+                        .is_some_and(|key| key.eql_bytes(name))
+                })
+                .count()
+        })
+}
+
+/// Positional without a name (`bun add <url> --catalog`): the entry is whatever plain add just wrote for the resolved name; a target that declared the name itself is refused here because the install already resolved both rows.
 fn settle_resolved_positional(
     state: &mut State,
     request: &UpdateRequest,
@@ -529,23 +551,19 @@ fn settle_resolved_positional(
     // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
     let literal: &[u8] = unsafe { (*e_string).data }.slice();
 
-    let list = package_json
-        .get(dependency_list)
-        .and_then(|list| list.data.e_object());
-    let declared_elsewhere = list.is_some_and(|list| {
-        list.properties
-            .slice()
-            .iter()
-            .filter(|property| {
-                property
-                    .key
-                    .as_ref()
-                    .and_then(|key| key.data.e_string())
-                    .is_some_and(|key| key.eql_bytes(name))
-            })
-            .count()
-            > 1
-    });
+    if keys_named(package_json, dependency_list, name) > 1 {
+        Output::err_generic(
+            "--catalog cannot add \"{s}\": {s} already declares {s}; run `bun add {s}@{s} --catalog` to move that declaration into the catalog",
+            (
+                BStr::new(literal),
+                BStr::new(target),
+                BStr::new(name),
+                BStr::new(name),
+                BStr::new(literal),
+            ),
+        );
+        Global::crash();
+    }
 
     let entry: &[u8] = match root_entry(&state.root_entries, name) {
         Some(entry) => entry,
@@ -570,20 +588,6 @@ fn settle_resolved_positional(
         }
     };
 
-    if declared_elsewhere {
-        if let Some(mut list) = list {
-            list.properties.retain(|property| {
-                !property
-                    .value
-                    .and_then(|value| value.data.e_string())
-                    .is_some_and(|value| core::ptr::eq(value.as_ptr(), e_string))
-            });
-        }
-        let declared =
-            existing_slot(package_json, name).map_or(b"".as_slice(), |slot| slot.slice());
-        note_keeps(quiet, name, target, declared, entry);
-        return Decision::Keep;
-    }
     if entry != literal {
         note_keeps(quiet, name, target, literal, entry);
         return Decision::Keep;
@@ -684,11 +688,7 @@ pub(crate) fn edit_target(
                     );
                     reference
                 }
-                (Some(reference), None)
-                    if request.version.tag == dependency::Tag::Uninitialized =>
-                {
-                    reference
-                }
+                (Some(reference), None) if !has_explicit_version(request) => reference,
                 (None, Some(name)) => {
                     let declared = existing.map(|slot| slot.slice());
                     match record_add(state, request, name, declared, &label, quiet) {

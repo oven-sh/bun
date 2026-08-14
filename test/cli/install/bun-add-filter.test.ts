@@ -1408,15 +1408,27 @@ async function addVendorFoo(dir: string) {
 test.concurrent("package.json is written even when a root postinstall fails (pnpm#8627)", async () => {
   const dir = await makeMonorepo({ root: { ...ROOT, scripts: { postinstall: "exit 1" } } });
 
-  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir);
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "root", "--filter", "api"], dir);
   expect(stderr).toContain('postinstall script from "root" exited with 1');
   expect(exitCode).toBe(1);
 
+  expect((await pkg(dir, "root")).dependencies).toEqual({ "no-deps": "^2.0.0" });
   expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect((await lockfileJson(dir)).workspaces["packages/api"]).toEqual({
-    name: "api",
-    dependencies: { "no-deps": "^2.0.0" },
-  });
+  const { workspaces } = await lockfileJson(dir);
+  expect(workspaces[""].dependencies).toEqual({ "no-deps": "^2.0.0" });
+  expect(workspaces["packages/api"]).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+});
+
+test.concurrent("the root's lifecycle scripts do not run when --filter leaves the root out", async () => {
+  const dir = await makeMonorepo({ root: { ...ROOT, scripts: { postinstall: "exit 1" } } });
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir);
+  expect(stderr).not.toContain("postinstall");
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api"]);
 });
 
 test.concurrent("a failed resolution leaves every target untouched", async () => {

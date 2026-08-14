@@ -1,8 +1,9 @@
 use std::sync::OnceLock;
 
 use bstr::BStr;
-use bun_collections::HashMap;
-use bun_core::{Global, Output, prettyln, strings};
+use bun_collections::bit_set::Range;
+use bun_collections::{DynamicBitSet, HashMap};
+use bun_core::{Global, Output, UnwrapOrOom as _, prettyln, strings};
 use bun_semver::string::Builder as StringBuilder;
 
 use crate::dependency::Behavior;
@@ -57,9 +58,10 @@ impl UpdateScope<'_> {
         self.contains_workspace(is_root, lockfile.packages.items_name_hash()[owner], name)
     }
 
-    /// One flag per dependency row; rows covered by no package's slice (orphans left by the differ) stay false.
-    pub fn walkable_rows(&self, lockfile: &Lockfile) -> Vec<bool> {
-        let mut walk = vec![false; lockfile.buffers.dependencies.len()];
+    /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
+    pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        let mut walk =
+            DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
         let pkg_res = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
@@ -77,7 +79,15 @@ impl UpdateScope<'_> {
                 ),
                 _ => true,
             };
-            walk[slice.begin() as usize..slice.end() as usize].fill(in_scope);
+            if in_scope {
+                walk.set_range_value(
+                    Range {
+                        start: slice.begin() as usize,
+                        end: slice.end() as usize,
+                    },
+                    true,
+                );
+            }
         }
         walk
     }
@@ -279,7 +289,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 continue;
             }
             for i in slice.begin() as usize..slice.end() as usize {
-                if !walk[i] {
+                if !walk.is_set(i) {
                     continue;
                 }
                 let target = resolutions[i];

@@ -15,6 +15,7 @@ const catalogManifests: Manifests = {
   "leaf": { "1.0.0": {}, "2.0.0": {} },
   "wants-leaf-peer": { "1.0.0": { peerDependencies: { leaf: "catalog:" } } },
   "wants-leaf-dep": { "1.0.0": { dependencies: { leaf: "catalog:" } } },
+  "needs-leaf-2": { "1.0.0": { dependencies: { leaf: "2.0.0" } } },
   "no-deps": { "1.0.0": {}, "2.0.0": {} },
   "catalog-peer": {
     "1.0.0": { peerDependencies: { "no-deps": "catalog:" } },
@@ -1169,15 +1170,15 @@ describe("peer dependencies", () => {
     });
   });
 
-  // Only the entry the spec names is `^2.0.0`; a `>=1.0.0` decoy or an unresolved peer would give dedupedKeys instead (pnpm: resolveFromCatalog.test.ts).
+  // Only the entry the spec names is `^2.0.0`; a `>=1.0.0` decoy (in another group, or under the other default spelling — one name in both is an error) or an unresolved peer would give dedupedKeys instead (pnpm: resolveFromCatalog.test.ts).
   describe.each([
     ["catalog:peers", { catalog: { "no-deps": ">=1.0.0" }, catalogs: { peers: { "no-deps": "^2.0.0" } } }],
     ["catalog:", { catalog: { "no-deps": "^2.0.0" }, catalogs: { peers: { "no-deps": ">=1.0.0" } } }],
     ["catalog:default", { catalog: { "no-deps": "^2.0.0" } }],
     ["catalog:", { catalogs: { default: { "no-deps": "^2.0.0" } } }],
     ["catalog:default", { catalogs: { default: { "no-deps": "^2.0.0" } } }],
-    ["catalog:default", { catalog: { "no-deps": ">=1.0.0" }, catalogs: { default: { "no-deps": "^2.0.0" } } }],
-    ["catalog:", { catalog: { "no-deps": "^2.0.0" }, catalogs: { default: { "no-deps": ">=1.0.0" } } }],
+    ["catalog:default", { catalog: { "a-dep": ">=1.0.0" }, catalogs: { default: { "no-deps": "^2.0.0" } } }],
+    ["catalog:", { catalog: { "no-deps": "^2.0.0" }, catalogs: { default: { "a-dep": ">=1.0.0" } } }],
   ] as const)("peer %s resolves through the entry named by its spec (%o)", (peerSpec, catalogFields) => {
     test.concurrent("fresh and reload", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, linker: "hoisted" });
@@ -1213,24 +1214,23 @@ describe("peer dependencies", () => {
   const registryPeerKeys = ["app", "catalog-peer", "lib", "no-deps"];
 
   describe.each(linkers)("linker=%s", linker => {
+    // app hoists leaf@1.0.0 (a root dependency would dedupe every peer onto itself) and needs-leaf-2 locks leaf@2.0.0: the workspace's catalog: peer nests it, the registry package's identical spec binds to nothing (unstripped it would add "wants-leaf-peer/leaf").
     test.concurrent("a catalog: peer inside a registry package never reads the consumer's catalog", async () => {
-      using project = writeRegistryProject(
-        {
-          "package.json": JSON.stringify({
-            name: "root",
-            workspaces: { packages: ["packages/*"], catalog: { leaf: "^2.0.0" } },
-            dependencies: { "leaf": "1.0.0", "wants-leaf-peer": "1.0.0" },
-          }),
-          "packages/lib/package.json": JSON.stringify({ name: "lib", peerDependencies: { leaf: "catalog:" } }),
-        },
-        catalogRegistry.url.href,
-      );
-      const dir = String(project);
-      const keys = ["leaf", "lib", "lib/leaf", "wants-leaf-peer"];
+      const dir = await makeRepo({
+        catalog: { leaf: "^2.0.0" },
+        peerName: "leaf",
+        peerSpec: "catalog:",
+        rootDependencies: { "needs-leaf-2": "1.0.0", "wants-leaf-peer": "1.0.0" },
+        appDependencies: { leaf: "1.0.0" },
+        linker,
+        registry: catalogRegistry.url.href,
+      });
+      const keys = ["app", "leaf", "lib", "lib/leaf", "needs-leaf-2", "needs-leaf-2/leaf", "wants-leaf-peer"];
 
       await install(dir, linker);
       expect(await packageKeys(dir)).toEqual(keys);
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+      expect(lockfile).toContain('"peerDependencies": { "leaf": "catalog:" }');
 
       await rmNodeModules(dir);
       const frozen = await install(dir, linker, "--frozen-lockfile");

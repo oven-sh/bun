@@ -1715,8 +1715,9 @@ describe("bun update <name> semantics", () => {
   it.concurrent("bun update --latest is a no-op on `latest` literals whose tag has not moved", async () => {
     const dir = await setup({ "no-deps": "latest", aliased: "npm:a-dep@latest" });
     const before = await snapshotFiles(dir);
-    const { stderr } = await update(dir, "--latest");
-    expect(stderr).not.toContain("Saved lockfile");
+    const { stdout } = await update(dir, "--latest");
+    expect(stdout).not.toContain("->");
+    expect(stdout).not.toContain("→");
     await expectUnchanged(dir, before);
     expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
     expect(await installedVersion(dir, "aliased")).toBe("1.0.10");
@@ -2092,8 +2093,11 @@ describe("bun update <name> semantics", () => {
         expect(await packageJsonText(dir)).toBe(before[""]);
         expect(await packageJsonText(dir, "packages/web")).toBe(before["packages/web"]);
         expect(await packageJsonText(dir, "packages/pkg-b")).toBe(before["packages/pkg-b"]);
-        expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "^1.0.0" });
-        expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.1", "1.1.0", "2.0.0"]);
+        const { workspaces } = await lock(dir);
+        expect(workspaces[""].dependencies).toEqual({ "no-deps": "^1.0.0" });
+        expect(workspaces["packages/web"].peerDependencies).toEqual({ "no-deps": "~1.0.0" });
+        // 1.0.1 was only ever placed by api's alias row; web's peer entry is satisfied by whatever is hoisted.
+        expect(await lockedVersions(dir, "no-deps")).toEqual(["1.1.0", "2.0.0"]);
         await install(dir, "--frozen-lockfile");
       },
     );
@@ -2150,20 +2154,25 @@ describe("bun update <name> semantics", () => {
       expect(await packageJsonText(dir)).toBe(before[""]);
     });
 
-    it.concurrent("a catalog reference keeps the member's literal and moves the root catalog entry", async () => {
+    // Like an unfiltered `bun update <name>`, a named update never rewrites a `catalog:` reference or the catalog entry behind it (only a bare update moves the catalog).
+    it.concurrent("a catalog reference keeps the member's literal and the root catalog entry", async () => {
       const dir = await createDir({
         "package.json": { name: "root", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } } },
         "packages/api/package.json": { name: "api", dependencies: { "no-deps": "catalog:" } },
         "packages/web/package.json": '{"name":"web","dependencies":{"no-deps":"catalog:"}}',
       });
       await install(dir);
-      const webBefore = await packageJsonText(dir, "packages/web");
+      const [rootBefore, apiBefore, webBefore] = await Promise.all([
+        packageJsonText(dir),
+        packageJsonText(dir, "packages/api"),
+        packageJsonText(dir, "packages/web"),
+      ]);
       await update(dir, "no-deps", "--latest", "--filter", "api");
-      expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual({ "no-deps": "catalog:" });
-      expect((await packageJsonOf(dir)).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
-      expect((await lock(dir)).catalog).toEqual({ "no-deps": "^2.0.0" });
+      expect(await packageJsonText(dir, "packages/api")).toBe(apiBefore);
+      expect(await packageJsonText(dir)).toBe(rootBefore);
       expect(await packageJsonText(dir, "packages/web")).toBe(webBefore);
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["2.0.0"]);
+      expect((await lock(dir)).catalog).toEqual({ "no-deps": "^1.0.0" });
+      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.1.0"]);
       await install(dir, "--frozen-lockfile");
     });
 

@@ -229,7 +229,7 @@ describe.concurrent("syntax", () => {
       "hoisted",
       {
         "packages/app/package.json": JSON.stringify({ name: "@scoped/app", dependencies: { "@types/no-deps": "*" } }),
-        "packages/other/package.json": JSON.stringify({ name: "other", dependencies: { "@types/no-deps": "*" } }),
+        "packages/other/package.json": JSON.stringify({ name: "other", dependencies: { "@types/no-deps": "2.0.0" } }),
       },
     );
     const { err } = await installOk(dir);
@@ -352,7 +352,7 @@ describe.concurrent("syntax", () => {
     });
   });
 
-  // pnpm's `-` value deletes the dependency; Bun warns and installs as if the rule were absent.
+  // pnpm's `-` deletes the dependency; Bun warns and installs as if the rule were absent (both dependents pin no-deps exactly, so nothing can dedupe onto the other's version).
   describe.concurrent.each([
     { rules: { overrides: { "no-deps": "-" } }, label: "override" },
     { rules: { overrides: { "one-dep": { "no-deps": "-" } } }, label: "override" },
@@ -360,13 +360,13 @@ describe.concurrent("syntax", () => {
     { rules: { resolutions: { "one-dep/no-deps": "-" } }, label: "resolution" },
   ])('a "-" value warns and is ignored %j', ({ rules, label }) => {
     test("install still succeeds", async () => {
-      const dir = await project({ dependencies: { "one-dep": "1.0.0", "one-range-dep": "1.0.0" }, ...rules });
+      const dir = await project({ dependencies: { "one-dep": "1.0.0", ofd2: twoParents.ofd2 }, ...rules });
       const { err, exitCode } = await install(dir);
       expect(err).toContain(`${label} "no-deps" removes the dependency ('-'), which bun does not support`);
       expect(err).not.toContain("error:");
       expect(exitCode).toBe(0);
       expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
-      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      expect(await versionSeenBy(dir, "ofd2", "no-deps")).toBe("2.0.0");
       expect(await lock(dir)).not.toContain('"overrides"');
     });
   });

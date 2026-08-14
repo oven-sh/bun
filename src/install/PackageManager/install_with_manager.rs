@@ -1465,7 +1465,7 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, Pac
         let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
             continue;
         };
-        if !walkable[dependency_i] {
+        if !walkable.is_set(dependency_i) {
             matched_elsewhere[request] = true;
             continue;
         }

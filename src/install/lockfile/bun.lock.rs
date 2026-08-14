@@ -334,9 +334,9 @@ impl Stringifier {
 
         let mut path_buf = PathBuffer::uninit();
 
-        // if we loaded from a binary lockfile and we're migrating it to a text lockfile, ensure
+        // if we loaded from a binary lockfile or pnpm-lock.yaml and we're migrating it to a text lockfile, ensure
         // peer dependencies have resolutions, and mark them optional if they don't
-        if load_result.loaded_from_binary_lockfile() {
+        if load_result.loaded_from_binary_lockfile() || load_result.migrated_from_pnpm() {
             while let Some(node) = pkgs_iter.next(None) {
                 for &dep_id in node.dependencies {
                     let dep = &deps_buf[dep_id as usize];
@@ -3214,6 +3214,11 @@ pub(crate) fn parse_into_binary_lockfile(
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
+
+                // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
+                if dep.version.tag == DependencyVersionTag::Uninitialized {
+                    continue 'deps;
+                }
 
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,

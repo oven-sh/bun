@@ -771,12 +771,13 @@ describe("selectors", () => {
     });
   });
 
+  // `bun run --filter` only runs workspace members; the root's own scripts are never selected.
   test("a '!' pattern subtracts from '*'", () => {
     runInCwdSuccess({
       cwd: graph_root,
       pattern: ["*", "!web"],
-      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/, /out-root/],
-      antipattern: [/out-web/],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
     });
   });
 
@@ -784,8 +785,8 @@ describe("selectors", () => {
     runInCwdSuccess({
       cwd: graph_root,
       pattern: ["*", "!...api"],
-      target_pattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
-      antipattern: [/out-api/, /out-web/],
+      target_pattern: [/out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-api/, /out-web/, /out-root/],
     });
   });
 

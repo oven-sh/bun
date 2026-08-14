@@ -637,6 +637,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             bstr::BStr::new(name_str)
                         ),
                     );
+                    continue;
                 }
 
                 let sel = match crate::lockfile_real::override_selector::parse_selector(name_str) {
@@ -1714,16 +1715,34 @@ fn append_snapshot_dependency_version(
 ) -> Result<(String, Option<ExternalString>), AllocError> {
     if pnpm_reference_is_dep_path(reference) {
         if let Ok((alias_str, version_str)) = dependency::split_name_and_version(reference) {
-            if !version_str.first().is_some_and(u8::is_ascii_digit) {
+            let registry_qualified = split_registry_qualified_version(version_str);
+            if registry_qualified.is_none() && !version_str.first().is_some_and(u8::is_ascii_digit)
+            {
                 references_by_name.put(dep_name, Box::from(reference))?;
                 return Ok((sbuf!(lockfile).append(version_str)?, None));
             }
             let alias = sbuf!(lockfile).append_external(alias_str)?;
             version_buf.clear();
-            write!(version_buf, "npm:{}", bstr::BStr::new(reference)).map_err(|_| AllocError)?;
+            let version_str = match registry_qualified {
+                Some((_, version)) => {
+                    references_by_name.put(dep_name, Box::from(reference))?;
+                    version
+                }
+                None => version_str,
+            };
+            write!(
+                version_buf,
+                "npm:{}@{}",
+                bstr::BStr::new(alias_str),
+                bstr::BStr::new(version_str)
+            )
+            .map_err(|_| AllocError)?;
             let version = sbuf!(lockfile).append(version_buf.as_slice())?;
             return Ok((version, Some(alias)));
         }
+    } else if let Some((_, version_str)) = split_registry_qualified_version(reference) {
+        references_by_name.put(dep_name, Box::from(reference))?;
+        return Ok((sbuf!(lockfile).append(version_str)?, None));
     }
     Ok((sbuf!(lockfile).append(reference)?, None))
 }
@@ -1993,10 +2012,9 @@ fn append_importer_dependency(
     specifier_str: &[u8],
     behavior: dependency::Behavior,
 ) -> Result<(), ParseAppendDependenciesError> {
-    let name_hash = semver::string::Builder::string_hash(name_str);
-    let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
-
     if strings::has_prefix(specifier_str, b"catalog:") {
+        let name_hash = semver::string::Builder::string_hash(name_str);
+        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
         let mut catalog_group_name_str = specifier_str[b"catalog:".len()..].trim_ascii();
         if catalog_group_name_str == b"default" {
             catalog_group_name_str = b"";
@@ -2026,6 +2044,18 @@ fn append_importer_dependency(
         return Ok(());
     }
 
+    append_manifest_dependency(lockfile, log, name_str, specifier_str, behavior)
+}
+
+fn append_manifest_dependency(
+    lockfile: &mut Lockfile,
+    log: &mut bun_ast::Log,
+    name_str: &[u8],
+    specifier_str: &[u8],
+    behavior: dependency::Behavior,
+) -> Result<(), ParseAppendDependenciesError> {
+    let name_hash = semver::string::Builder::string_hash(name_str);
+    let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
     let specifier = sbuf!(lockfile).append(specifier_str)?;
     let specifier_sliced = specifier.sliced(string_bytes!(lockfile));
 
@@ -2202,7 +2232,7 @@ fn parse_append_importer_dependencies(
         }
         let mut behavior = dependency::Behavior::PEER;
         behavior.set_optional(*optional);
-        append_importer_dependency(lockfile, log, peer_name, *range, behavior)?;
+        append_manifest_dependency(lockfile, log, peer_name, *range, behavior)?;
     }
 
     if exclude_links_from_lockfile {

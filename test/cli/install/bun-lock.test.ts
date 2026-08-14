@@ -606,6 +606,44 @@ it("should pass frozen lockfile check when a bundled dependency has an optional 
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
+it("should pass frozen lockfile check when a dependency of a bundled dependency has an optional peer satisfiable from the root", async () => {
+  // Same as above, one level deeper: the package with the optional peer is not
+  // bundled itself, it is a dependency of the bundled package. It inherits the
+  // bundle's hoist root but its lockfile entry carries no "bundled" marker, so
+  // the loader must derive the binding the same way a fresh install does.
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "frozen-bundled-transitive-optional-peer",
+      dependencies: {
+        // bundles `depends-on-optional-peer-deps`, which depends on
+        // `optional-peer-deps`, which has an optional peer on `no-deps`
+        "bundled-transitive-optional-peer": "1.0.0",
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"bundled-transitive-optional-peer/depends-on-optional-peer-deps": ');
+  expect(lockfile).toContain('"bundled": true');
+  // hoisted to the bundle root, no bundled marker of its own
+  expect(lockfile).toContain('"bundled-transitive-optional-peer/optional-peer-deps": ');
+  // the optional peer is not satisfiable from inside the bundle
+  expect(lockfile).not.toContain('"bundled-transitive-optional-peer/no-deps"');
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // and from a cold start with no node_modules
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
 it("should include unused resolutions in the lockfile", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

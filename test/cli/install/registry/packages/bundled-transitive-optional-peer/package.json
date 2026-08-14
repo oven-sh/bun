@@ -1,0 +1,44 @@
+{
+	"name": "bundled-transitive-optional-peer",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-transitive-optional-peer",
+			"version": "1.0.0",
+			"dependencies": {
+				"depends-on-optional-peer-deps": "1.0.0"
+			},
+			"bundleDependencies": [
+				"depends-on-optional-peer-deps"
+			],
+			"_id": "bundled-transitive-optional-peer@1.0.0",
+			"integrity": "sha512-Vp931BgUZR2t8zHh5Fttkf1qK1axqKzs1CKP0uuYCTkIjmM36hibGR6FSDeAra0FSKkHpVQJ5ApOCUewGpOWpA==",
+			"shasum": "2f7810e5fb282ca0622f2695a24a4d1e5ae0aab4",
+			"dist": {
+				"integrity": "sha512-Vp931BgUZR2t8zHh5Fttkf1qK1axqKzs1CKP0uuYCTkIjmM36hibGR6FSDeAra0FSKkHpVQJ5ApOCUewGpOWpA==",
+				"shasum": "2f7810e5fb282ca0622f2695a24a4d1e5ae0aab4",
+				"tarball": "http://localhost:4873/bundled-transitive-optional-peer/-/bundled-transitive-optional-peer-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-30T18:14:22.143Z",
+		"created": "2024-12-30T18:14:22.143Z",
+		"1.0.0": "2024-12-30T18:14:22.143Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-transitive-optional-peer-1.0.0.tgz": {
+			"shasum": "2f7810e5fb282ca0622f2695a24a4d1e5ae0aab4",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-transitive-optional-peer",
+	"readme": ""
+}

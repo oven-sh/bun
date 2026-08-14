@@ -109,8 +109,7 @@ for (const flag of ["-e", "--print"]) {
 }
 
 // https://github.com/oven-sh/bun/issues/23631
-// Each child runs in an empty directory so that a token dispatched as a
-// subcommand (`bun test`, `bun x`, ...) has nothing to act on.
+// Empty cwd: a token dispatched as a subcommand (`bun test`, `bun x`, ...) must find nothing to act on.
 describe("eval flags take precedence over subcommand names", () => {
   describe("the code is a subcommand name", () => {
     const cases: string[][] = [

@@ -1568,16 +1568,7 @@ impl Poll {
         kqueue_event.ident = fd.native() as _;
         kqueue_event.filter = filter;
         kqueue_event.flags = flags_;
-        // A delete's owner is done with the poll once this returns (`Close`
-        // calls `on_done` before the changelist is submitted) and may be freed
-        // by the time kevent() reports on it; a failed delete (the one-shot
-        // already fired, the fd already closed) must not come back as an
-        // `EV_ERROR` event addressed to it. udata 0 is the waker's: ignored.
-        kqueue_event.udata = if action == ApplyAction::Cancel {
-            0usize as _
-        } else {
-            udata as _
-        };
+        kqueue_event.udata = udata as _;
         // Darwin's kevent64_s.ext[0] carries the generation number for the
         // optional sanity assertion (GenerationNumberInt is u0 elsewhere).
         #[cfg(target_os = "macos")]

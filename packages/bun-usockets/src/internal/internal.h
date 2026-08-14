@@ -288,8 +288,8 @@ struct us_socket_t {
   unsigned char kind;
   /* SSL state. These 6 bits live in the pad-to-pointer gap before `group`, so
    * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
-   * to 16 anyway for the pointer). Per-socket reneg counters and SNI userdata
-   * hang off SSL ex_data, allocated on first use only. */
+   * to 16 anyway for the pointer). Per-socket reneg counters hang off SSL
+   * ex_data, allocated on first use only. */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
   unsigned char ssl_read_wants_write : 1;
@@ -465,7 +465,7 @@ struct us_listen_socket_t {
   /* SSL_CTX for accepted sockets. Borrowed; up_ref'd on listen, freed on
    * close. NULL → plain TCP. */
   struct ssl_ctx_st *ssl_ctx;
-  /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
+  /* SNI hostname → SSL_CTX* tree. Owned. */
   void *sni;
   /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
    * in-flight handshake only (the caller does not cache it), or NULL to fall

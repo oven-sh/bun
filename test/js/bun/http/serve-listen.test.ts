@@ -1,6 +1,7 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { existsSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -159,6 +160,23 @@ describe.each([
       expect({ protocol, hostname, port, pathname }).toMatchObject(url);
     });
   });
+});
+
+test.skipIf(isWindows)("unix socket path with null bytes is rejected instead of truncated", () => {
+  const dir = tmpdirSync();
+  for (const listen of [
+    () => serve({ unix: join(dir, "nul\0byte.sock"), fetch: () => new Response("") }),
+    () => Bun.listen({ unix: join(dir, "nul\0byte.sock"), socket: { data() {} } }),
+  ]) {
+    let err: any;
+    try {
+      listen().stop(true);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("EINVAL");
+  }
+  expect(existsSync(join(dir, "nul"))).toBe(false);
 });
 
 // Linux-only: uses /proc/self/fd to find the listen socket and close it from

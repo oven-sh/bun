@@ -419,6 +419,9 @@ class Database implements SqliteTypes.Database {
     if (anonymous && (flags & constants.SQLITE_OPEN_READONLY) !== 0) {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
+    if (filename.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("filename", filename, "must be a string without null bytes");
+    }
 
     if (!SQL) {
       initializeSQL();

@@ -90,15 +90,25 @@ describe.concurrent("bun init", () => {
     await Promise.all(dirs.map(dir => fs.promises.rm(dir, { recursive: true, force: true })));
   });
 
+  // Every consumer of an init runs this before looking at anything the nested
+  // `bun install` should have produced. `bun init` exits 0 even when that
+  // install fails (#38474), and the install's errors are in the captured
+  // stderr, so a failed install has to be reported together with that output
+  // rather than as a missing file further down.
+  function expectInstalled({ dir, stdout, stderr, exitCode }: InitResult, packages: string[]) {
+    const missing = packages.filter(name => !fs.existsSync(path.join(dir, "node_modules", name, "package.json")));
+    expect({ missing, exitCode, stdout, stderr }).toMatchObject({ missing: [], exitCode: 0 });
+  }
+
   // A react template's scaffold is fully determined by its source directory
-  // plus the generated README.md and .gitignore. Whether the nested
-  // `bun install` did its job is checked through what it leaves behind
-  // (the lockfile is in the file listing, node_modules is checked here)
-  // rather than through `bun init`'s exit code.
+  // plus the generated README.md and .gitignore; `bun install` then adds
+  // bun.lock (part of the file listing the callers snapshot) and node_modules.
   function expectReactTemplate(init: InitResult, source: string, readmeTitle: string) {
-    const { dir, stdout, stderr, exitCode } = init;
-    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    expect(stderr).not.toMatch(/^(error|warn)/m);
+    const { dir } = init;
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies });
+    expect(declared).toContain("typescript");
+    expectInstalled(init, declared);
 
     // Line endings are normalized because the checkout that built the binary
     // and the one running the tests need not agree on them.
@@ -116,12 +126,6 @@ describe.concurrent("bun init", () => {
     const readme = fs.readFileSync(path.join(dir, "README.md"), "utf8");
     expect(readme).toStartWith(`# ${readmeTitle}\n`);
     expect(readme).toInclude("bun v" + Bun.version.replaceAll("-debug", ""));
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-    const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies }).sort();
-    expect(declared).toContain("typescript");
-    const installed = declared.filter(name => fs.existsSync(path.join(dir, "node_modules", name, "package.json")));
-    expect(installed).toEqual(declared);
   }
 
   test("bun init works", async () => {
@@ -354,6 +358,7 @@ describe.concurrent("bun init", () => {
 
   test("bun init --react works", async () => {
     const init = await initTemplate("--react");
+    expectReactTemplate(init, "react-app", "bun-react-template");
     expect(init.files).toMatchInlineSnapshot(`
       [
         ".gitignore",
@@ -374,11 +379,11 @@ describe.concurrent("bun init", () => {
         "tsconfig.json",
       ]
     `);
-    expectReactTemplate(init, "react-app", "bun-react-template");
   }, 30_000);
 
   test("bun init --react=tailwind works", async () => {
     const init = await initTemplate("--react=tailwind");
+    expectReactTemplate(init, "react-tailwind", "bun-react-tailwind-template");
     expect(init.files).toMatchInlineSnapshot(`
       [
         ".gitignore",
@@ -400,11 +405,11 @@ describe.concurrent("bun init", () => {
         "tsconfig.json",
       ]
     `);
-    expectReactTemplate(init, "react-tailwind", "bun-react-tailwind-template");
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
     const init = await initTemplate("--react=shadcn");
+    expectReactTemplate(init, "react-shadcn", "bun-react-tailwind-shadcn-template");
     expect(init.files).toMatchInlineSnapshot(`
       [
         ".gitignore",
@@ -435,7 +440,6 @@ describe.concurrent("bun init", () => {
         "tsconfig.json",
       ]
     `);
-    expectReactTemplate(init, "react-shadcn", "bun-react-tailwind-shadcn-template");
   }, 30_000);
 
   // Every template declares `typescript: "^6"`, so the `bun install` that
@@ -444,8 +448,9 @@ describe.concurrent("bun init", () => {
   test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
     "bun init %s installs TypeScript 6, typechecks, and builds",
     async flag => {
-      const { dir, stdout, stderr, exitCode } = await initTemplate(flag);
-      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      const init = await initTemplate(flag);
+      const { dir } = init;
+      expectInstalled(init, ["typescript"]);
 
       const tsPkg = JSON.parse(fs.readFileSync(path.join(dir, "node_modules/typescript/package.json"), "utf8"));
       expect(tsPkg.version).toStartWith("6.");

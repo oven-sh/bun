@@ -5898,8 +5898,7 @@ pub mod serializer {
         }
     }
 
-    /// `0.5px` -> `.5px`, `-0.5px` -> `-.5px`. A magnitude below 1 can also leave
-    /// `dtoa_short` as `-1e-7` or, rounded, `-1`; those have no zero to drop.
+    /// `0.5px` -> `.5px`, `-0.5px` -> `-.5px`; `-1e-7px` and `-1px` are written as is.
     pub(crate) fn write_without_leading_zero(
         number: &[u8],
         dest: &mut Printer,

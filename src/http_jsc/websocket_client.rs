@@ -217,12 +217,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let had_tunnel = this.proxy_tunnel.get().is_some();
         this.clear_data();
 
-        if SSL {
-            // we still want to send pending SSL buffer + close_notify
-            this.tcp.get().close(uws::CloseKind::Normal);
-        } else {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
+        // Failure still sends close_notify best-effort but never waits for the peer's reply.
+        this.tcp.get().close(uws::CloseKind::Failure);
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
         // handle_close() never fires. Mirror what handle_close() does for
@@ -1741,12 +1737,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         if !this.tcp.get().is_closed() {
-            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-            if SSL {
-                this.tcp.get().close(uws::CloseKind::Normal);
-            } else {
-                this.tcp.get().close(uws::CloseKind::Failure);
-            }
+            this.tcp.get().close(uws::CloseKind::Failure);
         }
     }
 

@@ -396,11 +396,10 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
@@ -416,11 +415,10 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }

@@ -10,8 +10,6 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-#[cfg(unix)]
-use core::ffi::c_ulong;
 use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -964,8 +962,9 @@ mod lib_util {
 
 #[cfg(unix)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
-    // On macOS, openpty is in libc, so we can use it directly
-    #[cfg(target_os = "macos")]
+    // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
+    // scripts/build/bun.ts).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
         // type unifies with the Linux dlsym path.
@@ -991,7 +990,12 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return lib_util::get_open_pty();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    )))]
     None
 }
 
@@ -1621,11 +1625,6 @@ impl Terminal {
 
         #[cfg(unix)]
         {
-            #[cfg(target_os = "macos")]
-            const TIOCSWINSZ: c_ulong = 0x80087467;
-            #[cfg(not(target_os = "macos"))]
-            const TIOCSWINSZ: c_ulong = 0x5414;
-
             let winsize = bun_core::Winsize {
                 row: new_rows,
                 col: new_cols,
@@ -1638,7 +1637,7 @@ impl Terminal {
             let ioctl_result = unsafe {
                 libc::ioctl(
                     self.master_fd.get().native(),
-                    TIOCSWINSZ as _,
+                    libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
             };

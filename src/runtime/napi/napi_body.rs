@@ -96,6 +96,8 @@ unsafe extern "C" {
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
     fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn NapiUngatedScope__construct(storage: *mut c_void, env: *mut NapiEnv);
+    fn NapiUngatedScope__destruct(storage: *mut c_void);
 }
 
 impl NapiEnv {
@@ -465,6 +467,43 @@ macro_rules! preamble {
     }};
 }
 
+/// napi.cpp's `NapiUngatedScope` (see the comment there), constructed in place in this storage.
+#[repr(C, align(8))]
+struct UngatedScope([core::mem::MaybeUninit<u8>; 80]);
+
+struct UngatedScopeGuard<'a>(&'a mut UngatedScope);
+
+impl UngatedScope {
+    #[inline]
+    fn enter<'a>(
+        storage: &'a mut core::mem::MaybeUninit<UngatedScope>,
+        env: &NapiEnv,
+    ) -> UngatedScopeGuard<'a> {
+        let this = storage.write(UngatedScope([core::mem::MaybeUninit::uninit(); 80]));
+        // SAFETY: storage is 80 bytes, 8-aligned, and stays put until the guard drops; napi.cpp
+        // static_asserts that NapiUngatedScope fits.
+        unsafe { NapiUngatedScope__construct(this.0.as_mut_ptr().cast(), env.as_mut_ptr()) };
+        UngatedScopeGuard(this)
+    }
+}
+
+impl Drop for UngatedScopeGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: constructed by `enter`, destroyed exactly once here.
+        unsafe { NapiUngatedScope__destruct(self.0.0.as_mut_ptr().cast()) };
+    }
+}
+
+/// `get_env!`, then the rest of the function runs under napi.cpp's `NapiUngatedScope` (which see): no JS or addon code.
+macro_rules! ungated {
+    ($env:ident, $raw:expr) => {
+        let $env = get_env!($raw);
+        let mut napi_ungated_storage = ::core::mem::MaybeUninit::<UngatedScope>::uninit();
+        let _napi_ungated_scope = UngatedScope::enter(&mut napi_ungated_storage, $env);
+    };
+}
+
 macro_rules! get_out {
     ($env:expr, $ptr:expr) => {
         // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
@@ -514,7 +553,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::UNDEFINED);
@@ -524,7 +563,7 @@ extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -> na
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_null");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::NULL);
@@ -542,7 +581,7 @@ extern "C" fn napi_get_boolean(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_boolean");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::from(value));
@@ -552,7 +591,7 @@ extern "C" fn napi_get_boolean(
 #[unsafe(no_mangle)]
 extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let arr = match JSValue::create_empty_array(env.to_js(), 0) {
@@ -570,7 +609,7 @@ extern "C" fn napi_create_array_with_length(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array_with_length");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
 
@@ -605,7 +644,7 @@ extern "C" fn napi_create_int32(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int32");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -619,7 +658,7 @@ extern "C" fn napi_create_uint32(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_uint32");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -633,7 +672,7 @@ extern "C" fn napi_create_int64(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int64");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -647,7 +686,7 @@ extern "C" fn napi_create_string_latin1(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -703,7 +742,7 @@ extern "C" fn napi_create_string_utf8(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -744,7 +783,7 @@ extern "C" fn napi_create_string_utf16(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u16] = 'brk: {
@@ -969,7 +1008,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_is_array(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1132,7 +1171,7 @@ extern "C" fn napi_open_handle_scope(
     result_: *mut napi_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     *result = NapiHandleScope::open(env, false);
@@ -1145,7 +1184,7 @@ extern "C" fn napi_close_handle_scope(
     handle_scope: napi_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     if !handle_scope.is_null() {
         NapiHandleScope::close(handle_scope, env);
@@ -1235,7 +1274,7 @@ extern "C" fn napi_open_escapable_handle_scope(
     result_: *mut napi_escapable_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     *result = NapiHandleScope::open(env, true);
@@ -1248,7 +1287,7 @@ extern "C" fn napi_close_escapable_handle_scope(
     scope: napi_escapable_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_escapable_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     if !scope.is_null() {
         NapiHandleScope::close(scope, env);
@@ -1264,7 +1303,7 @@ extern "C" fn napi_escape_handle(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_escape_handle");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     // SAFETY: scope_ is a raw NAPI handle; non-null is treated as &NapiHandleScope.
@@ -1332,7 +1371,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let value = value_.get();
     if value.is_empty() {
@@ -1358,7 +1397,7 @@ extern "C" fn napi_is_arraybuffer(
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1403,7 +1442,7 @@ extern "C" fn napi_get_arraybuffer_info(
     byte_length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let arraybuffer = arraybuffer_.get();
     let Some(array_buffer) = arraybuffer.as_array_buffer(env.to_js()) else {
@@ -1437,7 +1476,7 @@ extern "C" fn napi_get_typedarray_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let typedarray = typedarray_.get();
     if typedarray.is_empty_or_undefined_or_null() {
@@ -1498,7 +1537,7 @@ extern "C" fn napi_is_dataview(
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_dataview");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
     let value = value_.get();
     if value.is_empty() {
@@ -1519,7 +1558,7 @@ extern "C" fn napi_get_dataview_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let dataview = dataview_.get();
     if dataview.is_empty() {
@@ -1616,7 +1655,7 @@ extern "C" fn napi_is_promise(
     is_promise_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_promise");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let value = value_.get();
     let is_promise = get_out!(env, is_promise_);
@@ -1657,7 +1696,7 @@ extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi_val
 #[unsafe(no_mangle)]
 extern "C" fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let is_date = get_out!(env, is_date_);
     let value = value_.get();
@@ -2061,7 +2100,7 @@ extern "C" fn napi_get_buffer_info(
     length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let value = value_.get();
     // Keep the pointer valid for the buffer's lifetime, as in Node.
     if !data.is_null() && !value.materialize_array_buffer_view_buffer() {

@@ -263,6 +263,12 @@ CLANGXX
   mkdir -p "$CARGO_HOME"
   export RUSTUP_HOME="$RUST_HOME"
   export RUSTUP_TOOLCHAIN="$RUST_VER"
+  # RUSTC: cargo resolves rustc via PATH, where harmonybrew's stable rust
+  # (1.97.1) precedes RUST_HOME/bin in some shells → cargo would pick the
+  # stable rustc and fail with "option Z is only accepted on the nightly
+  # compiler" (and -Zbuild-std would pull stable rust-src). Pin it so the
+  # nightly toolchain is used deterministically.
+  export RUSTC="$RUST_HOME/bin/rustc"
 
   # OHOS 专用
   export OHOS_LLVM_PREFIX="$LLVM21"

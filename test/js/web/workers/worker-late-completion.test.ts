@@ -232,13 +232,22 @@ const ROWS: Row[] = [
 // the worker waits for (with the gate armed, a parent→worker post is itself a
 // cross-thread post that waits for the worker's teardown). Rows with a parent
 // side post in response to "armed".
+//
+// The work is started from an immediate, not from the module body: a `leak:`
+// suppression matches any frame of an allocation's recorded stack, and
+// test/leaksan.supp suppresses module evaluation (evaluateCommonJSModuleOnce),
+// which on the release ASAN build is still inside the 30 frames recorded for
+// what a row's work allocates. Started from the module body, a leaking
+// release path went unreported there.
 function host(row: Row, dir: string) {
   const worker = `
     const { parentPort, workerData } = require("node:worker_threads");
     parentPort.on("message", () => {});
-    ${row.worker}
-    parentPort.postMessage("armed");
-    setImmediate(() => setImmediate(() => process.exit(0)));
+    setImmediate(() => {
+      ${row.worker}
+      parentPort.postMessage("armed");
+      setImmediate(() => setImmediate(() => process.exit(0)));
+    });
   `;
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");

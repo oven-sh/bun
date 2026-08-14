@@ -249,7 +249,7 @@ impl JobContext for WalkTask {
 
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         let result = match this.walker.walk() {

@@ -569,9 +569,13 @@ mod _async_tasks {
         /// Used internally. Not from JavaScript.
         pub struct AsyncMkdirp {
             pub(crate) completion_ctx: *mut (),
-            pub(crate) completion: fn(*mut (), Maybe<()>),
+            /// Pool thread; `ticket` is this task's, for the callee to post its
+            /// hop back through.
+            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
             /// Memory is not owned by this struct
             pub path: *const [u8], // BORROW: not owned
+            /// `completion_ctx` is a JS-owned operation; its VM waits for this.
+            pub(crate) ticket: bun_jsc::Ticket,
             pub task: WorkPoolTask,
         }
 
@@ -606,23 +610,12 @@ mod _async_tasks {
                             // `with_path` already clones into a fresh `Box<[u8]>`; pass the
                             // existing path slice.
                             Err(err.with_path(&err.path)),
+                            &self.ticket,
                         );
                     }
                     Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()));
+                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
                     }
-                }
-            }
-        }
-
-        #[cfg(windows)]
-        impl Default for AsyncMkdirp {
-            fn default() -> Self {
-                Self {
-                    completion_ctx: core::ptr::null_mut(),
-                    completion: |_, _| {},
-                    path: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
-                    task: WorkPoolTask::default(),
                 }
             }
         }
@@ -1254,7 +1247,7 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
+            _vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
@@ -1362,8 +1355,11 @@ mod _async_tasks {
         pub args: ThreadSafe<args::Cp>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
-        /// How the last subtask's thread delivers the completion.
-        pub(crate) poster: bun_jsc::ConcurrentPoster,
+        /// How the last subtask's thread delivers the completion (moved out
+        /// by it: the loop may free `self` once the completion is queued). For
+        /// a JS loop this is the ticket its VM waits for — the arguments may
+        /// point into JS buffers and the promise lives on the JS heap.
+        pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
         /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
@@ -1546,7 +1542,7 @@ mod _async_tasks {
                 JSPromiseStrong::init(global_object),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
-                bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
+                bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 core::ptr::null_mut(),
             );
@@ -1589,7 +1585,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop,
-                poster,
+                poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker,
@@ -1601,9 +1597,6 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
-            // Its arguments may point into JS buffers and its promise lives on
-            // the JS heap: counted, so the VM waits for it (embedded work).
-            task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1669,13 +1662,14 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            let poster = this_ref.poster.clone();
+            let poster = this_ref
+                .poster
+                .take()
+                .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
-                // Counted work: the VM has not closed its handle.
-                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(ct) else {
-                    unreachable!("VM handle closed with an fs.cp outstanding");
-                };
+                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
+                    this,
+                )));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
                     this,
@@ -1688,7 +1682,7 @@ mod _async_tasks {
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
             // The pool side is done (`this` may already be freed by its loop).
-            poster.embedded_work_finished();
+            drop(poster);
         }
 
         pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
@@ -2185,7 +2179,7 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
+            _vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.done = Some(done);

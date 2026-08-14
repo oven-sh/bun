@@ -811,7 +811,7 @@ impl Drop for CompressionAsyncCtx {
     fn drop(&mut self) {
         // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
         // reference and drops it exactly once (in `then`, or when the job is
-        // released unrun / its off-thread part finishes after the VM is gone).
+        // released unrun).
         unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
     }
 }
@@ -836,7 +836,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the

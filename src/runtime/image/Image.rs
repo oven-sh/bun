@@ -1467,7 +1467,7 @@ impl jsc::JobContext for PipelineTask {
     type Js = PipelineJs;
     fn run(
         this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
+        _vm: &jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         this.run();

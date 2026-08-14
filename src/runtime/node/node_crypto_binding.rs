@@ -5,7 +5,6 @@ use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
@@ -127,13 +126,13 @@ macro_rules! extern_crypto_job {
 
                 fn run(
                     this: &mut Self,
-                    vm: &Borrow,
+                    vm: &bun_jsc::Ticket,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
                     // SAFETY: the creating global, alive under the borrow; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
-                        this.global.under_borrow(vm)
+                        this.global.under_ticket(vm)
                     });
                     Some(done)
                 }
@@ -237,7 +236,7 @@ pub mod random {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
+            vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             match this {
@@ -248,7 +247,7 @@ pub mod random {
                     // the buffer's own allocation size.
                     let slice = unsafe {
                         core::slice::from_raw_parts_mut(
-                            core::ptr::from_mut(bytes.under_borrow(vm)),
+                            core::ptr::from_mut(bytes.under_ticket(vm)),
                             *length,
                         )
                     };
@@ -1064,11 +1063,11 @@ mod _impl {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
+            vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
-            let key = unsafe { this.result.under_borrow(vm) };
+            let key = unsafe { this.result.under_ticket(vm) };
             this.err = this.params.run_task_impl(key);
             Some(done)
         }

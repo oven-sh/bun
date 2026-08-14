@@ -246,8 +246,6 @@ pub struct VirtualMachine {
     /// does not count). What is still pending on the entry promise after that
     /// is a top-level await.
     pub entry_evaluation_started: bool,
-    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
-    pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
 
     pub(crate) had_errors: bool,
 
@@ -331,8 +329,8 @@ pub struct VirtualMachine {
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `join_child_workers` drains at exit.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
-    /// The one object other threads hold to reach this VM (post completions,
-    /// wake, keep-alive, borrow VM-owned memory); closed by `teardown`.
+    /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
+    /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
@@ -687,18 +685,24 @@ impl Drop for MacroModeGuard {
     }
 }
 
-// SAFETY: `VirtualMachine` is a per-JS-thread singleton (see `VMHolder`).
-// All access is same-thread; the `Sync` impl exists so `&'static
-// VirtualMachine` can be returned from [`VirtualMachine::get`] and passed
-// through `'static`-bound closures / trait objects without `T: Sync`
-// cascading. Cross-thread paths go through `ConcurrentTask` which never
-// hands out a `&VirtualMachine`. Fields mutated post-init are wrapped in
-// [`JsCell`] for interior mutability.
-unsafe impl Sync for VirtualMachine {}
-// SAFETY: see the `Sync` impl above — the VM is only ever accessed from its
-// owning JS thread; `Send` lets the boxed VM be moved into the worker thread
-// that will own it during `Worker` startup.
-unsafe impl Send for VirtualMachine {}
+// `VirtualMachine` is deliberately `!Send + !Sync` (its raw-pointer fields
+// make it so): a `&VirtualMachine`, a pointer to it or to its loops cannot be
+// carried to another thread. Other threads hold a `bun_jsc::Ticket` /
+// `VmHandle` and reach the VM only by posting to it. Fields mutated post-init
+// are wrapped in [`JsCell`] for same-thread interior mutability.
+const _: () = {
+    const fn assert_not_send_sync<T: ?Sized>() {}
+    trait AmbiguousIfImpl<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+    #[allow(dead_code)]
+    struct Invalid;
+    impl<T: ?Sized + Send> AmbiguousIfImpl<Invalid> for T {}
+    // Fails to compile ("multiple applicable items") if `VirtualMachine: Send`.
+    let _ = <VirtualMachine as AmbiguousIfImpl<_>>::some_item;
+    assert_not_send_sync::<VirtualMachine>();
+};
 
 impl VirtualMachine {
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
@@ -840,11 +844,17 @@ impl VirtualMachine {
         unsafe { &*self.event_loop }
     }
 
-    /// A clone of this VM's [`crate::VmHandle`] — what off-thread work captures
-    /// instead of a pointer to the VM or its event loop.
+    /// A clone of this VM's uncounted [`crate::VmHandle`] — what something
+    /// that refers to this VM from elsewhere holds. Work that leaves the thread
+    /// on this VM's behalf takes a [`ticket`](Self::ticket) instead.
     #[inline]
     pub fn handle(&self) -> crate::VmHandle {
         (*self.handle).clone()
+    }
+
+    #[inline]
+    pub(crate) fn handle_ref(&self) -> &crate::VmHandle {
+        &self.handle
     }
 
     /// May native code enter user JavaScript right now? `true` in normal
@@ -1713,11 +1723,10 @@ impl VirtualMachine {
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
     ///  B. release — cron, user timers and GC-controller timers cancelled; child
-    ///     workers joined; this VM's sqlite connections closed; the JS side of
-    ///     boxed pool jobs released; counted off-thread work waited for; main:
-    ///     HTTP thread parked; the VM handle closed; (Windows worker) in-flight
-    ///     uv requests completed; queued tasks and RareData's JS handles
-    ///     released without running.
+    ///     workers joined; this VM's sqlite connections closed; **the wait**:
+    ///     every ticket held off-thread comes back while queued work is
+    ///     released without running; the handle closes; main: HTTP thread
+    ///     parked; RareData's JS handles released.
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
     ///     drained; then the timer heap's loop handles closed.
@@ -1803,19 +1812,23 @@ impl VirtualMachine {
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
-        // Work still out on other threads (pool jobs, fetches): its JS side
-        // — promises, callbacks, pins, protected buffers, keep-alives — is
-        // released here, on this thread with the heap alive. After `close()`
-        // below the other thread cannot hand it back; it frees only its own part.
-        vm.jobs().release_all_js(&vm.global().js_thread());
-        // Pool work stored inside JS-owned objects (transpile slots, zlib
-        // streams) must be back before the handle closes: it completes into the
-        // still-open queue and is released below, on this thread.
+        // The one place the invariant is enforced: nothing below runs until
+        // everything that left this thread (pool jobs, fetches, uv work, C++
+        // work-queue tasks, child threads) has come back. Whatever arrives
+        // meanwhile — and whatever was already queued — is released here, on
+        // this thread with the heap alive, never run.
         teardown_log!(
-            "teardown: waiting for {} unit(s) of off-thread work",
-            vm.handle.embedded_work_outstanding()
+            "teardown: waiting for {} ticket(s) held off-thread",
+            vm.handle.tickets_outstanding()
         );
-        vm.handle.wait_for_embedded_work();
+        // A released completion can be a native continuation that opens
+        // something new (a multipart upload's next part); sweep again so it is
+        // cancelled rather than waited out.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        vm.handle.close_and_wait(|| unsafe {
+            (*this).release_queued_work();
+            let _ = Self::stop_phase_sweep(this, kind);
+        });
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -1824,21 +1837,13 @@ impl VirtualMachine {
             teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
             return;
         }
-        // From here no other thread reaches this VM: posts are refused (the
-        // poster releases its task itself), wake/keep-alive are no-ops, and any
-        // job still using VM-owned memory has finished (close waits for it).
-        vm.handle.close();
-        // Tasks posted by other threads (HTTP, children before they were
-        // joined) or by the request completions in A: release, do not run —
-        // their JSC handles must drop against a live heap.
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
-            (*this).release_queued_work();
             if let Some(rare) = (*this).rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
         }
-        teardown_log!("teardown: script forbidden, resources cancelled, children joined");
+        teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
         match kind {
@@ -3948,21 +3953,18 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
         #[cfg(debug_assertions)]
-        if bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_REFUSAL_GATE::get()
+        if bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
             .unwrap_or(false)
         {
-            vm_ref.handle.park_posts_until_closed();
+            vm_ref.handle.arm_test_gate();
         }
-        // `parent_vm()` is a `BackRef`; the parent outlives this worker while
-        // `parent_poll_ref` is held (see web_worker.rs file header).
-        let parent = worker.parent_vm();
-        vm_ref.standalone_module_graph = parent.standalone_module_graph;
+        vm_ref.standalone_module_graph = opts.graph;
         // The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        vm_ref.hot_reload = parent.hot_reload;
+        vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {

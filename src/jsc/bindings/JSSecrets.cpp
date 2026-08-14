@@ -243,7 +243,7 @@ struct SecretsJobOptions {
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
-void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* global)
+void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
 {
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {

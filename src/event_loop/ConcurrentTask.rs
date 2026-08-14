@@ -137,12 +137,12 @@ pub struct Task {
 /// freed when it will never run. Implement on every type that can be
 /// enqueued; the impl lives in whatever crate owns the type.
 ///
-/// A queued task ends one of three ways: it runs (`bun_runtime::dispatch::
-/// run_task`); it is refused at post because its VM already closed (the
-/// poster frees it — `Postable::release_refused` / the `Posted::Refused` arm);
-/// or it was queued in time but its VM stops before running it —
+/// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
+/// run_task`), or its VM stops before running it —
 /// [`release_unrun`](Self::release_unrun), required here so no type can be
-/// queued without having decided it.
+/// queued without having decided it. (A *weak* poster — `JsPoster` — can also
+/// get its task back unqueued once the VM has closed; that task never entered
+/// a queue and is the poster's own to free: [`ConcurrentTask::release_refused`].)
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
@@ -312,8 +312,9 @@ impl ConcurrentTask {
         self
     }
 
-    /// A poster got `task` back because the target VM is gone: free it if it
-    /// is a heap task (`create*`); an intrusive one belongs to its container.
+    /// A weak poster got `task` back because the target VM has closed: free
+    /// it if it is a heap task (`create*`); an intrusive one belongs to its
+    /// container.
     ///
     /// # Safety
     /// `task` was just refused and is not queued anywhere.

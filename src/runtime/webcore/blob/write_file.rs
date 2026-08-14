@@ -50,7 +50,7 @@ impl bun_jsc::JobContext for WriteFile {
     type Js = ();
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
@@ -581,8 +581,6 @@ mod windows_impl {
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: *mut EventLoop,
-        /// How the mkdirp pool completion gets back to the VM.
-        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -640,7 +638,6 @@ mod windows_impl {
                     base: null_mut(),
                     len: 0,
                 }],
-                loop_handle: bun_jsc::virtual_machine::VirtualMachine::get().loop_handle(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -924,7 +921,8 @@ mod windows_impl {
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
-                ..Default::default()
+                ticket: bun_jsc::virtual_machine::VirtualMachine::get().ticket(),
+                task: Default::default(),
             });
         }
 
@@ -966,7 +964,11 @@ mod windows_impl {
             Ok(())
         }
 
-        fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
+        fn on_mkdirp_complete_concurrent(
+            ctx: *mut (),
+            err_: bun_sys::Result<()>,
+            ticket: &bun_jsc::Ticket,
+        ) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
             let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
@@ -976,17 +978,9 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
-                this,
-                Self::on_mkdirp_complete_task,
+            ticket.post(ConcurrentTask::create(
+                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
-                // VM torn down: nobody will settle the promise. Free the hop (the
-                // ConcurrentTask owns the boxed ManagedTask); the operation's
-                // buffers/fd go with the process's teardown of its owner.
-                // SAFETY: refused ⇒ we own the task box.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
-            }
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {

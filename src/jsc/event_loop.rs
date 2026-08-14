@@ -815,6 +815,17 @@ impl EventLoop {
         self.immediate_tasks.push(task);
     }
 
+    /// JS thread: queue `task` on this loop's *concurrent* queue from its own
+    /// thread — a "next tick" bounce that lets the loop poll before it runs
+    /// (the shell's `Async` state and `yes` builtin re-arm themselves this way).
+    pub fn enqueue_task_concurrent_same_thread(
+        &self,
+        task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+    ) {
+        self.concurrent_tasks.push(task);
+        self.wakeup();
+    }
+
     /// See [`EventLoop::yield_tasks`].
     pub fn enqueue_task_after_yield(&mut self, task: Task) {
         if self.closed_for_tasks {
@@ -1012,7 +1023,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: the poster other threads use to reach the loop this
+    /// JS thread: the weak poster other threads use to reach the loop this
     /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
@@ -1020,6 +1031,16 @@ impl EventLoop {
             Some(p) => crate::vm_handle::IsolatedPosterInner::to_js_poster(p),
             None => self.vm_ref().js_poster(),
         }
+    }
+
+    /// JS thread: an erased ticket on this loop's VM (see `bun_jsc::Ticket`).
+    #[track_caller]
+    pub fn js_ticket(&self) -> bun_event_loop::JsTicket {
+        debug_assert!(
+            self.isolated_poster.is_none(),
+            "ticket on a spawnSync isolated loop"
+        );
+        self.vm_ref().ticket().to_js_ticket()
     }
 
     /// JS thread: count one more thing keeping this loop alive (the same
@@ -1343,7 +1364,9 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
+        enqueue_task_concurrent_same_thread(task) => (*this).enqueue_task_concurrent_same_thread(task),
         js_poster() => (*this).js_poster(),
+        js_ticket() => (*this).js_ticket(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

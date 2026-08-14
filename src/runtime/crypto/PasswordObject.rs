@@ -569,7 +569,7 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
     type Js = JSPromiseStrong;
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         this.value = Some(this.op.compute(&this.password));

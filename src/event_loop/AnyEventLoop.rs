@@ -67,11 +67,21 @@ impl Default for AnyEventLoop {
 }
 
 impl AnyEventLoop {
-    /// Owning thread: the poster other threads use to deliver JS-loop tasks
-    /// to this loop's VM; `None` for a mini loop.
+    /// Owning thread: the weak poster other threads use to deliver JS-loop
+    /// tasks to this loop's VM; `None` for a mini loop.
     pub fn js_poster(&self) -> Option<JsPoster> {
         match self {
             AnyEventLoop::Js { owner } => Some(owner.js_poster()),
+            AnyEventLoop::Mini(_) => None,
+        }
+    }
+
+    /// Owning thread: a ticket on this loop's VM for work about to leave the
+    /// thread; `None` for a mini loop (owned by, and outliving the work of,
+    /// its thread).
+    pub fn js_ticket(&self) -> Option<JsTicket> {
+        match self {
+            AnyEventLoop::Js { owner } => Some(owner.js_ticket()),
             AnyEventLoop::Mini(_) => None,
         }
     }
@@ -433,12 +443,20 @@ impl EventLoopHandle {
         EnteredEventLoop(self)
     }
 
-    /// Owning thread: the poster other threads use to deliver JS-loop tasks to
-    /// this handle's VM; `None` for a mini loop (post to it directly — it is
-    /// owned by, and outlives the work of, its thread).
+    /// Owning thread: the weak poster other threads use to deliver JS-loop
+    /// tasks to this handle's VM; `None` for a mini loop (post to it directly —
+    /// it is owned by, and outlives the work of, its thread).
     pub fn js_poster(&self) -> Option<JsPoster> {
         match self {
             EventLoopHandle::Js { owner } => Some(owner.js_poster()),
+            EventLoopHandle::Mini(_) => None,
+        }
+    }
+
+    /// Owning thread: a ticket on this handle's VM; `None` for a mini loop.
+    pub fn js_ticket(&self) -> Option<JsTicket> {
+        match self {
+            EventLoopHandle::Js { owner } => Some(owner.js_ticket()),
             EventLoopHandle::Mini(_) => None,
         }
     }
@@ -523,17 +541,23 @@ impl EventLoopHandle {
     }
 }
 
-// ─────────────────────────── JsPoster ──────────────────────────────────────
+// ─────────────────────── JsPoster / JsTicket ─────────────────────────────────
 //
-// How code below `bun_jsc` (spawn's waiter thread, the bundler's JS-loop hops,
-// shell/fs work that may serve a JS VM) posts a `ConcurrentTask` to a JS VM
-// from another thread. It is an erased `bun_jsc::VmHandle` clone: `bun_jsc`
-// fills the vtable; holders just call `post`. The VM's teardown closes the
-// underlying handle, after which `post` refuses (returns the task) and the
-// caller releases it on its own thread. Valid for as long as it is held.
+// How code below `bun_jsc` reaches a JS VM from another thread. Both are erased
+// `bun_jsc::vm_handle` types; `bun_jsc` fills the vtables.
+//
+// `JsPoster` is the *uncounted* form (an erased `VmHandle`): what something
+// that merely refers to a VM holds (spawn's process-wide waiter thread). Its
+// `post` is deliver-or-refuse: once the VM has closed, the task comes back and
+// the caller releases it — its own payload — on its own thread.
+//
+// `JsTicket` is the *counted* form (an erased `Ticket`): what work running on
+// another thread on behalf of a VM holds (the bundler's JS-loop hops for a
+// `Bun.build`). The VM's teardown waits for every ticket, so its `post` cannot
+// fail. Hold it in the in-flight operation and drop it when done.
 
-/// Result of posting a task to a JS loop from another thread: it was queued, or
-/// the loop's VM is gone and the caller has the task back to release on this
+/// Result of a weak post to a JS loop from another thread: it was queued, or
+/// the loop's VM is closed and the caller has the task back to release on this
 /// thread.
 #[must_use = "a refused task must be released by its producer"]
 pub enum Posted {
@@ -543,9 +567,6 @@ pub enum Posted {
 
 pub struct JsPosterVTable {
     pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
-    /// `VmHandle::embedded_work_scheduled` / `_finished` (see there).
-    pub embedded_work_scheduled: unsafe fn(data: *const ()),
-    pub embedded_work_finished: unsafe fn(data: *const ()),
     pub clone: unsafe fn(data: *const ()) -> *const (),
     pub drop: unsafe fn(data: *const ()),
 }
@@ -564,30 +585,76 @@ unsafe impl Sync for JsPoster {}
 impl JsPoster {
     /// # Safety
     /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
-    /// implementations (`VmHandle` / `LoopHandle` / the isolated poster).
+    /// implementations (`VmHandle` / the isolated poster).
     #[inline]
     pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
         Self { data, vtable }
     }
 
     /// Queue `task` on the VM this poster was created for and wake it, or hand
-    /// it back if the VM has been torn down.
+    /// it back if the VM has closed.
     #[inline]
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
         // SAFETY: vtable contract.
         unsafe { (self.vtable.post)(self.data, task) }
     }
+}
 
+pub struct JsTicketVTable {
+    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>),
+    pub script_allowed: unsafe fn(data: *const ()) -> bool,
+    pub clone: unsafe fn(data: *const ()) -> *const (),
+    pub drop: unsafe fn(data: *const ()),
+}
+
+/// See the section note. Cloning shares the one underlying ticket.
+pub struct JsTicket {
+    data: *const (),
+    vtable: &'static JsTicketVTable,
+}
+
+// SAFETY: `data` is an erased `Arc<bun_jsc::Ticket>`, itself `Send + Sync`.
+unsafe impl Send for JsTicket {}
+// SAFETY: as above.
+unsafe impl Sync for JsTicket {}
+
+impl JsTicket {
+    /// # Safety
+    /// `data`/`vtable` come from `bun_jsc::Ticket::to_js_ticket`.
     #[inline]
-    /// Count work whose storage the VM (indirectly) owns; it waits for the
-    /// matching `embedded_work_finished` before closing. See `VmHandle`.
-    pub fn embedded_work_scheduled(&self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.embedded_work_scheduled)(self.data) }
+    pub unsafe fn from_raw(data: *const (), vtable: &'static JsTicketVTable) -> Self {
+        Self { data, vtable }
     }
-    pub fn embedded_work_finished(&self) {
+
+    /// Queue `task` on the VM this ticket is for and wake it.
+    #[inline]
+    pub fn post(&self, task: NonNull<ConcurrentTask>) {
         // SAFETY: vtable contract.
-        unsafe { (self.vtable.embedded_work_finished)(self.data) }
+        unsafe { (self.vtable.post)(self.data, task) }
+    }
+
+    /// Whether the VM is still running script (not stopping).
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.script_allowed)(self.data) }
+    }
+}
+
+impl Clone for JsTicket {
+    fn clone(&self) -> Self {
+        Self {
+            // SAFETY: vtable contract.
+            data: unsafe { (self.vtable.clone)(self.data) },
+            vtable: self.vtable,
+        }
+    }
+}
+
+impl Drop for JsTicket {
+    fn drop(&mut self) {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.drop)(self.data) }
     }
 }
 

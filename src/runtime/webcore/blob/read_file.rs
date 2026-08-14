@@ -226,7 +226,7 @@ impl bun_jsc::JobContext for ReadFile {
     type Js = ReadFileCompletionFns;
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.

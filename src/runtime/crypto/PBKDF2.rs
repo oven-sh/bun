@@ -272,7 +272,7 @@ impl JobContext for Pbkdf2Job {
 
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _vm: &bun_jsc::Ticket,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         let len = usize::try_from(this.pbkdf2.length).expect("int cast");

@@ -1,7 +1,16 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  normalizeBunSnapshot,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -1085,13 +1094,26 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(exitCode).toBe(0);
 });
 
+async function runInDir(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
 test("bun pm untrusted and bun pm trust escape control characters in dependency scripts", async () => {
-  // Everything after `#` is a shell comment, so only the echo runs once the package is
-  // trusted. Printed raw, though, the tail erases the listing line (ESC[2K), returns to
-  // column 1 (ESC[1G) and repaints it as the harmless looking command. `\r`, DEL and the
-  // 8-bit CSI (U+009B) are the other control characters a terminal would act on.
-  const script = 'echo "real command" #\x1b[2K\x1b[1G\r\x7f\u009b » [postinstall]: node scripts/postinstall.js';
-  const shown = 'echo "real command" #\\x1b[2K\\x1b[1G\\r\\x7f\\u009b » [postinstall]: node scripts/postinstall.js';
+  // Both lines of the script are a shell comment after the echo, so only the echo runs once
+  // the package is trusted. Printed raw, though, the first comment erases the listing line
+  // (ESC[2K) and returns to column 1 (ESC[1G), and the newline lets the second one pose as
+  // a further listing entry. `\r`, `\t`, DEL and the 8-bit CSI (U+009B) are the remaining
+  // kinds of control character a terminal acts on.
+  const script = 'echo "real command" #\x1b[2K\x1b[1G\r\x7f\u009b\n#\t» [postinstall]: node scripts/postinstall.js';
+  const shown =
+    'echo "real command" #\\x1b[2K\\x1b[1G\\r\\x7f\\u009b\\n#\\t» [postinstall]: node scripts/postinstall.js';
 
   using dir = tempDir("pm-untrusted-control-chars", {
     "package.json": JSON.stringify({
@@ -1110,23 +1132,12 @@ test("bun pm untrusted and bun pm trust escape control characters in dependency 
     }),
   });
 
-  async function run(...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  }
-
-  let [stdout, stderr, exitCode] = await run("install");
+  let [stdout, stderr, exitCode] = await runInDir(String(dir), "install");
   expect(stderr).not.toContain("error:");
   expect(stdout).toContain("Blocked 1 postinstall");
   expect(exitCode).toBe(0);
 
-  [stdout, stderr, exitCode] = await run("pm", "untrusted");
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "untrusted");
   expect(stderr).not.toContain("error:");
   expect(stdout).toContain(` » [postinstall]: ${shown}\n`);
   expect(stdout).not.toContain("\x1b");
@@ -1134,12 +1145,46 @@ test("bun pm untrusted and bun pm trust escape control characters in dependency 
   expect(stdout).not.toContain("\u009b");
   expect(exitCode).toBe(0);
 
-  [stdout, stderr, exitCode] = await run("pm", "trust", "nice-pkg");
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "trust", "nice-pkg");
   expect(stderr).not.toContain("error:");
   expect(stdout).toContain(` ✓ [postinstall]: ${shown}\n`);
   expect(stdout).toContain("1 script ran across 1 package");
   expect(stdout).not.toContain("\x1b");
   expect(stdout).not.toContain("\x7f");
   expect(stdout).not.toContain("\u009b");
+  expect(exitCode).toBe(0);
+});
+
+// The dependency alias becomes the node_modules folder and the file: target becomes the
+// resolution, so a dependent can put control characters in both. Windows does not allow
+// them in file names, so the packages cannot be installed there in the first place.
+test.skipIf(isWindows)("bun pm untrusted escapes control characters in the package path and resolution", async () => {
+  using dir = tempDir("pm-untrusted-control-chars-path", {
+    "package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "nice\x1b[2Kpkg": "file:./real\rpkg",
+      },
+    }),
+    "real\rpkg/package.json": JSON.stringify({
+      name: "real-pkg",
+      version: "1.0.0",
+      scripts: {
+        postinstall: "exit 0",
+      },
+    }),
+  });
+
+  let [stdout, stderr, exitCode] = await runInDir(String(dir), "install");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("Blocked 1 postinstall");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "untrusted");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("./node_modules/nice\\x1b[2Kpkg @real\\rpkg\n » [postinstall]: exit 0\n");
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\r");
   expect(exitCode).toBe(0);
 });

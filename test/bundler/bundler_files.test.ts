@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { basename } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -581,5 +582,181 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  test("in-memory imports use the build's jsx options", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: {
+        "/app/entry.js": `import "./child.jsx";`,
+        "/app/child.jsx": `console.log(<div>child</div>);`,
+      },
+      jsx: { runtime: "classic", factory: "myFactory", fragment: "MyFragment" },
+    });
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain(`myFactory("div", null, "child")`);
+  });
+
+  test("import attributes pick the loader of in-memory imports", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: {
+        "/app/entry.js": `import data from "./data.json" with { type: "text" }; console.log(data);`,
+        "/app/data.json": `{"answer": 42}`,
+      },
+    });
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain(`'{"answer": 42}'`);
+  });
+
+  test("a server-side build importing an in-memory HTML file gets its manifest", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/server.js"],
+      target: "bun",
+      files: {
+        "/app/server.js": `import page from "./page.html"; console.log(page.index);`,
+        "/app/page.html": `<!DOCTYPE html><script src="./client.js"></script>`,
+        "/app/client.js": `console.log("client script");`,
+      },
+      throw: false,
+    });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+
+    const server = await result.outputs.find(output => basename(output.path) === "server.js")!.text();
+    // The import is replaced by the manifest of the page's browser build, which
+    // is emitted next to the server code.
+    expect(server).not.toMatch(/^import /m);
+    const manifests = [...server.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
+      JSON.parse(JSON.parse(`"${match[1]}"`)),
+    );
+    expect(manifests).toEqual([
+      {
+        index: expect.stringMatching(/page\.html$/),
+        files: expect.arrayContaining([
+          expect.objectContaining({ loader: "html" }),
+          expect.objectContaining({ loader: "js" }),
+        ]),
+      },
+    ]);
+    const scriptPath = manifests[0].files.find((file: { loader: string }) => file.loader === "js").path;
+    const script = await result.outputs.find(output => basename(output.path) === basename(scriptPath))!.text();
+    expect(script).toContain("client script");
+    // The page's script is bundled for the browser even though the build targets bun.
+    expect(script).not.toContain("// @bun");
+  });
+
+  // A url reference in an HTML document (<link rel="manifest">, <img src>, ...) is
+  // copied to the output as an asset even when its extension has a loader that would
+  // parse it, exactly as when the files are on disk (see html/manifest-json in
+  // bundler_html.test.ts). Each case resolves the reference on a different path: the
+  // bulk resolution pass, the resolver behind a declining onResolve callback, and a
+  // path returned by onResolve.
+  describe("url assets referenced from HTML", () => {
+    const manifestJson = `{"name":"app"}`;
+    const pageHtml = `<!DOCTYPE html><link rel="manifest" href="./manifest.json"><script src="./page.js"></script>`;
+    const pageJs = `console.log("page script");`;
+
+    async function expectManifestCopied(result: Awaited<ReturnType<typeof Bun.build>>) {
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+
+      const assets = result.outputs.filter(output => output.kind === "asset");
+      expect(assets.map(asset => basename(asset.path))).toEqual([
+        expect.stringMatching(/^manifest-[a-zA-Z0-9]+\.json$/),
+      ]);
+      expect(await assets[0].text()).toBe(manifestJson);
+
+      const html = await result.outputs.find(output => output.path.endsWith(".html"))!.text();
+      expect(html).toContain(`${basename(assets[0].path)}"`);
+      expect(html).not.toContain(`manifest.json"`);
+
+      // The page's script is still bundled, not copied.
+      const script = await result.outputs.find(output => output.path.endsWith(".js"))!.text();
+      expect(script).toContain("page script");
+    }
+
+    test("from an in-memory HTML file", async () => {
+      await expectManifestCopied(
+        await Bun.build({
+          entrypoints: ["/app/page.html"],
+          files: {
+            "/app/page.html": pageHtml,
+            "/app/manifest.json": manifestJson,
+            "/app/page.js": pageJs,
+          },
+          throw: false,
+        }),
+      );
+    });
+
+    test("from an HTML file on disk", async () => {
+      using dir = tempDir("bundler-files-html-asset", { "page.html": pageHtml });
+
+      await expectManifestCopied(
+        await Bun.build({
+          entrypoints: [`${dir}/page.html`],
+          files: {
+            [`${dir}/manifest.json`]: manifestJson,
+            [`${dir}/page.js`]: pageJs,
+          },
+          throw: false,
+        }),
+      );
+    });
+
+    test("when an onResolve callback declines the reference", async () => {
+      const declined: string[] = [];
+
+      await expectManifestCopied(
+        await Bun.build({
+          entrypoints: ["/app/page.html"],
+          files: {
+            "/app/page.html": pageHtml,
+            "/app/manifest.json": manifestJson,
+            "/app/page.js": pageJs,
+          },
+          plugins: [
+            {
+              name: "decline-manifest",
+              setup(build) {
+                build.onResolve({ filter: /manifest\.json$/ }, args => {
+                  declined.push(args.path);
+                  return undefined;
+                });
+              },
+            },
+          ],
+          throw: false,
+        }),
+      );
+
+      expect(declined).toEqual(["./manifest.json"]);
+    });
+
+    test("when an onResolve callback returns the path of an in-memory file", async () => {
+      await expectManifestCopied(
+        await Bun.build({
+          entrypoints: ["/app/page.html"],
+          files: {
+            "/app/page.html": pageHtml,
+            // Only reachable through the plugin: the HTML references ./manifest.json.
+            "/app/generated/manifest.json": manifestJson,
+            "/app/page.js": pageJs,
+          },
+          plugins: [
+            {
+              name: "redirect-manifest",
+              setup(build) {
+                build.onResolve({ filter: /manifest\.json$/ }, () => ({ path: "/app/generated/manifest.json" }));
+              },
+            },
+          ],
+          throw: false,
+        }),
+      );
+    });
   });
 });

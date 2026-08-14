@@ -2270,7 +2270,7 @@ pub mod bv2_impl {
                         )
                     };
                     if !found_existing {
-                        let loader: Loader = 'brk: {
+                        let resolved_loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
@@ -2284,6 +2284,7 @@ pub mod bv2_impl {
                                 .loader(unsafe { &(*transpiler).options.loaders })
                                 .unwrap_or(Loader::File);
                         };
+                        let loader = self.loader_for_plugin_import(import_record, resolved_loader);
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
@@ -2518,7 +2519,7 @@ pub mod bv2_impl {
                 if let Some(p) = resolve_result.path() {
                     *p = path;
                 }
-                let loader: Loader = 'brk: {
+                let resolved_loader: Loader = 'brk: {
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
                         .as_slice()[import_record.import_record_index as usize];
@@ -2529,8 +2530,8 @@ pub mod bv2_impl {
                     break 'brk path
                         .loader(unsafe { &(*transpiler).options.loaders })
                         .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
                 };
+                let loader = self.loader_for_plugin_import(import_record, resolved_loader);
                 let mut tmp_source = bun_ast::Source {
                     path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -4782,9 +4783,11 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                            let loader = this.loader_for_plugin_import(
+                                &resolve.import_record,
+                                path.loader(&this.transpiler.options.loaders)
+                                    .unwrap_or(Loader::File),
+                            );
 
                             this.graph
                                 .input_files
@@ -5942,7 +5945,53 @@ pub mod bv2_impl {
         pub(crate) last_error: Option<Error>,
     }
 
+    /// The loader for a file imported from a file bundled with `importer_loader`,
+    /// given the loader it gets on its own (`resolved_loader`: the import
+    /// attribute, or the one registered for its extension). Every way of
+    /// resolving an import record (the resolver, `Bun.build({ files })`, an
+    /// onResolve plugin) goes through here so they all bundle the file the same way.
+    ///
+    /// A url reference in an HTML document (`<link rel="manifest"
+    /// href="./manifest.json">`, `<img src>`) names a file the browser fetches
+    /// as-is, so it is copied to the output like a `file` loader asset even when
+    /// its extension has a loader that would parse it (json, toml, text, ...).
+    /// Scripts, stylesheets and documents referenced from HTML are bundled
+    /// instead, and `url()` references from CSS keep their loaders.
+    fn loader_for_import(
+        importer_loader: Loader,
+        kind: ImportKind,
+        resolved_loader: Loader,
+    ) -> Loader {
+        if importer_loader == Loader::Html
+            && kind == ImportKind::Url
+            && !resolved_loader.should_copy_for_bundling()
+            && !resolved_loader.is_javascript_like()
+            && !resolved_loader.is_css()
+            && resolved_loader != Loader::Html
+        {
+            return Loader::File;
+        }
+        resolved_loader
+    }
+
     impl<'a> BundleV2<'a> {
+        /// [`loader_for_import`] for a record that went through onResolve plugins;
+        /// its importer is read back from the graph. An entry point has no importer.
+        fn loader_for_plugin_import(
+            &self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            resolved_loader: Loader,
+        ) -> Loader {
+            if import_record.kind == ImportKind::EntryPointBuild {
+                return resolved_loader;
+            }
+            loader_for_import(
+                self.graph.input_files.items_loader()[import_record.importer_source_index as usize],
+                import_record.kind,
+                resolved_loader,
+            )
+        }
+
         /// Resolve all unresolved import records for a module. Skips records that
         /// are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
@@ -6162,79 +6211,21 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
+                // An in-memory file (`Bun.build({ files })`) takes the place of the
+                // resolver's result and is handled like a file on disk from there on.
+                let in_memory_result: Option<_resolver::Result> =
+                    self.file_map.and_then(|file_map| {
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
-                        import_record.loader = Some(import_record_loader);
-
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
-                            import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
-                        }
-
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                        // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                        // cascading borrow conflicts into every `&mut self` call below).
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
-                        import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "created ParseTask from FileMap: {}",
-                            bstr::BStr::new(&path_primary.text)
-                        );
-                        file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val =
-                            ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
-                        // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
-                        resolve_task.loader = Some(import_record_loader);
-                        resolve_task.tree_shaking = transpiler.options.tree_shaking;
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
-                        continue;
-                    }
-                }
-
+                    });
+                let is_in_memory = in_memory_result.is_some();
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
+                    if let Some(mut result) = in_memory_result {
+                        // The resolver fills this in from the transpiler options and the
+                        // file's tsconfig.json; an in-memory file has no tsconfig.json.
+                        result.jsx = transpiler.options.jsx.clone();
+                        break result;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -6522,27 +6513,14 @@ pub mod bv2_impl {
                     }
                 }
 
-                let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
+                let import_record_loader = loader_for_import(
+                    loader,
+                    import_record.kind,
+                    import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
                             .unwrap_or(Loader::File)
-                    });
-                    // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
-                    // the file must be copied to the output directory as-is. If the resolved loader would
-                    // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
-                    // so that `shouldCopyForBundling()` returns true and the asset is emitted.
-                    // Only do this for HTML sources — CSS url() imports should retain their original behavior.
-                    if loader == Loader::Html
-                        && import_record.kind == ImportKind::Url
-                        && !resolved_loader.should_copy_for_bundling()
-                        && !resolved_loader.is_javascript_like()
-                        && !resolved_loader.is_css()
-                        && resolved_loader != Loader::Html
-                    {
-                        break 'brk Loader::File;
-                    }
-                    break 'brk resolved_loader;
-                };
+                    }),
+                );
                 import_record.loader = Some(import_record_loader);
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
@@ -6571,9 +6549,19 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                if is_in_memory {
+                    // An in-memory file is displayed by its key in `files`, not by a path
+                    // relative to the project.
+                    // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+                    // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
+                    path.pretty = unsafe {
+                        bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
+                    };
+                } else {
+                    *path = self
+                        .path_with_pretty_initialized(path, target)
+                        .expect("oom");
+                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut

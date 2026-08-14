@@ -2470,6 +2470,15 @@ unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
   return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
 }
 
+/* Ciphertext per batch flush, i.e. per send(): four records (64 KiB plus record
+ * overhead). Keep each send() below 128 KiB: on Windows (64 KiB default
+ * SO_SNDBUF) a refused send() of 128 KiB or more is not reported writable again
+ * until the next ~15.6 ms timer tick even though the peer drains the socket at
+ * once, while smaller refused sends are reported as soon as space frees up. The
+ * former 8-record batches (131248 bytes) paid that tick on every backpressure
+ * round of every large TLS write. */
+#define US_SSL_WRITE_BATCH_FLUSH_BYTES (4 * 16384)
+
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
@@ -2535,7 +2544,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     /* A batching allocation failure marks the socket fatal from inside the BIO;
      * stop sealing records for a connection that is being torn down. */
     if (s->ssl_fatal_error) break;
-    if (batching && loop_ssl_data->ssl_write_batch_len >= 131072) {
+    if (batching && loop_ssl_data->ssl_write_batch_len >= US_SSL_WRITE_BATCH_FLUSH_BYTES) {
       if (!ssl_flush_write_batch(loop_ssl_data, s)) break; /* wire blocked: stop consuming */
       if (s->ssl_fatal_error) break;
     }

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -336,5 +336,91 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       new Promise<void>(resolve => h.req.once("close", () => resolve())),
     ]);
     expect(h.client.closed || h.client.destroyed).toBe(true);
+  });
+});
+
+// us_internal_ssl_write seals a large write into records and hands them to the
+// kernel a batch at a time, one send() per batch (openssl.c
+// US_SSL_WRITE_BATCH_FLUSH_BYTES). A batch must stay below 128 KiB: on Windows
+// (64 KiB default SO_SNDBUF) a refused send() of 128 KiB or more is not
+// reported writable again until the next ~15.6 ms timer tick, and the former
+// 8-record batches (131248 bytes) paid that tick on every backpressure round
+// of every large TLS write (an https fetch of a 1 MiB body took ~16 ms on
+// Windows 11 vs ~1 ms over plain http). Refusing the first send() of the
+// write with injected backpressure makes the batch size observable on every
+// platform: write() reports exactly the plaintext whose ciphertext sits in
+// the refused (spilled) batch, and the spill is re-sent on the next writable
+// event, so the peer still receives the whole payload.
+describe.skipIf(!fault.available())("TLS write batching", () => {
+  afterEach(() => fault.clear());
+
+  test("a large write hands the kernel at most 4 records per send()", async () => {
+    const payload = Buffer.alloc(1024 * 1024, "t");
+    const firstWrite = Promise.withResolvers<number>();
+    const delivered = Promise.withResolvers<Buffer>();
+    const chunks: Buffer[] = [];
+    let receivedLength = 0;
+    // -1 until the instrumented first write has happened.
+    let offset = -1;
+
+    function pump(socket: Bun.Socket) {
+      if (offset < 0) return;
+      while (offset < payload.length) {
+        const written = socket.write(payload.subarray(offset));
+        if (written <= 0) return;
+        offset += written;
+      }
+      socket.end();
+    }
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        // The client's "go" arrives decrypted, so this side's handshake is
+        // over and the next send() in the process is the first batch flush.
+        data(socket) {
+          if (offset >= 0) return;
+          fault.set({ syscall: "send", action: "zero", repeat: 1 });
+          offset = socket.write(payload);
+          fault.clear();
+          firstWrite.resolve(offset);
+        },
+        drain: pump,
+        error(_socket, error) {
+          firstWrite.reject(error);
+          delivered.reject(error);
+        },
+      },
+    });
+
+    using client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        open(socket) {
+          socket.write("go");
+        },
+        data(_socket, chunk) {
+          chunks.push(chunk);
+          receivedLength += chunk.length;
+          if (receivedLength >= payload.length) delivered.resolve(Buffer.concat(chunks));
+        },
+        close() {
+          delivered.reject(new Error(`client closed after ${receivedLength} of ${payload.length} bytes`));
+        },
+        error(_socket, error) {
+          delivered.reject(error);
+        },
+      },
+    });
+
+    expect(await firstWrite.promise).toBe(4 * 16384);
+    const received = await delivered.promise;
+    expect(received.length).toBe(payload.length);
+    expect(received.equals(payload)).toBe(true);
+    client.end();
   });
 });

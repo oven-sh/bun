@@ -624,7 +624,7 @@ pub(crate) struct All {
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
     /// Timers that came due while a domain run they are foreign to was turning
-    /// the loop (`crate::domain_run`): out of `timers` so the poll timeout
+    /// the loop (`bun_jsc::domain_run`): out of `timers` so the poll timeout
     /// ignores them, still `ACTIVE`, reinserted with their original deadlines
     /// when the run exits (`unpark_after_run`).
     parked: TimerHeap,
@@ -954,9 +954,9 @@ impl All {
         vm: *mut (),
     ) -> Option<Timespec> {
         // JSC's run-loop timers (deferred work that settles promises and runs
-        // FinalizationRegistry callbacks, GC activity callbacks) predate any
-        // domain run: they neither fire inside one nor keep its poll awake.
-        if bun_io::run_epoch::active_run_start() != 0 {
+        // FinalizationRegistry callbacks, GC activity callbacks) are the
+        // program's: they neither fire inside a nested run nor keep its poll awake.
+        if bun_jsc::domain_run::in_nested_run() {
             return None;
         }
         loop {
@@ -1136,7 +1136,7 @@ impl All {
                     (*timer).in_heap = InHeap::Parked;
                 }
                 bun_core::scoped_log!(
-                    crate::domain_run::DomainRun,
+                    bun_jsc::domain_run::DomainRun,
                     "parked foreign timer {:p}",
                     timer
                 );

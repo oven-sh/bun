@@ -626,7 +626,7 @@ pub(crate) fn tick_queue_with_count(
     let global_vm = global.vm();
 
     while let Some(task) = el.tasks.read_item() {
-        if crate::domain_run::park_task_if_foreign(task) {
+        if bun_jsc::domain_run::park_task_if_foreign(task) {
             continue;
         }
         // Incremented before dispatch so the count includes every task,
@@ -864,7 +864,9 @@ unsafe fn __bun_run_immediate_task(
 ) -> bool {
     let immediate = task.cast::<crate::timer::ImmediateObject>();
     // SAFETY: per fn contract — `task` is a live queued `ImmediateObject`.
-    if unsafe { crate::domain_run::park_immediate_if_foreign(immediate) } {
+    if bun_jsc::domain_run::park_immediate_if_foreign(task, unsafe {
+        (*immediate).event_loop_timer.birth
+    }) {
         return false;
     }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)

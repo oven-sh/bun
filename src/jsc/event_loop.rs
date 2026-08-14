@@ -1006,24 +1006,6 @@ impl EventLoop {
         self.vm_ref().as_mut().gc_controller.perform_gc();
     }
 
-    /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
-    /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
-    #[inline]
-    pub fn auto_tick(&mut self) {
-        self.vm_ref().as_mut().auto_tick();
-    }
-
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
-    /// only sleeps in the uSockets loop while it has active handles.
-    /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
-    /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
-    #[inline]
-    pub fn auto_tick_active(&mut self) {
-        self.vm_ref().as_mut().auto_tick_active();
-    }
-
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
@@ -1031,19 +1013,30 @@ impl EventLoop {
     /// function crosses explicitly with [`jsc::Stopped::throw`].
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
                 return Err(jsc::Stopped);
             }
-            self.tick();
-            if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
-            }
+            self.turn(None, || promise.status() != PromiseStatus::Pending);
         }
         Ok(())
+    }
+
+    /// One turn of the innermost domain run — the event loop's iteration (see
+    /// [`crate::domain_run::turn`]). Returns whether `deadline` has passed.
+    #[inline]
+    pub fn turn(
+        &mut self,
+        deadline: Option<&bun_core::Timespec>,
+        done: impl FnMut() -> bool,
+    ) -> bool {
+        self.vm_ref().as_mut().turn(deadline, done)
+    }
+
+    /// See [`VirtualMachine::turn_active`].
+    #[inline]
+    pub fn turn_active(&mut self, done: impl FnOnce() -> bool) {
+        self.vm_ref().as_mut().turn_active(done)
     }
 
     pub fn wakeup(&self) {
@@ -1252,20 +1245,17 @@ impl EventLoop {
             {
                 break;
             }
-            self.tick();
             let vm = self.vm_ref();
-            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
-            if terminated
-                || vm.entry_evaluation_started
-                || promise.status() != PromiseStatus::Pending
-            {
+            self.turn(None, || {
+                vm.worker_ref().is_some_and(|w| w.has_requested_terminate())
+                    || vm.entry_evaluation_started
+                    || promise.status() != PromiseStatus::Pending
+                    // Nothing in flight can settle the load; let spin() decide.
+                    || !vm.is_event_loop_alive()
+            });
+            if !self.vm_ref().is_event_loop_alive() {
                 break;
             }
-            if !vm.is_event_loop_alive() {
-                // Nothing in flight can settle the load; let spin() decide.
-                break;
-            }
-            self.auto_tick();
         }
     }
 }
@@ -1390,8 +1380,8 @@ bun_event_loop::link_impl_JsEventLoop! {
         uws_loop() => (*this).usockets_loop(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),
-        auto_tick() => (*this).auto_tick(),
-        auto_tick_active() => (*this).auto_tick_active(),
+        turn(context, is_done) => { (*this).turn(None, || is_done(context)); },
+        turn_active() => (*this).turn_active(|| false),
         global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),

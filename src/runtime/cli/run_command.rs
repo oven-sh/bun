@@ -1473,9 +1473,12 @@ impl Run<'_> {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
-                    vm.tick();
-                    vm.report_exception_in_hot_reloaded_module_if_needed();
-                    vm.auto_tick_active();
+                    let vm_ptr: *mut VirtualMachine = vm;
+                    vm.turn_active(|| {
+                        // SAFETY: `vm_ptr` is `vm`, live; no other borrow is used meanwhile.
+                        unsafe { &mut *vm_ptr }.report_exception_in_hot_reloaded_module_if_needed();
+                        false
+                    });
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
@@ -1485,10 +1488,7 @@ impl Run<'_> {
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
-            }
+            vm.run_to_completion();
 
             if ctx.runtime_options.eval.eval_and_print {
                 let to_print: JSValue = 'brk: {
@@ -1510,12 +1510,8 @@ impl Run<'_> {
                                     crate::generated_host_exports::Bun__onResolveEntryPointResult,
                                     crate::generated_host_exports::Bun__onRejectEntryPointResult,
                                 );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
+                                vm.turn_active(|| false);
+                                vm.run_to_completion();
                                 break 'brk result;
                             }
                             _ => break 'brk promise.result(vm.jsc_vm()),

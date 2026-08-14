@@ -133,11 +133,11 @@ impl VM {
         JsError::Thrown
     }
 
-    /// End-of-job WeakRef release. A checkpoint inside a domain run is not the
-    /// end of the outer frame's job, so targets it observed stay alive until its
-    /// own checkpoint.
+    /// End-of-job WeakRef release. A checkpoint inside a nested domain run is
+    /// not the end of the outer frame's job, so targets it observed stay alive
+    /// until its own checkpoint.
     pub fn release_weak_refs(&self) {
-        if bun_event_loop::active_run_start() != 0 {
+        if crate::domain_run::in_nested_run() {
             return;
         }
         JSC__VM__releaseWeakRefs(self)

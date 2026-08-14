@@ -37,8 +37,11 @@ pub const PRIMORDIAL: u32 = 1;
 /// A poll a run on this thread has custody of.
 /// Per-thread run state, in one TLS block so every gate is a single TLS access.
 struct RunTls {
-    /// Start epoch of the innermost run on this thread; 0 when no run is active.
+    /// Start epoch of the innermost run on this thread (`PRIMORDIAL` at the
+    /// root; 0 before the VM's root run is entered / on threads with no VM).
     active_start: Cell<u32>,
+    /// How many runs are on this thread's stack (1 = only the root).
+    depth: Cell<u32>,
     /// Whether that run's own consequences include scripts
     /// (`bun_runtime::domain_run::Policy::NativeAndScripts`).
     active_executes_scripts: Cell<bool>,
@@ -46,7 +49,7 @@ struct RunTls {
 
 thread_local! {
     static RUN: RunTls = const {
-        RunTls { active_start: Cell::new(0), active_executes_scripts: Cell::new(false) }
+        RunTls { active_start: Cell::new(0), depth: Cell::new(0), active_executes_scripts: Cell::new(false) }
     };
 }
 
@@ -93,24 +96,44 @@ pub fn active_run_start() -> u32 {
 /// outer owners (auto-flush queues, embedder loop hooks) waits too.
 #[inline]
 pub fn active_run_is_native_only() -> bool {
-    RUN.with(|r| r.active_start.get() != 0 && !r.active_executes_scripts.get())
+    RUN.with(|r| r.depth.get() > 1 && !r.active_executes_scripts.get())
 }
 
-/// `bun_runtime::domain_run` only: entering a run (or restoring the outer run
-/// on exit; start 0 when leaving the outermost).
+/// Depth of this thread's run stack: 0 before the root run, 1 at the root,
+/// more while a nested run (a blocked frame) is active.
 #[inline]
-pub fn set_active_run(start: u32, executes_scripts: bool) {
+pub fn run_depth() -> u32 {
+    RUN.with(|r| r.depth.get())
+}
+
+/// `bun_jsc::domain_run` only: a run was entered on this thread.
+#[inline]
+pub fn push_run(start: u32, executes_scripts: bool) {
     RUN.with(|r| {
+        r.depth.set(r.depth.get() + 1);
         r.active_start.set(start);
         r.active_executes_scripts.set(executes_scripts);
     })
 }
 
+/// `bun_jsc::domain_run` only: the innermost run exited; `outer_*` describe
+/// the run that is now innermost.
+#[inline]
+pub fn pop_run(outer_start: u32, outer_executes_scripts: bool) {
+    RUN.with(|r| {
+        debug_assert!(r.depth.get() > 0);
+        r.depth.set(r.depth.get() - 1);
+        r.active_start.set(outer_start);
+        r.active_executes_scripts.set(outer_executes_scripts);
+    })
+}
+
 /// Whether something born at `birth` must wait for the run that started at
-/// `start` (0 = no run: nothing waits).
+/// `start`. Nothing predates the root (`start <= PRIMORDIAL`); to a nested run,
+/// the program's own (`PRIMORDIAL`), unknown (0) and older births are foreign.
 #[inline]
 pub fn is_foreign_to(birth: u32, start: u32) -> bool {
-    start != 0 && (birth <= PRIMORDIAL || before(birth, start))
+    start > PRIMORDIAL && (birth <= PRIMORDIAL || before(birth, start))
 }
 
 /// Whether something born at `birth` must wait for the active run to end.

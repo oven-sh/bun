@@ -131,30 +131,28 @@ impl<'a> Coordinator<'a> {
                 self.abort_all();
                 return;
             }
-            self.vm.event_loop_ref().tick();
-            self.run_pending_reaps();
-            self.maybe_scale_up();
-            self.run_pending_reaps();
-            if self.is_done() {
-                break;
-            }
-            if self.spawned_count < self.parallel_limit
+            // Bound the wait so we wake to scale up even if no I/O arrives.
+            let deadline = (self.spawned_count < self.parallel_limit
                 && self.has_undispatched_files()
-                && self.stop_reason.is_none()
-            {
-                // Bound the wait so we wake to scale up even if no I/O arrives.
-                const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
-                let ts = bun_core::Timespec {
-                    sec: self.scale_up_after_ms / MS_PER_S,
-                    nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
-                };
-                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop())
-                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
-                }
-            } else {
-                self.vm.event_loop_ref().auto_tick();
+                && self.stop_reason.is_none())
+            .then(|| {
+                bun_core::Timespec::ms_from_now(
+                    bun_core::TimespecMockMode::ForceRealTime,
+                    self.scale_up_after_ms,
+                )
+            });
+            let mut done = false;
+            let el: *mut bun_jsc::event_loop::EventLoop = self.vm.event_loop();
+            // SAFETY: `el` is the VM's live event loop; the closure only touches `self`.
+            unsafe { &mut *el }.turn(deadline.as_ref(), || {
+                self.run_pending_reaps();
+                self.maybe_scale_up();
+                self.run_pending_reaps();
+                done = self.is_done();
+                done
+            });
+            if done {
+                break;
             }
             self.run_pending_reaps();
         }

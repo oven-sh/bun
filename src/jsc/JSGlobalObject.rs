@@ -1119,9 +1119,10 @@ impl JSGlobalObject {
     }
 
     pub fn handle_rejected_promises(&self) {
-        // Inside a domain run the outer frame is mid-job and may still attach
-        // handlers; its unhandled-rejection processing waits for its own checkpoint.
-        if bun_event_loop::active_run_start() != 0 {
+        // Inside a nested domain run the outer frame is mid-job and may still
+        // attach handlers; its unhandled-rejection processing waits for its own
+        // checkpoint.
+        if crate::domain_run::in_nested_run() {
             return;
         }
         // JSC__JSGlobalObject__handleRejectedPromises catches and reports its

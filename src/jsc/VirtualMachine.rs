@@ -1596,8 +1596,7 @@ impl VirtualMachine {
         let mut dispatch = false;
         loop {
             while self.is_event_loop_alive() {
-                self.tick();
-                self.auto_tick_active();
+                self.turn_active(|| false);
                 dispatch = true;
             }
 
@@ -2038,15 +2037,17 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
-    /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
-    /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
-    pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
-    /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
-    /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// The poll half of `turn_active`: only sleeps in the uSockets loop while
+    /// it has active handles, skips `runImminentGCTimer` /
+    /// `handleRejectedPromises`, and falls through to `tickWithoutIdle` when
+    /// idle (shutdown semantics).
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
+    /// `auto_tick` after its leading immediates pass, sleeping no later than
+    /// `deadline` (`crate::domain_run::turn`).
+    pub auto_tick_after_immediates:
+        unsafe fn(vm: *mut VirtualMachine, deadline: Option<&bun_core::Timespec>),
+    /// `vm.timer.unpark_after_run(outer_start)` — a nested domain run exited.
+    pub timer_unpark_after_run: unsafe fn(vm: *mut VirtualMachine, outer_start: u32),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier
@@ -2268,6 +2269,59 @@ impl VirtualMachine {
 }
 
 impl VirtualMachine {
+    /// See [`RuntimeHooks::auto_tick_after_immediates`].
+    ///
+    /// # Safety
+    /// `self` is the live per-thread VM; JS thread.
+    #[inline]
+    pub unsafe fn auto_tick_after_immediates(&mut self, deadline: Option<&bun_core::Timespec>) {
+        match runtime_hooks() {
+            // SAFETY: per fn contract.
+            Some(hooks) => unsafe { (hooks.auto_tick_after_immediates)(self, deadline) },
+            // No high tier (unit tests) — a non-blocking tick keeps callers progressing.
+            None => self.event_loop_mut().tick(),
+        }
+    }
+
+    /// See [`RuntimeHooks::timer_unpark_after_run`].
+    ///
+    /// # Safety
+    /// `self` is the live per-thread VM; JS thread.
+    #[inline]
+    pub unsafe fn timer_unpark_after_run(&mut self, outer_start: u32) {
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: per fn contract.
+            unsafe { (hooks.timer_unpark_after_run)(self, outer_start) }
+        }
+    }
+
+    /// One turn of the innermost domain run — the event loop's iteration (see
+    /// [`crate::domain_run::turn`]). Returns whether `deadline` has passed.
+    #[inline]
+    pub fn turn(
+        &mut self,
+        deadline: Option<&bun_core::Timespec>,
+        done: impl FnMut() -> bool,
+    ) -> bool {
+        // SAFETY: `self` is the live per-thread VM.
+        unsafe { crate::domain_run::turn(self, deadline, done) }
+    }
+
+    /// [`Self::turn`] for run-to-completion loops that must not block once
+    /// nothing keeps the loop alive (see [`crate::domain_run::turn_active`]).
+    #[inline]
+    pub fn turn_active(&mut self, done: impl FnOnce() -> bool) {
+        // SAFETY: `self` is the live per-thread VM.
+        unsafe { crate::domain_run::turn_active(self, done) }
+    }
+
+    /// [`Self::turn_active`] until nothing keeps the loop alive.
+    pub fn run_to_completion(&mut self) {
+        while self.is_event_loop_alive() {
+            self.turn_active(|| false);
+        }
+    }
+
     /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
     /// `Timer::All` lives in `bun_runtime` (b2-cycle).
     ///
@@ -2562,6 +2616,8 @@ impl VirtualMachine {
             jsc_vm
         };
         VMHolder::set_cached_global_object(Some(global));
+        // From here on this thread's event loop turns inside the root domain run.
+        crate::domain_run::enter_root();
 
         // `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
@@ -2619,19 +2675,6 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
-    /// `eventLoop().autoTick()` — dispatched through the runtime hook
-    /// (needs `Timer::All` for the poll timeout).
-    #[inline]
-    pub fn auto_tick(&mut self) {
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.auto_tick)(self) };
-        } else {
-            // No high tier (unit tests) — fall back to a non-blocking tick.
-            self.event_loop_mut().tick();
-        }
-    }
-
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
     /// but only sleeps in the uSockets loop while it has active handles.
     /// The real body lives in `event_loop.rs`
@@ -2639,7 +2682,7 @@ impl VirtualMachine {
     /// then route through the same `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
-    pub fn auto_tick_active(&mut self) {
+    pub(crate) fn auto_tick_active(&mut self) {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `self` is the live per-thread VM (hook contract).
             unsafe { (hooks.auto_tick_active)(self) };
@@ -2810,14 +2853,14 @@ impl VirtualMachine {
                 if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
                     break;
                 }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
+                let this: *const Self = self;
+                self.turn(None, || {
+                    // (Re-read: a reload during the ready pass may replace it.)
+                    // SAFETY: `this` is `self`, live; a shared read of one field.
+                    unsafe { &*this }.pending_internal_promise.is_none_or(|p| {
+                        crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending
+                    })
+                });
             }
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
@@ -3906,13 +3949,12 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_immediate_task(task);
     }
 
-    /// Ticks the event loop until no tasks keep it alive.
+    /// Turns the event loop until nothing keeps it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
-            self.event_loop_mut().tick();
-            if self.is_event_loop_alive() {
-                self.auto_tick();
-            }
+            let this: *mut Self = self;
+            // SAFETY: `this` is `self`; the closure only reads liveness.
+            self.turn(None, || !unsafe { &*this }.is_event_loop_alive());
         }
     }
 
@@ -4705,6 +4747,7 @@ impl VirtualMachine {
     pub fn destroy(&mut self) {
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
+        crate::domain_run::exit_root();
         // The VM's own clone of its handle; the shared inner is freed when the
         // last outside holder (C++ client data, a late poster) lets go.
         // SAFETY: `destroy` runs once; the field is not used afterwards.
@@ -4895,14 +4938,14 @@ impl VirtualMachine {
                 if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
                     break;
                 }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
+                let this: *const Self = self;
+                self.turn(None, || {
+                    // (Re-read: a reload during the ready pass may replace it.)
+                    // SAFETY: `this` is `self`, live; a shared read of one field.
+                    unsafe { &*this }.pending_internal_promise.is_none_or(|p| {
+                        crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending
+                    })
+                });
             }
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
@@ -4913,9 +4956,9 @@ impl VirtualMachine {
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
-        // Pre-arm the waker so this settled-promise tick cannot park (#36450).
+        // Pre-arm the waker so this settled-promise turn cannot park (#36450).
         self.wakeup();
-        self.auto_tick();
+        self.turn(None, || false);
         Ok(self.pending_internal_promise.unwrap())
     }
 

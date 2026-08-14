@@ -60,8 +60,8 @@ bun_dispatch::link_interface! {
         fn uws_loop() -> *mut bun_uws::Loop;
         fn pipe_read_buffer() -> *mut [u8];
         fn tick();
-        fn auto_tick();
-        fn auto_tick_active();
+        fn turn(context: *mut core::ffi::c_void, is_done: fn(*mut core::ffi::c_void) -> bool);
+        fn turn_active();
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
         fn stdout() -> *mut ();

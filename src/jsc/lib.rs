@@ -437,6 +437,8 @@ pub mod any_promise;
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
+#[path = "domain_run.rs"]
+pub mod domain_run;
 #[path = "host_object.rs"]
 pub mod host_object;
 #[path = "JSArrayIterator.rs"]

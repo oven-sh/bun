@@ -302,12 +302,12 @@ pub(crate) fn spawn_sync(
 }
 
 /// How spawnSync blocks. On POSIX it turns the real event loop inside a
-/// native-only domain run (`crate::domain_run`): the child's pipes and exit are ordinary
+/// native-only domain run (`bun_jsc::domain_run`): the child's pipes and exit are ordinary
 /// polls on Bun's one loop while everything that predates the call is held until
 /// it returns. libuv-backed polls carry no birth epoch, so Windows waits on the
 /// isolated `SpawnSyncEventLoop`.
 enum SyncWait<'a> {
-    Run(crate::domain_run::DomainRun),
+    Run(bun_jsc::domain_run::DomainRun),
     Isolated(&'a mut bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop),
 }
 
@@ -316,7 +316,7 @@ impl SyncWait<'_> {
 
     /// One turn, sleeping no later than `deadline`; `done` lets a run skip a
     /// poll it no longer needs.
-    fn turn(&mut self, deadline: Option<&Timespec>, done: impl FnOnce() -> bool) -> TickState {
+    fn turn(&mut self, deadline: Option<&Timespec>, done: impl FnMut() -> bool) -> TickState {
         match self {
             // SAFETY: the run is the innermost one, entered on this thread.
             SyncWait::Run(run) => match unsafe { run.turn(deadline, done) } {
@@ -1092,9 +1092,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // SAFETY: `bun_vm_ptr()` is the live per-thread VM; the run is dropped
     // below (or on any early return), on this thread.
     let mut domain_run = (IS_SYNC && SyncWait::USES_RUN).then(|| unsafe {
-        crate::domain_run::DomainRun::enter(
+        bun_jsc::domain_run::DomainRun::enter(
             global_this.bun_vm_ptr(),
-            crate::domain_run::Policy::Native,
+            bun_jsc::domain_run::Policy::Native,
         )
     });
     // For IS_SYNC without a domain run, use the isolated loop's `event_loop`

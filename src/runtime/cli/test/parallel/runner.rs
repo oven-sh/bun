@@ -539,11 +539,8 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
-                vm.event_loop_ref().tick();
-                if self.cmds.pending_idx.is_some() || self.cmds.done {
-                    break;
-                }
-                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref()
+                    .turn(None, || self.cmds.pending_idx.is_some() || self.cmds.done);
             }
             let Some(idx) = self.cmds.pending_idx else {
                 break;
@@ -672,12 +669,9 @@ pub(crate) fn run_as_worker(
     // sees repeat_bufs / junit_chunk / coverage_chunk.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
         // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-            break;
-        }
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).auto_tick() };
+        unsafe { &mut *vm_ref.event_loop() }.turn(None, || {
+            !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get()
+        });
     }
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.

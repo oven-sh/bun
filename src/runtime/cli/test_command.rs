@@ -3072,10 +3072,7 @@ impl TestCommand {
         vm.event_loop_ref().tick_possibly_forever();
 
         loop {
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.event_loop_ref().auto_tick_active();
-            }
+            vm.run_to_completion();
 
             vm.event_loop_ref().tick_possibly_forever();
         }
@@ -3356,11 +3353,11 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
+                    vm.event_loop_ref()
+                        .turn(None, || buntest.phase == bun_test::Phase::Done);
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         vm.global().handle_rejected_promises();

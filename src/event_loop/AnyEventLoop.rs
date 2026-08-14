@@ -145,10 +145,7 @@ impl AnyEventLoop {
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
             match unsafe { &mut *this } {
-                AnyEventLoop::Js { owner } => {
-                    owner.tick();
-                    owner.auto_tick();
-                }
+                AnyEventLoop::Js { owner } => owner.turn(context, is_done),
                 AnyEventLoop::Mini(mini) => {
                     // One iteration only — we cannot call the *looping*
                     // `MiniEventLoop::tick` here because that would hold
@@ -165,8 +162,7 @@ impl AnyEventLoop {
         match self {
             AnyEventLoop::Js { owner } => {
                 let _ = context;
-                owner.tick();
-                owner.auto_tick_active();
+                owner.turn_active();
             }
             AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
         }

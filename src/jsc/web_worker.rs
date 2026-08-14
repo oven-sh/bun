@@ -930,21 +930,13 @@ impl WebWorker {
         vm.as_mut().tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
-        while !stopped_by_entry && vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            if self.has_requested_terminate() {
-                break;
-            }
-            if let EntryOutcome::Stop = observe_entry(vm) {
-                stopped_by_entry = true;
-                break;
-            }
-            vm.as_mut().auto_tick_active();
-            if self.has_requested_terminate() {
-                break;
-            }
-            if let EntryOutcome::Stop = observe_entry(vm) {
-                stopped_by_entry = true;
+        while !stopped_by_entry && vm.is_event_loop_alive() && !self.has_requested_terminate() {
+            vm.as_mut().turn_active(|| {
+                stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
+                stopped_by_entry || self.has_requested_terminate()
+            });
+            if !stopped_by_entry {
+                stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
             }
         }
 

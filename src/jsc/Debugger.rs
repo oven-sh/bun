@@ -310,15 +310,19 @@ impl Debugger {
             if wait == Wait::Off {
                 break;
             }
-            this.event_loop_mut().tick();
-            // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
-            let wait = match this.debugger.as_deref() {
-                Some(d) => d.wait_for_connection,
-                None => break,
+            // `Debugger__didConnect` may flip `wait_for_connection` during a turn's
+            // ready pass; if so, do not sit in the poll.
+            let this_ptr: *const VirtualMachine = core::ptr::from_ref(this);
+            let connected_meanwhile = || {
+                // SAFETY: `this_ptr` is `this`, live; short-lived shared read.
+                !matches!(
+                    unsafe { &*this_ptr }.debugger.as_deref(),
+                    Some(d) if d.wait_for_connection != Wait::Off
+                )
             };
             match wait {
                 Wait::Forever => {
-                    this.event_loop_mut().auto_tick_active();
+                    this.as_mut().turn_active(connected_meanwhile);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -338,8 +342,7 @@ impl Debugger {
                         }
                     }
 
-                    this.uws_loop_mut()
-                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
+                    this.as_mut().turn(Some(&deadline), connected_meanwhile);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -518,10 +521,7 @@ impl Debugger {
             // Each call forms a fresh short-lived `&`/`&mut` (via the safe
             // accessors) so re-entrant JS inside `tick()` may independently
             // call `VirtualMachine::get()` without aliasing.
-            while this.is_event_loop_alive() {
-                this.as_mut().tick();
-                this.event_loop_mut().auto_tick_active();
-            }
+            this.as_mut().run_to_completion();
             this.event_loop_mut().tick_possibly_forever();
         }
     }

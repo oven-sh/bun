@@ -3939,8 +3939,7 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    // `resolve_size` zeroes an S3 blob's size; the S3 arm below
-                    // rejects the entry, so leave it untouched.
+                    // `resolve_size` would zero an S3 entry, which is rejected below.
                     if blob.size.get() == MAX_SIZE && !blob.is_s3() {
                         blob.resolve_size();
                     }
@@ -3951,9 +3950,6 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // This serializer is synchronous and S3 objects can
-                            // only be fetched asynchronously. Emitting the part
-                            // with an empty body would silently upload nothing.
                             self.failed = true;
                             let entry_name = name.to_slice();
                             let _ = global_this.throw_type_error(format_args!(

@@ -10,10 +10,12 @@
 // the helper against a throwaway GPG key and re-implements the exact
 // checks from the user's validate-digests.ts:
 //
-//  1. Every manifest line matches /^[0-9a-f]{64} \*(.+)$/ — the helper
-//     emits `hex *name` exclusively (binary-mode marker), so the test
-//     regex is pinned to that form rather than the permissive
-//     validator regex that also accepts the text-mode `hex  name`.
+//  1. Every manifest line matches /^[0-9a-f]{64}  (.+)$/ — the helper
+//     emits the two-space text-mode `hex  name` form exclusively,
+//     byte-matching the daily sign cron's producer (upload-assets.ts)
+//     and the `grep " bun-linux-$build.zip$"` in dockerhub/*/Dockerfile,
+//     so the test regex is pinned to that form rather than the
+//     permissive validator regex.
 //  2. The sha256 in the manifest equals the sha256 of the actual file
 //  3. The body of the clearsigned .asc is byte-identical to the .txt
 //  4. The PGP signature verifies against the signing key
@@ -34,14 +36,15 @@ const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
 const validateScript = join(repoRoot, "scripts", "validate-digests.ts");
 
-// Shared manifest-line regex. Pinned to `hex *name` (the only form
-// scripts/sign-release-manifest.sh ever emits — see its `printf '%s
-// *%s\n'` at the sha256 collation loop) rather than the validator
-// regex /^([a-f0-9]{64})(  | \*)(.+)$/ which also accepts text mode.
-// Pinning the test to the strict form means any future helper change
-// that drops the `*` marker or switches to text mode would be caught
-// here instead of silently passing under the permissive validator.
-const manifestLineRe = /^([a-f0-9]{64}) \*(.+)$/;
+// Shared manifest-line regex. Pinned to the two-space `hex  name`
+// form (the only form scripts/sign-release-manifest.sh ever emits,
+// matching upload-assets.ts and the dockerhub Dockerfile greps)
+// rather than the validator regex /^([a-f0-9]{64})(  | \*)(.+)$/
+// which also accepts the binary-mode ` *` marker. Pinning the strict
+// form means any helper change that drifts from the format the
+// Docker consumers grep for is caught here instead of silently
+// passing under the permissive validator.
+const manifestLineRe = /^([a-f0-9]{64})  (.+)$/;
 
 async function sh(cmd: string[], env: Record<string, string> = {}) {
   // Async Bun.spawn (not spawnSync) so the wrapping describe.concurrent
@@ -236,8 +239,8 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const signed = readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8");
 
     // --- Line format check (stricter than validate-digests.ts on
-    // purpose — the helper always emits `hex *name`, so any drift
-    // away from the binary-mode marker fails here).
+    // purpose — the helper always emits the two-space `hex  name`
+    // form the Docker consumers grep for, so any drift fails here).
     const lines = manifest.trim().split(/\r?\n/);
     const entries: { hex: string; name: string }[] = [];
     const seen = new Set<string>();
@@ -398,7 +401,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     const manifest = readFileSync(join(deep, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("deep-bytes").digest("hex");
-    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
     // The clearsigned .asc exists and carries the same body.
     const signed = readFileSync(join(deep, "SHASUMS256.txt.asc"), "utf8");
     expect(signed).toContain(manifest);
@@ -430,7 +433,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("fake-linux").digest("hex");
-    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
@@ -512,7 +515,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // And the fresh .txt must reflect the rotated bytes.
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("fake-after-rotation").digest("hex");
-    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
   });
 
   test("sweeps orphaned .sign-manifest-scratch.* dirs left by a SIGKILL'd prior run", async () => {
@@ -559,7 +562,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // And the manifest is still correct for the real artifact.
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("artifact-bytes").digest("hex");
-    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
   });
 
   test("sweep restores .bak files from an orphaned scratch dir when live outputs are missing", async () => {
@@ -592,7 +595,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     mkdirSync(orphan);
     // Original (pre-SIGKILL) manifest and .asc bytes. Use distinctive
     // values so we can tell which ones the helper kept at the end.
-    const originalTxt = Buffer.alloc(64, "deadbeef").toString() + " *bun-linux-x64.zip\n";
+    const originalTxt = Buffer.alloc(64, "deadbeef").toString() + "  bun-linux-x64.zip\n";
     const originalAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nstashed-bytes\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     writeFileSync(join(orphan, "SHASUMS256.txt.bak"), originalTxt);
@@ -662,8 +665,8 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     mkdirSync(orphanOlder);
     mkdirSync(orphanNewer);
 
-    const olderTxt = Buffer.alloc(64, "a").toString() + " *bun-linux-x64.zip\n";
-    const newerTxt = Buffer.alloc(64, "b").toString() + " *bun-linux-x64.zip\n";
+    const olderTxt = Buffer.alloc(64, "a").toString() + "  bun-linux-x64.zip\n";
+    const newerTxt = Buffer.alloc(64, "b").toString() + "  bun-linux-x64.zip\n";
     const olderAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nolder\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     const newerAsc =
@@ -734,8 +737,8 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     mkdirSync(orphanA);
     mkdirSync(orphanB);
 
-    const aTxt = Buffer.alloc(64, "a").toString() + " *bun-linux-x64.zip\n";
-    const bTxt = Buffer.alloc(64, "b").toString() + " *bun-linux-x64.zip\n";
+    const aTxt = Buffer.alloc(64, "a").toString() + "  bun-linux-x64.zip\n";
+    const bTxt = Buffer.alloc(64, "b").toString() + "  bun-linux-x64.zip\n";
     const aAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\npair-a\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     const bAsc =
@@ -796,7 +799,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     });
     const dirStr = String(dir);
 
-    const liveTxt = Buffer.alloc(64, "c").toString() + " *bun-linux-x64.zip\n";
+    const liveTxt = Buffer.alloc(64, "c").toString() + "  bun-linux-x64.zip\n";
     const liveAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nlive-wins\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     writeFileSync(join(dirStr, "SHASUMS256.txt"), liveTxt);
@@ -804,7 +807,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     const orphan = join(dirStr, ".sign-manifest-scratch.orphanLL");
     mkdirSync(orphan);
-    const staleTxt = Buffer.alloc(64, "d").toString() + " *bun-linux-x64.zip\n";
+    const staleTxt = Buffer.alloc(64, "d").toString() + "  bun-linux-x64.zip\n";
     const staleAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nshould-not-win\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     writeFileSync(join(orphan, "SHASUMS256.txt.bak"), staleTxt);
@@ -983,8 +986,8 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // intermediate).
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expectedTmp = createHash("sha256").update(originalBytes).digest("hex");
-    expect(manifest).toContain(`${expectedTmp} *SHASUMS256.txt.tmp`);
-    expect(manifest).toContain("*bun-linux-x64.zip");
+    expect(manifest).toContain(`${expectedTmp}  SHASUMS256.txt.tmp`);
+    expect(manifest).toContain(" bun-linux-x64.zip");
     // No scratch leftovers.
     const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
     expect(leftovers).toEqual([]);
@@ -1060,7 +1063,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // because the helper is agnostic to the specific archive names and
     // parsing the shell array at test time would just create a new
     // fragile coupling. Five cross-OS basenames are enough to exercise
-    // sorting, binary-mode separator, and the full round-trip.
+    // sorting, two-space separator, and the full round-trip.
     using dir = tempDir("bun-28931-e2e-", {
       "bun-linux-x64.zip": "linux",
       "bun-linux-aarch64.zip": "linux-aarch64",
@@ -1189,12 +1192,12 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(sign.stderr).not.toContain("error:");
     expect(sign.exitCode).toBe(0);
 
-    // Rewrite .txt with the same (correct) hash but the two-space
-    // text-mode separator instead of the signed ` *` binary marker:
-    // the digest check alone would pass, so only the signed-body
+    // Rewrite .txt with the same (correct) hash but the binary-mode
+    // ` *` marker instead of the signed two-space separator: the
+    // digest check alone would pass, so only the signed-body
     // identity check catches the drift.
     const hash = createHash("sha256").update("drift-target").digest("hex");
-    writeFileSync(join(dirStr, "SHASUMS256.txt"), `${hash}  bun-linux-x64.zip\n`);
+    writeFileSync(join(dirStr, "SHASUMS256.txt"), `${hash} *bun-linux-x64.zip\n`);
     const res = await sh([bunExe(), validateScript, "--dir", dirStr]);
     expect(res.stderr).toContain("Identity Mismatch");
     expect(res.exitCode).toBe(1);

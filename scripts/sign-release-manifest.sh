@@ -653,12 +653,14 @@ unset -v _bak_path
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
 #   downstream consumer) resolves them relative to the release.
-# - Binary-mode marker: ` *NAME` (space + asterisk) tells sha256sum -c
-#   to open the file in binary mode, preventing line-ending translation
-#   of .zip contents on platforms where O_TEXT vs O_BINARY differ
-#   (Windows, Cygwin, msys). On POSIX systems this is equivalent to the
-#   two-space text-mode separator; on Windows it's a correctness fix.
-#   The validator regex in the issue already accepts both forms.
+# - Two-space text-mode separator (`HASH  NAME`), byte-matching the
+#   daily sign cron's producer (packages/bun-release/scripts/
+#   upload-assets.ts). The dockerhub/*/Dockerfile consumers grep
+#   `" bun-linux-$build.zip$"`, which requires a space immediately
+#   before the name — the binary-mode ` *NAME` marker would fail that
+#   grep and break (or on BusyBox silently bypass) the Docker image
+#   integrity check. Two producers of the same published file must
+#   agree byte-for-byte.
 # - Each digest file contains the full `HASH  FILENAME\n` line as
 #   emitted by the sha256 tool. The collation loop extracts just the
 #   hash via `cut -d ' ' -f 1` — doing the cut there (not inside the
@@ -724,7 +726,7 @@ while IFS= read -r artifact; do
     echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2 || true
     exit 1
   fi
-  printf '%s *%s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"
+  printf '%s  %s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"
 done < "${sorted_list}"
 
 # Atomic rename — the final `${manifest}` only appears once every hash

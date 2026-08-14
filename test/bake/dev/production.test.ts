@@ -600,93 +600,98 @@ export default function IndexPage() {
   // what runs the 'exit' handlers, applies process.exitCode and, under
   // BUN_DESTRUCT_VM_ON_EXIT, destroys the JSC heap. Before, it returned and
   // exited the process directly, skipping all three.
-  const onExitConfig = `
-    process.on("exit", code => console.log("exit event: " + code));
-    export default { app: { framework: "react" } };
-  `;
+  describe.concurrent("exits through the build VM", () => {
+    const onExitConfig = `
+      process.on("exit", code => console.log("exit event: " + code));
+      export default { app: { framework: "react" } };
+    `;
 
-  test.concurrent(
-    "rendered build runs 'exit' handlers and exits with process.exitCode",
-    async () => {
-      const dir = await tempDirWithBakeDeps("bake-production-exit-rendered", {
-        "app.ts": onExitConfig,
-        "pages/index.tsx": `
-          process.exitCode = 3;
-          export default function IndexPage() {
-            return <div>Hello World</div>;
-          }
-        `,
-      });
+    // Each case is a full react build on a debug (and ASAN) binary, and the
+    // LSan case also symbolizes its report, which the default timeout does not
+    // cover; WAIT_MULTIPLIER is how the bake harness budgets production builds.
+    const timeout = 30_000 * WAIT_MULTIPLIER;
 
-      const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
-        .cwd(dir)
-        .env(bunEnv)
-        .quiet()
-        .throws(false);
+    test(
+      "a rendered build runs 'exit' handlers and exits with process.exitCode",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-rendered", {
+          "app.ts": onExitConfig,
+          "pages/index.tsx": `
+            process.exitCode = 3;
+            export default function IndexPage() {
+              return <div>Hello World</div>;
+            }
+          `,
+        });
 
-      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
-      expect(stdout.toString()).toBe("done\nexit event: 3\n");
-      expect(exitCode).toBe(3);
-    },
-    30_000 * WAIT_MULTIPLIER,
-  );
+        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env(bunEnv)
+          .quiet()
+          .throws(false);
 
-  test.concurrent(
-    "build with nothing to render runs 'exit' handlers",
-    async () => {
-      const dir = await tempDirWithBakeDeps("bake-production-exit-no-routes", {
-        "app.ts": onExitConfig,
-      });
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+        expect(stdout.toString()).toBe("done\nexit event: 3\n");
+        expect(exitCode).toBe(3);
+      },
+      timeout,
+    );
 
-      const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
-        .cwd(dir)
-        .env(bunEnv)
-        .quiet()
-        .throws(false);
+    test(
+      "a build with nothing to render runs 'exit' handlers",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-no-routes", {
+          "app.ts": onExitConfig,
+        });
 
-      expect(stdout.toString()).toBe("done\nexit event: 0\n");
-      expect(exitCode).toBe(0);
-    },
-    30_000 * WAIT_MULTIPLIER,
-  );
+        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env(bunEnv)
+          .quiet()
+          .throws(false);
 
-  // The natives behind these wrappers are freed by the wrappers' finalizers, so
-  // they stay allocated until the VM is destroyed; LSan sees them as leaked when
-  // the build exits without destroying it. This checks the report's contents
-  // rather than requiring it to be empty because the build's own transpilers
-  // are still leaked (separate fix), which keeps this file in
-  // test/no-validate-leaksan.txt for now.
-  test.concurrent.skipIf(!isASAN)(
-    "rendered build destroys its VM under BUN_DESTRUCT_VM_ON_EXIT",
-    async () => {
-      const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
-        "app.ts": `export default { app: { framework: "react" } };`,
-        "pages/index.tsx": `
-          globalThis.keepUntilExit = [new TextDecoder(), new Blob(["prerender"]), setImmediate(() => {})];
-          export default function IndexPage() {
-            return <div>Hello World</div>;
-          }
-        `,
-      });
+        expect(stdout.toString()).toBe("done\nexit event: 0\n");
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-      const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
-        .cwd(dir)
-        .env({
-          ...bunEnv,
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
-        })
-        .quiet()
-        .throws(false);
+    // The natives behind these wrappers are freed by the wrappers' finalizers,
+    // so they stay allocated until the VM is destroyed, and LSan reports them
+    // when the build exits without destroying it. This checks the report's
+    // contents instead of requiring an empty report because the build's own
+    // transpilers are still leaked (#38233), which is also what keeps this file
+    // in test/no-validate-leaksan.txt.
+    test.skipIf(!isASAN)(
+      "a rendered build destroys its VM under BUN_DESTRUCT_VM_ON_EXIT",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+          "pages/index.tsx": `
+            globalThis.keepUntilExit = [new TextDecoder(), new Blob(["prerender"]), setImmediate(() => {})];
+            export default function IndexPage() {
+              return <div>Hello World</div>;
+            }
+          `,
+        });
 
-      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
-      expect(stdout.toString()).toBe("done\n");
-      const leaked = ["TextDecoder", "Blob", "ImmediateObject"].filter(type => stderr.toString().includes(type));
-      expect(leaked).toEqual([]);
-    },
-    // LSan symbolizes every reported stack through llvm-symbolizer, which is
-    // slow against a debug binary.
-    60_000 * WAIT_MULTIPLIER,
-  );
+        const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env({
+            ...bunEnv,
+            BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+            LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+          })
+          .quiet()
+          .throws(false);
+
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+        expect(stdout.toString()).toBe("done\n");
+        const leaked = ["TextDecoder", "Blob", "ImmediateObject"].filter(type => stderr.toString().includes(type));
+        expect(leaked).toEqual([]);
+      },
+      timeout,
+    );
+  });
 });

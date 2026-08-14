@@ -667,7 +667,6 @@ struct Redirect {
 }
 
 /// Finds the handler the build displaced from the unwind info at `unwind_info` (a bun.exe RVA).
-/// Like every other RVA read from the blob, the handler must lie inside its addon's span.
 fn find_redirect(unwind_info: u32) -> Option<Redirect> {
     let blob = blob()?;
     let mut r = Reader {

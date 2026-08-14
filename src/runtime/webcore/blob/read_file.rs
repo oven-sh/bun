@@ -222,8 +222,8 @@ unsafe impl Send for ReadFile {}
 impl bun_jsc::JobContext for ReadFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// Where the bytes go: completed by `then`, or cancelled when the VM releases the JS sides of
-    /// its live jobs at teardown (a refused or unrun read then frees only this off-thread part).
+    /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
+    /// back to a VM that is no longer running script and is released unrun.
     type Js = ReadFileCompletionFns;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.

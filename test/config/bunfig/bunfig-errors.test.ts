@@ -196,12 +196,16 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
   // Install commands also read $XDG_CONFIG_HOME/.bunfig.toml (or $HOME/.bunfig.toml).
   // `bun pm cache` prints the cache directory once that config has been handled.
   describe("global .bunfig.toml", () => {
-    const CACHE_DIR_MARKER = "/bunfig-global-test-cache-dir";
     const PACKAGE_JSON = { "package.json": JSON.stringify({ name: "bunfig-global-test" }) };
-    async function pmCache(cwd: string, env: Record<string, string | undefined>): Promise<Result> {
-      const result = await runBun(["pm", "cache"], cwd, { BUN_INSTALL_CACHE_DIR: CACHE_DIR_MARKER, ...env });
+    // `bun pm cache` creates the directory it prints, and silently falls back to
+    // node_modules/.cache when it cannot, so it has to live inside the temp dir.
+    const cacheDirIn = (dir: string) => join(dir, "install-cache");
+    async function pmCache(dir: string, env: Record<string, string | undefined>): Promise<Result> {
+      const result = await runBun(["pm", "cache"], dir, { BUN_INSTALL_CACHE_DIR: cacheDirIn(dir), ...env });
       return { ...result, stdout: result.stdout.trim() };
     }
+    /** The global config was skipped and the command went on to print the cache directory. */
+    const printedCacheDir = (dir: string): Result => ({ stdout: cacheDirIn(dir), stderr: "", exitCode: 0 });
 
     test("is loaded when its path is exactly MAX_PATH_BYTES - 1 bytes", async () => {
       using dir = tempDir("bunfig-long-global", PACKAGE_JSON);
@@ -224,22 +228,16 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
       using dir = tempDir("bunfig-long-global", PACKAGE_JSON);
       const configHome = pathOfLength(String(dir), configHomeLength);
 
-      expect(await pmCache(String(dir), { XDG_CONFIG_HOME: configHome })).toEqual({
-        stdout: CACHE_DIR_MARKER,
-        stderr: "",
-        exitCode: 0,
-      });
+      expect(await pmCache(String(dir), { XDG_CONFIG_HOME: configHome })).toEqual(printedCacheDir(String(dir)));
     });
 
     test("is skipped when its $HOME path would be exactly MAX_PATH_BYTES bytes", async () => {
       using dir = tempDir("bunfig-long-global", PACKAGE_JSON);
       const home = pathOfLength(String(dir), MAX_PATH_BYTES - "/.bunfig.toml".length);
 
-      expect(await pmCache(String(dir), { HOME: home, XDG_CONFIG_HOME: undefined })).toEqual({
-        stdout: CACHE_DIR_MARKER,
-        stderr: "",
-        exitCode: 0,
-      });
+      expect(await pmCache(String(dir), { HOME: home, XDG_CONFIG_HOME: undefined })).toEqual(
+        printedCacheDir(String(dir)),
+      );
     });
   });
 });

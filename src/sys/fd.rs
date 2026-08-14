@@ -320,4 +320,3 @@ fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     }
     Ok(out)
 }
-

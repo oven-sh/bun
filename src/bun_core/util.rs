@@ -1366,7 +1366,6 @@ unsafe fn fd_path_debug(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
 }
 
-
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let fd = *self;

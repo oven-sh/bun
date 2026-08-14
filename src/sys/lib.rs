@@ -4426,19 +4426,22 @@ mod windows_impl {
         let _close = scopeguard::guard(handle, |h| unsafe {
             let _ = w::CloseHandle(h);
         });
-        let wide = crate::windows::GetFinalPathNameByHandle(handle, Default::default(), &mut wbuf.0)
-            .map_err(|e| {
-                use crate::windows::GetFinalPathNameByHandleError as GE;
-                Error::from_code(
-                    match e {
-                        GE::FileNotFound => E::ENOENT,
-                        GE::NameTooLong => E::ENAMETOOLONG,
-                    },
-                    Tag::realpath,
-                )
-                .with_path(path.as_bytes())
-            })?;
-        Ok(bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf.0, wide))
+        let wide =
+            crate::windows::GetFinalPathNameByHandle(handle, Default::default(), &mut wbuf.0)
+                .map_err(|e| {
+                    use crate::windows::GetFinalPathNameByHandleError as GE;
+                    Error::from_code(
+                        match e {
+                            GE::FileNotFound => E::ENOENT,
+                            GE::NameTooLong => E::ENAMETOOLONG,
+                        },
+                        Tag::realpath,
+                    )
+                    .with_path(path.as_bytes())
+                })?;
+        Ok(bun_core::strings::convert_utf16_to_utf8_in_buffer(
+            &mut buf.0, wide,
+        ))
     }
     pub fn fcntl(_fd: Fd, _cmd: i32, _arg: isize) -> Maybe<isize> {
         Err(Error::new(E::ENOTSUP, Tag::fcntl))

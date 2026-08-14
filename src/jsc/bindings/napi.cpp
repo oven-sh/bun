@@ -107,18 +107,10 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// For the pure value constructors/accessors that Node implements with CHECK_ENV only: an addon may
-// call them while an exception is pending (node-addon-api builds the Error for a failed call this
-// way), and they never fail because a worker.terminate() / node:vm timeout has been requested. The
-// body must not run JS or addon callbacks.
-//
-// - An exception already on the VM is stashed so the body runs against a clean VM, and put back on
-//   return. Only when one is actually pending: JSC::SuspendExceptionScope restores the entry state
-//   unconditionally, so applied to a clean VM it would discard whatever the body raised.
-// - JSC::DeferTraps keeps the exception checks inside the body (its own and those in the JSC helpers
-//   it calls) from servicing VM traps, so a termination request that is waiting, or lands mid-call,
-//   stays a request and is delivered by the next check after the call returns instead of surfacing
-//   here as napi_pending_exception.
+// NAPI_PREAMBLE for the value constructors/accessors Node gates with CHECK_ENV only: callable with an
+// exception pending (stashed for the call; only then, since the scope's restore is unconditional), and
+// never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the next exception check
+// after the call delivers it, as in Node). No JS or addon code may run under it.
 #define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
     NAPI_LOG_CURRENT_FUNCTION;                                                     \
     NAPI_CHECK_ARG(_env, _env);                                                    \
@@ -1455,9 +1447,8 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
 
-// node_api_create_external_string_{latin1,utf16}. Sets `disposeNow` when nothing ended up
-// referencing the caller's buffer; the caller then runs the addon's finalizer itself, outside the
-// NAPI_PREAMBLE_NO_PENDING_CHECK scopes, which must not have addon code run under them.
+// node_api_create_external_string_{latin1,utf16}. On `disposeNow` the caller runs the addon's
+// finalizer itself, once this function's preamble scopes have closed.
 template<typename ExternalChar, typename Char>
 static napi_status createExternalString(napi_env env, Char* str, size_t length, napi_finalize finalize_callback, void* finalize_hint, napi_value* result, bool* copied, bool& disposeNow)
 {
@@ -1509,8 +1500,7 @@ node_api_create_external_string_latin1(napi_env env,
     napi_status status = createExternalString<Latin1Character>(env, str, length, finalize_callback, finalize_hint, result, copied, disposeNow);
     if (disposeNow) {
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        // Ownership transferred; still napi_ok if the finalizer left an exception pending, so the
-        // caller doesn't double-free.
+        // napi_ok even if the finalizer threw: the buffer is consumed either way.
         return napi_set_last_error(env, napi_ok);
     }
     return status;

@@ -85,20 +85,18 @@ describe("packages whose label is longer than 1024 bytes", () => {
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
 
-  type Project = { packageDir: string; env: Record<string, string | undefined> };
+  type Project = Awaited<ReturnType<VerdaccioRegistry["createTestDir"]>>;
 
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the cache createTestDir writes to bunfig.toml.
-  // Two of these concurrent tests install `bar` from the identical spec, and two installs publishing
-  // the same entry into one shared cache at the same time fail on Windows, so pin a cache per project.
-  async function createProject(tarball: string, packageJson: Record<string, unknown>): Promise<Project> {
-    const { packageDir } = await registry.createTestDir({
+  // Two of these concurrent tests install `bar` from the identical spec, so every command runs with
+  // the project's own cache (`project.env`) rather than the cache CI shares across the whole file.
+  function createProject(tarball: string, packageJson: Record<string, unknown>): Promise<Project> {
+    return registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify(packageJson),
         [tarball]: readFileSync(join(import.meta.dir, tarball)),
       },
     });
-    return { packageDir, env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") } };
   }
 
   async function runBun({ packageDir, env }: Project, ...args: string[]) {

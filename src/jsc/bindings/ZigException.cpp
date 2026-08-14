@@ -251,8 +251,7 @@ public:
         bool isConstructor = false;
         bool isGlobalCode = false;
         bool isAsync = false;
-        // The frame was printed as "name (url)" or "<anonymous> (url)" rather
-        // than as a bare "url" (module top-level code, native frames).
+        // Printed as "name (url)" or "<anonymous> (url)", not as a bare "url".
         bool isFunction = false;
     };
 

@@ -189,7 +189,7 @@ Unknown (4)
 
 License groups are printed in name order with `Unknown` always last, and packages within a group are sorted by name and then version. Packages that are only reached through `devDependencies` are marked `(dev)`. When nothing is listed, the text output is the single line `No packages found` and `--json` prints `{}`.
 
-Pass `--prod` (or `-P`, `-p`, `--production`) to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order), `license` (the same string as the key, `Unknown` included) and, when the newest listed version declares them, its `homepage`, `author` and `description`:
+Pass `--prod` (or `-P`, `-p`, `--production`) to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order), `paths` (the directory each of those versions was read from, in the same order — under `node_modules` for hoisted installs, inside `node_modules/.bun` for isolated installs), `license` (the same string as the key, `Unknown` included) and, when the newest listed version declares them, its `homepage`, `author` and `description`:
 
 ```bash terminal icon="terminal"
 bun pm licenses --json --prod
@@ -201,6 +201,7 @@ bun pm licenses --json --prod
     {
       "name": "path-parse",
       "versions": ["1.0.6"],
+      "paths": ["/home/me/app/node_modules/path-parse"],
       "license": "MIT",
       "homepage": "https://github.com/jbgutierrez/path-parse#readme",
       "author": "Javier Blanco <http://jbgutierrez.info>",
@@ -210,7 +211,7 @@ bun pm licenses --json --prod
 }
 ```
 
-`--long` prints each package's `author`, `description` and `homepage` (whichever it declares) on indented lines under its entry in the text output; it does not change `--json`.
+`--long` prints each package's `author`, `description` and `homepage` (whichever it declares) on indented lines under its entry in the text output; it does not change `--json`, and `paths` are only part of the `--json` output.
 
 `--prod` drops every `devDependencies` edge — the same packages `bun install --production` leaves out, including the `devDependencies` of `file:` dependencies; `optionalDependencies`, `peerDependencies` and everything a production dependency pulls in are still listed, and from a workspace root every workspace's production dependencies are included. Run it inside a workspace package to list only that package's dependencies, and use [`bun why`](/pm/cli/why) to see which dependency pulls in an unexpected package.
 

@@ -329,6 +329,7 @@ pub struct PackageManager {
 
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
+    pub(crate) update_request_index: update_request::UpdateRequestIndex,
     pub audit_fix_pins: Box<[crate::audit_fix::PlannedFix]>,
 
     /// Only set in `bun pm`
@@ -424,6 +425,9 @@ pub struct PackageManager {
 
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+
+    // add/remove/update --filter: only these importers are linked; None = every importer.
+    pub(crate) filtered_link_targets: Option<workspace_selection::LinkTargets>,
 
     // bun add --filter: which target received which request; consumed by bind_update_requests and package_json_write_back.
     pub(crate) pending_filtered_write: Option<Box<add_remove_with_filter::PendingWrite>>,
@@ -546,8 +550,24 @@ impl WorkspaceFilter {
             .all(|f| f.workspace_ids.binary_search(&pkg_id).is_ok())
     }
 
-    /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
+    /// Every workspace (root included) selected by `filter_patterns` (empty = all); warns about positive patterns that matched nothing.
     pub fn select_workspaces(
+        lockfile: &crate::Lockfile,
+        filter_patterns: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> Vec<PackageID> {
+        let selection = workspace_selection::select_lockfile_workspaces(
+            lockfile,
+            filter_patterns,
+            original_cwd,
+            workspace_selection::RootSelection::Implicit,
+        );
+        workspace_selection::warn_unmatched(filter_patterns, &selection.unmatched_patterns);
+        selection.ids
+    }
+
+    /// `select_workspaces` without the warning, for callers that report the selection themselves.
+    pub fn select_workspaces_quietly(
         lockfile: &crate::Lockfile,
         filter_patterns: &[&[u8]],
         original_cwd: &[u8],
@@ -558,6 +578,7 @@ impl WorkspaceFilter {
             original_cwd,
             workspace_selection::RootSelection::Implicit,
         )
+        .ids
     }
 }
 
@@ -2072,6 +2093,7 @@ pub fn init(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
@@ -2111,6 +2133,7 @@ pub fn init(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
@@ -2508,6 +2531,7 @@ fn init_with_runtime_once(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());
@@ -2554,6 +2578,7 @@ fn init_with_runtime_once(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
         wr!(catalog_add, add_catalog::State::default());

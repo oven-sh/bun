@@ -42,7 +42,7 @@ bun update --interactive
 bun update -i
 ```
 
-The flag opens a terminal interface that lists every outdated direct dependency with its current and target versions. Once you confirm, the selection is applied like `bun update <package>` with the selected names: those entries are rewritten in `package.json` and updated everywhere they occur in `bun.lock`, while the packages you left unselected, and every other transitive package, keep their locked versions. Confirming with nothing selected changes nothing.
+The flag opens a terminal interface that lists every outdated direct dependency with its current and target versions (`--dev`, `--prod` and `--no-optional` narrow that list, see [below](#--dev---prod---no-optional)). Once you confirm, the selection is applied like `bun update <package>` with the selected names: those entries are rewritten in `package.json` and updated everywhere they occur in `bun.lock`, while the packages you left unselected, and every other transitive package, keep their locked versions. Confirming with nothing selected changes nothing.
 
 ### Interactive Interface
 
@@ -115,9 +115,9 @@ Within each section, individual packages may have a suffix (` dev`, ` peer`, ` o
 
 ## `--recursive` and `--filter`
 
-In a monorepo, a plain `bun update` rewrites only the `package.json` of the workspace you run it in (transitive packages are shared, so they update either way). `bun update --recursive` (`-r`) also updates the direct dependencies of every workspace and rewrites each workspace's `package.json`; `bun update --filter <pattern>` limits that to the matching workspaces; the pattern syntax, including `{dir}` and `...` relations, is described on the [filtering](/pm/filter) page. Both need an existing `bun.lock`. They also work with `--interactive`, which then adds a "Workspace" column showing which workspace each dependency belongs to.
+In a monorepo, a plain `bun update` rewrites only the `package.json` of the workspace you run it in (transitive packages are shared, so they update either way). `bun update --recursive` (`-r`) also updates the direct dependencies of every workspace and rewrites each workspace's `package.json`; `bun update --filter <pattern>` (`-F`) limits that to the matching workspaces; the pattern syntax, including `{dir}` and `...` relations, is described on the [filtering](/pm/filter) page. Both need an existing `bun.lock`. They also work with `--interactive`, which then adds a "Workspace" column showing which workspace each dependency belongs to.
 
-`bun update <package> -r` and `bun update <package> --filter <pattern>` rewrite the entry for `<package>` in every selected workspace whose `package.json` declares it, each keeping its own `^`/`~`/exact style; the `package.json` of a workspace that was not selected is left alone, and nested packages that depend on `<package>` still move in `bun.lock`. A name that none of the selected workspaces uses, directly or through their dependencies, is an error. `--latest` and `--dry-run` apply the same way:
+`bun update <package> -r` and `bun update <package> --filter <pattern>` rewrite the entry for `<package>` in every selected workspace whose `package.json` declares it, each keeping its own `^`/`~`/exact style; the `package.json` of a workspace that was not selected is left alone, and nested packages that depend on `<package>` still move in `bun.lock`. A name that none of the selected workspaces uses, directly or through their dependencies, is an error. `--latest` and `--dry-run` apply the same way. With `--filter`, with or without names, the install that follows links only the selected workspaces, exactly like [`bun install --filter`](/pm/filter), and a pattern that matches nothing prints a warning; `-r` installs every workspace:
 
 ```sh terminal icon="terminal"
 bun update --recursive
@@ -129,12 +129,13 @@ bun update zod --filter '...^ui'
 
 ## `--dev`, `--prod`, `--no-optional`
 
-`bun update --dev` (`-D`) only updates the entries in `devDependencies`; `--prod` (`-P`, also `--production`) only those in `dependencies` and `optionalDependencies`; `--no-optional` skips `optionalDependencies`. These select which entries of the current workspace's `package.json` (or of the workspaces chosen with `-r`/`--filter`) are updated, and combine with names, patterns and `--latest`. They do not change what gets installed: `bun update --production` still installs `devDependencies`, unlike `bun install --production`. They need an existing `bun.lock`, and print `No packages to update` when no entry qualifies:
+`bun update --dev` (`-D`) only updates the entries in `devDependencies`; `--prod` (`-P`, also `--production`) only those in `dependencies` and `optionalDependencies`; `--no-optional` skips `optionalDependencies`. These select which entries of the current workspace's `package.json` (or of the workspaces chosen with `-r`/`--filter`) are updated, and combine with names, patterns and `--latest`. They do not change what gets installed: `bun update --production` still installs `devDependencies`, unlike `bun install --production`. They need an existing `bun.lock`, and print `No packages to update` when no entry qualifies. With `--interactive` the same flags decide which entries the picker lists (`bun update -i --dev`):
 
 ```sh terminal icon="terminal"
 bun update --dev
 bun update --prod --latest
 bun update -D '@types/*'
+bun update -i --prod
 ```
 
 ## `--global`
@@ -150,7 +151,7 @@ bun update -g typescript
 
 By default, `bun update` updates each dependency to the latest version that satisfies the version range in your `package.json`.
 
-To update the dependencies declared in `package.json` to the latest version regardless of whether it satisfies that range, use the `--latest` flag (`-L`). Transitive packages still move within the ranges their dependents declare, and a dependency that is already ahead of the `latest` tag (for example a prerelease) is left where it is rather than downgraded:
+To update the dependencies declared in `package.json` to the latest version regardless of whether it satisfies that range, use the `--latest` flag (`-L`). Transitive packages still move within the ranges their dependents declare, and an entry of the workspace you run in that is already ahead of the `latest` tag (for example a prerelease) is left where it is rather than downgraded. That only applies to the entries `--latest` rewrites: an entry you declared as a dist-tag, or a `"foo": "next"`-style entry declared by another package or workspace, still resolves through its own tag:
 
 ```sh terminal icon="terminal"
 bun update --latest

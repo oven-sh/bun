@@ -1023,25 +1023,40 @@ impl Diff {
             }
         }
 
+        let mut catalog_entries_skipped: usize = 0;
         if is_root {
             let tolerate_catalog_subset = pm.options.enable.frozen_lockfile();
             'catalogs: {
                 // don't sort if lengths are different
                 if from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count() {
-                    summary.catalogs_changed = !(tolerate_catalog_subset
-                        && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
-                            &*from_lockfile,
-                            &*to_lockfile,
-                        ));
+                    match tolerate_catalog_subset
+                        .then(|| {
+                            lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                &*from_lockfile,
+                                &*to_lockfile,
+                            )
+                        })
+                        .flatten()
+                    {
+                        Some(skipped) => catalog_entries_skipped = skipped,
+                        None => summary.catalogs_changed = true,
+                    }
                     break 'catalogs;
                 }
 
                 if from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count() {
-                    summary.catalogs_changed = !(tolerate_catalog_subset
-                        && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
-                            &*from_lockfile,
-                            &*to_lockfile,
-                        ));
+                    match tolerate_catalog_subset
+                        .then(|| {
+                            lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                &*from_lockfile,
+                                &*to_lockfile,
+                            )
+                        })
+                        .flatten()
+                    {
+                        Some(skipped) => catalog_entries_skipped = skipped,
+                        None => summary.catalogs_changed = true,
+                    }
                     break 'catalogs;
                 }
 
@@ -1100,11 +1115,18 @@ impl Diff {
                     }
 
                     if from_catalog_deps.count() != to_catalog_deps.count() {
-                        summary.catalogs_changed = !(tolerate_catalog_subset
-                            && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
-                                &*from_lockfile,
-                                &*to_lockfile,
-                            ));
+                        match tolerate_catalog_subset
+                            .then(|| {
+                                lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                    &*from_lockfile,
+                                    &*to_lockfile,
+                                )
+                            })
+                            .flatten()
+                        {
+                            Some(skipped) => catalog_entries_skipped = skipped,
+                            None => summary.catalogs_changed = true,
+                        }
                         break 'catalogs;
                     }
 
@@ -1300,6 +1322,8 @@ impl Diff {
             false
         };
 
+        let mut missing_workspaces: Vec<PackageID> = Vec::new();
+        let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {
                 let prev_i = to_i;
@@ -1345,28 +1369,29 @@ impl Diff {
             if !found {
                 if is_root
                     && from_dep.behavior.is_workspace()
-                    && pm.options.enable.frozen_lockfile()
                     && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
                         &*from_lockfile,
                         from_dep.name_hash,
                     )
                 {
-                    if pm.options.log_level.is_verbose() {
-                        bun_core::note!(
-                            "skipping workspace \"{}\": listed in bun.lock but not on disk",
-                            bstr::BStr::new(
-                                from_dep
-                                    .name
-                                    .slice(from_lockfile.buffers.string_bytes.as_slice())
-                            ),
-                        );
+                    if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
+                        missing_workspaces.push(from_resolutions[i]);
                     }
-                    summary.pruned_workspaces.push(from_dep.name_hash);
-                    continue;
+                    if pm.options.enable.frozen_lockfile() {
+                        if pm.options.log_level.is_verbose() {
+                            bun_core::note!(
+                                "skipping workspace \"{}\": listed in bun.lock but not on disk",
+                                bstr::BStr::new(
+                                    from_dep
+                                        .name
+                                        .slice(from_lockfile.buffers.string_bytes.as_slice())
+                                ),
+                            );
+                        }
+                        summary.pruned_workspaces.push(from_dep.name_hash);
+                        continue;
+                    }
                 }
-                // We found a removed dependency!
-                // We don't need to remove it
-                // It will be cleaned up later
                 summary.remove += 1;
                 continue;
             }
@@ -1383,8 +1408,7 @@ impl Diff {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
                         || (named_update_here
-                            && UpdateRequest::contains_name(
-                                updates,
+                            && pm.is_update_request(
                                 from_dep.name_hash,
                                 from_dep
                                     .name
@@ -1465,6 +1489,7 @@ impl Diff {
                             .dependencies
                             .get(to_lockfile.buffers.dependencies.as_slice())
                             .into();
+                        survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
                         let diff = Self::generate(
@@ -1513,8 +1538,7 @@ impl Diff {
             let is_explicit_update_target = matches!(update_requests, Some(updates)
             if updates.is_empty()
                 || (named_update_here
-                    && UpdateRequest::contains_name(
-                        updates,
+                    && pm.is_update_request(
                         from_dep.name_hash,
                         from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
                     )));
@@ -1553,10 +1577,13 @@ impl Diff {
                 .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
         )) as u32;
 
-        if !summary.pruned_workspaces.is_empty() {
-            lockfile::pruned_workspaces::exit_if_survivor_depends_on_pruned(
+        if !missing_workspaces.is_empty() {
+            lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
                 &*from_lockfile,
-                &summary.pruned_workspaces,
+                &missing_workspaces,
+                &*to_lockfile,
+                to.dependencies,
+                &survivors,
                 pm.options.log_level.is_silent(),
             );
         }
@@ -1567,6 +1594,18 @@ impl Diff {
                 "skipped {} workspace{} listed in bun.lock but not on disk",
                 count,
                 if count == 1 { "" } else { "s" },
+            );
+        }
+
+        if catalog_entries_skipped > 0 && !pm.options.log_level.is_silent() {
+            bun_core::note!(
+                "skipped {} catalog entr{} missing from bun.lock that no remaining workspace uses",
+                catalog_entries_skipped,
+                if catalog_entries_skipped == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
             );
         }
 

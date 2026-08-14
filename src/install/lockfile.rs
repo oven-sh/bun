@@ -40,6 +40,7 @@ use crate::{
     dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
     npm as Npm,
 };
+use bun_install_types::NodeLinker::NodeLinker;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Sub-module declarations — explicit #[path] attrs for PascalCase / dotted
@@ -434,6 +435,20 @@ impl<'a> LoadResult<'a> {
                 Migrated::Npm => (ConfigVersion::V0, true),
                 Migrated::Yarn => (ConfigVersion::V0, true),
             },
+        }
+    }
+
+    /// Resolves `Auto` the way `bun install` picks the linker for this lockfile; never returns `Auto`.
+    pub fn node_linker(&self, configured: NodeLinker) -> NodeLinker {
+        if configured != NodeLinker::Auto {
+            return configured;
+        }
+        if self.choose_config_version().0 != ConfigVersion::V1 {
+            return NodeLinker::Hoisted;
+        }
+        match self {
+            LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0 => NodeLinker::Isolated,
+            _ => NodeLinker::Hoisted,
         }
     }
 

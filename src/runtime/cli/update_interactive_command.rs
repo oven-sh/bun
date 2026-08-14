@@ -16,6 +16,8 @@ use bun_install::package_manager::{
     LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
+use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
+use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
@@ -272,6 +274,7 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
+        let groups = cli.update_groups;
         let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
@@ -290,7 +293,7 @@ impl UpdateInteractiveCommand {
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
-        Self::update_interactive(ctx, &original_cwd, manager)
+        Self::update_interactive(ctx, &original_cwd, manager, groups)
     }
 
     fn update_package_json_files_from_updates(
@@ -494,6 +497,7 @@ impl UpdateInteractiveCommand {
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
+        groups: UpdateGroups,
     ) -> crate::Result<()> {
         // Reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
@@ -567,13 +571,15 @@ impl UpdateInteractiveCommand {
         )?;
 
         // Get outdated packages
-        let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
-        // `defer { allocator.free(...) }` is implicit via Drop on
-        // `Vec<OutdatedPackage>` (Box<[u8]> fields).
+        let mut outdated_packages =
+            Self::get_outdated_packages(manager, &workspace_pkg_ids, groups)?;
 
         if outdated_packages.is_empty() {
-            // No packages need updating - just exit silently
-            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
+            if groups.is_default() {
+                bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
+            } else {
+                bun_core::prettyln!("No packages to update");
+            }
             return Ok(());
         }
 
@@ -804,6 +810,7 @@ impl UpdateInteractiveCommand {
     fn get_outdated_packages(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
+        groups: UpdateGroups,
     ) -> crate::Result<Vec<OutdatedPackage>> {
         // Reshaped for borrowck —
         // hoist the four scalars the manifest-lookup path reads into a by-value
@@ -833,6 +840,9 @@ impl UpdateInteractiveCommand {
                 }
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                 let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                if !selects(groups, dep.behavior) {
+                    continue;
+                }
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
                 else {
                     continue;

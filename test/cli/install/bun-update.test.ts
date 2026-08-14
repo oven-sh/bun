@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { access, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, dirname, join } from "path";
 import {
@@ -657,6 +657,15 @@ it("named update --filter rewrites only the selected workspace", async () => {
   expect(await fanOutTexts()).toEqual([root, expect.any(String), pkgB, pkgC]);
 });
 
+it("named update accepts -F as the short form of --filter", async () => {
+  const [root, , pkgB, pkgC] = await fanOutRepo();
+  const { err, exitCode } = await spawnUpdate("baz", "-F", "pkg-a", "--latest");
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect((await fanOutJson("packages/pkg-a/package.json")).dependencies.baz).toBe("~0.0.5");
+  expect(await fanOutTexts()).toEqual([root, expect.any(String), pkgB, pkgC]);
+});
+
 it("named update --filter of a workspace that does not depend on the name is an error", async () => {
   const before = await fanOutRepo();
   const lockBefore = await file(join(package_dir, "bun.lock")).text();
@@ -1003,6 +1012,7 @@ async function runUpdate(args: string[], cwd = package_dir) {
   const [err, code] = await Promise.all([stderr.text(), exited]);
   expect(err).not.toContain("error:");
   expect(code).toBe(0);
+  return err;
 }
 
 const pkgJson = (name: string) => file(join(package_dir, "packages", name, "package.json")).json();
@@ -1172,7 +1182,8 @@ it("--filter matching nothing writes no package.json", async () => {
   await setupWorkspaces({ dependencies: { baz: "~0.0.3" } }, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
   const rootBefore = await file(join(package_dir, "package.json")).text();
   const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
-  await runUpdate(["--filter", "does-not-exist"]);
+  const err = await runUpdate(["--filter", "does-not-exist"]);
+  expect(err).toContain('warn: No workspace packages matched the filter "does-not-exist"');
   expect(await file(join(package_dir, "package.json")).text()).toBe(rootBefore);
   expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).text()).toBe(aBefore);
 });
@@ -1423,6 +1434,59 @@ it("should update transitive resolutions of a named package", async () => {
   expect(
     await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
   ).toMatchObject({ version: "1.1.0" });
+});
+
+it("bun update <name> --latest holds back only the root's entry; a transitive edge declared as a dist-tag keeps following it", async () => {
+  setHandler(
+    await perNameRegistry(join(package_dir, ".tarballs"), {
+      shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.0.0" },
+      "dep-x": { versions: { "1.0.0": { dependencies: { shared: "latest" } } }, latest: "1.0.0" },
+    }),
+  );
+  await writeTextLockfileBunfig();
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.1.0", "dep-x": "1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+
+  await runInPackageDir("update", "shared", "--latest");
+  expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({
+    shared: "1.1.0",
+    "dep-x": "1.0.0",
+  });
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(
+    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.0" });
+  expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
+});
+
+it("bun update <name> --latest on a dist-tag entry follows the tag even when it moved backwards", async () => {
+  const tgzDir = join(package_dir, ".tarballs");
+  const versions = { "1.0.0": {}, "1.1.0": {} };
+  await packPerName(tgzDir, { shared: { versions, latest: "1.1.0" } });
+  setHandler(perNameHandler(tgzDir, { shared: { versions, latest: "1.1.0" } }));
+  await writeTextLockfileBunfig();
+  const packageJson = { name: "root", dependencies: { shared: "latest" } };
+  await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJson));
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"']);
+
+  setHandler(perNameHandler(tgzDir, { shared: { versions, latest: "1.0.0" } }));
+  await runInPackageDir("update", "shared", "--latest");
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+  });
+
+  await runInPackageDir("update");
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
 });
 
 // `shared` is only reachable through dep-x; the install below pins 1.0.0 before the registry starts serving 1.1.0.
@@ -2145,5 +2209,80 @@ describe("bun update <name> semantics", () => {
       expect(workspaces["packages/util"].dependencies).toEqual(utilDeps);
       await install(dir, "--frozen-lockfile");
     });
+
+    // Installed once, then every node_modules is removed and a stale entry is planted in web's, so what an update links back is observable.
+    async function linkRepo(linker: "hoisted" | "isolated") {
+      const dir = await createDir({
+        "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "a-dep": "^1.0.1" } },
+        "packages/api/package.json": { name: "api", dependencies: { "no-deps": "^1.0.0" } },
+        "packages/web/package.json": { name: "web", dependencies: { "is-number": "1.0.0" } },
+      });
+      await install(dir, `--linker=${linker}`);
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      if (linker === "isolated") {
+        await rm(join(dir, "packages", "api", "node_modules"), { recursive: true, force: true });
+        await rm(join(dir, "packages", "web", "node_modules"), { recursive: true, force: true });
+      }
+      await mkdir(join(dir, "packages", "web", "node_modules", "stale"), { recursive: true });
+      await writeFile(join(dir, "packages", "web", "node_modules", "stale", "package.json"), '{"name":"stale"}');
+      return dir;
+    }
+
+    const installed = (dir: string, rels: string[]) => Promise.all(rels.map(rel => exists(join(dir, rel))));
+
+    const HOISTED_LINK_PATHS = [
+      "node_modules/api",
+      "node_modules/no-deps/package.json",
+      "node_modules/web",
+      "node_modules/is-number",
+      "node_modules/a-dep",
+      "packages/web/node_modules/stale/package.json",
+    ];
+
+    it.concurrent("a named --filter update links only the selected workspace (hoisted)", async () => {
+      const dir = await linkRepo("hoisted");
+      await update(dir, "no-deps", "--filter", "api", "--linker=hoisted");
+      expect(await installed(dir, HOISTED_LINK_PATHS)).toEqual([true, true, false, false, false, true]);
+      await install(dir, "--linker=hoisted");
+      expect(await installed(dir, ["node_modules/is-number", "node_modules/a-dep"])).toEqual([true, true]);
+    });
+
+    it.concurrent("a named --filter update links only the selected workspace (isolated)", async () => {
+      const dir = await linkRepo("isolated");
+      await update(dir, "no-deps", "--filter", "api", "--linker=isolated");
+      expect(
+        await installed(dir, [
+          "packages/api/node_modules/no-deps/package.json",
+          "packages/web/node_modules/is-number",
+          "packages/web/node_modules/stale/package.json",
+          "node_modules/web",
+        ]),
+      ).toEqual([true, false, true, false]);
+      await install(dir, "--linker=isolated");
+      expect(await installed(dir, ["packages/web/node_modules/is-number/package.json"])).toEqual([true]);
+    });
+
+    it.concurrent("an unnamed --filter update links only the selected workspace", async () => {
+      const dir = await linkRepo("hoisted");
+      await update(dir, "--filter", "api", "--linker=hoisted");
+      expect(await installed(dir, HOISTED_LINK_PATHS)).toEqual([true, true, false, false, false, true]);
+    });
+
+    it.concurrent.each([[["-r"]], [["--filter", "*"]]])(
+      "a named update with %p still links every workspace and the root",
+      async flags => {
+        const dir = await linkRepo("hoisted");
+        await update(dir, "no-deps", ...flags, "--linker=hoisted");
+        expect(
+          await installed(dir, [
+            "node_modules/api",
+            "node_modules/web",
+            "node_modules/no-deps",
+            "node_modules/is-number",
+            "node_modules/a-dep",
+          ]),
+        ).toEqual([true, true, true, true, true]);
+      },
+    );
   });
 });

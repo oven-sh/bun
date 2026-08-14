@@ -33,6 +33,7 @@ const NOTE =
   "note: run 'bun install' with the same flags to install the versions bun.lock expects, then run 'bun prune' again";
 const OUT_OF_SYNC = "bun.lock does not match package.json";
 const OUT_OF_SYNC_NOTE = "note: run 'bun install' first, then run 'bun prune' again";
+const PRUNED_NOTE = "note: skipped 1 workspace listed in bun.lock but not on disk";
 const linkers: Linker[] = ["hoisted", "isolated"];
 
 async function prune(where: string | { dir: string; cwd: string }, ...args: string[]) {
@@ -1089,15 +1090,89 @@ const prunedCheckout = (app: Record<string, unknown>) => ({
 
 test.concurrent("prunes a checkout whose bun.lock lists a workspace that is no longer on disk", async () => {
   const dir = await setupWorkspaces("hoisted", prunedCheckout({}));
+  const nm = join(dir, "node_modules");
   rmSync(join(dir, "packages", "other"), { recursive: true });
+  expect(isSymlink(join(nm, "other"))).toBeTrue();
+  expect(existsSync(join(nm, "left-pad", "package.json"))).toBeTrue();
+  expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
   const junk = plant(dir, "node_modules/junk");
 
   const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
-  expect(stderr).toContain("note: skipped 1 workspace listed in bun.lock but not on disk");
+  expect(stderr).toContain(PRUNED_NOTE);
   expect(stderr).not.toContain(OUT_OF_SYNC);
-  expect(out(stdout)).toContain("- node_modules/junk");
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+    - node_modules/junk
+    - node_modules/left-pad
+    - node_modules/other
+    Removed 3 packages"
+  `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
+  expect(existsSync(join(nm, "left-pad"))).toBeFalse();
+  expect(() => lstatSync(join(nm, "other"))).toThrow();
+  expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
+  expect(isSymlink(join(nm, "app"))).toBeTrue();
+
+  await install(dir, "--frozen-lockfile", "--linker", "hoisted");
+  expect(existsSync(join(nm, "left-pad"))).toBeFalse();
+  expect(() => lstatSync(join(nm, "other"))).toThrow();
+
+  const second = await prune(dir, "--linker", "hoisted");
+  expect(out(second.stdout)).toEndWith("Nothing to prune.");
+  expect(second.exitCode).toBe(0);
+});
+
+test.concurrent("isolated: a workspace missing from disk no longer keeps its store entries", async () => {
+  const dir = await setupWorkspaces("isolated", prunedCheckout({}));
+  const store = join(dir, "node_modules", ".bun");
+  const appNoDeps = join(dir, "packages", "app", "node_modules", "no-deps", "package.json");
+  rmSync(join(dir, "packages", "other"), { recursive: true });
+  expect(existsSync(join(store, "left-pad@1.0.0"))).toBeTrue();
+  expect(existsSync(join(store, "no-deps@1.0.0"))).toBeTrue();
+  const junk = plant(dir, "node_modules/junk");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(stderr).toContain(PRUNED_NOTE);
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+    - node_modules/.bun/left-pad@1.0.0
+    - node_modules/junk
+    Removed 2 packages"
+  `);
+  expect(exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+  expect(existsSync(join(store, "left-pad@1.0.0"))).toBeFalse();
+  expect(existsSync(join(store, "no-deps@1.0.0"))).toBeTrue();
+  expect(existsSync(appNoDeps)).toBeTrue();
+
+  await install(dir, "--frozen-lockfile", "--linker", "isolated");
+  expect(existsSync(join(store, "left-pad@1.0.0"))).toBeFalse();
+  expect(existsSync(appNoDeps)).toBeTrue();
+
+  const second = await prune(dir, "--linker", "isolated");
+  expect(out(second.stdout)).toEndWith("Nothing to prune.");
+  expect(second.exitCode).toBe(0);
+});
+
+test.concurrent("hoisted: --filter on a pruned checkout does not protect the missing workspace", async () => {
+  const dir = await setupWorkspaces("hoisted", prunedCheckout({}));
+  const nm = join(dir, "node_modules");
+  rmSync(join(dir, "packages", "other"), { recursive: true });
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--filter", "app", "--linker", "hoisted");
+  expect(stderr).toContain(PRUNED_NOTE);
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+    - node_modules/left-pad
+    - node_modules/other
+    Removed 2 packages"
+  `);
+  expect(exitCode).toBe(0);
+  expect(existsSync(join(nm, "left-pad"))).toBeFalse();
+  expect(() => lstatSync(join(nm, "other"))).toThrow();
+  expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
+  expect(isSymlink(join(nm, "app"))).toBeTrue();
 });
 
 test.concurrent("a survivor depending on a missing workspace makes prune fail like install does", async () => {
@@ -1113,6 +1188,38 @@ test.concurrent("a survivor depending on a missing workspace makes prune fail li
   expect(exitCode).toBe(1);
   expect(existsSync(junk)).toBeTrue();
 });
+
+test.concurrent(
+  "pin: hoisted --production keeps the workspace links a production install creates and removes a dev-only alias link",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      packages: {
+        app: { devDependencies: { shared: "workspace:*", "shared-alias": "workspace:shared@*" } },
+        shared: {},
+      },
+    });
+    const nm = join(dir, "node_modules");
+    expect(isSymlink(join(nm, "app"))).toBeTrue();
+    expect(isSymlink(join(nm, "shared"))).toBeTrue();
+    expect(isSymlink(join(nm, "shared-alias"))).toBeTrue();
+
+    const { stdout, exitCode } = await prune(dir, "--production", "--linker", "hoisted");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+      - node_modules/shared-alias
+      Removed 1 package"
+    `);
+    expect(exitCode).toBe(0);
+    expect(isSymlink(join(nm, "app"))).toBeTrue();
+    expect(isSymlink(join(nm, "shared"))).toBeTrue();
+    expect(() => lstatSync(join(nm, "shared-alias"))).toThrow();
+    await expectProductionInstallIsNoop(dir);
+
+    const second = await prune(dir, "--production", "--linker", "hoisted");
+    expect(out(second.stdout)).toEndWith("Nothing to prune.");
+    expect(second.exitCode).toBe(0);
+  },
+);
 
 test.concurrent(
   "hoisted: --filter prunes only the selected workspaces, the root folder keeps what other workspaces use",

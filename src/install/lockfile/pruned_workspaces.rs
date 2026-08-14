@@ -1,11 +1,13 @@
 use bstr::BStr;
 use bun_paths::AutoAbsPath;
+use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
+use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile};
-use crate::{PackageNameHash, ResolutionTag};
+use crate::{PackageID, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -30,63 +32,70 @@ pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path:
         .any(|path| path.slice(string_bytes) == workspace_path)
 }
 
-pub(crate) fn exit_if_survivor_depends_on_pruned(
-    lockfile: &Lockfile,
-    pruned: &[PackageNameHash],
+pub(crate) fn exit_if_survivor_depends_on_missing(
+    from_lockfile: &Lockfile,
+    missing: &[PackageID],
+    to_lockfile: &Lockfile,
+    to_root_dependencies: DependencySlice,
+    survivors: &[(String, DependencySlice)],
     silent: bool,
 ) {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = from_lockfile.packages.slice();
     let names = pkgs.items_name();
     let name_hashes = pkgs.items_name_hash();
     let pkg_res = pkgs.items_resolution();
-    let dep_slices = pkgs.items_dependencies();
-    let res_slices = pkgs.items_resolutions();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let buf = lockfile.buffers.string_bytes.as_slice();
+    let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+    let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+    let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
-    let is_pruned = |id: usize| {
-        pkg_res[id].tag == ResolutionTag::Workspace && pruned.contains(&name_hashes[id])
+    let missing_target = |dep: &Dependency| -> Option<PackageID> {
+        if dep.version.tag != DependencyVersionTag::Workspace {
+            return None;
+        }
+        missing
+            .iter()
+            .copied()
+            .find(|&id| name_hashes[id as usize] == dep.name_hash)
     };
 
     let mut found = false;
-    for pkg_id in 0..pkgs.len() {
-        let tag = pkg_res[pkg_id].tag;
-        if (tag != ResolutionTag::Root && tag != ResolutionTag::Workspace) || is_pruned(pkg_id) {
+    for dep in to_root_dependencies.get(to_deps) {
+        if dep.behavior.is_workspace() {
             continue;
         }
-        for (dep, &target) in dep_slices[pkg_id]
-            .get(deps)
-            .iter()
-            .zip(res_slices[pkg_id].get(resolutions))
-        {
-            if pkg_id == 0 && dep.behavior.is_workspace() {
+        let Some(target) = missing_target(dep) else {
+            continue;
+        };
+        found = true;
+        if silent {
+            continue;
+        }
+        let target = target as usize;
+        debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+            BStr::new(names[target].slice(from_buf)),
+            BStr::new(pkg_res[target].workspace().slice(from_buf)),
+        );
+    }
+
+    for (name, slice) in survivors {
+        for dep in slice.get(to_deps) {
+            let Some(target) = missing_target(dep) else {
                 continue;
-            }
-            let target = target as usize;
-            if target >= pkgs.len() || !is_pruned(target) {
-                continue;
-            }
+            };
             found = true;
             if silent {
                 continue;
             }
-            let target_name = BStr::new(names[target].slice(buf));
-            let target_path = BStr::new(pkg_res[target].workspace().slice(buf));
-            if pkg_id == 0 {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-                    target_name,
-                    target_path,
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-                    BStr::new(names[pkg_id].slice(buf)),
-                    target_name,
-                    target_path,
-                );
-            }
+            let target = target as usize;
+            debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+                BStr::new(name.slice(to_buf)),
+                BStr::new(names[target].slice(from_buf)),
+                BStr::new(pkg_res[target].workspace().slice(from_buf)),
+            );
         }
     }
 
@@ -100,7 +109,10 @@ pub(crate) fn exit_if_survivor_depends_on_pruned(
     }
 }
 
-pub(crate) fn lockfile_catalogs_are_subset(from: &Lockfile, to: &Lockfile) -> bool {
+pub(crate) fn catalog_entries_missing_from_lockfile(
+    from: &Lockfile,
+    to: &Lockfile,
+) -> Option<usize> {
     let from_buf = from.buffers.string_bytes.as_slice();
     let to_buf = to.buffers.string_bytes.as_slice();
 
@@ -116,7 +128,7 @@ pub(crate) fn lockfile_catalogs_are_subset(from: &Lockfile, to: &Lockfile) -> bo
         _ => false,
     });
     if !all_kept {
-        return false;
+        return None;
     }
 
     let to_total = to.catalogs.default.count()
@@ -127,7 +139,7 @@ pub(crate) fn lockfile_catalogs_are_subset(from: &Lockfile, to: &Lockfile) -> bo
             .map(|group| group.count())
             .sum::<usize>();
     if matched == to_total {
-        return true;
+        return Some(0);
     }
 
     for_each_entry(&to.catalogs, to_buf, &mut |group, entry| {
@@ -135,6 +147,7 @@ pub(crate) fn lockfile_catalogs_are_subset(from: &Lockfile, to: &Lockfile) -> bo
         from.catalogs.find(from_buf, group, name).is_some()
             || !catalog_entry_is_referenced(from, group, StringBuilderNs::string_hash(name))
     })
+    .then_some(to_total - matched)
 }
 
 fn for_each_entry(

@@ -198,6 +198,7 @@ pub mod package_manager {
 
     /// Re-export the file-backed workspace package.json cache.
     pub use crate::package_manager_real::workspace_package_json_cache;
+    pub use crate::package_manager_real::workspace_selection;
     pub use workspace_package_json_cache::{
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,

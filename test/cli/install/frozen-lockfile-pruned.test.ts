@@ -73,6 +73,7 @@ const withApp = (extra: PackageJson): Tree => ({
 });
 
 const survivorTree = withApp({ dependencies: { ...(appPackageJson.dependencies as object), other: "workspace:*" } });
+const rootSurvivorTree: Tree = { ...monorepo, root: { ...rootPackageJson, dependencies: { other: "workspace:*" } } };
 
 const survivorError = (dependent: string, ws = "other") =>
   `workspace "${dependent}" depends on workspace "${ws}" (packages/${ws}), which is listed in bun.lock but not on disk`;
@@ -139,6 +140,8 @@ async function raw(dir: string, linker: Linker, args: string[], cwd = dir) {
 }
 
 const prunedNote = "note: skipped 1 workspace listed in bun.lock but not on disk";
+const catalogNote = (n: number) =>
+  `note: skipped ${n} catalog ${n === 1 ? "entry" : "entries"} missing from bun.lock that no remaining workspace uses`;
 
 async function run(dir: string, linker: Linker, args: string[], expectedExitCode: number, cwd = dir) {
   const { stdout, stderr, exitCode } = await raw(dir, linker, args, cwd);
@@ -493,6 +496,24 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent(
+    "a plain install reports a survivor depending on a missing workspace with the same error",
+    async () => {
+      const { packageDir, full } = await verbatimScenario(linker, survivorTree, survivors);
+
+      const { stderr, exitCode } = await raw(packageDir, linker, ["install"]);
+
+      expect(stderr).toContain(survivorError("app"));
+      expect(stderr).toContain(survivorNote);
+      expect(stderr).not.toContain('Workspace dependency "other" not found');
+      expect(stderr).not.toContain("failed to resolve");
+      expect(stderr).not.toContain("Saved lockfile");
+      expect(await lockText(packageDir)).toBe(full);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test.concurrent("a catalog entry only the pruned workspace used may be missing from bun.lock", async () => {
     const { packageDir, full } = await verbatimScenario(linker, catalogTree, ["packages/app"]);
     const trimmed = trimCatalogLine(full, "left-pad", "1.0.0");
@@ -501,6 +522,8 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     const { stderr } = await frozen(packageDir, linker, 0);
 
     expect(stderr).toContain(prunedNote);
+    expect(stderr).toContain(catalogNote(1));
+    expect(stderr.indexOf(prunedNote)).toBeLessThan(stderr.indexOf(catalogNote(1)));
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
@@ -522,8 +545,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
 describe("hoisted", () => {
   test.concurrent("the root package depending on a pruned workspace is reported", async () => {
-    const tree: Tree = { ...monorepo, root: { ...rootPackageJson, dependencies: { other: "workspace:*" } } };
-    const { packageDir, full } = await verbatimScenario("hoisted", tree, survivors);
+    const { packageDir, full } = await verbatimScenario("hoisted", rootSurvivorTree, survivors);
 
     const { stderr, exitCode } = await raw(packageDir, "hoisted", ["install", "--frozen-lockfile"]);
 
@@ -532,6 +554,32 @@ describe("hoisted", () => {
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a plain install reports the root package depending on a missing workspace", async () => {
+    const { packageDir, full } = await verbatimScenario("hoisted", rootSurvivorTree, survivors);
+
+    const { stderr, exitCode } = await raw(packageDir, "hoisted", ["install"]);
+
+    expect(stderr).toContain(rootSurvivorError);
+    expect(stderr).toContain(survivorNote);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(full);
+    expect(exitCode).toBe(1);
+  });
+
+  // Fences a from-side implementation: the edge to the missing workspace lives only in bun.lock now, so this must install.
+  test.concurrent("a plain install succeeds once the survivor no longer lists the missing workspace", async () => {
+    const { packageDir } = await verbatimScenario("hoisted", survivorTree, survivors);
+    await editApp(packageDir, app => {
+      delete app.dependencies.other;
+    });
+
+    const { stderr } = await install(packageDir, "hoisted");
+
+    expect(stderr).toContain("Saved lockfile");
+    expect(stderr).not.toContain("depends on workspace");
+    expect(await lockText(packageDir)).not.toContain('"packages/other"');
   });
 
   test.concurrent("--production still reports a devDependencies edge to a pruned workspace", async () => {
@@ -596,13 +644,56 @@ describe("hoisted", () => {
     const trimmed = trimCatalogLine(full, "left-pad", "1.0.0");
     await write(join(packageDir, "bun.lock"), trimmed);
 
-    await frozen(packageDir, "hoisted", 0);
+    const { stderr } = await frozen(packageDir, "hoisted", 0);
 
+    expect(stderr).toContain(catalogNote(1));
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
       version: "1.0.1",
     });
+  });
+
+  test.concurrent("catalog note is pluralized", async () => {
+    const tree: Tree = {
+      root: {
+        name: "mono",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { "a-dep": "1.0.1", "left-pad": "1.0.0", "no-deps": "1.0.0" },
+        },
+      },
+      packages: {
+        ...catalogTree.packages,
+        "packages/other": {
+          name: "other",
+          version: "1.0.0",
+          dependencies: { "left-pad": "catalog:", "no-deps": "catalog:" },
+        },
+      },
+    };
+    const { packageDir, full } = await verbatimScenario("hoisted", tree, ["packages/app"]);
+    const trimmed = trimCatalogLine(trimCatalogLine(full, "left-pad", "1.0.0"), "no-deps", "1.0.0");
+    await write(join(packageDir, "bun.lock"), trimmed);
+
+    const { stderr } = await frozen(packageDir, "hoisted", 0);
+
+    expect(stderr).toContain(catalogNote(2));
+    expect(await lockText(packageDir)).toBe(trimmed);
+    expect(await exists(join(packageDir, "node_modules", "a-dep", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  test.concurrent("--silent suppresses the catalog note", async () => {
+    const { packageDir, full } = await verbatimScenario("hoisted", catalogTree, ["packages/app"]);
+    const trimmed = trimCatalogLine(full, "left-pad", "1.0.0");
+    await write(join(packageDir, "bun.lock"), trimmed);
+
+    const { stdout, stderr } = await frozen(packageDir, "hoisted", 0, ["install", "--frozen-lockfile", "--silent"]);
+
+    expect(stdout + stderr).toBe("");
+    expect(await lockText(packageDir)).toBe(trimmed);
   });
 
   test.concurrent("bun ci behaves the same on turbo output", async () => {
@@ -934,8 +1025,9 @@ describe("hoisted", () => {
     const { packageDir, full } = await verbatimScenario("hoisted", catalogTree, ["packages/app"]);
     expect(full).toContain('"left-pad": "1.0.0"');
 
-    await frozen(packageDir, "hoisted", 0);
+    const { stderr } = await frozen(packageDir, "hoisted", 0);
 
+    expect(stderr).not.toContain("catalog entr");
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
@@ -1121,6 +1213,7 @@ describe("hoisted", () => {
     const { stderr } = await install(packageDir, "hoisted");
 
     expect(stderr).toContain("Saved lockfile");
+    expect(stderr).not.toContain("catalog entr");
     const lock = await lockText(packageDir);
     expect(lock).toContain('"left-pad": "1.0.0"');
     expect(lock).not.toContain('"packages/other"');

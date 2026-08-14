@@ -75,6 +75,49 @@ const cwd_root = tempDirWithFiles("testworkspace", {
   }),
 });
 
+// Edges: web -> api -> shared -> pkg-a; pkg-b and the root are isolated.
+const graph_root = tempDirWithFiles("filter-selectors", {
+  packages: {
+    web: {
+      "package.json": JSON.stringify({
+        name: "web",
+        dependencies: { api: "workspace:*" },
+        scripts: { present: "echo out-web" },
+      }),
+    },
+    api: {
+      "package.json": JSON.stringify({
+        name: "api",
+        devDependencies: { shared: "workspace:*" },
+        scripts: { present: "echo out-api" },
+      }),
+    },
+    shared: {
+      "package.json": JSON.stringify({
+        name: "shared",
+        dependencies: { "pkg-a": "*" },
+      }),
+    },
+    "pkg-a": {
+      "package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { present: "echo out-pkg-a" },
+      }),
+    },
+    "pkg-b": {
+      "package.json": JSON.stringify({
+        name: "pkg-b",
+        scripts: { present: "echo out-pkg-b" },
+      }),
+    },
+  },
+  "package.json": JSON.stringify({
+    name: "ws",
+    workspaces: ["packages/*"],
+    scripts: { present: "echo out-root" },
+  }),
+});
+
 const cwd_packages = join(cwd_root, "packages");
 const cwd_a = join(cwd_packages, "pkga");
 const cwd_b = join(cwd_packages, "pkgb");
@@ -661,6 +704,171 @@ describe("bun", () => {
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("selectors", () => {
+  test("'foo...' runs foo and the workspaces it depends on", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'foo^...' runs only the dependencies", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api^...",
+      target_pattern: [/out-pkg-a/],
+      antipattern: [/out-api/, /out-web/],
+    });
+  });
+
+  test("'...foo' runs foo and its dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...api",
+      target_pattern: [/out-api/, /out-web/],
+      antipattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'...^foo' runs only the dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...^api",
+      target_pattern: [/out-web/],
+      antipattern: [/out-api/, /out-pkg-a/],
+    });
+  });
+
+  test("a relation on a directory selector", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...{./packages/pkg-a}",
+      target_pattern: [/out-pkg-a/, /out-api/, /out-web/],
+      antipattern: [/out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'{dir}' runs everything under the directory but not the root", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "{packages}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  test("'{.}' is resolved from the current directory", () => {
+    runInCwdSuccess({
+      cwd: join(graph_root, "packages"),
+      pattern: "{.}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  test("a '!' pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/, /out-root/],
+      antipattern: [/out-web/],
+    });
+  });
+
+  test("a negated relation subtracts the whole group", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!...api"],
+      target_pattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
+      antipattern: [/out-api/, /out-web/],
+    });
+  });
+
+  test("selectors work in the 'bun --filter <script>' form", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+      auto: true,
+    });
+  });
+
+  test("selectors work with --parallel", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "--filter", "api...", "present"],
+      cwd: graph_root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("out-api");
+    expect(stdout).toContain("out-pkg-a");
+    expect(stdout).not.toContain("out-web");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bare '...' is rejected", () => {
+    runInCwdFailure(graph_root, "...", "present", /is missing a workspace name or path/);
+  });
+
+  test("dependency order is kept inside a relation selection", () => {
+    using dir = tempDir("filter-selectors-order", {
+      dep0: {
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep1: {
+        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: {
+            dep0: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep2: {
+        "package.json": JSON.stringify({
+          name: "dep2",
+          scripts: {
+            script: "echo unrelated",
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "dep1...",
+      target_pattern: [/success/],
+      antipattern: [/not found/, /unrelated/],
+      command: ["script"],
+    });
+  });
+
+  test("'*' still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "*",
+      target_pattern: [/scripta/],
+      antipattern: [/malformed1/],
+    });
   });
 });
 

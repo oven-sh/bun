@@ -71,7 +71,7 @@ pub struct Options {
     pub depth: Option<usize>,
 
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
-    pub(crate) node_linker: NodeLinker,
+    pub node_linker: NodeLinker,
 
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,

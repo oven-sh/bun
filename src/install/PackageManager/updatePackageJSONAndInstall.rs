@@ -259,6 +259,15 @@ fn update_package_json_and_install_with_manager_with_updates(
                 })
                 .collect(),
         );
+        if !manager.options.filter_patterns.is_empty() {
+            manager.filtered_link_targets =
+                Some(super::workspace_selection::LinkTargets::from_importers(
+                    selected.iter().map(|&id| {
+                        (resolutions[id as usize].tag != crate::resolution::Tag::Root)
+                            .then(|| name_hashes[id as usize])
+                    }),
+                ));
+        }
     }
 
     add_catalog::prepare(manager, &updates);
@@ -428,10 +437,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // reshaped for borrowck — the field is owning
-    // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
-    // `manager.update_requests` after `install_with_manager` (which is the only writer).
-    manager.update_requests = updates.into_boxed_slice();
+    manager.set_update_requests(updates);
 
     let mut buffer_writer = js_printer::BufferWriter::init();
     buffer_writer.buffer.list.reserve(

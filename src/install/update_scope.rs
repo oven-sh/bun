@@ -83,7 +83,8 @@ impl UpdateScope<'_> {
     }
 }
 
-fn selects(groups: UpdateGroups, behavior: Behavior) -> bool {
+/// Which package.json entries --dev / --prod / --no-optional cover; peer entries are covered only when no selector is given.
+pub fn selects(groups: UpdateGroups, behavior: Behavior) -> bool {
     if groups.no_optional && behavior.is_optional() {
         return false;
     }
@@ -231,14 +232,18 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         let names = lockfile.packages.items_name();
         let resolutions = lockfile.packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
-        WorkspaceFilter::select_workspaces(lockfile, manager.options.filter_patterns, original_cwd)
-            .into_iter()
-            .map(|id| UpdateTargetWorkspace {
-                is_root: resolutions[id as usize].tag == ResolutionTag::Root,
-                name_hash: name_hashes[id as usize],
-                name: Box::from(names[id as usize].slice(buf)),
-            })
-            .collect()
+        WorkspaceFilter::select_workspaces_quietly(
+            lockfile,
+            manager.options.filter_patterns,
+            original_cwd,
+        )
+        .into_iter()
+        .map(|id| UpdateTargetWorkspace {
+            is_root: resolutions[id as usize].tag == ResolutionTag::Root,
+            name_hash: name_hashes[id as usize],
+            name: Box::from(names[id as usize].slice(buf)),
+        })
+        .collect()
     });
     let scope = UpdateScope {
         targets: selection.as_deref(),

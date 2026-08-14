@@ -16,6 +16,7 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
 use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
+use bstr::BStr;
 use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -229,7 +230,7 @@ impl CatalogMap {
         source: &Source,
         expr: Expr,
         builder: &mut StringBuilder,
-    ) -> Result<bool, AllocError> {
+    ) -> crate::Result<bool> {
         let mut found_any = false;
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
@@ -244,6 +245,38 @@ impl CatalogMap {
                 let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
                 Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
             })?;
+        }
+
+        // `self.default` is only fed by the singular `catalog` object; `catalogs.default` lands in `groups`.
+        if self.default.count() > 0
+            && let Some(default_group) = expr.get(b"catalogs").and_then(|c| c.get(b"default"))
+        {
+            let buf = builder.string_bytes.as_slice();
+            let singular = &self.default;
+            let mut conflict = false;
+            default_group.for_each_property(|dep_name, key_loc, _| {
+                let ctx = ArrayHashContext {
+                    arg_buf: dep_name,
+                    existing_buf: buf,
+                };
+                if singular
+                    .get_index_adapted(&String::init(dep_name, dep_name), &ctx)
+                    .is_some()
+                {
+                    log.add_error_fmt(
+                        Some(source),
+                        key_loc,
+                        format_args!(
+                            "\"{}\" is defined in both \"catalog\" and \"catalogs.default\"; keep one of them",
+                            BStr::new(dep_name)
+                        ),
+                    );
+                    conflict = true;
+                }
+            });
+            if conflict {
+                return Err(crate::Error::InstallFailed);
+            }
         }
 
         Ok(found_any)

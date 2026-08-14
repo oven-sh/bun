@@ -20,9 +20,9 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, UpdateRequest,
-    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
-    run_tasks, set_preinstall_state,
+    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
+    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
+    set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -2041,16 +2041,9 @@ fn get_or_put_resolved_package_with_find_result(
         && if !this.update_requests.is_empty() {
             // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
             let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-            (UpdateRequest::contains_name(
-                &this.update_requests,
-                dependency.name_hash,
-                dependency.name.slice(string_buf),
-            ) || (name_hash != dependency.name_hash
-                && UpdateRequest::contains_name(
-                    &this.update_requests,
-                    name_hash,
-                    name.slice(string_buf),
-                )))
+            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
+                || (name_hash != dependency.name_hash
+                    && this.is_update_request(name_hash, name.slice(string_buf))))
                 && crate::update_scope::UpdateScope::of(&*this)
                     .contains_dependency(&this.lockfile, dependency_id)
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
@@ -2573,7 +2566,14 @@ fn get_or_put_resolved_package(
             let find_result = if version_was_replaced {
                 find_result
             } else {
-                keep_locked_if_ahead(this, dependency, version, manifest, find_result)
+                keep_locked_if_ahead(
+                    this,
+                    dependency,
+                    dependency_id,
+                    version,
+                    manifest,
+                    find_result,
+                )
             };
 
             // reshaped for borrowck — `manifest`/`find_result`
@@ -2821,10 +2821,11 @@ fn get_or_put_resolved_package(
     }
 }
 
-/// `bun update --latest` rewrote this row to a dist-tag; a locked version already ahead of the tag (a prerelease) is kept rather than downgraded.
+/// Only the invoking workspace's own row that --latest rewrote to a dist-tag is held back when its locked version (e.g. a prerelease) is ahead of the tag.
 fn keep_locked_if_ahead<'m>(
     this: &PackageManager,
     dependency: &Dependency,
+    dependency_id: DependencyID,
     version: &dependency::Version,
     manifest: &'m Npm::PackageManifest,
     found: Npm::FindResult<'m>,
@@ -2838,12 +2839,23 @@ fn keep_locked_if_ahead<'m>(
     {
         return found;
     }
+    let Some(own_rows) = this.root_package_id.id else {
+        return found;
+    };
+    if !this.lockfile.packages.items_dependencies()[own_rows as usize].contains(dependency_id) {
+        return found;
+    }
     let Some(entry) = this
         .updating_packages
         .get(this.lockfile.str(&dependency.name))
     else {
         return found;
     };
+    if dependency::version::Tag::infer(&entry.original_version_literal)
+        == dependency::version::Tag::DistTag
+    {
+        return found;
+    }
     let Some(locked) = entry.original_version else {
         return found;
     };

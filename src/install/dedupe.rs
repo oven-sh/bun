@@ -1,3 +1,4 @@
+use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -306,7 +307,30 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     label
 }
 
-pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
+fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -> Ordering {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    let pkg_res = lockfile.packages.items_resolution();
+    let (a, b) = (a as usize, b as usize);
+    strings::order(names[a].slice(buf), names[b].slice(buf)).then_with(|| {
+        pkg_res[a]
+            .npm()
+            .version
+            .order(pkg_res[b].npm().version, buf, buf)
+    })
+}
+
+fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
+    ids.sort_by(|&a, &b| order_by_name_then_version(lockfile, a, b));
+}
+
+#[derive(Default)]
+struct Outcome {
+    removed: Vec<Box<[u8]>>,
+    kept: Vec<Box<[u8]>>,
+}
+
+fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let has_patches = lockfile.patched_dependencies.count() > 0;
@@ -315,6 +339,18 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
     let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
     let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
     let mut max_candidates = 0;
+
+    if has_patches {
+        for id in 0..pkg_res.len() {
+            if pkg_res[id].tag == ResolutionTag::Npm
+                && lockfile.patched_dependencies.contains(
+                    &bun_semver::string::Builder::string_hash(&label(lockfile, id as PackageID)),
+                )
+            {
+                pinned.set(id);
+            }
+        }
+    }
 
     for entry in lockfile.package_index.values() {
         let PackageIndexEntry::Ids(ids) = entry else {
@@ -337,20 +373,13 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         });
         for &id in &candidates {
             group_of[id as usize] = groups.len() as u32;
-            if has_patches
-                && lockfile.patched_dependencies.contains(
-                    &bun_semver::string::Builder::string_hash(&label(lockfile, id)),
-                )
-            {
-                pinned.set(id as usize);
-            }
         }
         max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
     }
 
     if groups.is_empty() {
-        return Vec::new();
+        return Outcome::default();
     }
 
     // Re-pointing keeps an edge inside its group, so the initial per-group edge counts bound every pass.
@@ -365,26 +394,92 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
     let max_edges = edge_counts.iter().copied().max().unwrap_or(0) as usize;
 
     let initial = reachable(lockfile, &lockfile.buffers.resolutions);
-    let mut live = initial.clone().unwrap_or_oom();
-    let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
-    {
-        let mut pass = Pass::new(
-            lockfile,
-            &groups,
-            &group_of,
-            &pinned,
-            max_candidates,
-            max_edges,
-        );
-        loop {
-            cur = pass.settle(&cur, &live);
-            let after = reachable(lockfile, &cur);
-            if after.unmanaged.eql(&live.unmanaged) {
-                break;
+    let patched: Vec<PackageID> = (0..pkg_res.len())
+        .filter(|&p| pinned.is_set(p) && initial.is_set(p))
+        .map(|p| p as PackageID)
+        .collect();
+    let mut kept: Vec<(PackageID, Vec<PackageID>)> = Vec::new();
+
+    // Walked over the original resolutions: pinning every removed version that led to the orphan keeps those paths intact on the re-run.
+    let (cur, live) = loop {
+        let mut live = initial.clone().unwrap_or_oom();
+        let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
+        {
+            let mut pass = Pass::new(
+                lockfile,
+                &groups,
+                &group_of,
+                &pinned,
+                max_candidates,
+                max_edges,
+            );
+            loop {
+                cur = pass.settle(&cur, &live);
+                let after = reachable(lockfile, &cur);
+                if after.unmanaged.eql(&live.unmanaged) {
+                    break;
+                }
+                live = after;
             }
-            live = after;
         }
-    }
+
+        let orphaned: Vec<PackageID> = patched
+            .iter()
+            .copied()
+            .filter(|&p| !live.is_set(p as usize))
+            .collect();
+        if orphaned.is_empty() {
+            break (cur, live);
+        }
+        let before = kept.len();
+        for &v in groups.iter().flatten() {
+            let i = v as usize;
+            if !initial.is_set(i) || live.is_set(i) || pinned.is_set(i) {
+                continue;
+            }
+            let leads = crate::lockfile::reachable::packages_from(
+                lockfile,
+                &lockfile.buffers.resolutions,
+                core::slice::from_ref(&v),
+                true,
+                crate::lockfile::reachable::Options::all(0),
+            );
+            let needed: Vec<PackageID> = orphaned
+                .iter()
+                .copied()
+                .filter(|&p| leads.is_set(p as usize))
+                .collect();
+            if !needed.is_empty() {
+                pinned.set(i);
+                kept.push((v, needed));
+            }
+        }
+        if kept.len() == before {
+            debug_assert!(
+                false,
+                "an orphaned patched package has no removed dependent"
+            );
+            break (cur, live);
+        }
+    };
+
+    kept.sort_by(|(a, _), (b, _)| order_by_name_then_version(lockfile, *a, *b));
+    let kept: Vec<Box<[u8]>> = kept
+        .into_iter()
+        .map(|(v, mut needed)| {
+            sort_by_name_then_version(lockfile, &mut needed);
+            let mut line = label(lockfile, v);
+            line.extend_from_slice(b" (needed to reach patched ");
+            for (i, &p) in needed.iter().enumerate() {
+                if i > 0 {
+                    line.extend_from_slice(b", ");
+                }
+                line.extend_from_slice(&label(lockfile, p));
+            }
+            line.push(b')');
+            line.into_boxed_slice()
+        })
+        .collect();
 
     let mut removed: Vec<PackageID> = groups
         .iter()
@@ -393,26 +488,23 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
         .collect();
     if removed.is_empty() {
-        return Vec::new();
+        return Outcome {
+            removed: Vec::new(),
+            kept,
+        };
     }
 
-    let names = lockfile.packages.items_name();
-    removed.sort_by(|&a, &b| {
-        let (a, b) = (a as usize, b as usize);
-        strings::order(names[a].slice(buf), names[b].slice(buf)).then_with(|| {
-            pkg_res[a]
-                .npm()
-                .version
-                .order(pkg_res[b].npm().version, buf, buf)
-        })
-    });
+    sort_by_name_then_version(lockfile, &mut removed);
     let labels = removed
         .iter()
         .map(|&id| label(lockfile, id).into_boxed_slice())
         .collect();
 
     lockfile.buffers.resolutions = cur;
-    labels
+    Outcome {
+        removed: labels,
+        kept,
+    }
 }
 
 pub(crate) fn effective_npm_range(
@@ -492,18 +584,25 @@ pub fn dedupe_before_install(
         .root_package()
         .is_none_or(|root| root.dependencies.len == 0)
     {
-        report_already_deduplicated(manager);
+        report_already_deduplicated(manager, &[]);
     }
     Ok(())
 }
 
-fn report_already_deduplicated(manager: &PackageManager) {
+fn report_already_deduplicated(manager: &PackageManager, kept: &[Box<[u8]>]) {
     if manager.options.log_level != LogLevel::Silent {
         bun_core::prettyln!("Already deduplicated.");
+        print_kept(kept);
         Output::flush();
     }
     if manager.options.dry_run {
         Global::exit(0);
+    }
+}
+
+fn print_kept(kept: &[Box<[u8]>]) {
+    for line in kept {
+        bun_core::note!("kept {}", BStr::new(line));
     }
 }
 
@@ -522,11 +621,12 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         Global::exit(1);
     }
 
-    let removed = dedupe_lockfile(&mut manager.lockfile);
-    if removed.is_empty() {
-        report_already_deduplicated(manager);
+    let outcome = dedupe_lockfile(&mut manager.lockfile);
+    if outcome.removed.is_empty() {
+        report_already_deduplicated(manager, &outcome.kept);
         return;
     }
+    let removed = &outcome.removed;
 
     let n = removed.len();
     let plural = if n == 1 { "" } else { "s" };
@@ -546,6 +646,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
                 plural,
                 BStr::new(&list)
             );
+            print_kept(&outcome.kept);
             bun_core::note!("run 'bun dedupe' to remove them");
             Output::flush();
         }
@@ -566,6 +667,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
                 why,
                 BStr::new(&list)
             );
+            print_kept(&outcome.kept);
             bun_core::note!("run 'bun dedupe --check' to only report duplicates");
             Output::flush();
         }
@@ -579,6 +681,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
             plural,
             BStr::new(&list)
         );
+        print_kept(&outcome.kept);
         Output::flush();
     }
     manager

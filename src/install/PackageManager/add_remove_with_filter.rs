@@ -22,7 +22,7 @@ use super::update_package_json_and_install::{
     remove_leftover_node_modules,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
-use super::workspace_selection::{self, Candidate, RootSelection, WorkspaceGraph};
+use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
 use super::{
     Command, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest, UpdateTargetWorkspace,
 };
@@ -221,11 +221,7 @@ pub(crate) fn select_targets(
             .collect();
         workspace_selection::select(patterns, original_cwd, &subjects, graph.as_ref(), root_rule)
     };
-    let unmatched: Vec<&[u8]> = selection
-        .unmatched_patterns
-        .iter()
-        .map(|&i| patterns[i])
-        .collect();
+    let unmatched_patterns = selection.unmatched_patterns;
 
     let targets: Vec<WorkspaceTarget> = candidates
         .into_iter()
@@ -237,16 +233,11 @@ pub(crate) fn select_targets(
     if targets.is_empty() {
         Output::err_generic(
             "No workspace packages matched the filter {}",
-            (BStr::new(&quote_patterns(patterns)),),
+            (BStr::new(&workspace_selection::quote_patterns(patterns)),),
         );
         Global::crash();
     }
-    if !unmatched.is_empty() {
-        bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> No workspace packages matched the filter {}",
-            BStr::new(&quote_patterns(&unmatched)),
-        );
-    }
+    workspace_selection::warn_unmatched(patterns, &unmatched_patterns);
 
     Ok(targets)
 }
@@ -286,19 +277,6 @@ fn load_workspace_graph(
     let hashes: Vec<Option<PackageNameHash>> =
         candidates.iter().map(|(t, _)| t.name_hash).collect();
     WorkspaceGraph::from_lockfile(&manager.lockfile, &hashes)
-}
-
-fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (i, pattern) in patterns.iter().enumerate() {
-        if i > 0 {
-            out.extend_from_slice(b", ");
-        }
-        out.push(b'"');
-        out.extend_from_slice(pattern);
-        out.push(b'"');
-    }
-    out
 }
 
 pub(crate) fn fetch_entry<'a>(
@@ -578,7 +556,7 @@ impl PendingWrite {
     }
 }
 
-/// bun add/remove --filter and bun update <name> -r/--filter: edits every selected package.json, then runs one install.
+/// bun add/remove --filter and bun update <name> -r/--filter: edits every selected package.json, then runs one install that links only the selected workspaces.
 pub(super) fn update_filtered_workspaces_and_install(
     manager: &mut PackageManager,
     ctx: Command::Context,
@@ -596,6 +574,11 @@ pub(super) fn update_filtered_workspaces_and_install(
     }
 
     let targets = select_targets(manager, original_cwd)?;
+    if !manager.options.filter_patterns.is_empty() {
+        manager.filtered_link_targets = Some(LinkTargets::from_importers(
+            targets.iter().map(|target| target.name_hash),
+        ));
+    }
     add_catalog::prepare(manager, &updates);
     let subcommand = manager.subcommand;
     let is_update = subcommand == Subcommand::Update;
@@ -710,7 +693,7 @@ pub(super) fn update_filtered_workspaces_and_install(
         .or_else(|| changed.first());
     manager.workspace_name_hash = summary_target.and_then(|pending| pending.target.name_hash);
     manager.to_update = is_update;
-    manager.update_requests = updates.into_boxed_slice();
+    manager.set_update_requests(updates);
     if let Some(update_targets) = update_targets {
         manager.update_target_workspaces = Some(update_targets);
     }

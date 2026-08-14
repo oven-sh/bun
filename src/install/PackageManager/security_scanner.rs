@@ -36,7 +36,6 @@ use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 
 /// Signal name for a raw signal byte.
@@ -91,12 +90,7 @@ fn do_partial_install_of_security_scanner(
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
-    original_cwd: &[u8],
 ) -> Result<(), Error> {
-    let (workspace_filters, install_root_dependencies) =
-        InstallWithManager::get_workspace_filters(manager, original_cwd)?;
-    // `defer manager.allocator.free(workspace_filters)` — workspace_filters is now owned, drops at scope exit.
-
     if !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(());
     }
@@ -114,8 +108,8 @@ fn do_partial_install_of_security_scanner(
             HoistedInstall::install_hoisted_packages(
                 manager,
                 ctx,
-                &workspace_filters,
-                install_root_dependencies,
+                &[],
+                true,
                 log_level,
                 packages_to_install,
             )?
@@ -124,8 +118,8 @@ fn do_partial_install_of_security_scanner(
             IsolatedInstall::install_isolated_packages(
                 manager,
                 ctx,
-                install_root_dependencies,
-                &workspace_filters,
+                true,
+                &[],
                 packages_to_install,
             )?
         }
@@ -249,13 +243,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
+            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
@@ -289,13 +277,7 @@ pub fn perform_security_scan_for_all(
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
+            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(

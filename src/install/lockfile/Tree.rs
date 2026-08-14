@@ -613,18 +613,12 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    // Filtering only applies to the root package dependencies. Also
-    // --filter has a different meaning if a new package is being installed.
-    if manager.subcommand != crate::package_manager::Subcommand::Install || parent_pkg_id != 0 {
+    if parent_pkg_id != 0 {
         return false;
     }
 
     if !dep.behavior.is_workspace() {
-        if !install_root_dependencies {
-            return true;
-        }
-
-        return false;
+        return !install_root_dependencies;
     }
 
     if manager.summary.pruned_workspaces.contains(&dep.name_hash) {

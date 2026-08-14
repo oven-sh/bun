@@ -12,24 +12,34 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, PackageNameHash};
 
-pub(crate) struct Candidate<'a> {
-    pub(crate) name: &'a [u8],
-    pub(crate) abs_posix_dir: &'a [u8],
-    pub(crate) is_root: bool,
+pub struct Candidate<'a> {
+    pub name: &'a [u8],
+    pub abs_posix_dir: &'a [u8],
+    pub is_root: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RootSelection {
+pub enum RootSelection {
     Implicit,
     ExplicitOnly,
 }
 
-pub(crate) struct Selection {
-    pub(crate) selected: Vec<bool>,
+pub struct Selection {
+    pub selected: Vec<bool>,
+    pub unmatched_patterns: Vec<usize>,
+}
+
+pub(crate) struct LockfileSelection {
+    pub(crate) ids: Vec<PackageID>,
     pub(crate) unmatched_patterns: Vec<usize>,
 }
 
-pub(crate) struct WorkspaceGraph {
+/// Importers a filtered add/remove/update selected; None is the root. Only their dependencies get linked.
+pub(crate) struct LinkTargets {
+    importers: Box<[Option<PackageNameHash>]>,
+}
+
+pub struct WorkspaceGraph {
     dependencies: Vec<Vec<u32>>,
     dependents: Vec<Vec<u32>>,
 }
@@ -121,7 +131,14 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
 
 fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
     match base {
-        Base::All => !(c.is_root && explicit_root_only),
+        // A package.json without a name (bun run --filter's walk) is only selectable by path.
+        Base::All => {
+            if c.is_root {
+                !explicit_root_only
+            } else {
+                !c.name.is_empty()
+            }
+        }
         Base::Name(glob) => bun_glob::r#match(glob, c.name).matches(),
         Base::Path(glob) => bun_glob::r#match(glob, c.abs_posix_dir).matches(),
         Base::Subtree(glob) => {
@@ -176,14 +193,14 @@ fn walk(graph: &WorkspaceGraph, sel: &Selector, base: &[bool]) -> Vec<bool> {
     reached
 }
 
-pub(crate) fn first_relational<'a>(patterns: &[&'a [u8]]) -> Option<&'a [u8]> {
+pub fn first_relational<'a>(patterns: &[&'a [u8]]) -> Option<&'a [u8]> {
     patterns.iter().copied().find(|raw| {
         let (trimmed, _) = strip_negations(raw);
         strings::has_prefix(trimmed, b"...") || trimmed.ends_with(b"...")
     })
 }
 
-pub(crate) fn select(
+pub fn select(
     patterns: &[&[u8]],
     original_cwd: &[u8],
     candidates: &[Candidate<'_>],
@@ -295,6 +312,39 @@ impl WorkspaceGraph {
         }
         graph
     }
+
+    pub fn from_dependency_names<D, I>(names: &[&[u8]], mut dependency_names: D) -> WorkspaceGraph
+    where
+        D: FnMut(usize) -> I,
+        I: IntoIterator,
+        I::Item: AsRef<[u8]>,
+    {
+        let n = names.len();
+        let mut by_name: HashMap<&[u8], u32> = HashMap::with_capacity(n);
+        for (i, &name) in names.iter().enumerate() {
+            if !name.is_empty() && !by_name.contains_key(name) {
+                by_name.insert(name, i as u32);
+            }
+        }
+
+        let mut graph = WorkspaceGraph {
+            dependencies: vec![Vec::new(); n],
+            dependents: vec![Vec::new(); n],
+        };
+        for from in 0..n {
+            for dep in dependency_names(from) {
+                let Some(&to) = by_name.get(dep.as_ref()) else {
+                    continue;
+                };
+                if to as usize == from {
+                    continue;
+                }
+                graph.dependencies[from].push(to);
+                graph.dependents[to as usize].push(from as u32);
+            }
+        }
+        graph
+    }
 }
 
 pub(crate) fn select_lockfile_workspaces(
@@ -302,7 +352,7 @@ pub(crate) fn select_lockfile_workspaces(
     patterns: &[&[u8]],
     original_cwd: &[u8],
     root: RootSelection,
-) -> Vec<PackageID> {
+) -> LockfileSelection {
     let pkg_resolutions = lockfile.packages.items_resolution();
 
     let ids: Vec<PackageID> = pkg_resolutions
@@ -313,7 +363,10 @@ pub(crate) fn select_lockfile_workspaces(
         .collect();
 
     if patterns.is_empty() {
-        return ids;
+        return LockfileSelection {
+            ids,
+            unmatched_patterns: Vec::new(),
+        };
     }
 
     let pkg_names = lockfile.packages.items_name();
@@ -358,10 +411,70 @@ pub(crate) fn select_lockfile_workspaces(
         WorkspaceGraph::from_lockfile(lockfile, &hashes)
     });
 
-    let selection = select(patterns, original_cwd, &candidates, graph.as_ref(), root);
-    ids.into_iter()
-        .zip(selection.selected)
+    let Selection {
+        selected,
+        unmatched_patterns,
+    } = select(patterns, original_cwd, &candidates, graph.as_ref(), root);
+    let ids: Vec<PackageID> = ids
+        .into_iter()
+        .zip(selected)
         .filter(|(_, selected)| *selected)
         .map(|(pkg_id, _)| pkg_id)
-        .collect()
+        .collect();
+    LockfileSelection {
+        ids,
+        unmatched_patterns,
+    }
+}
+
+pub(crate) fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (i, pattern) in patterns.iter().enumerate() {
+        if i > 0 {
+            out.extend_from_slice(b", ");
+        }
+        out.push(b'"');
+        out.extend_from_slice(pattern);
+        out.push(b'"');
+    }
+    out
+}
+
+pub(crate) fn warn_unmatched(patterns: &[&[u8]], unmatched_patterns: &[usize]) {
+    if unmatched_patterns.is_empty() {
+        return;
+    }
+    let unmatched: Vec<&[u8]> = unmatched_patterns.iter().map(|&i| patterns[i]).collect();
+    bun_core::pretty_errorln!(
+        "<r><yellow>warn<r><d>:<r> No workspace packages matched the filter {}",
+        BStr::new(&quote_patterns(&unmatched)),
+    );
+}
+
+impl LinkTargets {
+    pub(crate) fn from_importers(
+        importers: impl Iterator<Item = Option<PackageNameHash>>,
+    ) -> LinkTargets {
+        let mut importers: Vec<Option<PackageNameHash>> = importers.collect();
+        importers.sort_unstable();
+        importers.dedup();
+        LinkTargets {
+            importers: importers.into_boxed_slice(),
+        }
+    }
+
+    pub(crate) fn package_ids(&self, lockfile: &Lockfile) -> Vec<PackageID> {
+        let tags = lockfile.packages.items_resolution();
+        let name_hashes = lockfile.packages.items_name_hash();
+        (0..tags.len())
+            .filter(|&i| match tags[i].tag {
+                ResolutionTag::Root => self.importers.binary_search(&None).is_ok(),
+                ResolutionTag::Workspace => {
+                    self.importers.binary_search(&Some(name_hashes[i])).is_ok()
+                }
+                _ => false,
+            })
+            .map(|i| i as PackageID)
+            .collect()
+    }
 }

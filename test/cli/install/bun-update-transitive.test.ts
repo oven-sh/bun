@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
-// Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0.
+// Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
 
 const registry = new VerdaccioRegistry();
 
@@ -67,12 +67,13 @@ const packageJsonText = (dir: string, rel = "") => file(join(dir, rel, "package.
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 const lock = async (dir: string): Promise<Json> => Bun.JSONC.parse(await lockText(dir)) as Json;
 
-// Every version of `name` resolved anywhere in bun.lock.
+// Every version of `name` resolved anywhere in bun.lock, rows installed under an alias included.
 async function lockedVersions(dir: string, name: string) {
   const { packages } = await lock(dir);
-  const versions = Object.entries(packages as Record<string, [string]>)
-    .filter(([key]) => key === name || key.endsWith(`/${name}`))
-    .map(([, [resolution]]) => resolution.slice(name.length + 1));
+  const versions = Object.values(packages as Record<string, [string]>)
+    .map(([resolution]) => resolution)
+    .filter(resolution => resolution.startsWith(`${name}@`))
+    .map(resolution => resolution.slice(name.length + 1));
   return [...new Set(versions)].sort();
 }
 
@@ -377,6 +378,30 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "`bun update --latest` holds back only the entry it rewrote; a member's own dist-tag entry still follows its tag",
+  async () => {
+    const dir = await setup({
+      "package.json": { ...ROOT, dependencies: { "dep-with-tags": "3.0.1" } },
+      "packages/pkg1/package.json": member("pkg1", { "dep-with-tags": "pre-2" }),
+    });
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1", "3.0.1"]);
+    const rootText = await packageJsonText(dir);
+    const pkg1Text = await packageJsonText(dir, "packages/pkg1");
+
+    const { stderr, exitCode } = await run(dir, "update", "--latest");
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonText(dir)).toBe(rootText);
+    expect(await packageJsonText(dir, "packages/pkg1")).toBe(pkg1Text);
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1", "3.0.1"]);
+    expect((await lock(dir)).workspaces["packages/pkg1"].dependencies).toStrictEqual({ "dep-with-tags": "pre-2" });
+    expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.1");
+    expect(await lockText(dir)).toContain('"dep-with-tags@2.0.1"');
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("`bun up --help` prints the update help", async () => {
   const { packageDir } = await registry.createTestDir();
   const { stdout, exitCode } = await run(packageDir, "up", "--help");
@@ -384,6 +409,8 @@ test.concurrent("`bun up --help` prints the update help", async () => {
   expect(stdout).toContain("Alias: bun up");
   expect(stdout).toContain("-L, --latest");
   expect(stdout).toContain("--no-optional");
+  expect(stdout).toContain("Only update dependencies and optionalDependencies");
+  expect(stdout).toContain("bun update --prod");
   expect(stdout).not.toContain("--transitive");
   expect(exitCode).toBe(0);
 });
@@ -780,6 +807,25 @@ test.concurrent("patterns need a lockfile", async () => {
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("several names in one command are matched independently, aliases through their real name", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "a-dep": "1.0.1", aliased: "npm:no-deps@1.0.0", "one-range-dep": "1.0.0" }),
+  });
+  await reinstall(dir, pkgJson({ "a-dep": "^1.0.1", aliased: "npm:no-deps@~1.0.0", "one-range-dep": "1.0.0" }));
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "a-dep", "no-deps");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(
+    pkgJson({ "a-dep": "^1.0.10", aliased: "npm:no-deps@~1.0.1", "one-range-dep": "1.0.0" }),
+  );
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1", "1.1.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
 const DEV_A_DEP: Groups = { "a-dep": "devDependencies" };
 
 test.concurrent.each(["--dev", "-D", "-d", "--development"])(
@@ -850,4 +896,67 @@ test.concurrent("a version cannot be combined with a selector", async () => {
     "--dev",
     "a-dep@1",
   );
+});
+
+// `a` selects every offered row and `\r` confirms; EOF confirms too, so "" answers an empty picker.
+async function runInteractive(dir: string, keys: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "-i", ...args],
+    cwd: dir,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  proc.stdin.write(keys);
+  proc.stdin.end();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("`bun update -i --dev` only offers and updates devDependencies", async () => {
+  const { dir } = await staleSiblings(DEV_A_DEP);
+  const { stderr, exitCode } = await runInteractive(dir, "a\r", "--dev");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(grouped({ "no-deps": "^1.0.0", "a-dep": "^1.0.10" }, DEV_A_DEP));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update -i --prod --dry-run` lists only dependencies", async () => {
+  const { dir } = await staleSiblings(DEV_A_DEP);
+  const before = await lockText(dir);
+  const { stdout, exitCode } = await runInteractive(dir, "a\r", "--prod", "--dry-run");
+  expect(stdout).toContain("Would update no-deps to 1.1.0");
+  expect(stdout).not.toContain("a-dep");
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update -i --no-optional --dry-run` skips optionalDependencies", async () => {
+  const { dir } = await staleSiblings({ "a-dep": "optionalDependencies" });
+  const { stdout, exitCode } = await runInteractive(dir, "a\r", "--no-optional", "--dry-run");
+  expect(stdout).toContain("Would update no-deps to 1.1.0");
+  expect(stdout).not.toContain("a-dep");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update -i` with a selector that matches nothing prints No packages to update", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
+  const before = await lockText(dir);
+  const { stdout, exitCode } = await runInteractive(dir, "", "--dev");
+  expect(stdout).toContain("No packages to update");
+  expect(stdout).not.toContain("no-deps");
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update -i` without a selector still offers every group", async () => {
+  const { dir } = await staleSiblings(DEV_A_DEP);
+  const { stdout, exitCode } = await runInteractive(dir, "a\r", "--dry-run");
+  expect(stdout).toContain("Would update no-deps to 1.1.0");
+  expect(stdout).toContain("Would update a-dep to 1.0.10");
+  expect(exitCode).toBe(0);
 });

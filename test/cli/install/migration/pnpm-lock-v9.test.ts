@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "fs";
+import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 const verdaccio = new VerdaccioRegistry();
 
@@ -1118,28 +1118,27 @@ snapshots:
       `);
     });
 
-    test("peer variants of one package migrate identically regardless of snapshot order", async () => {
-      // pnpm11/lockfile/fs convertToLockfileObject: every variant joins packages[removeSuffix(key)]
-      const packageJsons = {
-        "package.json": JSON.stringify({ name: "v9-peer-variants", workspaces: ["apps/*"] }),
-        "apps/a/package.json": JSON.stringify({
-          name: "a",
-          dependencies: { "no-deps": "1.0.1", "peer-deps": "^1.0.0" },
-        }),
-        "apps/b/package.json": JSON.stringify({
-          name: "b",
-          dependencies: { "no-deps": "2.0.0", "peer-deps": "^1.0.0" },
-        }),
-      };
-      const variant101 = `  peer-deps@1.0.0(no-deps@1.0.1):
+    // pnpm11/lockfile/fs convertToLockfileObject: every variant joins packages[removeSuffix(key)]
+    const peerVariantPackageJsons = {
+      "package.json": JSON.stringify({ name: "v9-peer-variants", workspaces: ["apps/*"] }),
+      "apps/a/package.json": JSON.stringify({
+        name: "a",
+        dependencies: { "no-deps": "1.0.1", "peer-deps": "^1.0.0" },
+      }),
+      "apps/b/package.json": JSON.stringify({
+        name: "b",
+        dependencies: { "no-deps": "2.0.0", "peer-deps": "^1.0.0" },
+      }),
+    };
+    const peerVariant101 = `  peer-deps@1.0.0(no-deps@1.0.1):
     dependencies:
       no-deps: 1.0.1
 `;
-      const variant200 = `  peer-deps@1.0.0(no-deps@2.0.0):
+    const peerVariant200 = `  peer-deps@1.0.0(no-deps@2.0.0):
     dependencies:
       no-deps: 2.0.0
 `;
-      const lockfile = (variants: string) => `lockfileVersion: '9.0'
+    const peerVariantLockfile = (variants: string) => `lockfileVersion: '9.0'
 
 importers:
 
@@ -1184,13 +1183,20 @@ snapshots:
 
 ${variants}`;
 
+    test("peer variants of one package migrate identically regardless of snapshot order", async () => {
       const { packageDir: forward } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
-        files: { ...packageJsons, "pnpm-lock.yaml": lockfile(`${variant101}\n${variant200}`) },
+        files: {
+          ...peerVariantPackageJsons,
+          "pnpm-lock.yaml": peerVariantLockfile(`${peerVariant101}\n${peerVariant200}`),
+        },
       });
       const { packageDir: swapped } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
-        files: { ...packageJsons, "pnpm-lock.yaml": lockfile(`${variant200}\n${variant101}`) },
+        files: {
+          ...peerVariantPackageJsons,
+          "pnpm-lock.yaml": peerVariantLockfile(`${peerVariant200}\n${peerVariant101}`),
+        },
       });
 
       const [forwardResult, swappedResult] = await Promise.all([migrate(forward), migrate(swapped)]);
@@ -1210,8 +1216,98 @@ ${variants}`;
 
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(forward)).toBe(bunLock);
       expect((await installedPackageJson(forward, "apps/a", "no-deps")).version).toBe("1.0.1");
       expect((await installedPackageJson(forward, "apps/b", "no-deps")).version).toBe("2.0.0");
+
+      // pins existing behaviour (not a fix): a variant lockfile migrates to the bun.lock a fresh install writes
+      const { packageDir: fresh } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: peerVariantPackageJsons,
+      });
+
+      const freshInstall = await run(fresh, "install");
+
+      expect(freshInstall.stderr).not.toContain("error:");
+      expect(freshInstall.exitCode).toBe(0);
+      expect(await bunLockOf(fresh)).toBe(bunLock);
+    });
+
+    test("importers that reference different peer variants get one store entry per peer set with the isolated linker", async () => {
+      // pins existing behaviour (not a fix): pnpm's per-importer variants (pnpm/pnpm peers-suffix) are rebuilt by the isolated linker from the single migrated entry
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          ...peerVariantPackageJsons,
+          "pnpm-lock.yaml": peerVariantLockfile(`${peerVariant101}\n${peerVariant200}`),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(migrated);
+
+      const variants = readdirSync(join(packageDir, "node_modules", ".bun")).filter(name =>
+        /^peer-deps@1\.0\.0\+[0-9a-f]{16}$/.test(name),
+      );
+      expect(variants).toBeArrayOfSize(2);
+
+      const peerDepsDirs: string[] = [];
+      for (const [app, version] of [
+        ["apps/a", "1.0.1"],
+        ["apps/b", "2.0.0"],
+      ]) {
+        const peerDepsDir = realpathSync(join(packageDir, app, "node_modules", "peer-deps"));
+        expect(variants.some(variant => peerDepsDir.includes(variant))).toBeTrue();
+        expect((await Bun.file(join(dirname(peerDepsDir), "no-deps", "package.json")).json()).version).toBe(version);
+        peerDepsDirs.push(peerDepsDir);
+      }
+      expect(peerDepsDirs[0]).not.toBe(peerDepsDirs[1]);
+    });
+
+    test("a peer met in one importer and unmet in another is bound from the met variant", async () => {
+      // pnpm sorts the unsuffixed (peer-unmet) variant first; the met variant must still bind the peer
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: join(import.meta.dir, "pnpm/v9-peer-variant-merge"),
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(migrated).toContain(
+        `"has-peer": ["has-peer@file:vendor/has-peer", { "peerDependencies": { "peer": "*" } }]`,
+      );
+      expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", {}]`);
+      expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", {}]`);
+      expect(migrated).toContain(`"with/has-peer/peer": ["peer@file:vendor/peer", {}]`);
+      expect(migrated).not.toContain(`"optionalPeers"`);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(migrated);
+
+      const entry = readdirSync(join(packageDir, "node_modules", ".bun")).find(name =>
+        /^has-peer@file\+vendor\+has-peer\+[0-9a-f]{16}$/.test(name),
+      );
+      expect(entry).toBeDefined();
+      expect(
+        existsSync(join(packageDir, "node_modules", ".bun", entry!, "node_modules", "peer", "package.json")),
+      ).toBeTrue();
     });
 
     test("root and workspace peerDependencies come from package.json", async () => {

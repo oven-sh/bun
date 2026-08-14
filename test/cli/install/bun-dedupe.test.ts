@@ -1280,6 +1280,83 @@ test.concurrent("a patched version wins over keeping the direct dependency's hig
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// one-fixed-dep@1.0.0 is the only dependent of the patched no-deps@1.0.0, so root's ">=1.0.0" edge must not move up onto 2.0.0.
+test.concurrent("a version that is the only way to reach a patched package is kept and reported", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch);
+  const patched = { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" };
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    {
+      name: "foo",
+      dependencies: { "one-fixed-dep": "1.0.0", "dwt": "npm:dep-with-tags@>=1.0.0" },
+      patchedDependencies: patched,
+    },
+    {
+      name: "foo",
+      dependencies: {
+        "one-fixed-dep": ">=1.0.0",
+        "ofd2": "npm:one-fixed-dep@2.0.0",
+        "dwt": "npm:dep-with-tags@>=1.0.0",
+        "dep-with-tags": "latest",
+      },
+      patchedDependencies: patched,
+    },
+  );
+  for (const label of [
+    '"one-fixed-dep@1.0.0"',
+    '"one-fixed-dep@2.0.0"',
+    '"no-deps@1.0.0"',
+    '"no-deps@2.0.0"',
+    '"dep-with-tags@3.0.0"',
+    '"dep-with-tags@3.0.1"',
+    '"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"',
+  ]) {
+    expect(lockfile).toContain(label);
+  }
+
+  const KEPT = "note: kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)";
+  const keptLines = (stderr: string) =>
+    normalizeBunSnapshot(stderr)
+      .split("\n")
+      .filter(line => line.startsWith("note: kept "));
+
+  const check = await dedupe(packageDir, "--check");
+  expect(firstLines(check.stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "1 duplicate version can be removed: dep-with-tags@3.0.1",
+  ]);
+  expect(keptLines(check.stderr)).toEqual([KEPT]);
+  expect(check.stderr).toContain("note: run 'bun dedupe' to remove them");
+  expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockfile);
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: dep-with-tags@3.0.1",
+  ]);
+  expect(keptLines(stderr)).toEqual([KEPT]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const after = await lock(packageDir);
+  expect(after).toContain('"one-fixed-dep@1.0.0"');
+  expect(after).toContain('"no-deps@1.0.0"');
+  expect(after).toContain('"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"');
+  expect(after).not.toContain('"dep-with-tags@3.0.1"');
+  expect(await nodeModulesVersion(packageDir, "one-fixed-dep")).toBe("1.0.0");
+  expect(await nodeModulesVersion(packageDir, "dep-with-tags")).toBe("3.0.0");
+
+  const recheck = await dedupe(packageDir, "--check");
+  expect(recheck.stdout).toContain("Already deduplicated.");
+  expect(keptLines(recheck.stderr)).toEqual([KEPT]);
+  expect(recheck.exitCode).toBe(0);
+  expect(await lock(packageDir)).toBe(after);
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
 // pnpm/pnpm#9213 (and #6619): one-fixed-dep@1.0.0 dies in this run, so its exact no-deps@1.0.0 edge must not drag the live "^1.0.0" edges down.
 test.concurrent("a version removed by the run does not vote for its own dependencies", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();

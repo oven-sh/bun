@@ -158,7 +158,7 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
             "-i, --interactive                     Show an interactive list of outdated packages to select for update"
         ),
         clap::param!(
-            "--filter <STR>...                     Update packages for the matching workspaces"
+            "-F, --filter <STR>...                 Update packages for the matching workspaces"
         ),
         clap::param!("-r, --recursive                       Update packages in all workspaces"),
         clap::param!("-d, --dev                             Only update devDependencies"),
@@ -724,6 +724,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
   <d>Only update devDependencies:<r>
   <b><green>bun update<r> <cyan>--dev<r>
+
+  <d>Only update dependencies and optionalDependencies:<r>
+  <b><green>bun update<r> <cyan>--prod<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";

@@ -256,6 +256,28 @@ describe("basic", () => {
 
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   });
+
+  test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "catalog-split-default",
+          workspaces: {
+            catalog: { "no-deps": "1.0.0" },
+            catalogs: { default: { "a-dep": "1.0.1" } },
+          },
+          dependencies: { "no-deps": "catalog:default", "a-dep": "catalog:" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.0");
+    expect((await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version).toBe("1.0.1");
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  });
 });
 
 describe("update", () => {
@@ -664,6 +686,56 @@ describe("errors", () => {
     const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(exitCode).not.toBe(0);
+  });
+
+  function rootWithDuplicateDefault(placement: "workspaces" | "top-level", definitions: object, dependencies: object) {
+    return JSON.stringify(
+      placement === "workspaces"
+        ? { name: "catalog-duplicate-default", workspaces: { packages: [], ...definitions }, dependencies }
+        : { name: "catalog-duplicate-default", ...definitions, workspaces: [], dependencies },
+    );
+  }
+
+  for (const placement of ["workspaces", "top-level"] as const) {
+    test.concurrent(`the same package in both catalog and catalogs.default is rejected (${placement})`, async () => {
+      const { packageDir } = await registry.createTestDir({
+        files: {
+          "package.json": rootWithDuplicateDefault(
+            placement,
+            { catalog: { "no-deps": "1.0.0" }, catalogs: { default: { "no-deps": "2.0.0" } } },
+            { "no-deps": "catalog:" },
+          ),
+        },
+      });
+
+      const { err, exitCode } = await failingInstall(packageDir);
+      expect(err).toContain('error: "no-deps" is defined in both "catalog" and "catalogs.default"; keep one of them');
+      expect(exitCode).not.toBe(0);
+      expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeFalse();
+    });
+  }
+
+  test.concurrent("every package in both catalog and catalogs.default is reported", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": rootWithDuplicateDefault(
+          "workspaces",
+          {
+            catalog: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+            catalogs: { default: { "no-deps": "2.0.0", "a-dep": "1.0.10" } },
+          },
+          { "no-deps": "catalog:", "a-dep": "catalog:" },
+        ),
+      },
+    });
+
+    const { err, exitCode } = await failingInstall(packageDir);
+    expect(err).toContain('error: "no-deps" is defined in both "catalog" and "catalogs.default"; keep one of them');
+    expect(err).toContain('error: "a-dep" is defined in both "catalog" and "catalogs.default"; keep one of them');
+    expect(exitCode).not.toBe(0);
+    expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
 
   // pnpm: deps-installer/test/catalogs.ts "external dependency using catalog protocol errors"

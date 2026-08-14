@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 import { pathToFileURL } from "url";
 
 type Linker = "hoisted" | "isolated";
@@ -10,6 +10,7 @@ type Files = Record<string, string>;
 type LicenseEntry = {
   name: string;
   versions: string[];
+  paths?: string[];
   license: string;
   homepage?: string;
   author?: string;
@@ -119,13 +120,43 @@ async function licensesText(dir: string, ...args: string[]) {
   return stdout;
 }
 
-async function licensesJson(dir: string, ...args: string[]) {
+function stripPaths(parsed: Record<string, LicenseEntry[]>) {
+  for (const entries of Object.values(parsed)) {
+    for (const entry of entries) {
+      expect(entry.paths).toBeArrayOfSize(entry.versions.length);
+      for (const p of entry.paths!) {
+        expect(isAbsolute(p)).toBeTrue();
+        expect(existsSync(join(p, "package.json"))).toBeTrue();
+      }
+      delete entry.paths;
+    }
+  }
+  return parsed;
+}
+
+async function licensesJsonRaw(dir: string, ...args: string[]) {
   const [stdout, stderr, exitCode] = await licenses(dir, ...args, "--json");
   expect(stderr).toBe("");
   const parsed = JSON.parse(stdout);
   expect(exitCode).toBe(0);
   return parsed as Record<string, LicenseEntry[]>;
 }
+
+async function licensesJson(dir: string, ...args: string[]) {
+  return stripPaths(await licensesJsonRaw(dir, ...args));
+}
+
+async function licensesEntries(dir: string, ...args: string[]): Promise<LicenseEntry[]> {
+  return Object.values(await licensesJsonRaw(dir, ...args)).flat();
+}
+
+function pathsOf(entries: LicenseEntry[], name: string) {
+  return entries.find(entry => entry.name === name)!.paths;
+}
+
+const nm = (dir: string, ...rest: string[]) => join(dir, "node_modules", ...rest);
+const store = (dir: string, entry: string, ...name: string[]) =>
+  join(dir, "node_modules", ".bun", entry, "node_modules", ...name);
 
 async function pm(dir: string, ...args: string[]): Promise<[string, string, number]> {
   await using proc = spawn({
@@ -217,6 +248,7 @@ describe("bun pm licenses", () => {
       └── one-dep@1.0.0"
     `);
     expect(stdout.split("\n").filter(line => line.endsWith(" (dev)"))).toEqual(["├── a-dep@1.0.1 (dev)"]);
+    expect(stdout).not.toContain(hoistedDir);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -225,7 +257,22 @@ describe("bun pm licenses", () => {
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--json");
     expect(stderr).toBe("");
     const parsed = JSON.parse(stdout);
-    expect(parsed).toEqual(fullJson);
+    expect(parsed).toEqual({
+      MIT: [
+        { ...fullJson.MIT[0], paths: [nm(hoistedDir, "path-parse")] },
+        { ...fullJson.MIT[1], paths: [nm(hoistedDir, "resolve")] },
+      ],
+      Unknown: [
+        { ...u("a-dep", "1.0.1"), paths: [nm(hoistedDir, "a-dep")] },
+        {
+          ...u("no-deps", "1.0.0", "1.0.1"),
+          paths: [nm(hoistedDir, "no-deps"), nm(hoistedDir, "one-dep", "node_modules", "no-deps")],
+        },
+        { ...u("one-dep", "1.0.0"), paths: [nm(hoistedDir, "one-dep")] },
+      ],
+    });
+    expect(Object.keys(parsed.MIT[0]).slice(0, 4)).toEqual(["name", "versions", "paths", "license"]);
+    expect(stripPaths(structuredClone(parsed))).toEqual(fullJson);
     expect(Object.keys(parsed)).toEqual(["MIT", "Unknown"]);
     expect(parsed.MIT[0].description).toBe(pathParseDescription);
     expect(parsed.MIT[1]).not.toHaveProperty("homepage");
@@ -330,6 +377,10 @@ describe("bun pm licenses", () => {
       ...fullJson.MIT,
     ]);
     expect(parsed["Unknown"]).toEqual([u("a-dep", "1.0.1"), u("one-dep", "1.0.0")]);
+    expect(pathsOf(await licensesEntries(dir), "no-deps")).toEqual([
+      nm(dir, "no-deps"),
+      nm(dir, "one-dep", "node_modules", "no-deps"),
+    ]);
   });
 
   test.concurrent("--json `license` follows each version's group; an empty description is omitted", async () => {
@@ -387,7 +438,7 @@ describe("bun pm licenses", () => {
     expect(jsonStderr).toBe("");
     expect(json).not.toContain("(dev)");
     expect(json).not.toContain('"dev"');
-    expect(JSON.parse(json)).toEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
+    expect(stripPaths(JSON.parse(json))).toEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
     expect(jsonExit).toBe(0);
 
     expect(await licensesJson(dir, "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
@@ -547,13 +598,14 @@ describe("bun pm licenses", () => {
     expect(exitCode).toBe(0);
 
     expect(await licensesText(hoistedDir, "ls", "--long")).toBe(stdout);
+    expect(stdout).not.toContain(nm(hoistedDir));
 
     const [plainJson, longJson] = await Promise.all([
       licensesText(hoistedDir, "--json"),
       licensesText(hoistedDir, "--long", "--json"),
     ]);
     expect(longJson).toBe(plainJson);
-    expect(JSON.parse(longJson)).toEqual(fullJson);
+    expect(stripPaths(JSON.parse(longJson))).toEqual(fullJson);
   });
 
   test.concurrent("--long details are per version in text; --json takes them from the newest version", async () => {
@@ -667,13 +719,13 @@ describe("bun pm licenses", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
-    for (const args of [["--long"], ["--dev"], ["--dev", "--json"], ["--long", "--json"]]) {
+    for (const args of [["--long"], ["--dev"]]) {
       expect(await licensesText(dir, ...args)).toBe(await licensesText(hoistedDir, ...args));
     }
+    expect(await licensesJson(dir, "--dev")).toEqual(await licensesJson(hoistedDir, "--dev"));
+    expect(await licensesJson(dir, "--long")).toEqual(await licensesJson(hoistedDir, "--long"));
     expect(await licensesText(dir, "--long")).toContain("│   Javier Blanco <http://jbgutierrez.info>\n");
-    expect(await licensesText(isoMono, "--filter", "foo", "--json")).toBe(
-      await licensesText(monoDir, "--filter", "foo", "--json"),
-    );
+    expect(await licensesJson(isoMono, "--filter", "foo")).toEqual(await licensesJson(monoDir, "--filter", "foo"));
     expect(await licensesText(isoMono, "--filter", "foo")).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
   });
 
@@ -685,14 +737,30 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(dir)).toEqual({
       Unknown: [u("@types/is-number", "2.0.0"), u("no-deps", "1.1.0"), u("two-range-deps", "1.0.0")],
     });
+    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toEqual([
+      store(dir, "@types+is-number@2.0.0", "@types", "is-number"),
+    ]);
+  });
+
+  test.concurrent("paths: isolated installs report the store directory", async () => {
+    const dir = await setup("isolated");
+    const entries = await licensesEntries(dir);
+    expect(Object.fromEntries(entries.map(entry => [entry.name, entry.paths]))).toEqual({
+      "path-parse": [store(dir, "path-parse@1.0.6", "path-parse")],
+      "resolve": [store(dir, "resolve@1.9.0", "resolve")],
+      "a-dep": [store(dir, "a-dep@1.0.1", "a-dep")],
+      "no-deps": [store(dir, "no-deps@1.0.0", "no-deps"), store(dir, "no-deps@1.0.1", "no-deps")],
+      "one-dep": [store(dir, "one-dep@1.0.0", "one-dep")],
+    });
+    expect(await licensesJson(dir)).toEqual(fullJson);
   });
 
   test.concurrent("isolated linker: store entries with a peer hash suffix are matched", async () => {
     const dir = await setup("isolated", {
       "package.json": pkg({ dependencies: { "peer-deps-lvl0": "1.0.0" } }),
     });
-    const store = readdirSync(join(dir, "node_modules", ".bun"));
-    expect(store.some(name => /^peer-deps-lvl[12]@1\.0\.0\+[0-9a-f]{16}$/.test(name))).toBeTrue();
+    const storeEntries = readdirSync(join(dir, "node_modules", ".bun"));
+    expect(storeEntries.some(name => /^peer-deps-lvl[12]@1\.0\.0\+[0-9a-f]{16}$/.test(name))).toBeTrue();
 
     expect(await licensesJson(dir)).toEqual({
       Unknown: [
@@ -702,6 +770,11 @@ describe("bun pm licenses", () => {
         u("peer-deps-lvl2", "1.0.0"),
       ],
     });
+
+    const [lvl1Path] = pathsOf(await licensesEntries(dir), "peer-deps-lvl1")!;
+    expect(lvl1Path).toMatch(new RegExp("peer-deps-lvl1@1\\.0\\.0\\+[0-9a-f]{16}"));
+    expect(lvl1Path.startsWith(join(dir, "node_modules", ".bun"))).toBeTrue();
+    expect(existsSync(join(lvl1Path, "package.json"))).toBeTrue();
   });
 
   // pnpm 'should work with file protocol dependency' (fixtures/with-file-protocol): a license-less folder dep is listed as Unknown.
@@ -714,6 +787,9 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(dir)).toEqual({
       Unknown: [u("no-deps", "1.0.0"), u("sub-dep", "sub-dep")],
     });
+    expect(pathsOf(await licensesEntries(dir), "sub-dep")).toEqual([
+      linker === "hoisted" ? nm(dir, "sub-dep") : store(dir, "sub-dep@file+sub-dep", "sub-dep"),
+    ]);
   });
 
   test.concurrent("--prod omits a file: dependency's devDependencies, like bun install --production", async () => {
@@ -759,7 +835,7 @@ describe("bun pm licenses", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ Unknown: [u("no-deps", "1.0.0")] });
+    expect(stripPaths(JSON.parse(stdout))).toEqual({ Unknown: [u("no-deps", "1.0.0")] });
     expect(exitCode).toBe(0);
   });
 
@@ -781,6 +857,12 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(join(monoDir, "packages", "bar"))).toEqual(barJson);
     expect(await licensesJson(join(monoDir, "packages", "foo"))).toEqual(fooJson);
     expect(await licensesText(monoDir)).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
+
+    const fromRoot = await licensesEntries(monoDir);
+    expect(pathsOf(fromRoot, "a-dep")).toEqual([nm(monoDir, "a-dep")]);
+    expect(pathsOf(fromRoot, "resolve")).toEqual([nm(monoDir, "resolve")]);
+    expect(pathsOf(await licensesEntries(monoDir, "--filter", "foo"), "a-dep")).toEqual([nm(monoDir, "a-dep")]);
+    expect(pathsOf(await licensesEntries(join(monoDir, "packages", "foo")), "a-dep")).toEqual([nm(monoDir, "a-dep")]);
   });
 
   test.concurrent("(dev) from the root is unmarked when another member needs the package in production", async () => {
@@ -953,7 +1035,7 @@ describe("bun pm licenses", () => {
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
         `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
       );
-      expect(JSON.parse(stdout)).toEqual({
+      expect(stripPaths(JSON.parse(stdout))).toEqual({
         MIT: [fullJson.MIT[0]],
         Unknown: [u("a-dep", "1.0.1"), u("no-deps", "1.0.0"), u("resolve", "1.9.0")],
       });
@@ -977,6 +1059,7 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(dir, "--prod")).toEqual({
       Unknown: [u("a-dep", "1.0.10"), u("uses-a-dep-10", "1.0.0")],
     });
+    expect(pathsOf(await licensesEntries(dir, "--prod"), "a-dep")).toEqual([nm(dir, "a-dep")]);
   });
 
   test.concurrent("pnpm#8589: a different version at the tree path is not misattributed", async () => {
@@ -987,7 +1070,7 @@ describe("bun pm licenses", () => {
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
       `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
     );
-    expect(JSON.parse(stdout)).toEqual({
+    expect(stripPaths(JSON.parse(stdout))).toEqual({
       MIT: [{ name: "a-dep", versions: ["1.0.10"], license: "MIT" }],
       Unknown: [u("uses-a-dep-10", "1.0.0")],
     });
@@ -1004,6 +1087,17 @@ describe("bun pm licenses", () => {
       expect(await licensesJson(dir)).toEqual({
         Unknown: [u("bundled-1", "1.0.0"), u("no-deps", "1.0.0")],
       });
+
+      const entries = await licensesEntries(dir);
+      if (linker === "hoisted") {
+        expect(pathsOf(entries, "bundled-1")).toEqual([nm(dir, "bundled-1")]);
+        expect(pathsOf(entries, "no-deps")).toEqual([nm(dir, "bundled-1", "node_modules", "no-deps")]);
+      } else {
+        expect(pathsOf(entries, "bundled-1")).toEqual([store(dir, "bundled-1@1.0.0", "bundled-1")]);
+        const noDepsPaths = pathsOf(entries, "no-deps")!;
+        expect(noDepsPaths).toBeArrayOfSize(1);
+        expect(noDepsPaths[0]).toEndWith(join("bundled-1", "node_modules", "no-deps"));
+      }
     },
   );
 

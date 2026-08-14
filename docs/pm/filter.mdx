@@ -5,7 +5,7 @@ description: "Select packages by pattern in a monorepo using the --filter flag"
 
 The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. A pattern is a package name glob, a `./path` glob, a `{dir}` directory selector, or a `...` dependency relation.
 
-`bun install`, `bun add`, `bun remove`, `bun update` and `bun outdated` support `--filter` (pass it after the subcommand, or as `--filter=<pattern>` before it); for `bun add`/`bun remove` it selects which workspace `package.json` files are edited. You can also use it to run scripts in multiple packages at once. The `{dir}` and `...` forms are only understood by these package-manager commands, not by `bun run --filter`.
+The same patterns are understood by `bun install`, `bun add`, `bun remove`, `bun update` and `bun outdated`, and by `bun run --filter` (including `--parallel` and `--sequential`), which runs a script in every selected package. For the package-manager commands, pass the flag after the subcommand or write it as `--filter=<pattern>` before it, because `bun --filter <pattern> <word>` always runs the script `<word>`. For `bun add`, `bun remove` and `bun update` the filter selects which workspace `package.json` files are edited and, like `bun install --filter`, which workspaces get installed; the `node_modules` of an unselected workspace is left as it was.
 
 ---
 
@@ -38,7 +38,7 @@ Adding `...` to a pattern also selects the workspaces related to it through work
 
 The middle part is a name glob or a directory selector (`...{./packages/api}`), and `!` still goes first: `--filter '!...foo'` drops `foo` and everything that depends on it.
 
-Relations follow the workspace links recorded in `bun.lock`, from any dependency group. `bun install --filter 'web...'` works on a fresh clone, but `bun add`, `bun remove` and `bun update <pkg>` with a relation need an existing `bun.lock` and ask you to run `bun install` first when it is missing.
+For the package-manager commands, relations follow the workspace links recorded in `bun.lock`, from any dependency group. `bun run --filter` instead follows the `dependencies`, `devDependencies` and `optionalDependencies` entries of the workspace `package.json` files themselves (the same links Bun uses to order the scripts), so it needs no `bun.lock` and works before the first install. `bun install --filter 'web...'` works on a fresh clone, but `bun add`, `bun remove` and `bun update <pkg>` with a relation need an existing `bun.lock` and ask you to run `bun install` first when it is missing.
 
 ```bash terminal icon="terminal"
 bun install --filter 'web...'
@@ -52,7 +52,7 @@ bun outdated --filter '{./packages/apps}'
 
 By default, `bun install` installs dependencies for every package in the monorepo. To install dependencies for specific packages, use `--filter`.
 
-A set of patterns selects everything matched by a positive pattern, minus everything matched by a `!` pattern, so `bun install --filter api --filter '!web'` installs only `api`. If nothing matches, `bun install` installs nothing and exits 0.
+A set of patterns selects everything matched by a positive pattern, minus everything matched by a `!` pattern, so `bun install --filter api --filter '!web'` installs only `api`. If nothing matches, `bun install` installs nothing and exits 0. A positive pattern that matches nothing prints `warn: No workspace packages matched the filter "<pattern>"` (for `bun install`, `bun outdated` and `bun update` as well as `bun add`/`bun remove`); `!` patterns never warn.
 
 Given a monorepo with workspaces `pkg-a`, `pkg-b`, and `pkg-c` under `./packages`:
 
@@ -109,6 +109,24 @@ bun --filter '*' dev
 Both scripts run in parallel, and a terminal UI shows their respective outputs:
 
 <Frame>![Terminal Output](https://github.com/oven-sh/bun/assets/48869301/2a103e42-9921-4c33-948f-a1ad6e6bac71)</Frame>
+
+The other pattern forms work the same way:
+
+```bash terminal icon="terminal"
+# build web and everything it depends on, in dependency order
+bun --filter 'web...' build
+
+# test the packages that depend on ui
+bun --filter '...^ui' test
+
+# run dev in every package under packages/apps
+bun --filter '{./packages/apps}' dev
+
+# lint every package except docs
+bun --filter '*' --filter '!docs' lint
+```
+
+A `!` pattern removes packages matched by the other patterns, and a `package.json` without a `name` is only selected by a `./path` pattern.
 
 ### Running scripts in workspaces
 

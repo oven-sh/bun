@@ -591,6 +591,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     let mut found_patches: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
     let mut snapshot_dep_paths = SnapshotDepPaths::new();
+    let mut packages_with_unbound_peers: bun_collections::HashMap<PackageID, ()> =
+        bun_collections::HashMap::new();
     let mut named_registries: Option<StringArrayHashMap<Box<[u8]>>> = None;
     let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
 
@@ -1177,7 +1179,17 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     None => key_str,
                 };
 
-                if pkg_map.contains(key_str) {
+                if let Some(&existing_id) = pkg_map.get(key_str) {
+                    if packages_with_unbound_peers.contains(&existing_id)
+                        && bind_peers_from_variant(
+                            lockfile,
+                            existing_id,
+                            snapshot_obj,
+                            &mut snapshot_dep_paths,
+                        )?
+                    {
+                        packages_with_unbound_peers.remove(&existing_id);
+                    }
                     continue;
                 }
 
@@ -1393,7 +1405,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
                 // TODO: libc
 
-                let (off, len) = parse_append_package_dependencies(
+                let (off, len, has_unbound_peers) = parse_append_package_dependencies(
                     lockfile,
                     &package_obj,
                     snapshot_obj,
@@ -1406,6 +1418,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 pkg.resolution = res.copy();
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+                if has_unbound_peers {
+                    packages_with_unbound_peers.put(pkg_id, ())?;
+                }
 
                 pkg_map.put(key_str, pkg_id)?;
             }
@@ -1782,7 +1797,7 @@ fn parse_append_package_dependencies(
     snapshot_obj: &Expr,
     log: &mut bun_ast::Log,
     snapshot_dep_paths: &mut SnapshotDepPaths,
-) -> Result<(u32, u32), ParseAppendDependenciesError> {
+) -> Result<(u32, u32, bool), ParseAppendDependenciesError> {
     let mut version_buf: Vec<u8> = Vec::new();
     let mut references_by_name: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
     let mut peers = declared_package_peers(package_obj)?;
@@ -1882,6 +1897,7 @@ fn parse_append_package_dependencies(
         }
     }
 
+    let mut has_unbound_peers = false;
     for (peer_name, decl) in peers.iter() {
         if decl.seen {
             continue;
@@ -1909,6 +1925,7 @@ fn parse_append_package_dependencies(
             behavior,
             version,
         });
+        has_unbound_peers = true;
     }
 
     let end = lockfile.buffers.dependencies.len();
@@ -1931,7 +1948,42 @@ fn parse_append_package_dependencies(
     Ok((
         u32::try_from(off).expect("int cast"),
         u32::try_from(end - off).expect("int cast"),
+        has_unbound_peers,
     ))
+}
+
+// pnpm sorts the peer-unmet variant (no suffix) first; later variants carry the resolutions it lacks.
+fn bind_peers_from_variant(
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    snapshot_obj: &Expr,
+    snapshot_dep_paths: &mut SnapshotDepPaths,
+) -> Result<bool, AllocError> {
+    let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
+    let groups = [
+        snapshot_obj.get(b"dependencies"),
+        snapshot_obj.get(b"optionalDependencies"),
+    ];
+    let mut all_bound = true;
+    for dep_id in deps.begin()..deps.end() {
+        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        if !dep.behavior.is_peer() || snapshot_dep_paths.contains(&dep_id) {
+            continue;
+        }
+        let name = dep.name.slice(string_bytes!(lockfile));
+        let reference = groups
+            .iter()
+            .flatten()
+            .find_map(|group| group.get(name))
+            .and_then(|value| as_string(&value))
+            .map(remove_suffix)
+            .filter(|reference| !strings::has_prefix_comptime(reference, b"link:"));
+        match reference {
+            Some(reference) => snapshot_dep_paths.put(dep_id, Box::from(reference))?,
+            None => all_bound = false,
+        }
+    }
+    Ok(all_bound)
 }
 
 fn append_importer_dependency(

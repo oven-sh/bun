@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { exists, mkdir } from "fs/promises";
+import { exists, mkdir, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -627,11 +627,12 @@ test.concurrent("install --filter with relations installs the closure only", asy
   }
 });
 
-// add/remove error on zero matches; install keeps its documented silent no-op.
-test.concurrent("install --filter with a pattern that matches nothing still exits 0", async () => {
+// add/remove error on zero matches; install warns and keeps its documented no-op.
+test.concurrent("install --filter with a pattern that matches nothing warns and exits 0", async () => {
   const dir = await makeMonorepo();
 
   const { stderr, exitCode } = await run(["install", "--filter", "nope"], dir, { linker: "hoisted" });
+  expect(stderr).toContain('warn: No workspace packages matched the filter "nope"');
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -889,6 +890,8 @@ test.concurrent("remove --filter where no target contains the dependency writes 
 
 test.concurrent("add/remove --filter with the isolated linker links only the target workspace", async () => {
   const dir = await makeMonorepo({}, "isolated");
+  const stale = join(dir, "packages", "web", "node_modules", "stale", "package.json");
+  await write(stale, '{"name":"stale"}');
 
   {
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir, { linker: "isolated" });
@@ -902,6 +905,9 @@ test.concurrent("add/remove --filter with the isolated linker links only the tar
     });
     expect(await exists(join(dir, "packages", "web", "node_modules", "no-deps"))).toBeFalse();
     expect(await exists(join(dir, "node_modules", "no-deps"))).toBeFalse();
+    expect(await exists(join(dir, "packages", "web", "node_modules", "a-dep"))).toBeFalse();
+    expect(await file(stale).text()).toBe('{"name":"stale"}');
+    expect(await exists(join(dir, "node_modules", "web"))).toBeFalse();
   }
 
   {
@@ -914,6 +920,137 @@ test.concurrent("add/remove --filter with the isolated linker links only the tar
     // The isolated installer does not yet prune packages/api/node_modules/no-deps (same as unfiltered `bun remove`).
     expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps");
   }
+
+  await installOk(dir, "isolated");
+  expect(await exists(join(dir, "packages", "web", "node_modules", "a-dep", "package.json"))).toBeTrue();
+});
+
+test.concurrent("add --filter links only the selected workspace (hoisted)", async () => {
+  const dir = await makeMonorepo();
+  const stale = join(dir, "packages", "web", "node_modules", "stale", "package.json");
+  await write(stale, '{"name":"stale"}');
+  const installed = () =>
+    Promise.all([
+      exists(join(dir, "node_modules", "api")),
+      exists(join(dir, "node_modules", "no-deps", "package.json")),
+      exists(join(dir, "node_modules", "web")),
+      exists(join(dir, "node_modules", "pkg-a")),
+      exists(join(dir, "node_modules", "a-dep")),
+      exists(stale),
+    ]);
+
+  const { stdout, stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("installed no-deps@2.0.0");
+  expect(stdout).toMatch(/\b2 packages installed\b/);
+  expect(exitCode).toBe(0);
+
+  expect(await installed()).toEqual([true, true, false, false, false, true]);
+  expect(await file(join(dir, "bun.lock")).text()).toContain('"a-dep@1.0.1"');
+
+  await installOk(dir, "hoisted");
+  expect(await installed()).toEqual([true, true, true, true, true, true]);
+});
+
+test.concurrent("add --filter leaves the root's own dependencies alone unless the root is selected", async () => {
+  const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "is-number": "1.0.0" } } });
+  const installed = (name: string) => exists(join(dir, "node_modules", name));
+
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "*"], dir, { linker: "hoisted" });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await Promise.all(["is-number", "api", "web", "pkg-a", "pkg-b", "a-dep", "no-deps"].map(installed))).toEqual(
+      [false, true, true, true, true, true, true],
+    );
+  }
+
+  {
+    const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "root"], dir, { linker: "hoisted" });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await installed("is-number")).toBeTrue();
+  }
+});
+
+test.concurrent("remove --filter re-links only the selected workspace", async () => {
+  const dir = await makeMonorepo({
+    api: { name: "api", dependencies: { "no-deps": "^2.0.0" } },
+    web: { name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } },
+  });
+  await installOk(dir, "hoisted");
+  const webBefore = await pkgText(dir, "web");
+  await rm(join(dir, "node_modules"), { recursive: true });
+  const installed = () =>
+    Promise.all(["api", "web", "no-deps", "a-dep"].map(name => exists(join(dir, "node_modules", name))));
+
+  const { stderr, exitCode } = await run(["remove", "no-deps", "--filter", "api"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await pkg(dir, "api")).toEqual({ name: "api" });
+  expect(await pkgText(dir, "web")).toBe(webBefore);
+  expect(await installed()).toEqual([true, false, false, false]);
+  expect((await lockfileJson(dir)).packages["no-deps"]).toBeDefined();
+
+  await installOk(dir, "hoisted");
+  expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+  expect(await exists(join(dir, "node_modules", "a-dep"))).toBeTrue();
+});
+
+test.concurrent("add --filter with a relation links the whole closure and nothing else", async () => {
+  const dir = await makeMonorepo({
+    ...GRAPH,
+    web: { name: "web", dependencies: { api: "workspace:*", "a-dep": "1.0.1" } },
+    "pkg-b": { name: "pkg-b", dependencies: { "is-number": "1.0.0" } },
+  });
+  await installOk(dir, "hoisted");
+  const before = await allPackageJsonTexts(dir);
+  await rm(join(dir, "node_modules"), { recursive: true });
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api..."], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api", "pkg-a"]);
+  expect(
+    await Promise.all(
+      ["api", "pkg-a", "no-deps", "web", "a-dep", "is-number"].map(name => exists(join(dir, "node_modules", name))),
+    ),
+  ).toEqual([true, true, true, false, false, false]);
+});
+
+test.concurrent("outdated --filter warns about a positive pattern that matched nothing", async () => {
+  const dir = await makeMonorepo({ api: { name: "api", dependencies: { "no-deps": "1.0.0" } } });
+  await installOk(dir);
+
+  {
+    const { stdout, stderr, exitCode } = await run(["outdated", "--filter", "api", "--filter", "typo"], dir);
+    expect(stderr).toContain('warn: No workspace packages matched the filter "typo"');
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("no-deps");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await run(["outdated", "--filter", "api", "--filter", "!typo"], dir);
+    expect(stderr).not.toContain("warn:");
+    expect(stdout).toContain("no-deps");
+    expect(exitCode).toBe(0);
+  }
+});
+
+test.concurrent("--filter=<pattern> is accepted before the subcommand", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["--filter=api", "add", "no-deps"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api"]);
 });
 
 test.concurrent("two name filters are unioned and unselected workspaces are byte-identical", async () => {

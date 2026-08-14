@@ -9,8 +9,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag, WorkspaceFilter};
+use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
-use bun_paths::AutoAbsPath;
+use bun_paths::{AutoAbsPath, resolve_path};
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::package_manager_command::PackageManagerCommand;
@@ -25,12 +26,14 @@ struct PackageInfo {
     homepage: Option<Box<[u8]>>,
     author: Option<Box<[u8]>>,
     description: Option<Box<[u8]>>,
+    path: Box<[u8]>,
 }
 
 struct Entry {
     license: Box<[u8]>,
     name: Box<[u8]>,
     version: Box<[u8]>,
+    path: Box<[u8]>,
     semver: Option<bun_semver::Version>,
     homepage: Option<Box<[u8]>>,
     author: Option<Box<[u8]>>,
@@ -71,8 +74,10 @@ impl PmLicensesCommand {
         }
 
         let log_level = pm.options.log_level;
+        let configured_linker = pm.options.node_linker;
         let load = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load, log_level);
+        let isolated = load.node_linker(configured_linker) == NodeLinker::Isolated;
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
@@ -100,7 +105,8 @@ impl PmLicensesCommand {
                 true,
             )
         } else {
-            let roots = WorkspaceFilter::select_workspaces(lockfile, filter_patterns, original_cwd);
+            let roots =
+                WorkspaceFilter::select_workspaces_quietly(lockfile, filter_patterns, original_cwd);
             if roots.is_empty() {
                 Output::err_generic(
                     "No workspace packages matched the filter {}",
@@ -175,36 +181,41 @@ impl PmLicensesCommand {
             let _ = write!(&mut version, "{}", resolution.fmt(buf, PathSep::Posix));
             let is_npm = resolution.tag == ResolutionTag::Npm;
 
-            let mut info = match &locations[pkg_id] {
-                Some(location) => {
-                    let segments: [&[u8]; 2] = [location, b"package.json"];
-                    read_package_info_at(&mut path, top_len, &segments, &mut log)
-                }
-                None => None,
+            let mut info = if isolated {
+                store.read_info(
+                    &mut path,
+                    top_len,
+                    pkg_names[pkg_id],
+                    resolution,
+                    buf,
+                    &mut log,
+                )
+            } else {
+                None
             };
 
-            if is_npm {
-                info = info.filter(|info| match &info.version {
-                    Some(installed) => installed[..] == version[..],
-                    None => true,
-                });
-            }
-
             if info.is_none() {
-                let store_entry: Option<Box<[u8]>> = store
-                    .lookup(&mut path, top_len, pkg_names[pkg_id], resolution, buf)
-                    .map(Into::into);
-                if let Some(store_entry) = store_entry {
-                    let segments: [&[u8]; 6] = [
-                        b"node_modules",
-                        b".bun",
-                        &store_entry,
-                        b"node_modules",
-                        pkg_names[pkg_id].slice(buf),
-                        b"package.json",
-                    ];
+                if let Some(location) = &locations[pkg_id] {
+                    let segments: [&[u8]; 1] = [location];
                     info = read_package_info_at(&mut path, top_len, &segments, &mut log);
                 }
+                if is_npm {
+                    info = info.filter(|info| match &info.version {
+                        Some(installed) => installed[..] == version[..],
+                        None => true,
+                    });
+                }
+            }
+
+            if info.is_none() && !isolated {
+                info = store.read_info(
+                    &mut path,
+                    top_len,
+                    pkg_names[pkg_id],
+                    resolution,
+                    buf,
+                    &mut log,
+                );
             }
 
             if info.is_none() && is_npm {
@@ -226,6 +237,7 @@ impl PmLicensesCommand {
                 license: info.license,
                 name: pkg_names[pkg_id].slice(buf).into(),
                 version: version.into_boxed_slice(),
+                path: info.path,
                 semver: is_npm.then(|| resolution.npm().version),
                 homepage: info.homepage,
                 author: info.author,
@@ -336,12 +348,15 @@ fn read_package_info_at(
     for &segment in segments {
         let _ = path.append(segment);
     }
-    let info = read_package_info(path.slice(), log);
+    let dir_len = path.len();
+    let _ = path.append(b"package.json");
+    let full = path.slice();
+    let info = read_package_info(full, &full[..dir_len], log);
     path.set_length(base_len);
     info
 }
 
-fn read_package_info(path: &[u8], log: &mut Log) -> Option<PackageInfo> {
+fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageInfo> {
     let contents = File::read_from(Fd::cwd(), path).ok()?;
     bun_ast::initialize_store_or_reset();
     let source = Source::init_path_string(path, contents.as_slice());
@@ -354,6 +369,7 @@ fn read_package_info(path: &[u8], log: &mut Log) -> Option<PackageInfo> {
                 homepage: string_field(&json, b"homepage"),
                 author: author_of(&json),
                 description: string_field(&json, b"description"),
+                path: platform_dir(dir),
             },
             Err(_) => PackageInfo {
                 name: None,
@@ -362,9 +378,16 @@ fn read_package_info(path: &[u8], log: &mut Log) -> Option<PackageInfo> {
                 homepage: None,
                 author: None,
                 description: None,
+                path: platform_dir(dir),
             },
         },
     )
+}
+
+fn platform_dir(dir: &[u8]) -> Box<[u8]> {
+    let mut out = dir.to_vec();
+    resolve_path::posix_to_platform_in_place(&mut out);
+    out.into_boxed_slice()
 }
 
 fn str_of(expr: &Expr) -> Option<&[u8]> {
@@ -455,6 +478,26 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 }
 
 impl BunStore {
+    fn read_info(
+        &mut self,
+        path: &mut AutoAbsPath,
+        top_len: usize,
+        pkg_name: bun_semver::String,
+        resolution: &Resolution,
+        buf: &[u8],
+        log: &mut Log,
+    ) -> Option<PackageInfo> {
+        let entry = self.lookup(path, top_len, pkg_name, resolution, buf)?;
+        let segments: [&[u8]; 5] = [
+            b"node_modules",
+            b".bun",
+            entry,
+            b"node_modules",
+            pkg_name.slice(buf),
+        ];
+        read_package_info_at(path, top_len, &segments, log)
+    }
+
     fn lookup(
         &mut self,
         path: &mut AutoAbsPath,
@@ -592,7 +635,7 @@ impl DiskIndex {
         out: &mut StringHashMap<PackageInfo>,
     ) {
         let pkg_len = path.len();
-        if let Some(info) = read_package_info_at(path, pkg_len, &[b"package.json"], log) {
+        if let Some(info) = read_package_info_at(path, pkg_len, &[], log) {
             if let (Some(name), Some(version)) = (&info.name, &info.version) {
                 let key = disk_key(name, version);
                 if !out.contains_key(&key[..]) {
@@ -707,20 +750,30 @@ fn print_json(entries: &[Entry]) {
             first_group = false;
             out.extend_from_slice(b"\n    {\n      \"name\": ");
             json_string(&mut out, &first.name);
-            out.extend_from_slice(b",\n      \"versions\": [");
-            let mut previous: Option<&[u8]> = None;
+            let mut kept: Vec<&Entry> = Vec::new();
             for entry in &entries[group_start..group_end] {
-                if previous == Some(&entry.version[..]) {
-                    continue;
+                if kept
+                    .last()
+                    .is_none_or(|previous| previous.version != entry.version)
+                {
+                    kept.push(entry);
                 }
-                if previous.is_some() {
+            }
+            out.extend_from_slice(b",\n      \"versions\": [");
+            for (i, entry) in kept.iter().enumerate() {
+                if i > 0 {
                     out.extend_from_slice(b", ");
                 }
                 json_string(&mut out, &entry.version);
-                previous = Some(&entry.version[..]);
             }
-            out.push(b']');
-            out.extend_from_slice(b",\n      \"license\": ");
+            out.extend_from_slice(b"],\n      \"paths\": [");
+            for (i, entry) in kept.iter().enumerate() {
+                if i > 0 {
+                    out.extend_from_slice(b", ");
+                }
+                json_string(&mut out, &entry.path);
+            }
+            out.extend_from_slice(b"],\n      \"license\": ");
             json_string(&mut out, license);
             let newest = &entries[group_end - 1];
             if let Some(homepage) = &newest.homepage {

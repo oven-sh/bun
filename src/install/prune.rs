@@ -9,7 +9,6 @@ use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 
-use crate::config_version::ConfigVersion;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
@@ -130,16 +129,17 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
+    let configured_linker = manager.options.node_linker;
     let loaded = {
         let load = manager.load_lockfile_from_cwd::<false>();
         match &load {
             LoadResult::NotFound => Err(None),
             LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.choose_config_version().0),
+            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
         }
     };
-    let config_version = match loaded {
-        Ok(config_version) => config_version,
+    let linker = match loaded {
+        Ok(linker) => linker,
         Err(None) => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
@@ -173,22 +173,12 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         }
     };
 
-    let layout = match manager.options.node_linker {
-        NodeLinker::Hoisted => Layout::Hoisted,
+    let layout = match linker {
         NodeLinker::Isolated => Layout::Isolated,
-        NodeLinker::Auto => match config_version {
-            ConfigVersion::V0 => Layout::Hoisted,
-            ConfigVersion::V1 => {
-                if manager.lockfile.workspace_paths.len() > 0 {
-                    Layout::Isolated
-                } else {
-                    Layout::Hoisted
-                }
-            }
-        },
+        _ => Layout::Hoisted,
     };
 
-    let workspace_names = collect_workspace_names(&manager.lockfile);
+    let workspace_names = collect_workspace_names(manager);
     let selection = select_importers(manager, original_cwd);
 
     let mut plan = Plan::default();
@@ -253,15 +243,23 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     Ok(())
 }
 
-fn collect_workspace_names(lockfile: &Lockfile) -> Vec<Box<[u8]>> {
+fn is_pruned_workspace(manager: &PackageManager, pkg_id: usize) -> bool {
+    let pruned = &manager.summary.pruned_workspaces;
+    !pruned.is_empty() && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
+}
+
+fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
+    let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let pkg_res = lockfile.packages.items_resolution();
     let mut out: Vec<Box<[u8]>> = pkg_res
         .iter()
-        .zip(names)
-        .filter(|(res, _)| res.tag == ResolutionTag::Workspace)
-        .map(|(_, name)| name.slice(buf).into())
+        .enumerate()
+        .filter(|(pkg_id, res)| {
+            res.tag == ResolutionTag::Workspace && !is_pruned_workspace(manager, *pkg_id)
+        })
+        .map(|(pkg_id, _)| names[pkg_id].slice(buf).into())
         .collect();
     out.sort_unstable();
     out.dedup();
@@ -343,6 +341,7 @@ fn refuse_unless_lockfile_matches_package_json(manager: &mut PackageManager) -> 
         }
         Global::exit(1);
     }
+    manager.summary = summary;
     Ok(())
 }
 
@@ -363,8 +362,11 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
         return None;
     }
     let lockfile: &Lockfile = &manager.lockfile;
-    let ids =
-        WorkspaceFilter::select_workspaces(lockfile, manager.options.filter_patterns, original_cwd);
+    let ids = WorkspaceFilter::select_workspaces_quietly(
+        lockfile,
+        manager.options.filter_patterns,
+        original_cwd,
+    );
     if ids.is_empty() {
         if manager.options.log_level != LogLevel::Silent {
             Output::err_generic("No packages matched the filter", ());
@@ -395,7 +397,10 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     let mut protected_aliases: Vec<Box<[u8]>> = Vec::new();
     let mut worklist: Vec<PackageID> = Vec::new();
     for importer in 0..pkg_res.len() {
-        if selected.is_set(importer) || !is_importer(importer) {
+        if selected.is_set(importer)
+            || !is_importer(importer)
+            || is_pruned_workspace(manager, importer)
+        {
             continue;
         }
         protected_packages.set(importer);
@@ -403,9 +408,16 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
         while let Some(pkg_id) = worklist.pop() {
             let slice = dep_slices[pkg_id as usize];
             for dep_id in slice.begin() as usize..slice.end() as usize {
-                protected_aliases.push(deps[dep_id].name.slice(buf).into());
                 let target = resolutions[dep_id];
-                if target == invalid_package_id || (target as usize) >= pkg_res.len() {
+                let valid = target != invalid_package_id && (target as usize) < pkg_res.len();
+                if valid
+                    && is_importer(target as usize)
+                    && is_pruned_workspace(manager, target as usize)
+                {
+                    continue;
+                }
+                protected_aliases.push(deps[dep_id].name.slice(buf).into());
+                if !valid {
                     continue;
                 }
                 if protected_packages.is_set(target as usize) {
@@ -793,6 +805,7 @@ fn plan_hoisted(
         if visited.is_set(pkg_id)
             || res.tag != ResolutionTag::Workspace
             || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
+            || is_pruned_workspace(&*manager, pkg_id)
         {
             continue;
         }
@@ -969,11 +982,20 @@ fn scan_folder(
 
 fn wanted_packages(manager: &PackageManager) -> DynamicBitSet {
     let lockfile: &Lockfile = &manager.lockfile;
-    reachable::packages(
-        lockfile,
-        lockfile.buffers.resolutions.as_slice(),
-        reachable::Options::install(manager),
-    )
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let options = reachable::Options::install(manager);
+    if manager.summary.pruned_workspaces.is_empty() {
+        return reachable::packages(lockfile, resolutions, options);
+    }
+    let pkg_res = lockfile.packages.items_resolution();
+    let roots: Vec<PackageID> = (0..pkg_res.len())
+        .filter(|&id| {
+            (id == 0 || pkg_res[id].tag == ResolutionTag::Workspace)
+                && !is_pruned_workspace(manager, id)
+        })
+        .map(|id| id as PackageID)
+        .collect();
+    reachable::packages_from(lockfile, resolutions, &roots, false, options)
 }
 
 fn store_keys(lockfile: &Lockfile, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
@@ -1119,6 +1141,9 @@ fn plan_isolated(
             _ => continue,
         };
         if selection.is_some_and(|sel| !sel.selected.is_set(pkg_id)) {
+            continue;
+        }
+        if is_pruned_workspace(manager, pkg_id) {
             continue;
         }
         let Ok(dir) = Dir::open(&folder_path) else {

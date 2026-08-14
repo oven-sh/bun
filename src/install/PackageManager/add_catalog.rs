@@ -17,6 +17,7 @@ use super::add_remove_with_filter::{
     WorkspaceTarget, fetch_entry_root, load_workspace_members, local_relative_path,
     root_package_json_path,
 };
+use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_package_json_cache::MapEntry;
@@ -24,15 +25,19 @@ use super::{PackageManager, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
+type RootEntry = (Box<[u8]>, Box<[u8]>);
+
 #[derive(Default)]
 pub(crate) struct State {
     enabled: bool,
     auto_use: Vec<PackageNameHash>,
     adds: Vec<Add>,
+    /// (name, text) of every entry the flag's catalog had before this command; filled by prepare() in --catalog mode.
+    root_entries: Vec<RootEntry>,
 }
 
 struct Add {
-    name: &'static [u8],
+    name: Box<[u8]>,
     name_hash: PackageNameHash,
     group: Box<[u8]>,
     candidate: Candidate,
@@ -42,13 +47,16 @@ struct Add {
 enum Candidate {
     Explicit(Box<[u8]>),
     Existing(Box<[u8]>),
+    Resolved(Box<[u8]>),
     Latest,
 }
 
 impl Candidate {
     fn literal(&self) -> &[u8] {
         match self {
-            Candidate::Explicit(literal) | Candidate::Existing(literal) => &literal[..],
+            Candidate::Explicit(literal)
+            | Candidate::Existing(literal)
+            | Candidate::Resolved(literal) => &literal[..],
             Candidate::Latest => b"latest".as_slice(),
         }
     }
@@ -59,6 +67,65 @@ enum Outcome {
     Reused,
     Seeded,
     Moved { entry: Box<[u8]> },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    Convert,
+    Keep,
+}
+
+fn root_entry<'a>(root_entries: &'a [RootEntry], name: &[u8]) -> Option<&'a [u8]> {
+    root_entries
+        .iter()
+        .find(|(entry_name, _)| **entry_name == *name)
+        .map(|(_, text)| &text[..])
+}
+
+fn root_target() -> WorkspaceTarget {
+    WorkspaceTarget {
+        name: Box::default(),
+        name_hash: None,
+        package_json_path: root_package_json_path(),
+    }
+}
+
+fn target_label(package_json: &Expr) -> Box<[u8]> {
+    package_json
+        .get(b"name")
+        .and_then(|name| name.data.e_string())
+        .map(|name| name.data.slice())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(b"package.json".as_slice())
+        .into()
+}
+
+fn note_follows(quiet: bool, name: &[u8], target: &[u8], entry: &[u8], declared: &[u8]) {
+    if quiet {
+        return;
+    }
+    bun_core::note!(
+        "{} in {} now follows the catalog entry \"{}\" instead of \"{}\"",
+        BStr::new(name),
+        BStr::new(target),
+        BStr::new(entry),
+        BStr::new(declared),
+    );
+    Output::flush();
+}
+
+fn note_keeps(quiet: bool, name: &[u8], target: &[u8], declared: &[u8], entry: &[u8]) {
+    if quiet {
+        return;
+    }
+    bun_core::note!(
+        "{} in {} keeps \"{}\" because the catalog entry is \"{}\"",
+        BStr::new(name),
+        BStr::new(target),
+        BStr::new(declared),
+        BStr::new(entry),
+    );
+    Output::flush();
 }
 
 fn estring(arena: &bun_alloc::Arena, bytes: &[u8]) -> Expr {
@@ -122,8 +189,36 @@ fn root_defines_catalogs(root: &Expr) -> bool {
     has_catalogs(&workspaces) || has_catalogs(root)
 }
 
-fn entries_object(root: &Expr, name: &[u8], create: Option<&bun_alloc::Arena>) -> Option<Expr> {
-    let Some(workspaces) = root.get(b"workspaces") else {
+fn catalogs_container(root: &Expr) -> Option<Expr> {
+    let workspaces = root.get(b"workspaces")?;
+    let workspaces_is_object = matches!(workspaces.data, ExprData::EObject(_));
+    Some(if workspaces_is_object && has_catalogs(&workspaces) {
+        workspaces
+    } else if has_catalogs(root) || !workspaces_is_object {
+        *root
+    } else {
+        workspaces
+    })
+}
+
+fn default_group_objects(container: Expr, group: &[u8]) -> [Option<Expr>; 2] {
+    let singular = object_property(container, b"catalog", None);
+    let in_catalogs = object_property(container, b"catalogs", None)
+        .and_then(|catalogs| object_property(catalogs, b"default", None));
+    if group.is_empty() {
+        [singular, in_catalogs]
+    } else {
+        [in_catalogs, singular]
+    }
+}
+
+fn entries_object(
+    root: &Expr,
+    group: &[u8],
+    dep: &[u8],
+    create: Option<&bun_alloc::Arena>,
+) -> Option<Expr> {
+    let Some(container) = catalogs_container(root) else {
         if create.is_some() {
             Output::err_generic(
                 "--catalog requires a \"workspaces\" field in the root package.json",
@@ -134,37 +229,61 @@ fn entries_object(root: &Expr, name: &[u8], create: Option<&bun_alloc::Arena>) -
         return None;
     };
 
-    let workspaces_is_object = matches!(workspaces.data, ExprData::EObject(_));
-    let container = if workspaces_is_object && has_catalogs(&workspaces) {
-        workspaces
-    } else if has_catalogs(root) || !workspaces_is_object {
-        *root
-    } else {
-        workspaces
-    };
-
-    if !CatalogMap::same_name(name, b"") {
+    if !CatalogMap::same_name(group, b"") {
         let catalogs = object_property(container, b"catalogs", create)?;
-        return object_property(catalogs, name, create);
+        return object_property(catalogs, group, create);
     }
-    let singular = || object_property(container, b"catalog", None);
-    let in_catalogs = || {
-        object_property(
-            object_property(container, b"catalogs", None)?,
-            b"default",
-            None,
-        )
-    };
-    let existing = if name.is_empty() {
-        singular().or_else(in_catalogs)
-    } else {
-        in_catalogs().or_else(singular)
-    };
-    existing.or_else(|| object_property(container, b"catalog", create))
+    let candidates = default_group_objects(container, group);
+    if let Some(defining) = candidates
+        .iter()
+        .flatten()
+        .find(|object| object.as_property(dep).is_some())
+    {
+        return Some(*defining);
+    }
+    if let Some(existing) = candidates.iter().flatten().next() {
+        return Some(*existing);
+    }
+    object_property(container, b"catalog", create)
 }
 
 fn request_literal(request: &UpdateRequest) -> &[u8] {
     request.version.literal.slice(request.version_buf())
+}
+
+fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
+    let Some(container) = catalogs_container(root) else {
+        return;
+    };
+    let objects: [Option<Expr>; 2] = if CatalogMap::same_name(group, b"") {
+        default_group_objects(container, group)
+    } else {
+        [
+            object_property(container, b"catalogs", None)
+                .and_then(|catalogs| object_property(catalogs, group, None)),
+            None,
+        ]
+    };
+    for object in objects.iter().flatten() {
+        let Some(obj) = object.data.e_object() else {
+            continue;
+        };
+        for property in obj.properties.slice() {
+            let (Some(key), Some(value)) = (
+                property
+                    .key
+                    .as_ref()
+                    .and_then(|k| k.as_utf8_string_literal()),
+                property
+                    .value
+                    .as_ref()
+                    .and_then(|v| v.as_utf8_string_literal()),
+            ) else {
+                continue;
+            };
+            out.push((key.into(), value.into()));
+        }
+    }
 }
 
 pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
@@ -175,15 +294,23 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
         !manager.catalog_add.enabled
             && manager.catalog_add.auto_use.is_empty()
             && manager.catalog_add.adds.is_empty()
+            && manager.catalog_add.root_entries.is_empty()
     );
 
-    if manager.options.add_catalog.is_some() {
+    if let Some(group) = manager.options.add_catalog {
         for request in updates {
-            if !request.is_aliased {
-                Output::err_generic(
-                    "--catalog can only add packages by name, but got \"{s}\"",
-                    (BStr::new(request_literal(request)),),
-                );
+            if local_relative_path(request).is_some() {
+                if request.is_aliased {
+                    Output::err_generic(
+                        "--catalog cannot add \"{s}@{s}\": a local path in the catalog would resolve from the workspace root, not from the package that added it",
+                        (BStr::new(request.name), BStr::new(request_literal(request))),
+                    );
+                } else {
+                    Output::err_generic(
+                        "--catalog cannot add \"{s}\": a local path in the catalog would resolve from the workspace root, not from the package that added it",
+                        (BStr::new(request_literal(request)),),
+                    );
+                }
                 Global::crash();
             }
             if request.version.tag == dependency::Tag::Workspace {
@@ -193,16 +320,9 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 );
                 Global::crash();
             }
-            if local_relative_path(request).is_some() {
-                Output::err_generic(
-                    "--catalog cannot add \"{s}@{s}\": a local path in the catalog would resolve from the workspace root, not from the package that added it",
-                    (BStr::new(request.name), BStr::new(request_literal(request))),
-                );
-                Global::crash();
-            }
         }
         let ws = load_workspace_members(manager);
-        for request in updates {
+        for request in updates.iter().filter(|request| request.is_aliased) {
             if *ws.root_name == *request.name {
                 Output::err_generic(
                     "--catalog cannot add a workspace package, but \"{s}\" is the workspace root",
@@ -224,26 +344,28 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 Global::crash();
             }
         }
+        let root = fetch_entry_root(manager, &root_target());
+        if root.get(b"workspaces").is_none() {
+            Output::err_generic(
+                "--catalog requires a \"workspaces\" field in the root package.json",
+                (),
+            );
+            Global::crash();
+        }
+        collect_root_entries(&root, group, &mut manager.catalog_add.root_entries);
         manager.catalog_add.enabled = true;
         return;
     }
 
-    let root = fetch_entry_root(
-        manager,
-        &WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        },
-    );
+    let root = fetch_entry_root(manager, &root_target());
     if !root_defines_catalogs(&root) {
         return;
     }
     manager.catalog_add.enabled = true;
-    let Some(entries) = entries_object(&root, b"", None) else {
-        return;
-    };
     for request in updates.iter().filter(|request| request.is_aliased) {
+        let Some(entries) = entries_object(&root, b"", request.name, None) else {
+            continue;
+        };
         let Some(q) = entries.as_property(request.name) else {
             continue;
         };
@@ -278,37 +400,195 @@ fn catalog_group_of(reference: &[u8]) -> &[u8] {
     strings::trim(&reference[b"catalog:".len()..], &strings::WHITESPACE_CHARS)
 }
 
-fn record_add(state: &mut State, request: &UpdateRequest, group: &[u8], existing: Option<&[u8]>) {
-    let candidate = if request.version.tag != dependency::Tag::Uninitialized {
-        Candidate::Explicit(request_literal(request).into())
-    } else {
-        match existing.map(|literal| (dependency::Tag::infer(literal), literal)) {
-            Some((dependency::Tag::Npm | dependency::Tag::DistTag, literal)) => {
-                Candidate::Existing(literal.into())
-            }
-            _ => Candidate::Latest,
-        }
-    };
-    match state
-        .adds
-        .iter_mut()
-        .find(|add| add.name_hash == request.name_hash && CatalogMap::same_name(&add.group, group))
-    {
-        None => state.adds.push(Add {
-            name: request.name,
+fn references_flag_group(slot: &[u8], flag: &[u8]) -> bool {
+    dependency::Tag::infer(slot) == dependency::Tag::Catalog
+        && CatalogMap::same_name(catalog_group_of(slot), flag)
+}
+
+fn find_add<'a>(
+    adds: &'a mut [Add],
+    name_hash: PackageNameHash,
+    group: &[u8],
+) -> Option<&'a mut Add> {
+    adds.iter_mut()
+        .find(|add| add.name_hash == name_hash && CatalogMap::same_name(&add.group, group))
+}
+
+fn record_add(
+    state: &mut State,
+    request: &UpdateRequest,
+    group: &[u8],
+    declared: Option<&[u8]>,
+    target: &[u8],
+    quiet: bool,
+) -> Decision {
+    let push = |adds: &mut Vec<Add>, candidate: Candidate| {
+        adds.push(Add {
+            name: request.name.into(),
             name_hash: request.name_hash,
             group: group.into(),
             candidate,
             outcome: Outcome::Pending,
-        }),
-        Some(add) => {
-            if matches!(add.candidate, Candidate::Latest)
-                && matches!(candidate, Candidate::Existing(_))
-            {
-                add.candidate = candidate;
+        });
+    };
+
+    if request.version.tag != dependency::Tag::Uninitialized {
+        if find_add(&mut state.adds, request.name_hash, group).is_none() {
+            push(
+                &mut state.adds,
+                Candidate::Explicit(request_literal(request).into()),
+            );
+        }
+        return Decision::Convert;
+    }
+
+    let declared = declared.filter(|literal| {
+        matches!(
+            dependency::Tag::infer(literal),
+            dependency::Tag::Npm | dependency::Tag::DistTag
+        )
+    });
+    let candidate = || match declared {
+        Some(literal) => Candidate::Existing(literal.into()),
+        None => Candidate::Latest,
+    };
+
+    if let (Some(declared), Some(entry)) = (declared, root_entry(&state.root_entries, request.name))
+    {
+        if declared != entry {
+            note_follows(quiet, request.name, target, entry, declared);
+        }
+        if find_add(&mut state.adds, request.name_hash, group).is_none() {
+            push(&mut state.adds, candidate());
+        }
+        return Decision::Convert;
+    }
+
+    let Some(add) = find_add(&mut state.adds, request.name_hash, group) else {
+        push(&mut state.adds, candidate());
+        return Decision::Convert;
+    };
+    match (&add.candidate, declared) {
+        (Candidate::Latest, Some(_)) => {}
+        (Candidate::Existing(seed), Some(declared)) => {
+            if declared == &seed[..] {
+                return Decision::Convert;
+            }
+            if exact_within(declared, seed) {
+                note_follows(quiet, request.name, target, seed, declared);
+                return Decision::Convert;
+            }
+            note_keeps(quiet, request.name, target, declared, seed);
+            return Decision::Keep;
+        }
+        _ => return Decision::Convert,
+    }
+    add.candidate = candidate();
+    Decision::Convert
+}
+
+fn drop_already_cataloged(
+    updates: &mut &mut [UpdateRequest],
+    package_json: &Expr,
+    root_entries: &[RootEntry],
+    flag: &[u8],
+) {
+    let mut i = 0;
+    while i < updates.len() {
+        let request = &updates[i];
+        let already = !request.is_aliased
+            && root_entries.iter().any(|(entry_name, text)| {
+                &text[..] == request_literal(request)
+                    && existing_slot(package_json, entry_name)
+                        .is_some_and(|slot| references_flag_group(slot.slice(), flag))
+            });
+        if !already {
+            i += 1;
+            continue;
+        }
+        let last = updates.len() - 1;
+        updates.swap(i, last);
+        *updates = &mut core::mem::take(updates)[..last];
+    }
+}
+
+/// Positional without a name (`bun add <url> --catalog`): the entry is whatever plain add just wrote for the resolved name.
+fn settle_resolved_positional(
+    state: &mut State,
+    request: &UpdateRequest,
+    lockfile: &Lockfile,
+    package_json: &Expr,
+    dependency_list: &[u8],
+    flag: &[u8],
+    e_string: *mut E::EString,
+    target: &[u8],
+    quiet: bool,
+) -> Decision {
+    let name: &[u8] = request.get_resolved_name(lockfile);
+    let name_hash = lockfile.packages.items_name_hash()[request.package_id as usize];
+    // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
+    let literal: &[u8] = unsafe { (*e_string).data }.slice();
+
+    let list = package_json
+        .get(dependency_list)
+        .and_then(|list| list.data.e_object());
+    let declared_elsewhere = list.is_some_and(|list| {
+        list.properties
+            .slice()
+            .iter()
+            .filter(|property| {
+                property
+                    .key
+                    .as_ref()
+                    .and_then(|key| key.data.e_string())
+                    .is_some_and(|key| key.eql_bytes(name))
+            })
+            .count()
+            > 1
+    });
+
+    let entry: &[u8] = match root_entry(&state.root_entries, name) {
+        Some(entry) => entry,
+        None => {
+            let position = state
+                .adds
+                .iter()
+                .position(|add| *add.name == *name && CatalogMap::same_name(&add.group, flag));
+            match position {
+                Some(i) => state.adds[i].candidate.literal(),
+                None => {
+                    state.adds.push(Add {
+                        name: name.into(),
+                        name_hash,
+                        group: flag.into(),
+                        candidate: Candidate::Resolved(literal.into()),
+                        outcome: Outcome::Pending,
+                    });
+                    literal
+                }
             }
         }
+    };
+
+    if declared_elsewhere {
+        if let Some(mut list) = list {
+            list.properties.retain(|property| {
+                !property
+                    .value
+                    .and_then(|value| value.data.e_string())
+                    .is_some_and(|value| core::ptr::eq(value.as_ptr(), e_string))
+            });
+        }
+        let declared =
+            existing_slot(package_json, name).map_or(b"".as_slice(), |slot| slot.slice());
+        note_keeps(quiet, name, target, declared, entry);
+        return Decision::Keep;
     }
+    if entry != literal {
+        note_keeps(quiet, name, target, literal, entry);
+        return Decision::Keep;
+    }
+    Decision::Convert
 }
 
 pub(crate) fn edit_target(
@@ -321,6 +601,20 @@ pub(crate) fn edit_target(
     if !manager.catalog_add.enabled {
         return PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options);
     }
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    let flag = manager.options.add_catalog;
+    let label = target_label(package_json);
+
+    if options.before_install {
+        if let Some(flag) = flag {
+            drop_already_cataloged(
+                updates,
+                package_json,
+                &manager.catalog_add.root_entries,
+                flag,
+            );
+        }
+    }
 
     let captured: Vec<(PackageNameHash, StoreStr)> = updates
         .iter()
@@ -332,18 +626,39 @@ pub(crate) fn edit_target(
 
     PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options)?;
 
-    let flag = manager.options.add_catalog;
     let arena = &manager.ast_arena;
+    let lockfile: &Lockfile = &manager.lockfile;
     let state = &mut manager.catalog_add;
     let flag_literal = flag.map(|name| StoreStr::new(reference_literal(arena, name)));
 
-    for request in updates.iter() {
-        if !request.is_aliased {
-            continue;
-        }
+    for request in updates.iter_mut() {
         let Some(e_string) = request.e_string else {
             continue;
         };
+        if !request.is_aliased {
+            let Some(flag) = flag else {
+                continue;
+            };
+            if options.before_install || request.package_id == INVALID_PACKAGE_ID {
+                continue;
+            }
+            let decision = settle_resolved_positional(
+                state,
+                request,
+                lockfile,
+                package_json,
+                dependency_list,
+                flag,
+                e_string,
+                &label,
+                quiet,
+            );
+            if decision == Decision::Convert {
+                // SAFETY: see the write at the bottom of this loop.
+                unsafe { (*e_string).data = flag_literal.expect("infallible: flag is Some") };
+            }
+            continue;
+        }
         let existing = captured
             .iter()
             .find(|&&(name_hash, _)| name_hash == request.name_hash)
@@ -359,7 +674,14 @@ pub(crate) fn edit_target(
         } else {
             match (existing_ref, flag) {
                 (Some(reference), Some(_)) => {
-                    record_add(state, request, catalog_group_of(reference.slice()), None);
+                    record_add(
+                        state,
+                        request,
+                        catalog_group_of(reference.slice()),
+                        None,
+                        &label,
+                        quiet,
+                    );
                     reference
                 }
                 (Some(reference), None)
@@ -368,8 +690,18 @@ pub(crate) fn edit_target(
                     reference
                 }
                 (None, Some(name)) => {
-                    record_add(state, request, name, existing.map(|slot| slot.slice()));
-                    flag_literal.expect("infallible: flag is Some")
+                    let declared = existing.map(|slot| slot.slice());
+                    match record_add(state, request, name, declared, &label, quiet) {
+                        Decision::Convert => flag_literal.expect("infallible: flag is Some"),
+                        Decision::Keep => {
+                            if let Some(slot) = existing {
+                                // SAFETY: see the write at the bottom of this loop.
+                                unsafe { (*e_string).data = slot };
+                            }
+                            request.e_string = None;
+                            continue;
+                        }
+                    }
                 }
                 (None, None) if state.auto_use.contains(&request.name_hash) => {
                     StoreStr::new(b"catalog:")
@@ -396,6 +728,27 @@ fn exact_within(wanted: &[u8], entry: &[u8]) -> bool {
     }
 }
 
+fn alphabetize_appended(root: &Expr, adds: &[Add], appended: &[usize]) {
+    for (n, &i) in appended.iter().enumerate() {
+        let group = &adds[i].group;
+        if appended[..n]
+            .iter()
+            .any(|&j| CatalogMap::same_name(&adds[j].group, group))
+        {
+            continue;
+        }
+        let mut entries = entries_object(root, group, &adds[i].name, None)
+            .expect("infallible: created by the caller");
+        let obj = entries
+            .data
+            .e_object_mut()
+            .expect("infallible: entries_object returns objects");
+        if obj.properties.len_u32() > 1 {
+            obj.alphabetize_properties();
+        }
+    }
+}
+
 pub(crate) fn edit_root_before_install(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -409,27 +762,30 @@ pub(crate) fn edit_root_before_install(
         if !matches!(add.outcome, Outcome::Pending) {
             continue;
         }
-        let entries = entries_object(root_package_json, &add.group, Some(arena))
+        debug_assert!(!matches!(add.candidate, Candidate::Resolved(_)));
+        let entries = entries_object(root_package_json, &add.group, &add.name, Some(arena))
             .expect("infallible: created on demand");
         let existing: Option<Box<[u8]>> = entries
-            .as_property(add.name)
+            .as_property(&add.name)
             .and_then(|q| q.expr.as_utf8_string_literal().map(Box::from));
         add.outcome = match (existing, &add.candidate) {
             (Some(entry), Candidate::Explicit(wanted)) if *entry == **wanted => Outcome::Reused,
             (Some(entry), Candidate::Explicit(wanted)) => {
-                set_property(entries, arena, add.name, estring(arena, wanted));
+                set_property(entries, arena, &add.name, estring(arena, wanted));
                 if exact_within(wanted, &entry) {
                     Outcome::Moved { entry }
                 } else {
                     Outcome::Seeded
                 }
             }
-            (Some(_), Candidate::Existing(_) | Candidate::Latest) => Outcome::Reused,
+            (Some(_), Candidate::Existing(_) | Candidate::Resolved(_) | Candidate::Latest) => {
+                Outcome::Reused
+            }
             (None, candidate) => {
                 set_property(
                     entries,
                     arena,
-                    add.name,
+                    &add.name,
                     estring(arena, candidate.literal()),
                 );
                 appended.push(i);
@@ -438,24 +794,7 @@ pub(crate) fn edit_root_before_install(
         };
     }
 
-    for (n, &i) in appended.iter().enumerate() {
-        let group = &adds[i].group;
-        if appended[..n]
-            .iter()
-            .any(|&j| CatalogMap::same_name(&adds[j].group, group))
-        {
-            continue;
-        }
-        let mut entries = entries_object(root_package_json, group, None)
-            .expect("infallible: created by the loop above");
-        let obj = entries
-            .data
-            .e_object_mut()
-            .expect("infallible: entries_object returns objects");
-        if obj.properties.len_u32() > 1 {
-            obj.alphabetize_properties();
-        }
-    }
+    alphabetize_appended(root_package_json, adds, &appended);
     Ok(())
 }
 
@@ -476,7 +815,7 @@ pub(crate) fn edit_root_entry_before_install(
     Ok(())
 }
 
-/// Runs after `clean_with_logger`: puts moved entries back and replaces dist-tag seeds with the resolved range; the lockfile catalog is re-derived from the file by `package_json_write_back`.
+/// Runs after `clean_with_logger`: puts moved entries back, replaces dist-tag seeds with the resolved range and writes the entries of nameless positionals; the lockfile catalog is re-derived from the file by `package_json_write_back`.
 pub(crate) fn edit_root_after_install(
     manager: &PackageManager,
     root_package_json: &Expr,
@@ -531,16 +870,38 @@ pub(crate) fn edit_root_after_install(
     }
 
     let mut changed = false;
-    for (add, &pkg_id) in adds.iter().zip(resolved.iter()) {
+    let mut appended: Vec<usize> = Vec::new();
+    for (i, (add, &pkg_id)) in adds.iter().zip(resolved.iter()).enumerate() {
         let literal: Vec<u8> = match &add.outcome {
-            Outcome::Pending | Outcome::Reused => continue,
+            Outcome::Pending => {
+                let Candidate::Resolved(literal) = &add.candidate else {
+                    continue;
+                };
+                let entries = entries_object(root_package_json, &add.group, &add.name, Some(arena))
+                    .expect("infallible: prepare() checked workspaces");
+                let current = entries.as_property(&add.name);
+                if current
+                    .as_ref()
+                    .and_then(|q| q.expr.as_utf8_string_literal())
+                    == Some(&literal[..])
+                {
+                    continue;
+                }
+                if current.is_none() {
+                    appended.push(i);
+                }
+                set_property(entries, arena, &add.name, estring(arena, literal));
+                changed = true;
+                continue;
+            }
+            Outcome::Reused => continue,
             Outcome::Moved { entry } => entry.to_vec(),
             Outcome::Seeded => {
                 if pkg_id == INVALID_PACKAGE_ID {
                     continue;
                 }
                 // The seed is read back from the lockfile catalog: the requests were rebound to the `catalog:` rows by `bind_update_requests`.
-                let Some(seed) = lockfile.catalogs.find(buf, &add.group, add.name) else {
+                let Some(seed) = lockfile.catalogs.find(buf, &add.group, &add.name) else {
                     continue;
                 };
                 if seed.version.tag != dependency::Tag::DistTag {
@@ -566,14 +927,15 @@ pub(crate) fn edit_root_after_install(
             }
         };
 
-        let Some(mut entries) = entries_object(root_package_json, &add.group, None) else {
+        let Some(mut entries) = entries_object(root_package_json, &add.group, &add.name, None)
+        else {
             continue;
         };
         let obj = entries
             .data
             .e_object_mut()
             .expect("infallible: entries_object returns objects");
-        let Some(q) = obj.as_property(add.name) else {
+        let Some(q) = obj.as_property(&add.name) else {
             continue;
         };
         if q.expr.as_utf8_string_literal() == Some(&literal[..]) {
@@ -582,5 +944,6 @@ pub(crate) fn edit_root_after_install(
         obj.properties.slice_mut()[q.i as usize].value = Some(estring(arena, &literal));
         changed = true;
     }
+    alphabetize_appended(root_package_json, adds, &appended);
     Ok(changed)
 }

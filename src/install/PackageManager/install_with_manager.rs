@@ -1318,15 +1318,21 @@ pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> crate::Result<(Vec<WorkspaceFilter>, bool)> {
-    if manager.subcommand != Subcommand::Install || manager.options.filter_patterns.is_empty() {
-        return Ok((Vec::new(), true));
-    }
-    let ids = super::workspace_selection::select_lockfile_workspaces(
-        &manager.lockfile,
-        manager.options.filter_patterns,
-        original_cwd,
-        super::workspace_selection::RootSelection::Implicit,
-    );
+    let ids = if manager.subcommand == Subcommand::Install {
+        if manager.options.filter_patterns.is_empty() {
+            return Ok((Vec::new(), true));
+        }
+        WorkspaceFilter::select_workspaces(
+            &manager.lockfile,
+            manager.options.filter_patterns,
+            original_cwd,
+        )
+    } else {
+        match &manager.filtered_link_targets {
+            None => return Ok((Vec::new(), true)),
+            Some(targets) => targets.package_ids(&manager.lockfile),
+        }
+    };
     let filters = vec![WorkspaceFilter::from_ids(ids)];
     let install_root_dependencies = WorkspaceFilter::is_selected(&filters, 0);
     Ok((filters, install_root_dependencies))
@@ -1496,10 +1502,9 @@ fn index_of_named_update(
     dependency: &Dependency,
     package_id: PackageID,
 ) -> Option<usize> {
-    let requests = &manager.update_requests;
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
     if let Some(i) =
-        UpdateRequest::index_of_name(requests, dependency.name_hash, dependency.name.slice(buf))
+        manager.index_of_update_request(dependency.name_hash, dependency.name.slice(buf))
     {
         return Some(i);
     }
@@ -1509,18 +1514,14 @@ fn index_of_named_update(
             return None;
         }
         let name = manager.lockfile.packages.items_name()[package_id as usize].slice(buf);
-        return UpdateRequest::index_of_name(requests, name_hash, name);
+        return manager.index_of_update_request(name_hash, name);
     }
     let realname = dependency.realname();
     if realname.eql(dependency.name, buf, buf) {
         return None;
     }
     let realname = realname.slice(buf);
-    UpdateRequest::index_of_name(
-        requests,
-        bun_semver::string::Builder::string_hash(realname),
-        realname,
-    )
+    manager.index_of_update_request(bun_semver::string::Builder::string_hash(realname), realname)
 }
 
 #[cold]

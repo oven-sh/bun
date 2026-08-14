@@ -2619,6 +2619,11 @@ impl<'a> LinkerContext<'a> {
         // does O(V*E) work when shorter paths are discovered late on
         // diamond-shaped DAGs.
         debug_assert!(ctx.queue.is_empty());
+        // A stylesheet entry point only gets a CSS chunk (`compute_chunks`), so
+        // its bit must not reach the runtime through the JS parts of the
+        // stylesheets it reaches: under `--splitting` that bit would move the
+        // runtime out of the chunks that print those parts.
+        let from_css_entry_point = ctx.css_reprs[source_index as usize].is_some();
         ctx.queue.push_back((source_index, distance));
 
         while let Some((source_index, distance)) = ctx.queue.pop_front() {
@@ -2650,19 +2655,12 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // A stylesheet's source index also holds the JS stub printed for it
-            // (the CommonJS wrapper when it is require()d, the namespace object
-            // when it is import-starred), whose parts depend on the runtime.
-            // Only the parts tree shaking kept get printed, so only those pull
-            // their dependencies into the chunk: the stub's namespace-export
-            // part uses `__export` whether or not anything import-stars it, and
-            // following it would put the runtime into every chunk that merely
-            // links a stylesheet.
-            let is_css = ctx.css_reprs[source_index as usize].is_some();
+            // Of the JS parts a stylesheet also carries, only the live ones get printed.
+            let live_parts_only = ctx.css_reprs[source_index as usize].is_some();
             let parts_live = &self.graph.parts_live[source_index as usize];
             let parts = ctx.parts[source_index as usize].as_slice();
             for (part_index, part) in parts.iter().enumerate() {
-                if is_css && !parts_live.is_set(part_index) {
+                if live_parts_only && (from_css_entry_point || !parts_live.is_set(part_index)) {
                     continue;
                 }
                 for dependency in part.dependencies.iter() {

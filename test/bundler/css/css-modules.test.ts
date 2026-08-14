@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -216,6 +217,48 @@ describe("css", () => {
       { file: "/out/a.js", stdout: "{}" },
       { file: "/out/b.js", stdout: '{"b":"b_Kd7Gww"}' },
     ],
+  });
+
+  // A stylesheet that is itself an entry point only produces a CSS file, so
+  // reaching the runtime from it must not count: the runtime has to stay in
+  // entry.js, the one chunk that prints the stylesheet's wrapper, instead of
+  // being split into a chunk of its own.
+  itBundled("css-module/RequireCssThatIsAlsoAnEntryPointWithSplitting", {
+    files: {
+      "/entry.js": `
+        console.log(JSON.stringify(require('./styles.module.css')));
+        export {};
+      `,
+      "/styles.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js", "styles.module.css"]);
+      api.expectFile("/out/entry.js").toContain("var __commonJS =");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: '{"foo":"foo_-MSaAA"}',
+    },
+  });
+
+  itBundled("css-module/RequireCssThatIsAlsoAnEntryPointInCjsFormat", {
+    files: {
+      "/entry.js": `
+        console.log(JSON.stringify(require('./styles.module.css')));
+        export {};
+      `,
+      "/styles.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: '{"foo":"foo_-MSaAA"}',
+    },
   });
 
   // Wrapping a CSS file must not wrap the files its stylesheet references:

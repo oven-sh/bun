@@ -1543,15 +1543,19 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
-        let (filter, flags_): (i16, u16) = match action {
-            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
-            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
+        let owner = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
+        // A cancel carries no udata: its owner is finished (`on_done` runs right
+        // after), EV_DELETE matches by (ident, filter) alone, and any receipt for it
+        // (knote already fired → ENOENT, fd closed → EBADF) must land on the
+        // `PollableTag::Empty` early return, not on the stale owner.
+        let (filter, flags_, udata): (i16, u16, usize) = match action {
+            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag, owner),
+            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE)
+                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
                 } else if poll.flags.contains(Flags::PollWritable) {
-                    (libc::EVFILT_WRITE, libc::EV_DELETE)
+                    (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
                 } else {
                     unreachable!()
                 }
@@ -1632,8 +1636,8 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
-        // only to unblock kevent() so the pending queue drains.
+        // The waker (whose event only exists to unblock kevent() so the pending
+        // queue drains) and cancels are submitted with udata=0 → tag=.empty.
         if tag == PollableTag::Empty {
             return;
         }
@@ -1641,7 +1645,10 @@ impl Poll {
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
-        if event.flags == libc::EV_ERROR {
+        // A changelist entry the kernel could not apply comes back with EV_ERROR
+        // set (xnu ORs it into the action bits, FreeBSD replaces them) and the
+        // errno in `data`.
+        if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.

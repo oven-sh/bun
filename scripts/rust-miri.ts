@@ -28,11 +28,10 @@ import { resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "..");
 
 // Crates that pass `cargo miri test` under Tree Borrows. To add one it must
-// (a) have at least one `#[test]`, (b) compile under `--cfg test`, (c) only
-// call `extern "C"` functions Miri ships shims for at test runtime (libc's
-// futex syscall and thread APIs, as bun_threading does, are fine; anything
-// vendored is not) — Miri reports
-// `unsupported operation: can't call foreign function` otherwise.
+// (a) have at least one `#[test]`, (b) compile under `--cfg test`, (c) at test
+// runtime only call `extern "C"` functions Miri has shims for (libc's futex and
+// thread APIs are; vendored C is not) — otherwise Miri reports
+// `unsupported operation: can't call foreign function`.
 const MIRI_CRATES = [
   "bun_ast",
   "bun_base64",

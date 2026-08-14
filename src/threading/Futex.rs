@@ -58,14 +58,9 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
     wake_raw(core::ptr::from_ref(ptr), max_waiters);
 }
 
-/// [`wake`] for a word that may be freed before this runs: a mutex's unlock
-/// tail (`Mutex::unlock_raw`), where the store that released the lock has to
-/// be the primitive's last access to its own memory because the thread it
-/// released may free the primitive at once. A `&AtomicU32` would assert the
-/// word live until this returns. Every backend's wake side uses the address
-/// only as a key and never reads the word, so this needs no `unsafe`: the
-/// worst a freed or reused address yields is a spurious wakeup, which every
-/// `wait()` loop tolerates.
+/// [`wake`] for a word the woken side may already have freed (`Mutex::unlock_raw`).
+/// Safe: every backend keys the wake on the address and never reads the word, so a
+/// stale address is at most a spurious wakeup.
 #[cold]
 pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     // Avoid calling into the OS if there's nothing to wake up.
@@ -179,8 +174,7 @@ mod windows_impl {
         let address: *const c_void = ptr.cast();
         debug_assert!(max_waiters != 0);
 
-        // SAFETY: RtlWakeAddress* only look `address` up in the waiter table;
-        // they never access the memory, so it need not be live (see `super::wake_raw`).
+        // SAFETY: RtlWakeAddress* only key on `address`; it need not be live (`super::wake_raw`).
         unsafe {
             match max_waiters {
                 1 => windows::ntdll::RtlWakeAddressSingle(address),
@@ -285,9 +279,7 @@ mod darwin_impl {
 
         loop {
             let addr: *const c_void = ptr.cast();
-            // SAFETY: __ulock_wake only keys the waiter lookup on `addr`; it never
-            // accesses the memory (hence no EFAULT below), so it need not be live
-            // (see `super::wake_raw`).
+            // SAFETY: __ulock_wake only keys on `addr`; it need not be live (`super::wake_raw`).
             let status = unsafe { c::__ulock_wake(flags, addr, 0) };
 
             if status >= 0 {
@@ -368,9 +360,8 @@ mod linux_impl {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
         };
-        // SAFETY: a private FUTEX_WAKE keys the waiter lookup on the address
-        // alone (`get_futex_key` does not touch the memory), so `ptr` need not
-        // point to live memory (see `super::wake_raw`).
+        // SAFETY: a private FUTEX_WAKE only keys on the address (`get_futex_key`); it
+        // need not be live (see `super::wake_raw`).
         let rc = unsafe {
             linux::futex_3arg(
                 ptr.cast(),
@@ -385,13 +376,7 @@ mod linux_impl {
         match linux::E::init(rc) {
             linux::E::SUCCESS => {} // successful wake up
             linux::E::INVAL => {}   // invalid futex_wait() on ptr done elsewhere
-            // The kernel only reports this for an address outside user space.
-            #[cfg(not(miri))]
-            linux::E::FAULT => panic!("futex_wake() returned EFAULT unexpectedly"),
-            // Miri reports it for a word that has already been freed, which
-            // `super::wake_raw` allows.
-            #[cfg(miri)]
-            linux::E::FAULT => {}
+            linux::E::FAULT => {}   // word already freed (Miri reports this; see `super::wake_raw`)
             _ => panic!("Unexpected futex_wake() return code"),
         }
     }
@@ -456,8 +441,7 @@ mod freebsd_impl {
         // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
         // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
         let n: c_ulong = max_waiters.min(c_int::MAX as u32) as c_ulong;
-        // SAFETY: a private WAKE only keys the waiter lookup on the address; it
-        // never accesses the memory, so it need not be live (see `super::wake_raw`).
+        // SAFETY: a private WAKE only keys on the address; it need not be live (`super::wake_raw`).
         let rc = unsafe {
             libc::_umtx_op(
                 ptr.cast::<c_void>().cast_mut(),
@@ -510,9 +494,8 @@ mod wasm_impl {
         compile_error!("WASI target missing cpu feature 'atomics'");
 
         debug_assert!(max_waiters != 0);
-        // SAFETY: memory.atomic.notify only keys on the (aligned, in-bounds)
-        // address; linear memory is never unmapped, so a freed word is still a
-        // valid key (see `super::wake_raw`). AtomicU32 has the layout of i32.
+        // SAFETY: memory.atomic.notify only keys on the aligned address, and linear memory is
+        // never unmapped (see `super::wake_raw`); AtomicU32 has the layout of i32.
         let woken_count = unsafe {
             core::arch::wasm32::memory_atomic_notify(ptr.cast::<i32>().cast_mut(), max_waiters)
         };

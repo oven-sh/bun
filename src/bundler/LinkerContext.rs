@@ -1367,11 +1367,9 @@ impl SourceMapDataTask {
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
             ctx.mark_pending_task_done();
-            // SAFETY: the linker is blocked in `line_offset_wait_group.wait()`
-            // (or will be) until this finish, so the group is live; it frees the
-            // tasks as soon as `wait()` returns (`generate_chunks_in_parallel`),
-            // which is why this goes through `finish_raw` and is the last
-            // statement to touch `ctx`.
+            // SAFETY: the group is live until this lets the linker's `wait()` return; the
+            // linker then frees the tasks at once (`generate_chunks_in_parallel`), so this
+            // is the last statement to touch `ctx`.
             unsafe {
                 WaitGroup::finish_raw(
                     &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,

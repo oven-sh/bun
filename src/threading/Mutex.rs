@@ -64,21 +64,17 @@ impl Mutex {
     /// Releases the mutex which was previously acquired with `lock()` or `try_lock()`.
     /// It is undefined behavior if the mutex is unlocked from a different thread that it was locked from.
     pub fn unlock(&self) {
-        // SAFETY: `self` is held by this thread (fn contract) and live for the
-        // whole call.
+        // SAFETY: held by this thread (fn contract) and live for the whole call.
         unsafe { Self::unlock_raw(self) }
     }
 
-    /// [`unlock`](Self::unlock) for a critical section whose exit is what lets
-    /// another thread free the mutex's owner (`WaitGroup::finish_raw`). A `&self`
-    /// argument would assert the mutex's storage, padding included, until this
-    /// returns; here the store that releases the lock is the last access to
-    /// `*this`, and the futex wake that may follow it goes by address only
-    /// ([`Futex::wake_raw`](crate::futex::wake_raw)).
+    /// [`unlock`](Self::unlock) for a release that lets another thread free the mutex
+    /// (`WaitGroup::finish_raw`): the releasing store is the last access to `*this`
+    /// (the wake after it goes by address, [`Futex::wake_raw`](crate::futex::wake_raw)),
+    /// where a `&self` argument would assert the storage until the call returned.
     ///
     /// # Safety
-    /// `this` must point to a mutex this thread holds. It stays valid until the
-    /// lock is released; from then on another thread may free it.
+    /// `this` must be held by this thread and stay live until the lock is released.
     pub(crate) unsafe fn unlock_raw(this: *const Self) {
         // SAFETY: the lock is still held, so `*this` is live (fn contract).
         unsafe { Impl::unlock_raw(&raw const (*this).impl_) }
@@ -265,9 +261,8 @@ impl WindowsImpl {
 
     /// See [`Mutex::unlock_raw`] for the contract.
     unsafe fn unlock_raw(this: *const Self) {
-        // SAFETY: this thread holds the lock (fn contract), so `*this` is live
-        // up to the release inside the call; releasing without ownership is
-        // documented UB on Windows.
+        // SAFETY: held by this thread (fn contract), so `*this` is live until the release
+        // inside the call; releasing without ownership is documented UB on Windows.
         unsafe {
             let srwlock = core::cell::UnsafeCell::raw_get(&raw const (*this).srwlock);
             bun_sys::windows::kernel32::ReleaseSRWLockExclusive(srwlock)
@@ -303,9 +298,7 @@ pub(crate) struct OsUnfairLock {
 // The type encodes the only pointer-validity precondition, and Apple's runtime
 // detects misuse (recursive lock / unowned unlock) by aborting — which is safe
 // — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
-// `os_unfair_lock_unlock` is the exception: a reference would assert the word
-// live until the call returns, but once it releases the lock another thread
-// may free the word (`Mutex::unlock_raw`), so it takes the address.
+// `os_unfair_lock_unlock` takes the address instead: see `Mutex::unlock_raw`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
     #[cfg(debug_assertions)]
@@ -333,8 +326,8 @@ impl DarwinImpl {
 
     /// See [`Mutex::unlock_raw`] for the contract.
     unsafe fn unlock_raw(this: *const Self) {
-        // SAFETY: this thread holds the lock (fn contract), so `*this` is live
-        // up to the release inside the call, which is its last access.
+        // SAFETY: held by this thread (fn contract), so `*this` is live until the release
+        // inside the call.
         unsafe { os_unfair_lock_unlock(core::cell::UnsafeCell::raw_get(&raw const (*this).oul)) }
     }
 }
@@ -426,9 +419,7 @@ impl FutexImpl {
         //
         // SAFETY: the lock is still held, so `*this` is live (fn contract).
         let state_ptr = unsafe { &raw const (*this).state };
-        // SAFETY: as above; the swap is what releases the lock, and the last
-        // access to `*this`. The wake below goes by address because the thread
-        // the swap releases may have freed the mutex by the time it runs.
+        // SAFETY: as above; this swap is the release, and the last access to `*this`.
         let state = unsafe { (*state_ptr).swap(Self::UNLOCKED, Ordering::Release) };
         debug_assert!(state != Self::UNLOCKED);
 

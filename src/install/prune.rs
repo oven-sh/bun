@@ -1251,8 +1251,6 @@ fn tree_at(paths: &[(&[u8], tree::Id)], path: &[u8]) -> Option<tree::Id> {
         .map(|i| paths[i].1)
 }
 
-// A workspace's tree is installed into the workspace folder itself; `node_modules/<name>` is only a link to it,
-// and `bun link` can point that link at another checkout. Nothing below the root folder is ever followed.
 fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
     let trees = lockfile.buffers.trees.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -1265,6 +1263,7 @@ fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
     }
     let mut dir = Dir::open(b"node_modules").ok()?;
     while let Some(id) = chain.pop() {
+        // `node_modules/<workspace>` is a link `bun link` may point anywhere; the tree lives in the workspace folder.
         if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
             dir = Dir::open(&folder).ok()?;
             continue;

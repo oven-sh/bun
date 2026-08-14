@@ -6,10 +6,13 @@ use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::dependency::{
-    Tag as DependencyVersionTag, Value as DependencyVersionValue, Version as DependencyVersion,
+    NpmInfo, Tag as DependencyVersionTag, Value as DependencyVersionValue,
+    Version as DependencyVersion,
 };
 use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::{Behavior, Dependency, Lockfile, PackageManager};
+use bun_semver::SlicedString;
+use core::mem::ManuallyDrop;
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
 // into the lower-tier `bun_ast::js_ast` shape (re-exported via
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
@@ -160,17 +163,34 @@ impl CatalogMap {
         }
     }
 
-    /// Only the root and its workspaces may reference catalogs; anywhere else a `catalog:` spec is left unresolvable.
-    pub(crate) fn strip_reference(version: DependencyVersion) -> DependencyVersion {
-        if version.tag != DependencyVersionTag::Catalog {
-            return version;
+    /// Only the root and its workspaces may reference catalogs; elsewhere a `catalog:` dependency is left unresolvable and a `catalog:` peer becomes an optional `*` peer, binding to whatever the importer provides.
+    pub(crate) fn strip_reference(dep: &mut Dependency) {
+        if dep.version.tag != DependencyVersionTag::Catalog {
+            return;
         }
-        let literal = version.literal;
-        DependencyVersion {
-            tag: DependencyVersionTag::Uninitialized,
+        let literal = dep.version.literal;
+        if !dep.behavior.is_peer() {
+            dep.version = DependencyVersion {
+                tag: DependencyVersionTag::Uninitialized,
+                literal,
+                value: DependencyVersionValue::default(),
+            };
+            return;
+        }
+        let star = bun_semver::query::parse(b"*", SlicedString::init(b"*", b"*"))
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        dep.behavior.insert(Behavior::OPTIONAL);
+        dep.version = DependencyVersion {
+            tag: DependencyVersionTag::Npm,
             literal,
-            value: DependencyVersionValue::default(),
-        }
+            value: DependencyVersionValue {
+                npm: ManuallyDrop::new(NpmInfo {
+                    name: dep.name,
+                    version: star,
+                    is_alias: false,
+                }),
+            },
+        };
     }
 
     /// Takes `buf: &[u8]` (the lockfile's string buffer, used for the hash

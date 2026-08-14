@@ -1570,11 +1570,18 @@ describe("bun update <name> semantics", () => {
   const installedVersion = async (dir: string, name: string): Promise<string> =>
     (await file(join(dir, "node_modules", name, "package.json")).json()).version;
 
+  // CI exports one BUN_INSTALL_CACHE_DIR per test file, which overrides the per-test-dir bunfig cache; concurrent cases racing on one cache fail on Windows.
+  const envFor = (dir: string) => ({ ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
+
   async function run(dir: string, ...args: string[]) {
+    return runFrom(dir, dir, ...args);
+  }
+
+  async function runFrom(cwd: string, dir: string, ...args: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), ...args],
-      cwd: dir,
-      env,
+      cwd,
+      env: envFor(dir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -2149,7 +2156,14 @@ describe("bun update <name> semantics", () => {
 
     it.concurrent("--filter decides the target, not the cwd", async () => {
       const { dir, before } = await fanOut();
-      const { stderr, exitCode } = await run(join(dir, "packages", "web"), "update", "no-deps", "--filter", "api");
+      const { stderr, exitCode } = await runFrom(
+        join(dir, "packages", "web"),
+        dir,
+        "update",
+        "no-deps",
+        "--filter",
+        "api",
+      );
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
       expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual(API_UPDATED);

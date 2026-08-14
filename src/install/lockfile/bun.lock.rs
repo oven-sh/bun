@@ -657,6 +657,7 @@ impl Stringifier {
 
             let mut tree_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_deps_sort_buf: Vec<DependencyID> = Vec::new();
+            let mut pkg_key_buf: Vec<u8> = Vec::new();
 
             Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"packages\": {")?;
@@ -731,6 +732,16 @@ impl Stringifier {
 
                     let dep = &deps_buf[dep_id as usize];
                     let dep_name = dep.name.slice(buf);
+
+                    pkg_key_buf.clear();
+                    if pkg_map.map.len() > 0 {
+                        pkg_key_buf.extend_from_slice(relative_path);
+                        if *depth != 0 {
+                            pkg_key_buf.push(b'/');
+                        }
+                        pkg_key_buf.extend_from_slice(dep_name);
+                    }
+                    let pkg_key: &[u8] = &pkg_key_buf;
 
                     write!(
                         writer,
@@ -833,7 +844,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -858,7 +869,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -888,7 +899,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -917,7 +928,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -964,7 +975,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -1012,7 +1023,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                pkg_key,
                                 &mut path_buf,
                             )?;
 
@@ -1061,7 +1072,7 @@ impl Stringifier {
         optional_peers_buf: &mut Vec<String>,
         extern_strings: &[ExternalString],
         pkg_map: &PkgMap<()>,
-        relative_path: &[u8],
+        pkg_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
         // `optional_peers_buf` is cleared at the fn tail.
@@ -1116,7 +1127,7 @@ impl Stringifier {
                     && pkg_map.map.len() > 0
                 {
                     if pkg_map
-                        .find_resolution(relative_path, dep, buf, path_buf)
+                        .find_resolution(pkg_path, dep, buf, path_buf)
                         .is_err()
                     {
                         optional_peers_buf.push(dep.name);
@@ -3595,8 +3606,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         &mut *log,
                         None,
                     ) {
-                        Some(v) if catalogs_apply => v,
-                        Some(v) => CatalogMap::strip_reference(v),
+                        Some(v) => v,
                         None => {
                             log.add_error(
                                 Some(source),
@@ -3608,6 +3618,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     },
                     ..Default::default()
                 };
+                if !catalogs_apply {
+                    CatalogMap::strip_reference(&mut dep);
+                }
 
                 if CHECK_FOR_BUNDLED {
                     let pkg_path = pkg_path.expect("pkg_path required when CHECK_FOR_BUNDLED");

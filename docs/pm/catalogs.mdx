@@ -298,7 +298,7 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 - Empty strings and whitespace in catalog names are ignored (treated as default catalog)
 - `catalog:default` is the same as `catalog:`; both read the `catalog` field, or `catalogs.default` if that is where the entry is defined (as pnpm names it). A package may be defined in only one of the two: if both `catalog` and `catalogs.default` list it, `bun install` stops with `error: "react" is defined in both "catalog" and "catalogs.default"` (`bun add --catalog` always edits the one that already defines the package)
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
-- `catalog:` is only understood in the root `package.json` and in workspace packages. A `catalog:` specifier inside an installed package (from the registry, git, a tarball or a `file:` folder) never reads your catalogs: as a regular dependency it fails to resolve (`x@catalog: failed to resolve`), and as a peer dependency it is treated as unsatisfiable and no copy is installed for it. Publish with `bun publish` or `bun pm pack`, which substitute the ranges (see [Publishing](#publishing))
+- `catalog:` is only understood in the root `package.json` and in workspace packages. A `catalog:` specifier inside an installed package (from the registry, git, a tarball or a `file:` folder) never reads your catalogs: as a regular dependency it fails to resolve (`x@catalog: failed to resolve`), and as a peer dependency it behaves like an optional `*` peer: it binds to whichever version the package that depends on it already provides, and no copy is installed for it otherwise. Publish with `bun publish` or `bun pm pack`, which substitute the ranges (see [Publishing](#publishing))
 
 ## Publishing
 

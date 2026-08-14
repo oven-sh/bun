@@ -808,22 +808,21 @@ impl Package<u64> {
                         }
                     }
 
-                    let dependency = Dependency {
+                    let mut dependency = Dependency {
                         name: name.value,
                         name_hash: name.hash,
                         behavior,
-                        version: lockfile::CatalogMap::strip_reference(
-                            Dependency::parse(
-                                name.value,
-                                Some(name.hash),
-                                sliced.slice,
-                                &sliced,
-                                Some(&mut *log),
-                                Some(&mut *pm),
-                            )
-                            .unwrap_or_default(),
-                        ),
+                        version: Dependency::parse(
+                            name.value,
+                            Some(name.hash),
+                            sliced.slice,
+                            &sliced,
+                            Some(&mut *log),
+                            Some(&mut *pm),
+                        )
+                        .unwrap_or_default(),
                     };
+                    lockfile::CatalogMap::strip_reference(&mut dependency);
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if group.behavior.is_optional() {
@@ -1756,9 +1755,6 @@ impl Package<u64> {
             Some(&mut *pm),
         )
         .unwrap_or_default();
-        if !(features.is_main || features.is_workspace) {
-            dependency_version = lockfile::CatalogMap::strip_reference(dependency_version);
-        }
         let mut workspace_range: Option<semver::query::Group> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;
@@ -2034,12 +2030,15 @@ impl Package<u64> {
             _ => {}
         }
 
-        let this_dep = Dependency {
+        let mut this_dep = Dependency {
             behavior: group.behavior,
             name: external_alias.value,
             name_hash: external_alias.hash,
             version: dependency_version,
         };
+        if !(FEATURES.is_main || FEATURES.is_workspace) {
+            lockfile::CatalogMap::strip_reference(&mut this_dep);
+        }
 
         // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
         // the array is processed

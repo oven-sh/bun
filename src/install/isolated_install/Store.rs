@@ -95,6 +95,13 @@ impl<T> NewId<T> {
 
 impl Drop for Store {
     fn drop(&mut self) {
+        use entry::EntryColumns as _;
+        for slot in self.entries.items_scripts() {
+            if let Some(list) = slot.take() {
+                // SAFETY: the installer returned only after every task finished, so nothing else references the list boxed in Installer's RunPreinstall step.
+                unsafe { bun_core::heap::destroy(list) };
+            }
+        }
         self.entries.drop_elements();
         self.nodes.drop_elements();
     }

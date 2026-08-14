@@ -1192,7 +1192,7 @@ describe("peer dependencies", () => {
     });
   });
 
-  // pnpm errors here; Bun never fails an install over an unresolved peer, so the peer must simply not get a nested copy (a registry package's own `catalog:` peer takes this exact path).
+  // pnpm errors here; Bun never fails an install over an unresolved peer, so the peer must simply not get a nested copy.
   describe.each([
     ["catalog:", { catalog: {} }],
     ["catalog:peers", { catalogs: { other: { "no-deps": ">=1.0.0" } } }],
@@ -1214,7 +1214,7 @@ describe("peer dependencies", () => {
   const registryPeerKeys = ["app", "catalog-peer", "lib", "no-deps"];
 
   describe.each(linkers)("linker=%s", linker => {
-    // app hoists leaf@1.0.0 (a root dependency would dedupe every peer onto itself) and needs-leaf-2 locks leaf@2.0.0: the workspace's catalog: peer nests it, the registry package's identical spec binds to nothing (unstripped it would add "wants-leaf-peer/leaf").
+    // app hoists leaf@1.0.0 (a root dependency would dedupe every peer onto itself) and needs-leaf-2 locks leaf@2.0.0: the workspace's catalog: peer nests it, the registry package's identical spec is satisfied by the hoisted leaf@1.0.0 (unstripped it would add "wants-leaf-peer/leaf").
     test.concurrent("a catalog: peer inside a registry package never reads the consumer's catalog", async () => {
       const dir = await makeRepo({
         catalog: { leaf: "^2.0.0" },
@@ -1251,17 +1251,25 @@ describe("peer dependencies", () => {
           linker,
           registry: catalogRegistry.url.href,
         });
-        const result = await record(dir, linker);
-        expect(result.keys).toStrictEqual(registryPeerKeys);
-        expect(result.keysAfterReload).toStrictEqual(registryPeerKeys);
-        expect(result.reloadSavedLockfile).toBeFalse();
+        const boundPeer = async () => {
+          if (linker === "isolated") {
+            const storeEntry = await realpath(join(dir, "packages", "app", "node_modules", "catalog-peer"));
+            return (await Bun.file(join(storeEntry, "..", "no-deps", "package.json")).json()).version;
+          }
+          return existsSync(join(dir, "node_modules", "catalog-peer", "node_modules")) ? "nested" : "hoisted";
+        };
+        const expected = linker === "isolated" ? "1.0.0" : "hoisted";
+
+        await install(dir, linker);
+        expect(await packageKeys(dir)).toStrictEqual(registryPeerKeys);
+        expect(await boundPeer()).toBe(expected);
+
+        await rmNodeModules(dir);
+        const { err } = await install(dir, linker);
+        expect(err).not.toContain("Saved lockfile");
+        expect(await packageKeys(dir)).toStrictEqual(registryPeerKeys);
+        expect(await boundPeer()).toBe(expected);
         expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
-        if (linker === "isolated") {
-          const storeEntry = await realpath(join(dir, "packages", "app", "node_modules", "catalog-peer"));
-          expect((await Bun.file(join(storeEntry, "..", "no-deps", "package.json")).json()).version).toBe("1.0.0");
-        } else {
-          expect(existsSync(join(dir, "node_modules", "catalog-peer", "node_modules"))).toBeFalse();
-        }
       },
     );
 

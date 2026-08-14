@@ -108,10 +108,7 @@ using namespace Zig;
 
 namespace {
 
-// Stashes an exception that is already pending when an ungated function is entered and puts it back
-// on return, except that a TerminationException the body raised in between wins: the body's exception
-// checks service VM traps (a node:vm timeout or worker.terminate() becomes an exception there, once),
-// and restoring the entry state over it would leave the calling script running forever.
+// JSC::SuspendExceptionScope, but only when an exception is pending on entry.
 class NapiSuspendExceptionScope {
 public:
     explicit NapiSuspendExceptionScope(JSC::VM& vm)
@@ -127,6 +124,7 @@ public:
         if (!m_suspended) [[likely]] {
             return;
         }
+        // The trap behind a termination the body raised has fired; restoring over it would lose it.
         bool bodyRaisedTermination = m_vm.hasPendingTerminationException();
         m_suspended.reset();
         if (bodyRaisedTermination) [[unlikely]] {
@@ -143,10 +141,8 @@ private:
 
 } // namespace
 
-// Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
-// an exception is pending (CHECK_ENV_NOT_IN_GC only); node-addon-api relies on that to build the
-// Error for a failed call. With nothing pending it checks for exceptions like NAPI_PREAMBLE does,
-// which also delivers a waiting termination as napi_pending_exception.
+// NAPI_PREAMBLE for the pure value constructors/accessors that Node gates with CHECK_ENV only: they
+// keep working while an exception is pending, which node-addon-api relies on to build its Error.
 #define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                      \
     NAPI_LOG_CURRENT_FUNCTION;                                                    \
     NAPI_CHECK_ARG(_env, _env);                                                   \

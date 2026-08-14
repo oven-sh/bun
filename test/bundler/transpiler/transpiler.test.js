@@ -2083,15 +2083,11 @@ export default class {
         ["expression", `export default ${deadCall};`],
         ["arrow function", `export default () => ${deadCall};`],
         ["function declaration", `export default function Page() { return ${deadCall}; }`],
+        ["class declaration", `export default class Page { method() { return ${deadCall}; } }`],
+        ["anonymous class", `export default class { method() { return ${deadCall}; } }`],
       ])("export default %s, replaced: trims an import only the discarded value used", (_, source) => {
         expect(replacingDefault.transformSync(deadImport + source)).toBe("export default 42;\n");
         expect(replacingDefault.scan(deadImport + source)).toEqual({ exports: ["default"], imports: [] });
-      });
-
-      it("export default class, replaced: trims an import only the discarded value used", () => {
-        const source = deadImport + `export default class Page { method() { return ${deadCall}; } }`;
-        expect(replacingDefault.scan(source)).toEqual({ exports: ["default"], imports: [] });
-        expect(replacingDefault.transformSync(source)).not.toContain("deadFS");
       });
 
       it("does not record an import() made inside the discarded value", () => {

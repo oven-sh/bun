@@ -811,7 +811,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replace_expr,
                             ) = entry
                             {
+                                // The class is discarded, so it is not lowered: lowering
+                                // writes the class back into `data.value`.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                stmts.push(*stmt);
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -819,10 +822,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                restore_dead!();
-                                record_on_exit!();
-                                return Ok(());
                             }
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
                         }
 
                         if !data.default_name.ref_.is_symbol() {

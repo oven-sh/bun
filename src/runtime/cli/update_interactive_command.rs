@@ -2395,6 +2395,7 @@ fn preserve_version_prefix(
     original_version: &[u8],
     new_version: &[u8],
 ) -> crate::Result<Box<[u8]>> {
+    let original_version = dependency::trim_literal(original_version);
     if original_version.len() > 1 {
         let mut orig_version: &[u8] = original_version;
         let mut alias: Option<&[u8]> = None;

@@ -5448,6 +5448,44 @@ describe("update", () => {
       });
     }
 
+    test("bun update --interactive keeps the alias and the range prefix", async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "aliased-dep": " npm:no-deps@^1.0.0",
+            "no-deps": "\t~1.0.0",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+
+      // `a` selects every package, enter confirms. bunEnv lets the prompt read keys from a pipe.
+      await using proc = spawn({
+        cmd: [bunExe(), "update", "--interactive", "--latest"],
+        cwd: packageDir,
+        env,
+        stdin: new Blob(["a\r"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out, err, exitCode }).toMatchObject({ exitCode: 0 });
+
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "aliased-dep": "npm:no-deps@^2.0.0",
+          "no-deps": "~2.0.0",
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+    });
+
     test("a catalog reference in an earlier dependency group is left alone", async () => {
       // devDependencies are visited before dependencies. The entry recorded for `dependencies`
       // must not be spent rewriting the `catalog:` reference.

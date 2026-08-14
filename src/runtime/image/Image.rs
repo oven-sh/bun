@@ -1398,11 +1398,10 @@ pub struct PipelineTask {
     auto_orient: bool,
     result: TaskResult,
 }
-// SAFETY: `input` borrows bytes that are pinned (`Pin`) or, like its path,
-// owned by the Image (`PendingTask`); both holders live on the job's Js side,
-// which is dropped on the JS thread only after the pool has posted this task
-// back, and the pool reads through the borrows in `run`, while the job's
-// ticket keeps the VM alive. The rest is owned.
+// SAFETY: `input` borrows bytes pinned by `Pin` or, like its path, owned by the
+// Image `PendingTask` holds; both sit on the job's Js side, dropped there only
+// after the pool has posted this task back, and the pool reads them in `run`,
+// under the job's ticket. The rest is owned.
 unsafe impl Send for PipelineTask {}
 
 /// The JS-thread half of a scheduled `PipelineTask`.

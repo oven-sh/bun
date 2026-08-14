@@ -664,9 +664,8 @@ pub(crate) struct TransformTask {
     pub loader: Loader,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
 }
-// SAFETY: see the type doc — the wrapper's config is read only in `run`, under
-// the job's ticket (`tsconfig` is a `JsPtr` for that reason); everything else
-// is owned.
+// SAFETY: see the type doc — the wrapper's config (behind `transpiler` and
+// `tsconfig`) is read only in `run`, under the job's ticket; the rest is owned.
 unsafe impl Send for TransformTask {}
 
 #[derive(bun_jsc::JsAffine)]

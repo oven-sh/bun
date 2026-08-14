@@ -409,11 +409,9 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
-    /// Whether the wait is over (`Closed`): no ticket can be issued any more
-    /// ([`VirtualMachine::ticket`] panics), a task queued on the VM's loops is
-    /// only released, never run, and its JSC VM is being (or has been)
-    /// destroyed. Any thread; meaningful on the JS thread, where the only code
-    /// still running this late is the final collection's finalizers.
+    /// Is the wait over? Past it nothing started for the VM runs any more:
+    /// [`VirtualMachine::ticket`] panics and a queued task is only released.
+    /// Any thread; meaningful on the JS thread (a final collection's finalizer).
     #[inline]
     pub fn closed(&self) -> bool {
         self.0.state() == State::Closed
@@ -513,15 +511,13 @@ impl VmHandle {
 impl VirtualMachine {
     /// JS thread: a ticket for work about to leave this thread — this VM, and
     /// the loop it is currently ticking. Hold it in the in-flight operation
-    /// and drop it after the completion is posted. Infallible until the VM is
-    /// [`closed`](Self::closed).
+    /// and drop it after the completion is posted.
     ///
-    /// Panics (in release builds too) once it is: nothing waits for a ticket
-    /// issued after the wait, so its completion would land on a loop that
-    /// teardown is about to free. The code that still runs on this thread by
-    /// then (the final collection's finalizers) has to check `closed()` and
-    /// refuse the work instead, as `napi_async_work::schedule` does; the panic
-    /// names the call site that did not.
+    /// Panics, in release too, once the VM is [`closed`](Self::closed): the
+    /// wait is over, so nothing would wait for this ticket and its completion
+    /// would land on a loop teardown is freeing. Callers that can run that late
+    /// (finalizers) check `closed()` and refuse the work; the panic names one
+    /// that did not.
     #[track_caller]
     #[inline]
     pub fn ticket(&self) -> Ticket {
@@ -534,9 +530,7 @@ impl VirtualMachine {
         Ticket::issue(&h.0, self.current_loop_kind())
     }
 
-    /// [`VmHandle::closed`] for this VM. Once true, [`ticket`](Self::ticket)
-    /// panics and a task queued on the VM's loop is only released: nothing
-    /// native code on this thread starts for the VM will run any more.
+    /// [`VmHandle::closed`] for this VM.
     #[inline]
     pub fn closed(&self) -> bool {
         self.handle_ref().closed()

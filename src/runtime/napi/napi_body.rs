@@ -1858,30 +1858,24 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Starts the work, or returns `false` without having touched it: the VM
-    /// has closed and the work stays the addon's to delete.
+    /// `false`: refused untouched, the work stays the addon's to delete.
     pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
             return true;
         }
         let vm = VirtualMachine::get();
         if vm.closed() {
-            // Queued by a finalizer of the collection that is destroying the
-            // heap: the wait for off-thread work is over (a ticket would be
-            // waited for by nobody; `vm.ticket()` panics), and the queue would
-            // release the work on the spot, running `complete` in the middle
-            // of that collection. Nothing can run it any more.
+            // A finalizer of the collection destroying the heap: `vm.ticket()`
+            // would panic, and the closed queue would run `complete` right
+            // here, mid-collection.
             return false;
         }
         self.scheduled = true;
         if !vm.script_allowed() {
-            // Queued while the VM is stopping, e.g. by a `complete` or
-            // finalizer that teardown is releasing. The pool would only hand
-            // it back cancelled; hand it straight to the queue instead, with
-            // no ticket, and `complete` gets `napi_cancelled` from the next
-            // tick or from teardown's release, as it would have from the pool.
-            // A closed queue releases on the spot, so `complete` (which may
-            // delete the work) can run inside this call: last use of `self`.
+            // The pool would only hand it back cancelled; skip the pool and the
+            // ticket. The queue runs or releases it, so `complete` still gets
+            // `napi_cancelled`, possibly inside this call (a queue teardown has
+            // already drained releases on the spot): last use of `self`.
             let _ = self.cancel();
             vm.event_loop_mut().enqueue_task(Task::init(self));
             return true;

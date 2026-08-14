@@ -3040,7 +3040,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NotificationResponse => {
                 let resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
-                self.on_notification(resp.channel.slice(), resp.payload.slice());
+                self.on_notification(resp.channel.slice(), resp.payload.slice())?;
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
@@ -3091,22 +3091,21 @@ impl PostgresSQLConnection {
 
     const MAX_INTERNED_CHANNELS: usize = 256;
 
-    fn channel_name_js(&self, global: &JSGlobalObject, channel: &[u8]) -> Option<JSValue> {
+    fn channel_name_js(
+        &self,
+        global: &JSGlobalObject,
+        channel: &[u8],
+    ) -> Result<JSValue, AnyPostgresError> {
         if let Some(entry) = self
             .channel_names
             .get()
             .iter()
             .find(|entry| entry.bytes.as_ref() == channel)
         {
-            return Some(entry.js.get());
+            return Ok(entry.js.get());
         }
-        let js = match bun_string_jsc::create_utf8_for_js(global, channel) {
-            Ok(js) => js,
-            Err(e) => {
-                global.report_active_exception_as_unhandled(e);
-                return None;
-            }
-        };
+        let js = bun_string_jsc::create_utf8_for_js(global, channel)
+            .map_err(|_| AnyPostgresError::JSError)?;
         if self.channel_names.get().len() < Self::MAX_INTERNED_CHANNELS {
             self.channel_names.with_mut(|names| {
                 names.push(InternedChannel {
@@ -3115,30 +3114,29 @@ impl PostgresSQLConnection {
                 })
             });
         }
-        Some(js)
+        Ok(js)
     }
 
-    fn on_notification(&self, channel: &[u8], payload: &[u8]) {
+    /// A conversion the VM cut short (OOM, a worker's termination) is this connection's
+    /// failure like any other in [`Self::on`]: `JSError` takes the pending exception.
+    fn on_notification(&self, channel: &[u8], payload: &[u8]) -> Result<(), AnyPostgresError> {
         let Some(this_value) = self.js_value.get().try_get() else {
-            return;
+            return Ok(());
         };
         let Some(callback) = js::onnotification_get_cached(this_value) else {
-            return;
+            return Ok(());
         };
         let global = self.global();
-        let Some(channel_js) = self.channel_name_js(global, channel) else {
-            return;
-        };
-        let payload_js = match bun_string_jsc::create_utf8_for_js(global, payload) {
-            Ok(js) => js,
-            Err(e) => return global.report_active_exception_as_unhandled(e),
-        };
+        let channel_js = self.channel_name_js(global, channel)?;
+        let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
+            .map_err(|_| AnyPostgresError::JSError)?;
         self.event_loop().run_callback(
             callback,
             global,
             JSValue::UNDEFINED,
             &[channel_js, payload_js],
         );
+        Ok(())
     }
 
     pub(crate) fn consume_on_connect_callback(

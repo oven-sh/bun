@@ -88,7 +88,8 @@ function parseArgs(argv: string[]): Options {
  * Adheres strictly to RFC 3986 scheme, hostname, and path separation.
  */
 function buildReleaseUrl(owner: string, repo: string, tag: string, latest = false): string {
-  const path = latest ? `/repos/${owner}/${repo}/releases/latest` : `/repos/${owner}/${repo}/releases/tags/${tag}`;
+  const prefix = `/repos/${owner}/${repo}/releases/`;
+  const path = prefix + (latest ? "latest" : `tags/${tag}`);
   return new URL(path, "https://api.github.com").toString();
 }
 

@@ -17,9 +17,8 @@ pub struct ImportRecord {
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
-    /// The loader a `type` import attribute asked for, or one the bundler wants the
-    /// runtime to apply to an import it left external; the printer re-emits it as
-    /// the attribute. A bundled file's loader lives on its input file, not here.
+    /// Printed back as a `type` attribute: set by that attribute or for an import the
+    /// bundler leaves to the runtime, never to the loader of a bundled file.
     pub loader: Option<Loader>,
 
     pub source_index: Index,

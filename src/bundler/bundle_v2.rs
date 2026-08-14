@@ -5937,10 +5937,8 @@ pub mod bv2_impl {
         }
     }
 
-    /// A database the loader map assigns the sqlite loader is opened at runtime, so
-    /// the import is left as written with the type attribute re-added, the same as
-    /// `with { type: "sqlite" }`; bundling it would print the build machine's path.
-    /// Other targets fall through to the parse task's "set target to bun" error.
+    /// Same output as `with { type: "sqlite" }`: the database is opened at runtime, and
+    /// bundling it would print the build machine's path. Other targets get the parse task's error.
     fn keep_sqlite_import_external(
         import_record: &mut ImportRecord,
         loader: Loader,

@@ -39,10 +39,13 @@ const ROWS: Row[] = [
     worker: `require("node:fs").realpath(process.execPath, () => {});`,
     refused: "args::Realpath",
   },
+  // On Windows these three are libuv requests on the worker's own loop
+  // (ReadFileUV, WriteFileWindows), not pool jobs: nothing gets refused.
   {
     name: "Bun.file().text()",
     worker: `Bun.file(process.execPath).slice(0, 65536).text();`,
     refused: "blob::read_file::ReadFile",
+    skip: isWindows,
   },
   {
     // Same read job, different completion: the image's read chain is handed
@@ -50,12 +53,14 @@ const ROWS: Row[] = [
     name: "Bun.Image(Bun.file()).metadata()",
     worker: `new Bun.Image(Bun.file(process.execPath).slice(0, 65536)).metadata().catch(() => {});`,
     refused: "blob::read_file::ReadFile",
+    skip: isWindows,
   },
   {
     // A Blob source: a string or buffer this small is written synchronously instead.
     name: "Bun.write()",
     worker: `Bun.write("written-by-the-pool", new Blob(["refused"]));`,
     refused: "blob::write_file::WriteFile",
+    skip: isWindows,
   },
   // The result the pool produced (names / Dirents / the created path / the
   // transpiled code) is what must be released along with the refused job.

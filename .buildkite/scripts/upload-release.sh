@@ -219,10 +219,14 @@ function report_github_quota() {
     echo "warn: Cannot read GitHub API rate limit, skipping usage report"
     return
   fi
-  if [[ "$GITHUB_QUOTA_BEFORE" =~ ^[0-9]+$ ]] && [ "$after" -le "$GITHUB_QUOTA_BEFORE" ]; then
-    echo "GitHub API calls used by this release: $((GITHUB_QUOTA_BEFORE - after)) (remaining: $after)"
+  if [[ "$GITHUB_QUOTA_BEFORE" =~ ^[0-9]+$ ]]; then
+    if [ "$after" -le "$GITHUB_QUOTA_BEFORE" ]; then
+      echo "GitHub API calls used by this release: $((GITHUB_QUOTA_BEFORE - after)) (remaining: $after)"
+    else
+      echo "GitHub API quota remaining after release: $after (quota window reset mid-release)"
+    fi
   else
-    echo "GitHub API quota remaining after release: $after (quota window reset mid-release)"
+    echo "GitHub API quota remaining after release: $after"
   fi
 }
 
@@ -347,6 +351,10 @@ function create_release() {
   assert_aws
   assert_sentry
   assert_github_quota
+  # The EXIT trap is the `set -e` equivalent of `if: always()`: it reports
+  # usage even when the release dies midway, which is when the number of
+  # calls already burned matters most.
+  trap report_github_quota EXIT
 
   local tag="$1" # 'canary' or 'x.y.z'
   local artifacts=(
@@ -440,7 +448,6 @@ function create_release() {
   create_sentry_release "$tag"
   send_discord_announcement "$tag"
   upload_s3_files "$tag" "${files[@]}"
-  report_github_quota
 }
 
 function assert_canary() {

@@ -2128,8 +2128,8 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                 for (unsigned i = 0; i < length; i++) {
                     JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (!extension.isObject())
-                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
+                    V::validateObject(scope, globalObject, extension, WTF::makeString("options.contextExtensions["_s, i, "]"_s));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             } else {
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);

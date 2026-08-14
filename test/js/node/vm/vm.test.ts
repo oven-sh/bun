@@ -12,6 +12,15 @@ import {
 
 function capture(_: any, _1?: any) {}
 
+// The error Node's validateObject() throws for a nested option (lib/internal/validators.js).
+function notAnObjectError(optionName: string, received: string) {
+  return expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${optionName}" property must be of type object. Received ${received}`,
+  });
+}
+
 describe("vm", () => {
   describe("runInContext()", () => {
     testRunInContext({ fn: runInContext, isIsolated: true });
@@ -100,6 +109,21 @@ describe("vm", () => {
         contextExtensions: undefined,
       })();
       expect(result).toBe(2);
+    });
+
+    test("each contextExtensions entry is checked like Node's validateObject(), under its own index", () => {
+      const compile = (...contextExtensions: unknown[]) =>
+        compileFunction("return 1;", [], { contextExtensions } as any);
+      expect(() => compile([])).toThrow(notAnObjectError("options.contextExtensions[0]", "an instance of Array"));
+      expect(() => compile({}, function ext() {})).toThrow(
+        notAnObjectError("options.contextExtensions[1]", "function ext"),
+      );
+      expect(() => compile({}, {}, 1)).toThrow(notAnObjectError("options.contextExtensions[2]", "type number (1)"));
+      expect(() => compile({}, undefined)).toThrow(notAnObjectError("options.contextExtensions[1]", "undefined"));
+      // Node lets null through validateObject() and then fails a native assertion; rejecting it is the sane version.
+      expect(() => compile(null)).toThrow(notAnObjectError("options.contextExtensions[0]", "null"));
+
+      expect(compileFunction("return a + b;", [], { contextExtensions: [{ a: 1 }, { b: 2 }] })()).toBe(3);
     });
 
     // Security tests
@@ -1012,20 +1036,6 @@ describe("codeGeneration options", () => {
   });
 
   describe("the codeGeneration option itself is checked like Node's validateObject()", () => {
-    function thrownBy(fn: () => unknown) {
-      try {
-        fn();
-      } catch (e: any) {
-        return { name: e.name, code: e.code, message: e.message };
-      }
-      return "did not throw";
-    }
-    const invalidArgType = (optionName: string, received: string) => ({
-      name: "TypeError",
-      code: "ERR_INVALID_ARG_TYPE",
-      message: `The "${optionName}" property must be of type object. Received ${received}`,
-    });
-
     // createContext() reads options.codeGeneration; vm.runInNewContext() and
     // Script#runInNewContext() read options.contextCodeGeneration.
     const entryPoints: [name: string, optionName: string, run: (codeGeneration: unknown) => unknown][] = [
@@ -1044,30 +1054,32 @@ describe("codeGeneration options", () => {
 
     describe.each(entryPoints)("%s", (_, optionName, run) => {
       test("rejects an array", () => {
-        expect(thrownBy(() => run([]))).toEqual(invalidArgType(optionName, "an instance of Array"));
-        expect(thrownBy(() => run(["strings"]))).toEqual(invalidArgType(optionName, "an instance of Array"));
+        expect(() => run([])).toThrow(notAnObjectError(optionName, "an instance of Array"));
+        expect(() => run(["strings"])).toThrow(notAnObjectError(optionName, "an instance of Array"));
       });
 
       test("rejects a function", () => {
         const arrow = async () => {};
-        expect(thrownBy(() => run(function codegen() {}))).toEqual(invalidArgType(optionName, "function codegen"));
-        expect(thrownBy(() => run(class Codegen {}))).toEqual(invalidArgType(optionName, "function Codegen"));
-        expect(thrownBy(() => run(arrow))).toEqual(invalidArgType(optionName, "function arrow"));
+        expect(() => run(function codegen() {})).toThrow(notAnObjectError(optionName, "function codegen"));
+        expect(() => run(class Codegen {})).toThrow(notAnObjectError(optionName, "function Codegen"));
+        expect(() => run(arrow)).toThrow(notAnObjectError(optionName, "function arrow"));
       });
 
       test("sees through proxies the way Array.isArray() and typeof do", () => {
-        expect(thrownBy(() => run(new Proxy([], {})))).toEqual(invalidArgType(optionName, "an instance of Array"));
-        expect(thrownBy(() => run(new Proxy(function codegen() {}, {})))).toMatchObject({
-          code: "ERR_INVALID_ARG_TYPE",
-        });
+        expect(() => run(new Proxy([], {}))).toThrow(notAnObjectError(optionName, "an instance of Array"));
+        // Only the code: Bun renders a callable Proxy as "function " with no name
+        // (Node prints the target's name), which is an error-formatting detail.
+        expect(() => run(new Proxy(function codegen() {}, {}))).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
         expect(() => run(new Proxy({}, {}))).not.toThrow();
       });
 
       test("still rejects null and primitives", () => {
-        expect(thrownBy(() => run(null))).toEqual(invalidArgType(optionName, "null"));
-        expect(thrownBy(() => run(1))).toEqual(invalidArgType(optionName, "type number (1)"));
-        expect(thrownBy(() => run("strings"))).toEqual(invalidArgType(optionName, "type string ('strings')"));
-        expect(thrownBy(() => run(true))).toEqual(invalidArgType(optionName, "type boolean (true)"));
+        expect(() => run(null)).toThrow(notAnObjectError(optionName, "null"));
+        expect(() => run(1)).toThrow(notAnObjectError(optionName, "type number (1)"));
+        expect(() => run("strings")).toThrow(notAnObjectError(optionName, "type string ('strings')"));
+        expect(() => run(true)).toThrow(notAnObjectError(optionName, "type boolean (true)"));
       });
 
       test("still accepts any other object, and undefined", () => {

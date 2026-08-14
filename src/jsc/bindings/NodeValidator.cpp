@@ -629,39 +629,40 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// `name` is whatever ERR::INVALID_ARG_TYPE accepts (JSValue, ASCIILiteral or
+// WTF::String); it is only converted on the error path.
+template<typename Name>
+static JSC::EncodedJSValue validateObjectImpl(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const Name& name)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
     if (value.isNull() || isArray || value.isCallable()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
     if (!value.isObject()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    return validateObjectImpl(scope, globalObject, callFrame->argument(0), callFrame->argument(1));
+}
+
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    return validateObjectImpl(scope, globalObject, value, name);
+}
+
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const WTF::String& name)
 {
-    bool isArray = JSC::isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (value.isNull() || isArray || value.isCallable()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
-    }
-
-    if (!value.isObject()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
-    }
-
-    return JSValue::encode(jsUndefined());
+    return validateObjectImpl(scope, globalObject, value, name);
 }
 
 //

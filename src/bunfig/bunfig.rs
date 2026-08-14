@@ -18,7 +18,6 @@ use bun_parsers::toml::TOML;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
-
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;

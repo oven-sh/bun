@@ -5,23 +5,7 @@
 </p>
 <h1 align="center">Bun Documentation</h1>
 
-Official documentation for Bun: the fast, all-in-one JavaScript runtime.
-
-## Development
-
-Install the [Mintlify CLI](https://www.npmjs.com/package/mint) to preview the documentation locally:
-
-```bash
-bun install -g mint
-```
-
-Run the development server:
-
-```bash
-mint dev
-```
-
-The site is served at `http://localhost:3000`.
+Official documentation for Bun: the fast, all-in-one JavaScript runtime. [bun.com/docs](https://bun.com/docs) is built from the files in this directory.
 
 ## Contributing
 

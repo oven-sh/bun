@@ -912,7 +912,7 @@ describe.concurrent("a generation whose top-level await never settles", () => {
                 while (readFileSync(entry, "utf8") === entryBefore) await Bun.sleep(5);
                 // A deferred reload is not observable; give the save's watcher
                 // event time to reach the still-loading generation.
-                await Bun.sleep(300);
+                await Bun.sleep(${isDebug ? 1_000 : 300});
                 return { contents, loader: "ts" };
               });
             },

@@ -3992,11 +3992,8 @@ unsafe fn fetch_builtin_module(
                 // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
                 // the embedded blob via `readFileSync(import.meta.path)`
                 // (resolved through the `/$bunfs/` virtual root).
-                // `new Database(bytes)` rejects an empty buffer, but a 0-byte
-                // file is a valid empty database, which `:memory:` also is.
-                // The IIFE keeps `bytes` collectable: `Database` copies them
-                // into sqlite, and a module-level binding would pin a second
-                // copy of the database for the life of the process.
+                // `new Database(bytes)` rejects an empty buffer; `:memory:` is
+                // the same empty database. The IIFE lets the buffer be collected.
                 const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';

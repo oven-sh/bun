@@ -2589,19 +2589,12 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 
-/// Whether `source_index` is a stylesheet or an HTML document rather than a
-/// JS module.
-///
-/// Tree shaking and code splitting follow a document's import records only
-/// into the modules it links (see [`document_links_to`]). The assets it
-/// references (`url()`, `<img src>`, ...) are resolved when the document
-/// itself is printed and are copied to the output by `process_files_to_copy`;
-/// the lazy-export JS stub such an asset parses to is only a module when JS
-/// imports it. Marking it live with the document's entry bits would make
-/// `compute_chunks` treat the stub as JS reached by the document's entry
-/// point and emit a JS chunk for it. Consequently such assets carry entry
-/// bits only from their JS importers; `HTMLImportManifest` and
-/// `MetafileBuilder` attribute them to the documents that reference them.
+/// A stylesheet or an HTML document, as opposed to a JS module. Linking
+/// follows a document's import records only into the modules it links
+/// ([`document_links_to`]): its assets are printed into the document itself,
+/// so they carry no entry bits of their own (a document's entry bits would
+/// make `compute_chunks` emit a JS chunk for the asset's lazy-export stub),
+/// and the manifest and the metafile find them through the document's records.
 pub(crate) fn is_document(
     css_reprs: &[crate::bundled_ast::CssCol],
     loaders: &[Loader],
@@ -2610,11 +2603,9 @@ pub(crate) fn is_document(
     css_reprs[source_index].is_some() || loaders[source_index] == Loader::Html
 }
 
-/// Whether an import record of a document (see [`is_document`]) pointing at
-/// `source_index` links a module (a stylesheet via `@import`/`composes`/
-/// `<link rel="stylesheet">`, a script via `<script src>`) as opposed to
-/// referencing an asset. A stylesheet pointing at a JS file is rejected by
-/// `scan_css_imports` before linking gets here.
+/// Whether a document's import record to `source_index` links a module (a
+/// stylesheet or a script) rather than referencing an asset; see [`is_document`].
+/// `scan_css_imports` has already rejected stylesheets pointing at JS.
 pub(crate) fn document_links_to(
     css_reprs: &[crate::bundled_ast::CssCol],
     loaders: &[Loader],

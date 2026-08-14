@@ -291,11 +291,8 @@ pub(crate) fn write<W: Write + ?Sized>(
         }
     }
 
-    // Assets referenced by this entry point's documents (`<img src>` in the
-    // HTML, `url()` in its stylesheets) carry no entry bits of their own (see
-    // `is_document`), so they are attributed through the documents that
-    // reference them. Assets imported from JS are reached through their own
-    // entry bits below.
+    // The assets of this entry point's documents carry no entry bits of their
+    // own (see `is_document`); only assets imported from JS do.
     let mut referenced_by_documents = AutoBitSet::init_empty(file_entry_bits.len())?;
     if !additional_output_files.is_empty() {
         let css_asts = linker_graph.ast.items_css();

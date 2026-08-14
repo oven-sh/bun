@@ -404,7 +404,7 @@ describe.skipIf(!fault.available())("TLS write batching", () => {
       },
     });
 
-    using client = await Bun.connect({
+    using _client = await Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
       tls: { ca: tls.cert },
@@ -430,6 +430,5 @@ describe.skipIf(!fault.available())("TLS write batching", () => {
     const received = await delivered.promise;
     expect(received.length).toBe(payload.length);
     expect(received.equals(payload)).toBe(true);
-    client.end();
   });
 });

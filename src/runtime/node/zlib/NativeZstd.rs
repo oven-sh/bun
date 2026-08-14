@@ -267,8 +267,7 @@ mod _impl {
             Ok(JSValue::TRUE)
         }
 
-        /// Thrown rather than emitted because `zlib.ts` installs `onerror` only
-        /// after `init()` returns; node's `ZstdStream::Init` throws the same way.
+        /// `zlib.ts` installs `onerror` only after `init()` returns, so init errors are thrown.
         fn throw_initialization_failed(&self, global: &JSGlobalObject, err: Error) -> jsc::JsError {
             CompressionStream::<Self>::close_internal(self);
             // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.

@@ -1828,8 +1828,17 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative =
+                let relative: &[u8] =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                #[cfg(windows)]
+                let relative: &[u8] = {
+                    let len = relative.len();
+                    folder_buf.0[..len].copy_from_slice(relative);
+                    path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        &mut folder_buf.0[..len],
+                    );
+                    &folder_buf.0[..len]
+                };
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });

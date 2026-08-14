@@ -965,17 +965,25 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: Regis
 
 // Installs `pinned` against the in-memory registry, then re-installs `packageJson`, which drops the pins that parked the transitive edges.
 async function setupServed(server: Bun.Server, prefix: string, pinned: Json, packageJson: Json = pinned) {
-  const dir = String(tempDir(prefix, { "package.json": stringify(pinned) }));
+  const dir = await installServed(server, prefix, pinned);
+  if (packageJson !== pinned) await reinstall(dir, packageJson);
+  return dir;
+}
+
+async function installServed(server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) {
+  const dir = String(tempDir(prefix, { "package.json": stringify(packageJson) }));
   await write(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
       install: { cache: join(dir, ".bun-cache"), registry: server.url.href, saveTextLockfile: true, linker: "hoisted" },
     }),
   );
-  await install(dir);
-  if (packageJson !== pinned) await reinstall(dir, packageJson);
+  await install(dir, ...args);
   return dir;
 }
+
+const freshInstallLock = async (server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) =>
+  lock(await installServed(server, prefix, packageJson, ...args));
 
 test.concurrent("`bun update <name>` leaves the named package's own dependencies where they are", async () => {
   using server = await serveRegistry({
@@ -1147,9 +1155,76 @@ test.concurrent(
     expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
     expect(await installedVersion(dir, "tagged")).toBe("1.1.0");
     await frozen(dir);
+    expect(await lock(dir)).toStrictEqual(
+      await freshInstallLock(server, "update-min-age-fresh-", packageJson, "--minimum-release-age", THREE_DAYS_SECONDS),
+    );
     expect(exitCode).toBe(0);
   },
 );
+
+// Mirrors verdaccio's dep-with-tags: 3.0.1 is published above `latest` (3.0.0), which `bun install` prefers whenever the range allows it.
+const ABOVE_LATEST: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: ">=1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.0.1": {}, "2.0.0": {}, "2.0.1": {}, "3.0.0": {}, "3.0.1": {} },
+};
+const ABOVE_LATEST_TAGS: Tags = { leaf: { latest: "3.0.0" } };
+
+test.concurrent(
+  "a bare `bun update` moves a transitive range edge to `latest`, as a fresh `bun install` would",
+  async () => {
+    using server = await serveRegistry(ABOVE_LATEST, ABOVE_LATEST_TAGS);
+    const packageJson = pkgJson({ parent: "^1.0.0" });
+    const dir = await setupServed(
+      server,
+      "update-below-latest-",
+      pkgJson({ ...packageJson.dependencies, leaf: "2.0.1" }),
+      packageJson,
+    );
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.1"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update");
+    expect(stdout).toContain("  leaf@2.0.1 → 3.0.0\n");
+    expect(stdout).not.toContain("3.0.1");
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("3.0.0");
+    await frozen(dir);
+    expect(await lock(dir)).toStrictEqual(await freshInstallLock(server, "update-below-latest-fresh-", packageJson));
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "a transitive range edge already on `latest` is a no-op even though a newer release exists",
+  async () => {
+    using server = await serveRegistry(ABOVE_LATEST, ABOVE_LATEST_TAGS);
+    const packageJson = pkgJson({ parent: "^1.0.0" });
+    const dir = await setupServed(server, "update-at-latest-", packageJson);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.0"]);
+    await expectNoop(dir);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.0"]);
+    expect(await lock(dir)).toStrictEqual(await freshInstallLock(server, "update-at-latest-fresh-", packageJson));
+  },
+);
+
+test.concurrent("a transitive range edge locked ahead of `latest` is not downgraded", async () => {
+  using server = await serveRegistry(ABOVE_LATEST, ABOVE_LATEST_TAGS);
+  const packageJson = pkgJson({ parent: "^1.0.0" });
+  const dir = await setupServed(
+    server,
+    "update-ahead-of-latest-",
+    pkgJson({ ...packageJson.dependencies, leaf: "3.0.1" }),
+    packageJson,
+  );
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.1"]);
+  await expectNoop(dir);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.1"]);
+  expect(await installedVersion(dir, "leaf")).toBe("3.0.1");
+  expect(
+    await lockedVersions(await installServed(server, "update-ahead-of-latest-fresh-", packageJson), "leaf"),
+  ).toStrictEqual(["3.0.0"]);
+});
 
 // `pre` is parked on `from` by a dropped root pin; parent's range on it is `range`.
 test.concurrent.each<[string, string, string[], string, string]>([

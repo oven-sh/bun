@@ -60,14 +60,14 @@ pub(crate) fn parse_selector(key: &[u8]) -> Result<Selector<'_>, SelectorError> 
     parse_yarn_path(key)
 }
 
-/// pnpm's `parent>child` delimiter: a `>` that does not continue a range (`@>1`, `|| >1`).
+/// pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` not preceded by a space, `|` or `@`.
 fn pnpm_delimiter(key: &[u8]) -> Option<usize> {
     let mut from = 1;
     while from < key.len() {
         let i = from + strings::index_of_char_usize(&key[from..], b'>')?;
-        match key[..i].trim_ascii_end().last() {
-            None | Some(b'|' | b'@') => from = i + 1,
-            Some(_) => return Some(i),
+        match key[i - 1] {
+            b' ' | b'|' | b'@' => from = i + 1,
+            _ => return Some(i),
         }
     }
     None

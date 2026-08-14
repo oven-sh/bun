@@ -392,10 +392,6 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if owner_is_ws && !selects(groups, dep.behavior) {
                     continue;
                 }
-                let real_hash = pkg_name_hashes[target as usize];
-                if decided.insert(real_hash, ()).is_some() {
-                    continue;
-                }
                 let real = pkg_names[target as usize].slice(buf);
                 let alias = dep.name.slice(buf);
                 let mut positive_hit = patterns.iter().all(|p| p.negated);
@@ -413,7 +409,12 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                         positive_hit = true;
                     }
                 }
-                if positive_hit && !excluded {
+                if positive_hit
+                    && !excluded
+                    && decided
+                        .insert(pkg_name_hashes[target as usize], ())
+                        .is_none()
+                {
                     // The named path matches `npm:` aliases through the real name, so the real name reaches both spellings.
                     names.push(Box::from(real));
                 }

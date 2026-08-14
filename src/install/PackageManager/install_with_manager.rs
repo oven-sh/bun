@@ -1903,7 +1903,11 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
 fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, original_cwd: &[u8]) {
     let is_subcommand_to_run_scanner = matches!(
         manager.subcommand,
-        Subcommand::Add | Subcommand::Update | Subcommand::Install | Subcommand::Remove
+        Subcommand::Add
+            | Subcommand::Update
+            | Subcommand::Install
+            | Subcommand::Remove
+            | Subcommand::Audit
     );
 
     if !is_subcommand_to_run_scanner {

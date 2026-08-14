@@ -574,43 +574,19 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        let age_limit = min_age.filter(|_| !manifest.should_exclude_from_age_filter(excludes));
-        let newest_in = |list: crate::npm::ExternVersionMap, range: &Semver::query::Group| {
-            let versions = list.keys.get(&manifest.versions);
-            let packages = list.values.get(&manifest.package_versions);
-            versions
-                .iter()
-                .enumerate()
-                .rev()
-                .take_while(|(_, v)| v.order(inst.current, manifest_buf, buf) == Ordering::Greater)
-                .find_map(|(i, &v)| {
-                    if v.tag.has_build() || !range.satisfies(v, buf, manifest_buf) {
-                        return None;
-                    }
-                    if let Some(limit) = age_limit
-                        && PackageManifest::is_package_version_too_recent(&packages[i], limit)
-                    {
-                        return None;
-                    }
-                    Some(v)
-                })
-        };
-
         for want in &inst.wants {
             let (v, to) = if want.version.tag == DependencyVersionTag::Npm {
                 let range = &want.version.npm().version;
-                let mut target = newest_in(manifest.pkg.releases, range);
-                if range.flags.is_set(Semver::query::Flags::PRE)
-                    && let Some(pre) = newest_in(manifest.pkg.prereleases, range)
-                    && target.is_none_or(|release| {
-                        pre.order(release, manifest_buf, manifest_buf) == Ordering::Greater
-                    })
-                {
-                    target = Some(pre);
-                }
-                let Some(v) = target else {
+                let Some(found) = manifest
+                    .find_best_version_with_filter(range, buf, min_age, excludes)
+                    .unwrap()
+                else {
                     continue;
                 };
+                let v = found.version;
+                if v.order(inst.current, manifest_buf, buf) != Ordering::Greater {
+                    continue;
+                }
                 if !v.tag.pre.value.is_inline() {
                     let end = pins.len() + want.dep_ids.len();
                     pre_strings.push((

@@ -2138,6 +2138,15 @@ describe("bun update <name> semantics", () => {
       expect(await installedVersion(dir, "@types/is-number")).toBe("2.0.0");
     });
 
+    it.concurrent("a name and a pattern that only matches that name update it once", async () => {
+      const dir = await stale({ "@types/no-deps": "1.0.0" }, { "@types/no-deps": "^1.0.0" });
+      const { stdout } = await update(dir, "@types/no-deps", "@types/*", "--latest");
+      expect(stdout.match(/^installed @types\/no-deps@.*$/gm)).toStrictEqual(["installed @types/no-deps@2.0.0"]);
+      await expectInSync(dir, { "@types/no-deps": "^2.0.0" });
+      expect(await lockedVersions(dir, "@types/no-deps")).toStrictEqual(["2.0.0"]);
+      expect(await installedVersion(dir, "@types/no-deps")).toBe("2.0.0");
+    });
+
     it.concurrent("two patterns update the union within their ranges", async () => {
       const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
       await update(dir, "a-*", "dep-*");

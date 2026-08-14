@@ -277,6 +277,31 @@ async function expectInstall(dir: string, ...args: string[]) {
   expect(exitCode).toBe(0);
 }
 
+// Written after `setup` so the initial install runs without it; records the `name@version`s it was sent in scanned.json and flags the listed ones as fatal.
+async function configureScanner(dir: string, server: Registry, fatal: string[] = []) {
+  await write(
+    join(dir, "scanner.ts"),
+    `import { writeFileSync } from "node:fs";
+     import { join } from "node:path";
+     export const scanner = {
+       version: "1",
+       scan(payload: { packages: { name: string; version: string }[] }) {
+         const packages = payload.packages.map(p => p.name + "@" + p.version).sort();
+         writeFileSync(join(import.meta.dir, "scanned.json"), JSON.stringify(packages));
+         console.error("SCANNER_RAN");
+         return packages
+           .filter(p => ${JSON.stringify(fatal)}.includes(p))
+           .map(p => ({ package: p.slice(0, p.lastIndexOf("@")), level: "fatal", description: "blocked " + p, url: "https://example.invalid/scanner/" + p }));
+       },
+     };`,
+  );
+  await writeBunfig(dir, server, undefined, { security: { scanner: "./scanner.ts" } });
+}
+
+function scanned(dir: string): Promise<string[]> {
+  return file(join(dir, "scanned.json")).json();
+}
+
 // a-dep@1.0.2 stays installed after the range is widened because the still-satisfied edge is not re-resolved.
 async function setupVulnerableADep(server: Registry) {
   const dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
@@ -1125,6 +1150,102 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(0);
     expect(await lock(dir)).toBe(lockBefore);
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
+  });
+
+  test.concurrent(
+    "the configured security scanner is sent every package, with the fix at its new version",
+    async () => {
+      await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+      using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2", "no-deps": "1.0.0" } });
+      await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.2", "no-deps": "1.0.0" } });
+      expect(await lock(dir)).toContain('"a-dep@1.0.2"');
+      await configureScanner(dir, server);
+
+      const { stdout, stderr, exitCode } = await auditFix(dir);
+      expect(stderr).toContain("SCANNER_RAN");
+      expect(stdout).toContain("a-dep@1.0.2 → 1.0.4");
+      expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+      expect(exitCode).toBe(0);
+      expect(await scanned(dir)).toStrictEqual(["a-dep@1.0.4", "no-deps@1.0.0"]);
+      expect(await lock(dir)).toContain('"a-dep@1.0.4"');
+      expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+    },
+  );
+
+  test.concurrent(
+    "a fatal advisory from the security scanner for the fixed version aborts before anything is written",
+    async () => {
+      await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+      using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
+      const pkgJsonBefore = await pkgJsonText(dir);
+      const lockBefore = await lock(dir);
+      expect(lockBefore).toContain('"a-dep@1.0.2"');
+      await configureScanner(dir, server, ["a-dep@1.0.4"]);
+
+      const { stdout, stderr, exitCode } = await auditFix(dir);
+      expect(stderr).toContain("SCANNER_RAN");
+      expect(stdout).toContain("FATAL: a-dep");
+      expect(stdout).toContain("blocked a-dep@1.0.4");
+      expect(stdout).toContain("https://example.invalid/scanner/a-dep@1.0.4");
+      expect(stdout).toContain("Installation aborted due to fatal security advisories");
+      expect(stdout).not.toContain("Fixed 1 vulnerability");
+      expect(stderr).not.toContain("Saved lockfile");
+      expect(exitCode).toBe(1);
+      expect(await scanned(dir)).toStrictEqual(["a-dep@1.0.4"]);
+      expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+      expect(await lock(dir)).toBe(lockBefore);
+      expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
+    },
+  );
+
+  test.concurrent("--dry-run does not run the security scanner", async () => {
+    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+    using dir = await setupVulnerableADep(server);
+    const lockBefore = await lock(dir);
+    await configureScanner(dir, server, ["a-dep@1.0.4"]);
+
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--dry-run");
+    expect(stderr).not.toContain("SCANNER_RAN");
+    expect(stdout).toContain("Would fix 1 vulnerability in 1 package");
+    expect(stdout).not.toContain("FATAL");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(dir, "scanned.json"))).toBe(false);
+    expect(await lock(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
+  });
+
+  test.concurrent("--json stays a single document when the security scanner runs clean", async () => {
+    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+    using dir = await setupVulnerableADep(server);
+    await configureScanner(dir, server);
+
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--json");
+    expect(stderr).toContain("SCANNER_RAN");
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(stdout)).toStrictEqual({
+      dryRun: false,
+      fixed: 1,
+      remaining: 0,
+      fixes: [
+        {
+          name: "a-dep",
+          from: "1.0.2",
+          to: "1.0.4",
+          downgrade: false,
+          newerThanMinimumReleaseAge: false,
+          packageJson: [],
+        },
+      ],
+      blocked: [],
+      unfixable: [],
+      manifestUnavailable: [],
+      unmatched: [],
+      unaudited: [],
+      vulnerableAfterInstall: [],
+    });
+    expect(exitCode).toBe(0);
+    expect(await scanned(dir)).toStrictEqual(["a-dep@1.0.4"]);
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
   });
 
   test.concurrent("a range that rejects every safe release is blocked on the highest safe downgrade", async () => {

@@ -810,7 +810,7 @@ describe("optionalDependencies", () => {
     await using proc = spawn({
       cmd: [bunExe(), "install", "--linker", linker, ...args],
       cwd: dir,
-      env: bunEnv,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
     });

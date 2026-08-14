@@ -274,6 +274,36 @@ describe.concurrent("syntax", () => {
     `);
   });
 
+  // pnpm splits on the first `>` not preceded by a space, `|` or `@`, so a compound parent range may contain ` >`.
+  describe.concurrent.each([
+    { key: "one-dep@<2 >=1>no-deps", object: { "one-dep@<2 >=1": { "no-deps": "2.0.0" } } },
+    { key: "one-dep@1 >0>no-deps", object: { "one-dep@1 >0": { "no-deps": "2.0.0" } } },
+    { key: "one-dep@>=1 <2>no-deps", object: { "one-dep@>=1 <2": { "no-deps": "2.0.0" } } },
+    { key: "one-dep>no-deps@>=1", object: { "one-dep": { "no-deps@>=1": "2.0.0" } } },
+    { key: "one-dep@1 >0>no-deps@>=1", object: { "one-dep@1 >0": { "no-deps@>=1": "2.0.0" } } },
+  ])("pnpm selector $key", ({ key, object }) => {
+    test("applies and writes the same bun.lock as the object form", async () => {
+      const dependencies = { "one-dep": "1.0.0", "one-range-dep": "1.0.0" };
+      const [pnpmDir, objectDir] = await Promise.all([
+        project({ dependencies, overrides: { [key]: "2.0.0" } }),
+        project({ dependencies, overrides: object }),
+      ]);
+      const [pnpm] = await Promise.all([installOk(pnpmDir), installOk(objectDir)]);
+      expect(pnpm.err).not.toContain("only supports one level");
+      expect(pnpm.err).not.toContain("warn:");
+      expect(await versionSeenBy(pnpmDir, "one-dep", "no-deps")).toBe("2.0.0");
+      expect(await versionSeenBy(pnpmDir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      const [pnpmLock, objectLock] = await Promise.all([lock(pnpmDir), lock(objectDir)]);
+      expect(pnpmLock).toContain('"lockfileVersion": 3');
+      expect(pnpmLock).toBe(objectLock);
+      const [parent, child] = Object.entries(object)[0];
+      expect(overridesSection(pnpmLock)).toBe(
+        `"overrides": {\n  ${JSON.stringify(parent)}: {\n    ${JSON.stringify(Object.keys(child)[0])}: "2.0.0",\n  },\n},`,
+      );
+      await installOk(pnpmDir, "--frozen-lockfile");
+    });
+  });
+
   test("precedence: ranged parent > unranged parent > flat", async () => {
     const dir = await project(precedenceProject);
     await installOk(dir);

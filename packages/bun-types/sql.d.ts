@@ -159,12 +159,43 @@ declare module "bun" {
       constructor(message: string, options: { code: string; errno: number; byteOffset?: number | undefined });
     }
 
+    const camel: ColumnTransform;
+    const pascal: ColumnTransform;
+    const kebab: ColumnTransform;
+    const snake: ColumnTransform;
+    function toCamel(str: string): string;
+    function toPascal(str: string): string;
+    function toKebab(str: string): string;
+    function toSnake(str: string): string;
+    function fromCamel(str: string): string;
+    function fromPascal(str: string): string;
+    function fromKebab(str: string): string;
+    function fromSnake(str: string): string;
+
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
       [K in keyof T]: Awaited<T[K]>;
     };
 
     type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
     type ContextCallback<T, SQL> = (sql: SQL) => Bun.MaybePromise<T>;
+
+    interface ColumnTransform {
+      (column: string): string;
+      to?: (column: string) => string;
+      from?: (column: string) => string;
+    }
+
+    interface TransformOptions {
+      column?: ColumnTransform | {
+        to?: (column: string) => string;
+        from?: (column: string) => string;
+      } | undefined;
+      value?: ((value: any) => any) | {
+        to?: (value: any) => any;
+        from?: (value: any) => any;
+      } | undefined;
+      row?: ((row: any) => any) | undefined;
+    }
 
     interface SQLiteOptions extends BunSQLite.DatabaseOptions {
       adapter?: "sqlite";
@@ -195,6 +226,11 @@ declare module "bun" {
        * Receives the closing `Error`, or `null`.
        */
       onclose?: ((err: Error | null) => void) | undefined;
+
+      /**
+       * Column name and value transforms (e.g. `postgres.camel` for snake_case -> camelCase).
+       */
+      transform?: TransformOptions | ColumnTransform | ((column: string) => string) | undefined;
     }
 
     interface PostgresOrMySQLOptions {
@@ -410,6 +446,11 @@ declare module "bun" {
        * @default false
        */
       allowPublicKeyRetrieval?: boolean | undefined;
+
+      /**
+       * Column name and value transforms (e.g. `postgres.camel` for snake_case -> camelCase).
+       */
+      transform?: TransformOptions | ColumnTransform | ((column: string) => string) | undefined;
     }
 
     /**

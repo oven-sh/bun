@@ -1619,9 +1619,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         }
     }
 
-    // Node compiles inside parsingContext (node_contextify.cc enters it before
-    // ScriptCompiler::CompileFunction), so the function and any compile error
-    // belong to that realm rather than to the caller's.
+    // Like Node, the function and any compile error are created in parsingContext's realm.
     JSGlobalObject* parsingContext = options.parsingContext;
     parsingContext->setGlobalScopeExtension(functionScope);
 

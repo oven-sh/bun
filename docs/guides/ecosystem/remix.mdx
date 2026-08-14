@@ -1,0 +1,98 @@
+---
+title: Build an app with Remix and Bun
+sidebarTitle: Remix with Bun
+mode: center
+---
+
+[Remix 3](https://github.com/remix-run/remix) is a web framework built from standalone packages (a router, HTML rendering, sessions, form parsing, and more) that are distributed together as the `remix` package. It is published under the `next` tag on npm while it is in beta, and its server runs on Bun as-is.
+
+<Note>This guide covers Remix 3. Remix 2 projects are created with `create-remix` instead.</Note>
+
+---
+
+Scaffold a new project with the Remix CLI.
+
+```sh terminal icon="terminal"
+bunx remix@next new my-remix-app
+```
+
+```txt
+• Prepare target directory...
+✓ Prepare target directory
+• Generate scaffold files...
+✓ Generate scaffold files
+• Finalize package.json...
+✓ Finalize package.json
+
+Created My Remix App at my-remix-app
+```
+
+Then install its dependencies.
+
+```sh terminal icon="terminal"
+cd my-remix-app
+bun install
+```
+
+---
+
+The generated `server.ts` creates a `node:http` server that hands every request to the app's router. Bun runs it directly; pass `--watch` to restart the server whenever a file it imports changes.
+
+```sh terminal icon="terminal"
+bun --watch server.ts
+```
+
+```txt
+Server listening on http://localhost:44100
+```
+
+Open [http://localhost:44100](http://localhost:44100) to see the starter page. The routes live in `app/routes.ts` and `app/router.ts`, and the starter home page is rendered by `app/actions/home-page.tsx`.
+
+---
+
+The `scripts` generated in `package.json` run the server with Node.js and the `remix/node-tsx` TypeScript loader. Bun runs TypeScript itself, so point the scripts at `bun` instead.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "dev": "NODE_ENV=development node --watch --import remix/node-tsx server.ts", // [!code --]
+    "dev": "bun --watch server.ts", // [!code ++]
+    "start": "NODE_ENV=production node --import remix/node-tsx server.ts", // [!code --]
+    "start": "NODE_ENV=production bun server.ts" // [!code ++]
+  }
+}
+```
+
+```sh terminal icon="terminal"
+bun run dev
+```
+
+```txt
+$ bun --watch server.ts
+Server listening on http://localhost:44100
+```
+
+<Note>
+  The generated `hmr` script (`hmr.ts`) also loads `remix/node-tsx`, which relies on `module.registerHooks()`. Bun does
+  not implement that API yet (see [Node.js compatibility](/runtime/nodejs-compat#node-module)), so the script fails
+  under Bun; `bun --watch` restarts the server on changes instead.
+</Note>
+
+---
+
+The router is a `fetch` handler, so the app can also be served with [`Bun.serve()`](/runtime/http/server) instead of `node:http`.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { router } from "./app/router.ts";
+
+const server = Bun.serve({
+  port: 44100,
+  fetch: request => router.fetch(request),
+});
+
+console.log(`Server listening on ${server.url}`);
+```
+
+---
+
+See the Remix [documentation](https://github.com/remix-run/remix/tree/main/docs) to learn more.

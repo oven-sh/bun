@@ -601,6 +601,12 @@ export default function IndexPage() {
   // BUN_DESTRUCT_VM_ON_EXIT, destroys the JSC heap. Before, it returned and
   // exited the process directly, skipping all three.
   describe.concurrent("exits through the build VM", () => {
+    // With BUN_DESTRUCT_VM_ON_EXIT set, global_exit tears the VM down before the
+    // process exits, so the exit codes asserted below also show that a build
+    // VM's teardown completes on every platform, not only on the ASAN lane that
+    // looks at what it frees.
+    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+
     const onExitConfig = `
       process.on("exit", code => console.log("exit event: " + code));
       export default { app: { framework: "react" } };
@@ -626,7 +632,7 @@ export default function IndexPage() {
 
         const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
           .cwd(dir)
-          .env(bunEnv)
+          .env(env)
           .quiet()
           .throws(false);
 
@@ -646,7 +652,7 @@ export default function IndexPage() {
 
         const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
           .cwd(dir)
-          .env(bunEnv)
+          .env(env)
           .quiet()
           .throws(false);
 
@@ -656,20 +662,28 @@ export default function IndexPage() {
       timeout,
     );
 
-    // The natives behind these wrappers are freed by the wrappers' finalizers,
-    // so they stay allocated until the VM is destroyed, and LSan reports them
-    // when the build exits without destroying it. This checks the report's
-    // contents instead of requiring an empty report because the build's own
-    // transpilers are still leaked (#38233), which is also what keeps this file
-    // in test/no-validate-leaksan.txt.
+    // The natives behind these objects are released by their wrappers'
+    // finalizers, so a build that exits without destroying its VM leaves all of
+    // them for LeakSanitizer to report. The page creates them while it renders:
+    // bun-framework-react's own prerender creates the first three kinds the same
+    // way (that is how the bug was found), and leaksan.supp would hide the same
+    // objects if they were created while the module is evaluated. The report
+    // cannot be required to be empty yet because the build's transpilers still
+    // leak (#38233), which is also what keeps this file in
+    // test/no-validate-leaksan.txt.
     test.skipIf(!isASAN)(
-      "a rendered build destroys its VM under BUN_DESTRUCT_VM_ON_EXIT",
+      "a rendered build frees the natives its JS objects own",
       async () => {
         const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
           "app.ts": `export default { app: { framework: "react" } };`,
           "pages/index.tsx": `
-            globalThis.keepUntilExit = [new TextDecoder(), new Blob(["prerender"]), setImmediate(() => {})];
             export default function IndexPage() {
+              globalThis.keepUntilExit = [
+                new TextDecoder(),
+                new Blob(["prerender"]),
+                setImmediate(() => {}),
+                new Bun.CryptoHasher("sha256"),
+              ];
               return <div>Hello World</div>;
             }
           `,
@@ -678,8 +692,7 @@ export default function IndexPage() {
         const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
           .cwd(dir)
           .env({
-            ...bunEnv,
-            BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ...env,
             ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
             LSAN_OPTIONS: [
               bunEnv.LSAN_OPTIONS,
@@ -693,7 +706,9 @@ export default function IndexPage() {
 
         expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
         expect(stdout.toString()).toBe("done\n");
-        const leaked = ["TextDecoder", "Blob", "ImmediateObject"].filter(type => stderr.toString().includes(type));
+        const leaked = ["TextDecoder", "Blob", "ImmediateObject", "CryptoHasher"].filter(type =>
+          stderr.toString().includes(type),
+        );
         expect(leaked).toEqual([]);
       },
       timeout,

@@ -337,7 +337,10 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 # LSAN per-spawn adds no coverage and slows the file significantly.
 test/napi/uv_stub.test.ts
 
+# `bun build --app` still leaks its transpilers (#38233) and, with "use client"
+# components, a ServerComponentParseTask (#38004); remove once both have landed.
 test/bake/dev/production.test.ts
+
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 

@@ -12,8 +12,7 @@ public:
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
 
-    // Node's `new Script(code)` default (lib/vm.js); a filename the caller
-    // passes replaces it, "" included. compileFunction has no such default.
+    // Node's default filename for `new Script(code)` (lib/vm.js); compileFunction's is "".
     ScriptOptions()
         : BaseVMOptions("evalmachine.<anonymous>"_s)
     {

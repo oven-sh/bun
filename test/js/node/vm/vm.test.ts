@@ -1513,6 +1513,7 @@ describe("code frame of an error thrown from a vm script", () => {
       [...numbered(4), throwLine].join("\n"),
       ["1 | 'L1';", "2 | 'L2';", "3 | 'L3';", "4 | 'L4';", `5 | ${throwLine}`, "          ^", "error: x"],
     ],
+    ["error on line 1", [throwLine, "'L2';"].join("\n"), [`1 | ${throwLine}`, "          ^", "error: x"]],
     ["error on line 2", ["'L1';", throwLine].join("\n"), ["1 | 'L1';", `2 | ${throwLine}`, "          ^", "error: x"]],
     [
       "at most five lines above the error",
@@ -1534,9 +1535,9 @@ describe("code frame of an error thrown from a vm script", () => {
       ["1 | ", "2 | 'L2';", "3 | ", `4 | ${throwLine}`, "          ^", "error: x"],
     ],
     [
-      "CRLF line endings",
-      ["'L1';", "'L2';", throwLine, "'L4';", ""].join("\r\n"),
-      ["1 | 'L1';", "2 | 'L2';", `3 | ${throwLine}`, "          ^", "error: x"],
+      "CRLF line endings, including a blank line",
+      ["'L1';", "'L2';", "", throwLine, "'L5';", ""].join("\r\n"),
+      ["1 | 'L1';", "2 | 'L2';", "3 | ", `4 | ${throwLine}`, "          ^", "error: x"],
     ],
     ["error positioned on the newline ending its line", "'L1';\nfoo\n'L3';", fooFrame],
     ["error positioned at the end of the source", fooAtEndOfSource, fooFrame],
@@ -1561,8 +1562,10 @@ describe("code frame of an error thrown from a vm script", () => {
       env: {
         ...bunEnv,
         // Malloc=1 routes JSC's allocations through the system allocator so ASAN
-        // sees a read past the end of the source string; detect_leaks=0 because
-        // that also exposes JSC's never-freed startup allocations to LSAN.
+        // sees a read past the end of the source string (bmalloc's system heap
+        // is unimplemented on Windows, which has no ASAN lane anyway);
+        // detect_leaks=0 because it also exposes JSC's never-freed startup
+        // allocations to LSAN.
         ...(isWindows ? {} : { Malloc: "1" }),
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
@@ -1572,8 +1575,10 @@ describe("code frame of an error thrown from a vm script", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("");
-    expect(stderr.split("\n").slice(0, fooFrame.length)).toEqual(fooFrame);
-    expect(exitCode).toBe(1);
+    expect({ stdout, frame: stderr.split("\n").slice(0, fooFrame.length), exitCode }).toEqual({
+      stdout: "",
+      frame: fooFrame,
+      exitCode: 1,
+    });
   });
 });

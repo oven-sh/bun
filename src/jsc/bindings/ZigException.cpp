@@ -181,7 +181,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             if (end > start && bytes[end - 1] == '\r') {
                 end--;
             }
-            return Bun::toStringView(sourceString.substring(start, end - start));
+            return Bun::toStringView(StringView_slice(sourceString, start, end));
         };
 
         unsigned lineEnd = divot;

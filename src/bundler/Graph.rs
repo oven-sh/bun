@@ -78,6 +78,14 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: HtmlImports,
 
+    /// A second copy of the bundler runtime, parsed for `Target::Browser`. A
+    /// server-side build creates it together with its client transpiler, so the
+    /// browser files it pulls in through HTML imports take `__toESM`,
+    /// `__require`, ... from a runtime built for the browser instead of sharing
+    /// `Index::RUNTIME` (and therefore output chunks) with the server code.
+    /// `Index::INVALID` when the build has no such browser side.
+    pub(crate) browser_runtime_source_index: Index,
+
     pub(crate) estimated_file_loader_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
@@ -175,6 +183,7 @@ impl<'a> Graph<'a> {
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
+            browser_runtime_source_index: Index::INVALID,
             estimated_file_loader_count: 0,
             css_file_count: 0,
             additional_output_files: Vec::new(),
@@ -221,6 +230,17 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The copy of the runtime that files parsed for `target` import their
+    /// helpers from.
+    #[inline]
+    pub(crate) fn runtime_source_index_for_target(&self, target: options::Target) -> Index {
+        if target == options::Target::Browser && self.browser_runtime_source_index.is_valid() {
+            self.browser_runtime_source_index
+        } else {
+            Index::RUNTIME
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

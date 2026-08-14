@@ -285,6 +285,7 @@ pub(crate) fn scan_imports_and_exports(
                     export_star_map: HashMap::default(),
                     export_star_records: &*export_star_import_records,
                     output_format,
+                    browser_runtime_source_index: this.graph.browser_runtime_source_index,
                     wrap_stack: Vec::new(),
                 }
             };
@@ -509,7 +510,6 @@ pub(crate) fn scan_imports_and_exports(
         let _trace = perf::trace("Bundler.BindImportsToExports");
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
-        let mut runtime_export_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
 
         for source_index_ in &reachable {
@@ -671,18 +671,11 @@ pub(crate) fn scan_imports_and_exports(
             // previous step. The previous step can't do this because it's running in
             // parallel and can't safely mutate the "importsToBind" map of another file.
             if flag.needs_export_symbol_from_runtime {
-                if !runtime_export_symbol_ref.is_valid() {
-                    runtime_export_symbol_ref = this.runtime_function(b"__export");
-                }
-
-                debug_assert!(runtime_export_symbol_ref.is_valid());
-
-                this.graph.generate_symbol_import_and_use(
+                this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
-                    bun_ast::NAMESPACE_EXPORT_PART_INDEX,
-                    runtime_export_symbol_ref,
+                    Index::part(bun_ast::NAMESPACE_EXPORT_PART_INDEX),
+                    b"__export",
                     1,
-                    Index::RUNTIME,
                 )?;
             }
 
@@ -1149,6 +1142,9 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    /// `LinkerGraph::browser_runtime_source_index`; `wrap` must skip it just
+    /// like `Index::RUNTIME`.
+    browser_runtime_source_index: Index,
     wrap_stack: Vec<IndexInt>,
 }
 
@@ -1206,8 +1202,11 @@ impl DependencyWrapper<'_> {
             }
             flag.did_wrap_dependencies = true;
 
-            // Never wrap the runtime file since it always comes first
-            if source_index == Index::RUNTIME.get() {
+            // Never wrap the runtime files since they always come first
+            if source_index == Index::RUNTIME.get()
+                || (self.browser_runtime_source_index.is_valid()
+                    && source_index == self.browser_runtime_source_index.get())
+            {
                 continue;
             }
 

@@ -117,6 +117,10 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// This task parses a copy of the bundler runtime (`Index::RUNTIME`, or the
+    /// browser copy a server build adds for its HTML imports). The runtime is
+    /// always tree-shaken and always honors its own `@__PURE__` annotations.
+    pub(crate) is_runtime: bool,
 }
 
 pub enum ParseTaskStage {
@@ -282,14 +286,18 @@ impl ParseTask {
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
             is_entry_point: false,
+            is_runtime: false,
         }
     }
 
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        parse_worker::get_runtime_source(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        source_index: Index,
+    ) -> RuntimeSource {
+        parse_worker::get_runtime_source(target, source_index)
     }
 }
 
@@ -323,6 +331,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            is_runtime: false,
         }
     }
 }
@@ -495,7 +504,7 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime(target: options::Target, source_index: Index) -> RuntimeSource {
         use const_format::concatcp;
 
         let runtime_code: &'static str = match target {
@@ -538,9 +547,10 @@ pub mod parse_worker {
                 ..Default::default()
             },
             contents_or_fd: ContentsOrFd::Contents(runtime_code.as_bytes()),
-            source_index: Index::RUNTIME,
+            source_index,
             loader: Some(Loader::Js),
             known_target: target,
+            is_runtime: true,
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
@@ -574,16 +584,17 @@ pub mod parse_worker {
                 is_symlink: false,
             },
             contents: std::borrow::Cow::Borrowed(runtime_code.as_bytes()),
-            // `Source.index` is `bun_ast::Index` (newtype `u32`),
-            // distinct from `bun_ast::Index`. Runtime source is index 0.
-            index: bun_ast::Index(Index::RUNTIME.get()),
+            index: source_index,
             ..Default::default()
         };
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        get_runtime_source_comptime(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        source_index: Index,
+    ) -> RuntimeSource {
+        get_runtime_source_comptime(target, source_index)
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -1545,7 +1556,7 @@ pub mod parse_worker {
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
         let might_have_on_parse_plugins = 'brk: {
-            if task.source_index.is_runtime() {
+            if task.is_runtime {
                 break 'brk false;
             }
             // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
@@ -2433,6 +2444,7 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
+        opts.source_is_runtime = task.is_runtime;
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
@@ -2454,7 +2466,7 @@ pub mod parse_worker {
         };
         opts.package_version = task.package_version.slice();
 
-        opts.features.allow_runtime = !task.source_index.is_runtime();
+        opts.features.allow_runtime = !task.is_runtime;
         opts.features.unwrap_commonjs_to_esm =
             output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
         opts.features.top_level_await = output_format == options::Format::Esm
@@ -2497,7 +2509,7 @@ pub mod parse_worker {
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();
         opts.features.hot_module_reloading =
-            output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
+            output_format == options::Format::InternalBakeDev && !task.is_runtime;
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
@@ -2582,8 +2594,7 @@ pub mod parse_worker {
             }
         });
 
-        opts.ignore_dce_annotations =
-            topts.ignore_dce_annotations && !task.source_index.is_runtime();
+        opts.ignore_dce_annotations = topts.ignore_dce_annotations && !task.is_runtime;
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
@@ -2594,7 +2605,7 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        opts.tree_shaking = if task.source_index.is_runtime() {
+        opts.tree_shaking = if task.is_runtime {
             true
         } else {
             topts.tree_shaking

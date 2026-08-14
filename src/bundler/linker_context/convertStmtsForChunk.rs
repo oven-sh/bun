@@ -97,6 +97,7 @@ pub(crate) fn convert_stmts_for_chunk(
                     // "import * as ns from 'path'"
                     // "import {foo} from 'path'"
                     if c.should_remove_import_export_stmt(
+                        source_index,
                         stmts,
                         stmt.loc,
                         s.namespace_ref,
@@ -117,6 +118,7 @@ pub(crate) fn convert_stmts_for_chunk(
                     // "export * as ns from 'path'"
                     if let Some(alias) = &s.alias {
                         if c.should_remove_import_export_stmt(
+                            source_index,
                             stmts,
                             stmt.loc,
                             s.namespace_ref,
@@ -181,7 +183,8 @@ pub(crate) fn convert_stmts_for_chunk(
                             );
 
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
-                            let export_star_ref = c.runtime_function(b"__reExport");
+                            let export_star_ref =
+                                c.runtime_function_for(source_index, b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
@@ -298,7 +301,8 @@ pub(crate) fn convert_stmts_for_chunk(
                             };
 
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
-                            let export_star_ref = c.runtime_function(b"__reExport");
+                            let export_star_ref =
+                                c.runtime_function_for(source_index, b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
@@ -348,6 +352,7 @@ pub(crate) fn convert_stmts_for_chunk(
                 bun_ast::StmtData::SExportFrom(s) => {
                     // "export {foo} from 'path'"
                     if c.should_remove_import_export_stmt(
+                        source_index,
                         stmts,
                         stmt.loc,
                         s.namespace_ref,

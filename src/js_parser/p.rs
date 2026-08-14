@@ -785,12 +785,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
-    /// use this instead of checking p.source.index
-    /// because when not bundling, p.source.index is `0`
+    /// use this instead of checking p.source.index: when not bundling,
+    /// p.source.index is `0`, and a bundle can hold more than one copy of the
+    /// runtime (see `Options::source_is_runtime`).
     #[inline]
     pub(crate) fn is_source_runtime(&self) -> bool {
-        // Index 0 is the synthetic runtime chunk.
-        self.options.bundle && self.source.index.0 == 0
+        self.options.source_is_runtime
     }
 
     /// Extracts a matchable "shape" from a dynamic import argument.

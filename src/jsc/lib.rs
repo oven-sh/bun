@@ -1206,7 +1206,7 @@ pub use self::js_global_object::BunPluginTarget;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).

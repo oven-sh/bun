@@ -2,7 +2,7 @@ use core::ffi::{c_uint, c_void};
 use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_core::{String as BunString, ZigString};
+use bun_core::{OwnedString, ZigString};
 
 unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
@@ -18,7 +18,7 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         owner: *mut JSCell,
         length: u32,
-        names: *mut ExternColumnIdentifier,
+        names: *const ExternColumnIdentifier,
     ) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
@@ -128,16 +128,16 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
+    /// C++ copies the names it needs into the returned `Structure` and does
+    /// not retain `names`, so the slice may be dropped as soon as this returns.
+    ///
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
-    /// `names` must point to `length` initialized `ExternColumnIdentifier`s
-    /// valid for the duration of the call; C++ does not retain the pointer.
     pub unsafe fn create_structure(
         global: &JSGlobalObject,
         owner: JSValue,
-        length: u32,
-        names: *mut ExternColumnIdentifier,
+        names: &[ExternColumnIdentifier],
     ) -> JSValue {
         crate::mark_binding!();
         debug_assert!(owner.is_cell());
@@ -145,11 +145,19 @@ impl JSObject {
         // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
         // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
         let owner_cell = owner.0 as *mut JSCell;
-        // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract.
+        // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract
+        // and `names` is a live slice that C++ only reads during the call.
         // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
         // no `&`-derived view of any field C++ mutates.
-        unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
+        unsafe {
+            JSC__createStructure(
+                global.as_ptr(),
+                owner_cell,
+                names.len() as u32,
+                names.as_ptr(),
+            )
+        }
     }
 
     pub fn create_with_initializer<Ctx: ObjectInitializer>(
@@ -213,41 +221,55 @@ impl JSObject {
     }
 }
 
+/// Mirrors `ExternColumnIdentifier` in `SQLClient.cpp`, which only reads it.
+/// A named column owns one reference to its name, released on drop.
 #[repr(C)]
 pub struct ExternColumnIdentifier {
-    pub tag: u8,
-    pub value: ExternColumnIdentifierValue,
+    tag: ExternColumnIdentifierTag,
+    value: ExternColumnIdentifierValue,
+}
+
+/// The discriminants are what `isIndexedColumn()` / `isNamedColumn()` test for
+/// in `SQLClient.cpp`. C++ also knows a duplicate tag (0), but duplicates are
+/// filtered out before identifiers are built, so Rust never constructs one.
+#[repr(u8)]
+enum ExternColumnIdentifierTag {
+    Index = 1,
+    Name = 2,
 }
 
 #[repr(C)]
-pub union ExternColumnIdentifierValue {
-    pub index: u32,
-    pub name: ManuallyDrop<BunString>,
-}
-
-impl Default for ExternColumnIdentifier {
-    fn default() -> Self {
-        Self {
-            tag: 0,
-            value: ExternColumnIdentifierValue { index: 0 },
-        }
-    }
+union ExternColumnIdentifierValue {
+    index: u32,
+    name: ManuallyDrop<OwnedString>,
 }
 
 impl ExternColumnIdentifier {
-    pub(crate) fn string(&mut self) -> Option<&mut BunString> {
-        match self.tag {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
-            _ => None,
+    #[inline]
+    pub fn index(index: u32) -> Self {
+        Self {
+            tag: ExternColumnIdentifierTag::Index,
+            value: ExternColumnIdentifierValue { index },
+        }
+    }
+
+    #[inline]
+    pub fn name(name: OwnedString) -> Self {
+        Self {
+            tag: ExternColumnIdentifierTag::Name,
+            value: ExternColumnIdentifierValue {
+                name: ManuallyDrop::new(name),
+            },
         }
     }
 }
 
 impl Drop for ExternColumnIdentifier {
     fn drop(&mut self) {
-        if let Some(str) = self.string() {
-            str.deref();
+        if matches!(self.tag, ExternColumnIdentifierTag::Name) {
+            // SAFETY: `Self::name` is the only constructor that sets this tag and
+            // it initializes `value.name`; the field is not touched after this.
+            unsafe { ManuallyDrop::drop(&mut self.value.name) }
         }
     }
 }

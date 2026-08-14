@@ -38,12 +38,16 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
-  // Only the Bun runtime can open a database the bundle leaves external, so
-  // every way of selecting the sqlite loader has to fail the build for the
-  // other targets. The `with { type: "sqlite" }` form used to be externalized
-  // before that check ran: the build succeeded and the output imported the
-  // database as a plain module, with the attribute dropped.
-  describe("sqlite loader requires target bun", () => {
+  // Only the Bun runtime can open a database the bundle leaves external, so a
+  // sqlite import attribute has to fail the build for the other targets, the
+  // way `embed: "true"` and `--loader .db:sqlite` already did. The plain
+  // `with { type: "sqlite" }` form used to be externalized before that check
+  // ran: the build succeeded and the output imported the database as a plain
+  // module, with the attribute dropped.
+  //
+  // The fixture is `app.db` on purpose: `.sqlite` selects the loader by
+  // extension alone, while a `.db` file only gets it from the attribute.
+  describe("sqlite import attribute requires target bun", () => {
     const database = (() => {
       const db = new Database(":memory:");
       db.exec("create table messages (message text)");
@@ -51,41 +55,56 @@ describe("bundler", () => {
       return db.serialize();
     })();
     const targetError = {
-      "/db.sqlite": ['To use the "sqlite" loader, set target to "bun"'],
+      "/app.db": ['To use the "sqlite" loader, set target to "bun"'],
     };
     for (const target of ["node", "browser"] as const) {
-      itBundled(`bun/sqlite-file-target-${target}`, {
+      itBundled(`bun/sqlite-attribute-target-${target}`, {
         target,
         files: {
           "/entry.ts": /* js */ `
-            import db from './db.sqlite' with {type: "sqlite"};
+            import db from './app.db' with {type: "sqlite"};
             console.log(db);
           `,
-          "/db.sqlite": database,
+          "/app.db": database,
         },
         bundleErrors: targetError,
       });
-      itBundled(`bun/sqlite-file-dynamic-import-target-${target}`, {
+      itBundled(`bun/sqlite-attribute-dynamic-import-target-${target}`, {
         target,
         files: {
           "/entry.ts": /* js */ `
-            const { default: db } = await import('./db.sqlite', {with: {type: "sqlite"}});
+            const { default: db } = await import('./app.db', {with: {type: "sqlite"}});
             console.log(db);
           `,
-          "/db.sqlite": database,
+          "/app.db": database,
         },
         bundleErrors: targetError,
       });
-      itBundled(`bun/embedded-sqlite-file-target-${target}`, {
+      itBundled(`bun/sqlite-attribute-embed-target-${target}`, {
         target,
         files: {
           "/entry.ts": /* js */ `
-            import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+            import db from './app.db' with {type: "sqlite", embed: "true"};
             console.log(db);
           `,
-          "/db.sqlite": database,
+          "/app.db": database,
         },
         bundleErrors: targetError,
+      });
+      // For these targets the import is resolved like any other, so a database
+      // that is not there is a resolution error (target bun never looks for it:
+      // see bun/sqlite-file below, which only creates the file at run time).
+      itBundled(`bun/sqlite-attribute-missing-file-target-${target}`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import db from './app.db' with {type: "sqlite"};
+            console.log(db);
+          `,
+        },
+        bundleErrors: {
+          "/entry.ts": ['Could not resolve: "./app.db"'],
+        },
       });
     }
   });

@@ -1963,17 +1963,21 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        // This is the pipe reader's landing frame: a buffer that cannot be
+        // built (allocation failure, a terminating VM) is folded here and
+        // reading goes on.
         let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
             .to_node_buffer(global_this)
         {
             Ok(data) => data,
-            // OOM / a termination request: that exception is reported by the loop.
             Err(err) => {
-                global_this.report_active_exception_as_unhandled(err);
+                crate::dispatch::fold(Err(err));
                 return true;
             }
         };
 
+        // Each chunk's `data` callback is its own top-level call: reported and
+        // reading continues, as a stream 'data' listener that throws does.
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,
             global_this,
@@ -2045,10 +2049,10 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        Self::from_parent_ptr(this).on_reader_done()
+        Self::from_parent_ptr(this).on_reader_done();
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(&err)
+        Self::from_parent_ptr(this).on_reader_error(&err);
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
@@ -2071,16 +2075,16 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status);
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err)
+        Self::from_parent_ptr(this).on_writer_error(&err);
     }
     unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close();
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -2115,15 +2119,15 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
     const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status);
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err)
+        Self::from_parent_ptr(this).on_writer_error(&err);
     }
     unsafe fn on_writable(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close();
     }
 }

@@ -403,7 +403,7 @@ mod shim {
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
-    ) -> bool {
+    ) -> JsResult<bool> {
         cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
@@ -1377,12 +1377,17 @@ where
         }
 
         if let Some(request) = this.request_mut() {
-            if shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Timeout,
                 global_this,
             ) {
-                any_js_calls.set(true);
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
             }
         }
     }
@@ -1430,12 +1435,17 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            if shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
                 global_this,
             ) {
-                any_js_calls.set(true);
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
             }
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
@@ -2360,7 +2370,7 @@ where
                         Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
-                    ))?;
+                    ));
                     err.reset();
                     return Ok(true);
                 }
@@ -2419,11 +2429,11 @@ where
         // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
+    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
     fn on_s3_size_resolved_thunk(
         result: S3::simple_request::S3StatResult<'_>,
         this: *mut c_void,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> JsResult<()> {
         let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
         stat_ref.ctx().on_s3_size_resolved(result);
         Ok(())
@@ -4079,8 +4089,7 @@ where
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
-                    // TODO: properly propagate exception upwards
-                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                    bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
                     err.reset();
@@ -4114,8 +4123,7 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+                bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
@@ -4147,8 +4155,7 @@ where
                 );
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
 
             return;

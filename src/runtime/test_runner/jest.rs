@@ -624,10 +624,22 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // `report_unhandled` reports the uncaught exception, with a guard
-            // for `Terminated` (which carries no pending exception to take).
-            use bun_jsc::JsResultExt as _;
-            bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
+                // As `RunTestsTask::call`: what advancing the runner threw is
+                // recorded against wherever the runner now is; a termination is
+                // left where it is.
+                if !global_object.has_pending_termination_exception() {
+                    // SAFETY: as above; `run` has returned, this is the only handle.
+                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+                    let phase = buntest.get_current_state_data();
+                    buntest.on_uncaught_exception(
+                        global_object,
+                        Some(global_object.take_exception(e)),
+                        false,
+                        &phase,
+                    );
+                }
+            }
             return;
         }
 

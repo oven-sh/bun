@@ -697,7 +697,7 @@ impl ErrorDeferred {
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
-        Ok(self.promise.reject(global_this, Ok(instance))?)
+        self.promise.reject(global_this, Ok(instance))
     }
 
     pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
@@ -715,7 +715,7 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
-                this.deferred.reject(global).map_err(Into::into)
+                this.deferred.reject(global)
             }
         }
 

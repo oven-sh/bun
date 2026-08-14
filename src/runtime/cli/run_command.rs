@@ -1329,30 +1329,25 @@ impl Run<'_> {
             // Go through the global object's getter because `Bun.redis` is a
             // PropertyCallback (no direct WriteBarrier handle to read).
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(redis) = bun_object.get(global, "redis")? else {
+                    return Ok(());
+                };
+                let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                else {
+                    return Ok(());
+                };
+                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // wrapper; accessed here under the API lock.
+                unsafe { &*client }.do_connect(global, redis)?;
+                Ok(())
             };
-            let redis = match bun_object.get(global, "redis") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
-            };
-            let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>() else {
-                break 'do_redis_preconnect;
-            };
-            // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
-            // wrapper; accessed here under the API lock.
-            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            // The process entry is the outermost frame: a preconnect that threw
+            // is reported here, before the entry point loads.
+            crate::dispatch::fold(preconnect());
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1361,33 +1356,20 @@ impl Run<'_> {
                 break 'do_postgres_preconnect;
             }
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(sql_object) = bun_object.get(global, "sql")? else {
+                    return Ok(());
+                };
+                let Some(connect_fn) = sql_object.get(global, "connect")? else {
+                    return Ok(());
+                };
+                connect_fn.call(global, sql_object, &[])?;
+                Ok(())
             };
-            let sql_object = match bun_object.get(global, "sql") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            let connect_fn = match sql_object.get(global, "connect") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            if let Err(e) = connect_fn.call(global, sql_object, &[]) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            crate::dispatch::fold(preconnect());
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────

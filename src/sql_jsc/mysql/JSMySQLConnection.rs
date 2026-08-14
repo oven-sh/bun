@@ -942,9 +942,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
-                return;
-            };
+            let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
             this.fail_with_js_value(v);
         }
     }

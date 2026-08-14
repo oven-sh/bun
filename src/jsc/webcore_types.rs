@@ -590,6 +590,14 @@ pub mod store {
     /// rather than `Vec<u8>` so the memfd-backed path
     /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
     /// can carry its allocator vtable with the buffer.
+    ///
+    /// `ptr[..len]` is immutable for as long as this `Bytes` exists. The
+    /// allocation behind it is not necessarily this value's alone: the stores
+    /// that `bun_runtime`'s `AppendBuffer` builds are several `Bytes` viewing
+    /// prefixes of one allocation (their `allocator` keeps it alive), so only
+    /// `allocator.free` may be assumed about the memory past what `slice()`
+    /// returns, and writing through `ptr` additionally needs the allocation to
+    /// be exclusively this value's (see `as_array_list_leak`).
     pub struct Bytes {
         pub ptr: Option<NonNull<u8>>,
         pub len: SizeType,
@@ -600,11 +608,12 @@ pub mod store {
         pub stored_name: Box<[u8]>,
     }
 
-    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
-    // `NonNull<u8>` is uniquely owned (`ptr` is the sole alias) and
+    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. It never writes
+    // through `ptr` itself, other `Bytes` sharing the allocation (see the type
+    // doc) only read it too, the allocator's `free` is thread-safe, and
     // `StdAllocator` is `Send + Sync`.
     unsafe impl Send for Bytes {}
-    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
+    // SAFETY: `&Bytes` only reads the immutable `ptr[..len]` via `slice()`; no
     // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
@@ -737,9 +746,16 @@ pub mod store {
             self.as_array_list_leak()
         }
 
+        /// Writing through the result (or handing it out writable, as the
+        /// `Lifetime::Transfer` ArrayBuffer path does) is only sound when no
+        /// other `Bytes` shares the allocation: a freshly created store, or a
+        /// store that `AppendBuffer::shares_allocation` clears. Everything
+        /// else only reads through it.
         pub fn as_array_list_leak(&mut self) -> &mut [u8] {
             match self.ptr {
-                // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
+                // SAFETY: `ptr[..len]` is live for as long as `*self` is, and
+                // `&mut self` rules out other users of this value; see the doc
+                // comment for what writers must additionally ensure.
                 Some(p) => unsafe {
                     core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
                 },

@@ -22,6 +22,8 @@ use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
+use super::append_buffer::AppendBuffer;
+
 #[cfg(unix)]
 use super::SizeType;
 
@@ -496,10 +498,13 @@ impl BytesExt for Bytes {
 
     fn to_internal_blob(&mut self) -> super::Internal {
         // `Internal.bytes` is `Vec<u8>` (global allocator), so
-        // round-trip only when the storage *is* the global allocator; otherwise
-        // copy + free through the original allocator (e.g. memfd → munmap).
+        // round-trip only when the storage *is* the global allocator (directly,
+        // or through an `AppendBuffer` nothing else shares); otherwise copy +
+        // free through the original allocator (e.g. memfd → munmap).
         let bytes = if self.ptr.is_none() {
             Vec::new()
+        } else if let Some(storage) = AppendBuffer::take_unique_storage(self) {
+            storage
         } else if core::ptr::eq(
             std::ptr::from_ref(self.allocator.vtable),
             std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),

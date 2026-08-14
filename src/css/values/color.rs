@@ -2184,12 +2184,8 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    /// A math function the `<number>` pass could not fold, evaluated as a
-    /// `<percentage>` and returned as a unit value. The keywords are `<number>`s
-    /// first, per CSS Color 5 (`calc(r * 50%)`). That fails for the forms bun has
-    /// always accepted with the keyword standing for a percentage of its range
-    /// (`calc(l + 10%)`, and `min(r, g)`, which `reduce_args` only folds over
-    /// values), so those are retried that way.
+    /// A `<percentage>` math function, as a unit value. The keywords are `<number>`s
+    /// (`calc(r * 50%)`), else percentages of their range as before (`calc(l + 10%)`).
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(unit_value) = input.try_parse(|i| {
             RelativeComponentParser::parse_percentage_calc(i, this, |ctx, ident| {

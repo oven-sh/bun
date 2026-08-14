@@ -798,9 +798,6 @@ pub mod fs {
                         ..Default::default()
                     },
                 )?;
-                // Spec's `TmpfileWindows` has no `dir_fd` field — the handle is
-                // local. Close it once we've captured the absolute path so we
-                // don't leak a directory HANDLE per tmpfile.
                 scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
                 let flags = bun_sys::O::CREAT
                     | bun_sys::O::WRONLY
@@ -808,8 +805,14 @@ pub mod fs {
                     | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
-                let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
-                self.existing_path = Box::<[u8]>::from(&*existing_path);
+                let existing_path = bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Windows,
+                >(
+                    FileSystem::get().top_level_dir,
+                    &mut buf[..],
+                    &[tmp, name.as_bytes()],
+                );
+                self.existing_path = Box::<[u8]>::from(existing_path);
                 Ok(())
             }
         }

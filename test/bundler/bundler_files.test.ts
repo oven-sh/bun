@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { join } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -581,5 +582,24 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  test("[dir] naming for an in-memory entry whose directory does not exist on disk", async () => {
+    using dir = tempDir("bundler-files-dir-naming", {});
+    const entryPath = join(String(dir), "virtual", "nested", "entry.js");
+    const outdir = join(String(dir), "out");
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      files: {
+        [entryPath]: `console.log("hello from memory");`,
+      },
+      root: String(dir),
+      outdir,
+      naming: "[dir]/[name].[ext]",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.map(o => o.path)).toEqual([join(outdir, "virtual", "nested", "entry.js")]);
   });
 });

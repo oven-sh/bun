@@ -900,8 +900,11 @@ pub mod js_bundler {
                     );
                 };
 
-                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
-                    Ok(d) => d,
+                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let rootdir = bun_resolver::fs::FileSystem::get()
+                    .abs_buf(&[path.slice()], &mut rootdir_buf.0);
+                match bun_sys::open_dir_at(bun_sys::Fd::cwd(), rootdir) {
+                    Ok(d) => d.close(),
                     Err(err) => {
                         return Err(global_this.throw(format_args!(
                             "{}: failed to open root directory: {}",
@@ -909,20 +912,7 @@ pub mod js_bundler {
                             bstr::BStr::new(path.slice())
                         )));
                     }
-                };
-                let _close = scopeguard::guard(dir, |d| d.close());
-
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
-                let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        return Err(global_this.throw(format_args!(
-                            "{}: failed to get full root directory path: {}",
-                            bstr::BStr::new(err.name()),
-                            bstr::BStr::new(path.slice())
-                        )));
-                    }
-                };
+                }
                 this.rootdir.append_slice_exact(rootdir)?;
                 drop(path);
             }

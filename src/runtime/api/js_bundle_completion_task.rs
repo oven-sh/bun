@@ -1022,7 +1022,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
-        transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
+        transpiler.options.root_dir = match transpiler.resolver.read_dir_info(&config.rootdir.list)
+        {
+            Ok(Some(dir)) => Box::from(dir.real_path()),
+            _ => Box::from(config.rootdir.list.as_slice()),
+        };
         transpiler.options.minify_syntax = config.minify.syntax;
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;

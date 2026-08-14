@@ -406,10 +406,8 @@ impl BuildCommand {
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
-            // `bun_sys::Dir` is the owning RAII
-            // handle; its Drop closes the fd when this block ends.
-            let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
-                Ok(d) => bun_sys::Dir { fd: d },
+            match bun_sys::open_dir_at(Fd::cwd(), path) {
+                Ok(d) => d.close(),
                 Err(err) => {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> opening root directory {}",
@@ -418,20 +416,19 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
-            };
+            }
 
-            let result = match bun_sys::get_fd_path(dir.fd, &mut src_root_dir_buf) {
-                Ok(p) => p,
-                Err(err) => {
+            let abs = bun_resolver::fs::FileSystem::get().abs_buf(&[path], &mut src_root_dir_buf.0);
+            match this_transpiler.resolver.read_dir_info(abs) {
+                Ok(Some(dir)) => break 'brk1 dir.real_path(),
+                _ => {
                     bun_core::pretty_errorln!(
-                        "<r><red>{}<r> resolving root directory {}",
-                        bstr::BStr::new(err.name()),
+                        "<r><red>error<r> resolving root directory {}",
                         bun_fmt::quote(path),
                     );
                     Global::exit(1);
                 }
-            };
-            break 'brk1 &*result;
+            }
         };
 
         this_transpiler.options.root_dir = src_root_dir.into();

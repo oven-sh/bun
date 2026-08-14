@@ -40,25 +40,6 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
 
-#[cfg(windows)]
-pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
-    use bun_paths::resolve_path::{self, platform};
-    // Rust's `&mut`/`&` aliasing rules forbid
-    // passing the same buffer as both `join_z_buf`'s output and an input part,
-    // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
-    // and this is called from deep inside `Iterator::next()` (via `lstatat`
-    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
-    // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
-    // worker-thread stacks. Draw both from the per-thread heap pool instead
-    // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
-    let mut dir_buf = bun_paths::path_buffer_pool::get();
-    let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
-    let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
-    let mut join_buf = bun_paths::path_buffer_pool::get();
-    let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
-    Syscall::stat(statpath)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Accessor trait
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,19 +153,15 @@ impl Accessor for SyscallAccessor {
     }
 
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
-        #[cfg(windows)]
-        {
-            return statat_windows(handle.value, path);
-        }
-        #[cfg(not(windows))]
         Syscall::fstatat(handle.value, path)
     }
 
-    /// Like statat but does not follow symlinks.
+    /// Like statat but does not follow symlinks (on Windows, reparse points
+    /// are still followed).
     fn lstatat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
         #[cfg(windows)]
         {
-            return statat_windows(handle.value, path);
+            return Syscall::fstatat(handle.value, path);
         }
         #[cfg(not(windows))]
         Syscall::lstatat(handle.value, path)

@@ -620,6 +620,10 @@ impl<'a> RouteLoader<'a> {
                             // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                             let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
+                            // SAFETY: see `kind()` above.
+                            let symlink =
+                                unsafe { (&*entry_ptr).symlink(resolver.fs_impl(), false) };
+
                             // SAFETY: `entry_ptr` is EntryStore-owned (process
                             // lifetime) with no other live `&mut` borrow here.
                             let route = unsafe {
@@ -627,6 +631,8 @@ impl<'a> RouteLoader<'a> {
                                     entry.base(),
                                     extname,
                                     entry_ptr,
+                                    root_dir_info.real_path(),
+                                    symlink,
                                     self.log,
                                     public_dir,
                                     self.route_dirname_len,
@@ -720,6 +726,8 @@ impl Route {
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
+        real_dir: &[u8],
+        symlink: &[u8],
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
@@ -846,87 +854,21 @@ impl Route {
             };
 
             if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
+                // The `set_abs_path` write below rewrites the cached `Entry`;
+                // serialize it on the per-entry mutex (the same lock every
+                // other `Entry` rewrite path takes).
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
-                // The guard is inverted: when the fd belongs to the cache
-                // (`needs_close == false`), `into_raw()` so we do not close
-                // someone else's fd.
-                let needs_close = core::cell::Cell::new(true);
-                let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if !needs_close.get() {
-                        if let Some(f) = f {
-                            let _ = f.into_raw();
-                        }
-                    }
-                });
-
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
-                    *file = Some(bun_sys::File::from_fd(valid));
-                    needs_close.set(false);
+                let fs = FileSystem::instance();
+                // Same rule as the resolver's `finalize_result`, so `abs_path`
+                // matches the module path the route file is loaded under.
+                let abs: &[u8] = if !symlink.is_empty() {
+                    symlink
                 } else {
                     // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
-                    let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
-                    // Rebind so the later getFdPath error
-                    // message prints the computed path instead of `b""`.
-                    // SAFETY: lifetime-laundered raw view into route_file_buf
-                    // (same pattern as `public_path` above) so the buffer can
-                    // be reborrowed mutably for the NUL write / open below.
-                    abs_path_str =
-                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
-                    route_file_buf[abs_len] = 0;
-                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
-                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
-                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
-                        Ok(f) => {
-                            *file = Some(f);
-                        }
-                        Err(err) => {
-                            needs_close.set(false);
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "{} opening route: {}",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(&route_file_buf[..abs_len])
-                                ),
-                            );
-                            return None;
-                        }
-                    }
-                    FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
-                }
-
-                let fd = file.as_ref().unwrap().handle();
-                let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving route: {}",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(abs_path_str)
-                            ),
-                        );
-                        return None;
-                    }
+                    fs.abs_buf(&[real_dir, unsafe { &*entry }.base()], route_file_buf)
                 };
-
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
+                abs_path_str = fs.dirname_store().append(abs).expect("unreachable");
 
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.

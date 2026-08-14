@@ -174,8 +174,8 @@ mod strings {
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
 // (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.
-// `open` / `open_dir_for_iteration` / `get_fd_path` / `OpenDirOptions` /
-// `iterate_dir` are now provided by the `pub use ::bun_sys::*` glob.
+// `open` / `open_dir_for_iteration` / `OpenDirOptions` / `iterate_dir` are
+// provided by the `pub use ::bun_sys::*` glob.
 mod bun_sys {
     pub(super) use ::bun_sys::*;
 
@@ -216,23 +216,15 @@ mod bun_sys {
     // and reach this module via the `pub use ::bun_sys::*` glob above.
 }
 
-/// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
-/// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
+/// `bun_sys::Fd` extension surface — thin method-syntax wrapper over the
+/// free function `::bun_sys::close`, so the resolver body can spell `fd.close()`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
     fn close(self) {
         let _ = ::bun_sys::close(self);
-    }
-    #[inline]
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
-        ::bun_sys::get_fd_path(self, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
     }
 }
 trait FdZero {
@@ -6239,10 +6231,10 @@ impl<'a> Resolver<'a> {
                         ) else {
                             break 'append_bin_dir;
                         };
-                        let _close = bun_sys::CloseOnDrop::new(file);
-                        let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
-                            break 'append_bin_dir;
-                        };
+                        file.close();
+                        let bin_path = self
+                            .fs_ref()
+                            .abs_buf(&[path, b"node_modules/.bin"], bufs!(node_bin_path));
                         let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
@@ -6278,15 +6270,9 @@ impl<'a> Resolver<'a> {
                                     .store(true, core::sync::atomic::Ordering::Release);
                             }
 
-                            let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
-                            else {
-                                break 'append_bin_dir;
-                            };
-                            let _close = bun_sys::CloseOnDrop::new(file);
-                            let Ok(bin_path) = bun_sys::get_fd_path(file, bufs!(node_bin_path))
-                            else {
-                                break 'append_bin_dir;
-                            };
+                            let bin_path = self
+                                .fs_ref()
+                                .abs_buf(&[path, b".bin"], bufs!(node_bin_path));
                             let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.

@@ -255,7 +255,7 @@ impl Entry {
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
     /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
+    pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,

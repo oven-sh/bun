@@ -145,8 +145,7 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
-// Node's Pipe-vs-TCP handle class; bun's native handle is the same class for
-// both, so connect() and the accept paths record it (read by resetAndDestroy).
+// Pipe vs TCP is not visible on bun's native handle, so the connect and accept paths record it here.
 const kIsPipe = Symbol("kIsPipe");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -2578,8 +2577,7 @@ function fdSyncWritev(data, callback) {
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {
-    // Node's `this._handle instanceof TCP` check: a TLS wrap or a Pipe throws.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+    // Only a TCP handle can be reset: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
     if (typeof this[bunTlsSymbol] === "function" || this[kIsPipe]) {
       throw $ERR_INVALID_HANDLE_TYPE();
     }

@@ -649,3 +649,26 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// An omitted alpha defaults to the origin color's alpha, not to 100%.
+describe("relative color syntax", () => {
+  test.each([
+    ["rgb(from #0008 r g b)", "#0008"],
+    ["rgb(from #0008 r g b / alpha)", "#0008"],
+    ["rgb(from #0008 r g b / 1)", "#000"],
+    ["rgb(from #000 r g b)", "#000"],
+    ["hsl(from #0008 h s l)", "#0008"],
+    ["hwb(from #0008 h w b)", "#0008"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h)", "oklch(50% 0 0 / .5)"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h / 1)", "oklch(50% 0 0)"],
+  ])("%s keeps the origin alpha", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the origin alpha is converted along with the channels", () => {
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b)", "[rgba]")).toEqual([1, 2, 3, 128]);
+    expect(color("hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l)", "[rgba]")).toEqual([3, 2, 1, 128]);
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b / 1)", "[rgba]")).toEqual([1, 2, 3, 255]);
+  });
+});

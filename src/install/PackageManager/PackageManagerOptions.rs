@@ -263,8 +263,7 @@ impl Options {
         }
     }
 
-    /// The scope for `url` when it replaces `current` (`--registry`, `publishConfig`),
-    /// carrying whatever credentials are configured for `url` itself.
+    /// The scope for `url` once it replaces `current`, with the credentials configured for `url`.
     fn scope_for_registry_url(
         &self,
         name: &[u8],
@@ -302,8 +301,7 @@ impl Options {
             url_hash,
             ..Default::default()
         };
-        // Nothing is configured for `url`: `current`'s credentials follow it only within
-        // its origin, and never down from https to http.
+        // Unconfigured `url`: `current`'s credentials follow it only same-origin, and never to http.
         let new_url = scope.url.url();
         let current_url = current.url.url();
         if bun_core::without_trailing_slash(new_url.host)
@@ -344,9 +342,7 @@ impl Options {
         self.registries.put(key, scope)
     }
 
-    /// Applies the `publishConfig` of the package being published, with npm's precedence: flags
-    /// win over it, its `registry` only replaces the default registry (a registry configured for
-    /// the package's scope still wins), and its `@scope:registry` replaces that one.
+    /// Applies the `publishConfig` of the package being published; command-line flags win over it.
     pub fn apply_publish_config(
         &mut self,
         package_json: &Expr,
@@ -373,6 +369,7 @@ impl Options {
             }
         }
 
+        // As in npm, `registry` replaces only the default registry; `@scope:registry` the scope's.
         if !self.registry_from_command_line {
             if let Some(url) = publish_config_registry(&config, bump, b"registry")? {
                 self.set_default_registry(url, env)?;
@@ -394,8 +391,7 @@ impl Options {
     }
 }
 
-/// `publishConfig[key]` as an http(s) URL. An unusable value is an error, not ignored:
-/// quietly publishing somewhere else is what the key exists to prevent.
+/// `publishConfig[key]` as an http(s) URL; anything else errors rather than publishing elsewhere.
 fn publish_config_registry<'b>(
     config: &Expr,
     bump: &'b Arena,

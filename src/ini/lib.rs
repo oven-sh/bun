@@ -1812,8 +1812,7 @@ mod draft {
         &mut entries[index]
     }
 
-    /// The `BunInstall::registry_credentials` entry for `registry_url`, if it holds a token or a
-    /// username + password pair (npm's definition of having credentials).
+    /// `registry_url`'s entry, if it holds a token or a username + password pair (npm's rule).
     pub fn credentials_for_registry<'a>(
         entries: &'a [NpmRegistry],
         registry_url: &[u8],

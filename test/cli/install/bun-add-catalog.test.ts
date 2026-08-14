@@ -16,6 +16,24 @@ afterAll(() => {
 
 const PKG1 = JSON.stringify({ name: "pkg1", version: "1.0.0" });
 
+// CI's per-file BUN_INSTALL_CACHE_DIR overrides bunfig's cache; concurrent installs sharing it race on Windows.
+function envFor(packageDir: string) {
+  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+}
+
+async function spawnBun(cwd: string, args: string[], env: Record<string, string | undefined>) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 async function createDir(
   root: Record<string, unknown> | string,
   pkg1: Record<string, unknown> | string = PKG1,
@@ -33,9 +51,15 @@ async function createDir(
   const rootPath = join(packageDir, "package.json");
   const pkg1Path = join(packageDir, "packages", "pkg1", "package.json");
   const pkg2Path = join(packageDir, "packages", "pkg2", "package.json");
+  const env = envFor(packageDir);
 
   return {
     packageDir,
+    env,
+    run: (cwd: string, args: string[], spawnEnv: Record<string, string | undefined> = env) =>
+      spawnBun(cwd, args, spawnEnv),
+    add: (cwd: string, ...args: string[]) => spawnBun(cwd, ["add", ...args], env),
+    install: (options: Parameters<typeof runBunInstall>[2] = {}) => runBunInstall(env, packageDir, options),
     pkg1Dir: join(packageDir, "packages", "pkg1"),
     pkg2Dir: join(packageDir, "packages", "pkg2"),
     rootPath,
@@ -59,23 +83,6 @@ const withPkg2 = (pkg2: Record<string, unknown> | string = PKG2) => ({
   "packages/pkg2/package.json": typeof pkg2 === "string" ? pkg2 : JSON.stringify(pkg2),
 });
 
-async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-
-function runAdd(cwd: string, ...args: string[]) {
-  return run(cwd, ["add", ...args]);
-}
-
 function expectOk({ stderr, exitCode }: { stderr: string; exitCode: number }) {
   expect(stderr).not.toContain("error:");
   expect(stderr).not.toContain("panic:");
@@ -91,7 +98,7 @@ describe.concurrent("bun add --catalog", () => {
   test("default catalog from a workspace member", async () => {
     const dir = await createDir(workspacesObject({ catalog: {} }));
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "no-deps": "catalog:" });
     expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
@@ -102,14 +109,14 @@ describe.concurrent("bun add --catalog", () => {
     expect(lock.catalog).toEqual({ "no-deps": "^2.0.0" });
     expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
   test("named catalog creates the catalogs object", async () => {
     const dir = await createDir(workspacesObject({ catalog: { "no-deps": "1.0.0" } }));
 
-    expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog=testing"));
+    expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog=testing"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:testing" });
     expect((await dir.root()).workspaces).toEqual({
@@ -128,7 +135,7 @@ describe.concurrent("bun add --catalog", () => {
     test("workspaces object gets workspaces.catalog", async () => {
       const dir = await createDir(workspacesObject());
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
       expect(await dir.root()).toEqual({
         name: "root",
@@ -140,7 +147,7 @@ describe.concurrent("bun add --catalog", () => {
     test("workspaces array gets a top-level catalog", async () => {
       const dir = await createDir({ name: "root", workspaces: ["packages/*"] });
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
       expect(await dir.root()).toEqual({
         name: "root",
@@ -157,7 +164,7 @@ describe.concurrent("bun add --catalog", () => {
     test("default catalog", async () => {
       const dir = await createDir(topLevel);
 
-      expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog"));
 
       const root = await dir.root();
       expect(root).toEqual({
@@ -172,7 +179,7 @@ describe.concurrent("bun add --catalog", () => {
     test("named catalog", async () => {
       const dir = await createDir(topLevel);
 
-      expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog=x"));
+      expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog=x"));
 
       expect(await dir.root()).toEqual({
         name: "root",
@@ -193,7 +200,7 @@ describe.concurrent("bun add --catalog", () => {
       test(`bun add ${args.join(" ")} writes ${JSON.stringify(entry)}`, async () => {
         const dir = await createDir(workspacesObject({ catalog: {} }));
 
-        expectOk(await runAdd(dir.pkg1Dir, ...args));
+        expectOk(await dir.add(dir.pkg1Dir, ...args));
 
         expect((await dir.pkg1()).dependencies).toEqual({ "no-deps": "catalog:" });
         expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": entry });
@@ -210,10 +217,10 @@ describe.concurrent("bun add --catalog", () => {
       dependencies: { "no-deps": "catalog:" },
     });
 
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
     expect((await dir.installed("no-deps")).version).toBe("1.1.0");
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
     expect((await dir.installed("no-deps")).version).toBe("2.0.0");
@@ -228,7 +235,7 @@ describe.concurrent("bun add --catalog", () => {
   test("run from the workspace root", async () => {
     const dir = await createDir(workspacesObject({ catalog: {} }));
 
-    expectOk(await runAdd(dir.packageDir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.packageDir, "no-deps", "--catalog"));
 
     expect(await dir.root()).toEqual({
       name: "root",
@@ -242,14 +249,14 @@ describe.concurrent("bun add --catalog", () => {
     expect(lock.workspaces[""].dependencies).toEqual({ "no-deps": "catalog:" });
     expect(lock.catalog).toEqual({ "no-deps": "^2.0.0" });
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
   test("bun install <pkg> --catalog --dev", async () => {
     const dir = await createDir(workspacesObject({ catalog: {} }));
 
-    expectOk(await run(dir.pkg1Dir, ["install", "no-deps", "--catalog", "--dev"]));
+    expectOk(await dir.run(dir.pkg1Dir, ["install", "no-deps", "--catalog", "--dev"]));
 
     const pkg1 = await dir.pkg1();
     expect(pkg1.devDependencies).toEqual({ "no-deps": "catalog:" });
@@ -261,7 +268,7 @@ describe.concurrent("bun add --catalog", () => {
   test("several packages into a named catalog", async () => {
     const dir = await createDir(workspacesObject());
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "a-dep", "--catalog=libs"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "a-dep", "--catalog=libs"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:libs", "no-deps": "catalog:libs" });
     const root = await dir.root();
@@ -278,7 +285,7 @@ describe.concurrent("bun add --catalog", () => {
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
       const cwd = from === "member" ? dir.pkg1Dir : dir.packageDir;
-      const { stderr, exitCode } = await runAdd(cwd, "no-deps", "--catalog", "--dry-run");
+      const { stderr, exitCode } = await dir.add(cwd, "no-deps", "--catalog", "--dry-run");
 
       expect(stderr).not.toContain("error:");
       expect(await dir.rootText()).toBe(rootBefore);
@@ -296,7 +303,7 @@ describe.concurrent("bun add --catalog", () => {
         peerDependencies: { "no-deps": ">=1" },
       });
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog", "--dev"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "--dev"));
 
       expect(await dir.pkg1()).toEqual({
         name: "pkg1",
@@ -319,8 +326,8 @@ describe.concurrent("bun add --catalog", () => {
       ]);
 
       const [plainResult, catalogResult] = await Promise.all([
-        runAdd(plain.pkg1Dir, "no-deps", "--dev"),
-        runAdd(catalog.pkg1Dir, "no-deps", "--dev", "--catalog"),
+        plain.add(plain.pkg1Dir, "no-deps", "--dev"),
+        catalog.add(catalog.pkg1Dir, "no-deps", "--dev", "--catalog"),
       ]);
       expectOk(plainResult);
       expectOk(catalogResult);
@@ -335,7 +342,7 @@ describe.concurrent("bun add --catalog", () => {
     test("--peer", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog", "--peer"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "--peer"));
 
       expect(await dir.pkg1()).toEqual({ name: "pkg1", version: "1.0.0", peerDependencies: { "no-deps": "catalog:" } });
       expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
@@ -347,10 +354,10 @@ describe.concurrent("bun add --catalog", () => {
       name: "pkg1",
       dependencies: { "no-deps": "catalog:testing" },
     });
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
     expect((await dir.installed("no-deps")).version).toBe("1.0.0");
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "no-deps": "catalog:" });
     expect((await dir.root()).workspaces).toEqual({
@@ -365,7 +372,7 @@ describe.concurrent("bun add --catalog", () => {
     expect(lock.catalog).toEqual({ "no-deps": "^2.0.0" });
     expect(lock.catalogs).toEqual({ testing: { "no-deps": "1.0.0" } });
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
@@ -373,28 +380,28 @@ describe.concurrent("bun add --catalog", () => {
     test("alias@npm:pkg is written verbatim, like plain add", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
 
-      expectOk(await runAdd(dir.pkg1Dir, "foo@npm:no-deps", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "foo@npm:no-deps", "--catalog"));
 
       expect((await dir.pkg1()).dependencies).toEqual({ foo: "catalog:" });
       expect((await dir.root()).workspaces.catalog).toEqual({ foo: "npm:no-deps" });
       expect((await dir.lock()).catalog).toEqual({ foo: "npm:no-deps" });
       expect(await dir.installed("foo")).toMatchObject({ name: "no-deps", version: "2.0.0" });
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
     test("alias@npm:pkg@dist-tag gets the resolved range", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
 
-      expectOk(await runAdd(dir.pkg1Dir, "foo@npm:no-deps@latest", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "foo@npm:no-deps@latest", "--catalog"));
 
       expect((await dir.pkg1()).dependencies).toEqual({ foo: "catalog:" });
       expect((await dir.root()).workspaces.catalog).toEqual({ foo: "npm:no-deps@^2.0.0" });
       expect((await dir.lock()).catalog).toEqual({ foo: "npm:no-deps@^2.0.0" });
       expect(await dir.installed("foo")).toMatchObject({ name: "no-deps", version: "2.0.0" });
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
@@ -402,7 +409,7 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
       const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
 
-      expectOk(await runAdd(dir.pkg1Dir, `no-deps@${tarball}`, "dep-with-tags@pre-1", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, `no-deps@${tarball}`, "dep-with-tags@pre-1", "--catalog"));
 
       expect((await dir.pkg1()).dependencies).toEqual({ "dep-with-tags": "catalog:", "no-deps": "catalog:" });
       const catalog = { "dep-with-tags": "^1.0.1", "no-deps": tarball };
@@ -411,14 +418,14 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.installed("no-deps")).version).toBe("1.0.0");
       expect((await dir.installed("dep-with-tags")).version).toBe("1.0.1");
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
     test("scoped package into a named catalog", async () => {
       const dir = await createDir(workspacesObject());
 
-      expectOk(await runAdd(dir.pkg1Dir, "@types/no-deps", "--catalog=types"));
+      expectOk(await dir.add(dir.pkg1Dir, "@types/no-deps", "--catalog=types"));
 
       expect((await dir.pkg1()).dependencies).toEqual({ "@types/no-deps": "catalog:types" });
       expect((await dir.root()).workspaces.catalogs).toEqual({ types: { "@types/no-deps": "^2.0.0" } });
@@ -432,7 +439,7 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }), PKG1, withPkg2());
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
-      const { stderr, exitCode } = await runAdd(dir.pkg1Dir, "pkg2", "--catalog");
+      const { stderr, exitCode } = await dir.add(dir.pkg1Dir, "pkg2", "--catalog");
 
       expect(stderr).toContain("error:");
       expect(await dir.rootText()).toBe(rootBefore);
@@ -447,7 +454,7 @@ describe.concurrent("bun add --catalog", () => {
         const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
         const cwd = from === "member" ? dir.pkg1Dir : dir.packageDir;
-        const { stderr, exitCode } = await runAdd(cwd, "pkg2@workspace:*", "--catalog");
+        const { stderr, exitCode } = await dir.add(cwd, "pkg2@workspace:*", "--catalog");
 
         expect(stderr).toContain('error: --catalog cannot add a workspace package, but got "pkg2@workspace:*"');
         expect(await dir.rootText()).toBe(rootBefore);
@@ -461,7 +468,7 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }), PKG1, withPkg2());
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
-      const { stderr, exitCode } = await runAdd(dir.packageDir, "pkg2@workspace:*", "--catalog", "--filter", "pkg1");
+      const { stderr, exitCode } = await dir.add(dir.packageDir, "pkg2@workspace:*", "--catalog", "--filter", "pkg1");
 
       expect(stderr).toContain('error: --catalog cannot add a workspace package, but got "pkg2@workspace:*"');
       expect(await dir.rootText()).toBe(rootBefore);
@@ -475,9 +482,9 @@ describe.concurrent("bun add --catalog", () => {
     test("edits only the filtered member and the root catalog", async () => {
       const pkg1 = JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:" } });
       const dir = await createDir(workspacesObject({ catalog: { "no-deps": "^1.0.0" } }), pkg1, withPkg2());
-      await runBunInstall(bunEnv, dir.packageDir);
+      await dir.install();
 
-      expectOk(await runAdd(dir.packageDir, "a-dep", "--catalog", "--filter", "pkg2"));
+      expectOk(await dir.add(dir.packageDir, "a-dep", "--catalog", "--filter", "pkg2"));
 
       expect((await dir.pkg2()).dependencies).toEqual({ "a-dep": "catalog:" });
       expect(await dir.pkg1Text()).toBe(pkg1);
@@ -488,14 +495,14 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.lock()).catalog).toEqual({ "a-dep": "^1.0.10", "no-deps": "^1.0.0" });
       expect((await dir.installed("a-dep")).version).toBe("1.0.10");
 
-      expectOk(await runAdd(dir.packageDir, "a-dep", "--catalog", "--filter", "*"));
+      expectOk(await dir.add(dir.packageDir, "a-dep", "--catalog", "--filter", "*"));
 
       expect((await dir.root()).dependencies).toEqual({ "a-dep": "catalog:" });
       expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:", "no-deps": "catalog:" });
       expect((await dir.pkg2()).dependencies).toEqual({ "a-dep": "catalog:" });
       expect((await dir.root()).workspaces.catalog).toEqual({ "a-dep": "^1.0.10", "no-deps": "^1.0.0" });
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
@@ -504,7 +511,7 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }), pkg1, withPkg2());
 
       expectOk(
-        await runAdd(dir.packageDir, "no-deps", "--catalog", "--only-missing", "--filter", "pkg1", "--filter", "pkg2"),
+        await dir.add(dir.packageDir, "no-deps", "--catalog", "--only-missing", "--filter", "pkg1", "--filter", "pkg2"),
       );
 
       expect(await dir.pkg1()).toEqual(pkg1);
@@ -516,7 +523,7 @@ describe.concurrent("bun add --catalog", () => {
       const pkg1 = { name: "pkg1", dependencies: { "no-deps": "^1.0.0" } };
       const dir = await createDir(workspacesObject({ catalog: {} }), pkg1);
 
-      const { stderr, exitCode } = await runAdd(
+      const { stderr, exitCode } = await dir.add(
         dir.packageDir,
         "no-deps",
         "--catalog",
@@ -537,7 +544,7 @@ describe.concurrent("bun add --catalog", () => {
     const dir = await createDir(workspacesObject({ catalog: {} }), pkg1);
     const rootBefore = await dir.rootText();
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog", "--only-missing"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "--only-missing"));
 
     expect(await dir.pkg1()).toEqual(pkg1);
     expect(await dir.rootText()).toBe(rootBefore);
@@ -552,10 +559,10 @@ describe.concurrent("bun add --catalog", () => {
       member("pkg1"),
       withPkg2(member("pkg2")),
     );
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
     expect((await dir.installed("no-deps")).version).toBe("2.0.0");
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps@1.0.0", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps@1.0.0", "--catalog"));
 
     expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "1.0.0" });
     expect(await dir.pkg2Text()).toBe(member("pkg2"));
@@ -565,7 +572,7 @@ describe.concurrent("bun add --catalog", () => {
     expect(lockText).not.toContain("no-deps@2.0.0");
     expect((await dir.lock()).catalog).toEqual({ "no-deps": "1.0.0" });
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
@@ -575,7 +582,7 @@ describe.concurrent("bun add --catalog", () => {
       dependencies: { "a-dep": "1.0.1" },
     });
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "1.0.1", "no-deps": "catalog:" });
     expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
@@ -588,10 +595,10 @@ describe.concurrent("bun add --catalog", () => {
       name: "pkg1",
       dependencies: { "no-deps": "^1.0.0" },
     });
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
     expect((await dir.installed("no-deps")).version).toBe("1.1.0");
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect(await dir.pkg1Text()).toBe(
       JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:" } }, null, 2),
@@ -603,10 +610,10 @@ describe.concurrent("bun add --catalog", () => {
   test("re-running the same add is idempotent", async () => {
     const dir = await createDir(workspacesObject({ catalog: {} }));
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
     const [rootAfter, pkg1After, lockAfter] = await Promise.all([dir.rootText(), dir.pkg1Text(), dir.lockText()]);
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect(await dir.rootText()).toBe(rootAfter);
     expect(await dir.pkg1Text()).toBe(pkg1After);
@@ -618,7 +625,7 @@ describe.concurrent("bun add --catalog", () => {
       workspacesObject({ catalogs: { other: { "a-dep": "1.0.1" }, testing: { "no-deps": "1.0.0" } } }),
     );
 
-    expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog=testing"));
+    expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog=testing"));
 
     const catalogs = { other: { "a-dep": "1.0.1" }, testing: { "a-dep": "^1.0.10", "no-deps": "1.0.0" } };
     const root = await dir.root();
@@ -628,7 +635,7 @@ describe.concurrent("bun add --catalog", () => {
     expect((await dir.lock()).catalogs).toEqual(catalogs);
     expect((await dir.installed("a-dep")).version).toBe("1.0.10");
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
@@ -636,7 +643,7 @@ describe.concurrent("bun add --catalog", () => {
     const dir = await createDir(workspacesObject({ catalog: {} }));
     const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
-    const { stderr, exitCode } = await runAdd(dir.pkg1Dir, "no-deps", "this-package-does-not-exist-xyz", "--catalog");
+    const { stderr, exitCode } = await dir.add(dir.pkg1Dir, "no-deps", "this-package-does-not-exist-xyz", "--catalog");
 
     expect(stderr).toContain("error:");
     expect(await dir.rootText()).toBe(rootBefore);
@@ -651,7 +658,7 @@ describe.concurrent("bun add --catalog", () => {
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
       const cwd = from === "member" ? dir.pkg1Dir : dir.packageDir;
-      expectOk(await runAdd(cwd, "no-deps", "--catalog", "--no-save"));
+      expectOk(await dir.add(cwd, "no-deps", "--catalog", "--no-save"));
 
       expect(await dir.rootText()).toBe(rootBefore);
       expect(await dir.pkg1Text()).toBe(pkg1Before);
@@ -669,7 +676,7 @@ describe.concurrent("bun add --catalog", () => {
       ) + "\n";
     const dir = await createDir(rootBefore);
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     const rootText = await dir.rootText();
     expect(rootText).toBe(
@@ -691,10 +698,10 @@ describe.concurrent("bun add --catalog", () => {
         member("pkg1"),
         withPkg2(member("pkg2", "catalog:default")),
       );
-      await runBunInstall(bunEnv, dir.packageDir);
+      await dir.install();
       expect((await dir.installed("no-deps")).version).toBe("1.0.0");
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
       expect((await dir.root()).workspaces).toEqual({
         packages: ["packages/*"],
@@ -709,7 +716,7 @@ describe.concurrent("bun add --catalog", () => {
       expect(lock.catalogs).toEqual({ default: { "no-deps": "^2.0.0" } });
       expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
 
-      const { stderr, exitCode } = await run(dir.packageDir, ["install", "--frozen-lockfile"]);
+      const { stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--frozen-lockfile"]);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     });
@@ -720,10 +727,10 @@ describe.concurrent("bun add --catalog", () => {
         PKG1,
         withPkg2(member("pkg2")),
       );
-      await runBunInstall(bunEnv, dir.packageDir);
+      await dir.install();
       expect((await dir.installed("no-deps")).version).toBe("1.1.0");
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog=default"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog=default"));
 
       expect((await dir.pkg1()).dependencies).toEqual({ "no-deps": "catalog:default" });
       expect((await dir.root()).workspaces).toEqual({
@@ -738,14 +745,14 @@ describe.concurrent("bun add --catalog", () => {
       expect(lock.workspaces["packages/pkg1"].dependencies).toEqual({ "no-deps": "catalog:default" });
       expect(await dir.lockText()).not.toContain("no-deps@1.1.0");
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
     test("--catalog=default with no catalog defined creates the singular catalog", async () => {
       const dir = await createDir(workspacesObject());
 
-      expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog=default"));
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog=default"));
 
       expect(await dir.root()).toEqual({
         name: "root",
@@ -758,17 +765,17 @@ describe.concurrent("bun add --catalog", () => {
 
     test("bun update --latest refreshes a catalogs.default entry referenced as catalog:", async () => {
       const dir = await createDir(workspacesObject({ catalogs: { default: { "no-deps": "^1.0.0" } } }), member("pkg1"));
-      await runBunInstall(bunEnv, dir.packageDir);
+      await dir.install();
       expect((await dir.installed("no-deps")).version).toBe("1.1.0");
 
-      expectOk(await run(dir.packageDir, ["update", "--latest"]));
+      expectOk(await dir.run(dir.packageDir, ["update", "--latest"]));
 
       expect((await dir.root()).workspaces.catalogs).toEqual({ default: { "no-deps": "^2.0.0" } });
       expect(await dir.pkg1Text()).toBe(member("pkg1"));
       expect((await dir.installed("no-deps")).version).toBe("2.0.0");
       expect((await dir.lock()).catalogs).toEqual({ default: { "no-deps": "^2.0.0" } });
 
-      const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+      const { err } = await dir.install({ savesLockfile: false });
       expect(err).not.toContain("Saved lockfile");
     });
 
@@ -778,9 +785,9 @@ describe.concurrent("bun add --catalog", () => {
         version: "1.0.0",
         peerDependencies: { "no-deps": "catalog:" },
       });
-      await runBunInstall(bunEnv, dir.packageDir);
+      await dir.install();
 
-      const { stderr, exitCode } = await run(dir.pkg1Dir, ["pm", "pack"]);
+      const { stderr, exitCode } = await dir.run(dir.pkg1Dir, ["pm", "pack"]);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
 
@@ -800,12 +807,12 @@ describe.concurrent("bun add --catalog", () => {
       version: "1.0.0",
       peerDependencies: { "no-deps": "catalog:" },
     });
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
 
-    expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog=x"));
+    expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog=x"));
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:x" });
 
-    const { stderr, exitCode } = await run(dir.pkg1Dir, ["pm", "pack"]);
+    const { stderr, exitCode } = await dir.run(dir.pkg1Dir, ["pm", "pack"]);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -827,9 +834,9 @@ describe.concurrent("bun add --catalog", () => {
       withPkg2(member("pkg2")),
     );
 
-    expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog=libs"));
-    expectOk(await run(dir.pkg1Dir, ["remove", "no-deps"]));
-    expectOk(await run(dir.pkg2Dir, ["remove", "no-deps"]));
+    expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog=libs"));
+    expectOk(await dir.run(dir.pkg1Dir, ["remove", "no-deps"]));
+    expectOk(await dir.run(dir.pkg2Dir, ["remove", "no-deps"]));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:libs" });
     expect((await dir.pkg2()).dependencies).toBeUndefined();
@@ -842,7 +849,7 @@ describe.concurrent("bun add --catalog", () => {
     expect(lock.catalog).toEqual({ "no-deps": "1.0.0" });
     expect(lock.catalogs).toEqual({ libs: { "a-dep": "^1.0.10" } });
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
@@ -851,9 +858,9 @@ describe.concurrent("bun add --catalog", () => {
     test(`--frozen-lockfile passes after the add and fails once the entry is edited (from ${from})`, async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
 
-      expectOk(await runAdd(from === "member" ? dir.pkg1Dir : dir.packageDir, "no-deps", "--catalog"));
+      expectOk(await dir.add(from === "member" ? dir.pkg1Dir : dir.packageDir, "no-deps", "--catalog"));
 
-      const frozen = await run(dir.packageDir, ["install", "--frozen-lockfile"]);
+      const frozen = await dir.run(dir.packageDir, ["install", "--frozen-lockfile"]);
       expect(frozen.stderr).not.toContain("error:");
       expect(frozen.exitCode).toBe(0);
 
@@ -861,7 +868,7 @@ describe.concurrent("bun add --catalog", () => {
       root.workspaces.catalog["no-deps"] = "1.0.0";
       await write(dir.rootPath, JSON.stringify(root));
 
-      const { stderr, exitCode } = await run(dir.packageDir, ["install", "--frozen-lockfile"]);
+      const { stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--frozen-lockfile"]);
       expect(stderr).toContain("error:");
       expect(stderr).toContain("frozen-lockfile");
       expect(exitCode).toBe(1);
@@ -875,14 +882,14 @@ describe.concurrent("bun add --catalog", () => {
       { ...workspacesObject({ catalog: { "no-deps": "^1.0.0" } }), overrides: { "no-deps": "1.0.0" } },
       pkg1,
     );
-    await runBunInstall(bunEnv, dir.packageDir);
+    await dir.install();
     expect((await dir.installed("no-deps")).version).toBe("1.0.0");
 
     for (const args of [["update"], ["update", "--recursive"], ["update", "no-deps"], ["update", "no-deps@1.1.0"]]) {
-      expectOk(await run(dir.pkg1Dir, args));
+      expectOk(await dir.run(dir.pkg1Dir, args));
       expect(await dir.pkg1()).toEqual(pkg1);
     }
-    expectOk(await runAdd(dir.pkg1Dir, "a-dep", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "a-dep": "catalog:", "no-deps": "catalog:" });
     const lock = await dir.lock();
@@ -890,7 +897,7 @@ describe.concurrent("bun add --catalog", () => {
     expect(lock.catalog).toEqual({ "a-dep": "^1.0.10", "no-deps": "^1.0.0" });
     expect((await dir.installed("no-deps")).version).toBe("1.0.0");
 
-    const { stderr, exitCode } = await run(dir.packageDir, ["install", "--frozen-lockfile"]);
+    const { stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--frozen-lockfile"]);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
@@ -899,14 +906,14 @@ describe.concurrent("bun add --catalog", () => {
   test("an override decides what --catalog records", async () => {
     const dir = await createDir({ ...workspacesObject({ catalog: {} }), overrides: { "no-deps": "1.0.0" } });
 
-    expectOk(await runAdd(dir.pkg1Dir, "no-deps", "--catalog"));
+    expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
 
     expect((await dir.pkg1()).dependencies).toEqual({ "no-deps": "catalog:" });
     expect((await dir.root()).workspaces.catalog).toEqual({ "no-deps": "^1.0.0" });
     expect((await dir.lock()).catalog).toEqual({ "no-deps": "^1.0.0" });
     expect((await dir.installed("no-deps")).version).toBe("1.0.0");
 
-    const { err } = await runBunInstall(bunEnv, dir.packageDir, { savesLockfile: false });
+    const { err } = await dir.install({ savesLockfile: false });
     expect(err).not.toContain("Saved lockfile");
   });
 
@@ -918,7 +925,7 @@ describe.concurrent("bun add --catalog", () => {
       });
       const before = await file(join(packageDir, "package.json")).text();
 
-      const { stderr, exitCode } = await runAdd(packageDir, "no-deps", "--catalog");
+      const { stderr, exitCode } = await spawnBun(packageDir, ["add", "no-deps", "--catalog"], envFor(packageDir));
 
       expect(stderr).toContain('error: --catalog requires a "workspaces" field in the root package.json');
       expect(await file(join(packageDir, "package.json")).text()).toBe(before);
@@ -931,7 +938,7 @@ describe.concurrent("bun add --catalog", () => {
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
       const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
 
-      const { stderr, exitCode } = await runAdd(dir.packageDir, "--catalog", tarball);
+      const { stderr, exitCode } = await dir.add(dir.packageDir, "--catalog", tarball);
 
       expect(stderr).toContain(`error: --catalog can only add packages by name, but got "${tarball}"`);
       expect(await dir.rootText()).toBe(rootBefore);
@@ -943,7 +950,7 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
-      const { stderr, exitCode } = await run(dir.packageDir, ["install", "--catalog"]);
+      const { stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--catalog"]);
 
       expect(stderr).toContain("error: --catalog requires at least one package to add");
       expect(await dir.rootText()).toBe(rootBefore);
@@ -957,8 +964,8 @@ describe.concurrent("bun add --catalog", () => {
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
       const globalDir = join(dir.packageDir, ".bun-global");
 
-      const { stderr, exitCode } = await run(dir.pkg1Dir, ["add", "no-deps", "--catalog", "-g"], {
-        ...bunEnv,
+      const { stderr, exitCode } = await dir.run(dir.pkg1Dir, ["add", "no-deps", "--catalog", "-g"], {
+        ...dir.env,
         BUN_INSTALL: globalDir,
         BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global"),
         BUN_INSTALL_BIN: join(globalDir, "bin"),

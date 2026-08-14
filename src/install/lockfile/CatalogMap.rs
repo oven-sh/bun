@@ -59,17 +59,32 @@ impl CatalogMap {
         catalog_name: &[u8],
         dep_name: &[u8],
     ) -> Option<(Option<usize>, usize)> {
+        let has_default = self.default.count() > 0;
+        let has_groups = self.groups.count() > 0;
+        if !has_default && !has_groups {
+            return None;
+        }
         let dep_key = String::init(dep_name, dep_name);
         let dep_ctx = ArrayHashContext {
             arg_buf: dep_name,
             existing_buf: string_buf,
         };
+        let dep_hash = dep_ctx.hash(dep_key);
+        let probe = |map: &Map| {
+            map.get_index_adapted_raw(dep_hash, |existing: &String, i| {
+                dep_ctx.eql(dep_key, *existing, i)
+            })
+        };
         let in_default = || {
-            self.default
-                .get_index_adapted(&dep_key, &dep_ctx)
-                .map(|i| (None, i))
+            if !has_default {
+                return None;
+            }
+            probe(&self.default).map(|i| (None, i))
         };
         let in_group = |name: &[u8]| {
+            if !has_groups {
+                return None;
+            }
             let ctx = ArrayHashContext {
                 arg_buf: name,
                 existing_buf: string_buf,
@@ -77,7 +92,7 @@ impl CatalogMap {
             let g = self
                 .groups
                 .get_index_adapted(&String::init(name, name), &ctx)?;
-            let i = self.groups.values()[g].get_index_adapted(&dep_key, &dep_ctx)?;
+            let i = probe(&self.groups.values()[g])?;
             Some((Some(g), i))
         };
         if catalog_name.is_empty() {
@@ -98,20 +113,6 @@ impl CatalogMap {
             None => &self.default,
         };
         Some(&map.values()[i])
-    }
-
-    pub(crate) fn find_mut<'a>(
-        &'a mut self,
-        string_buf: &[u8],
-        catalog_name: &[u8],
-        dep_name: &[u8],
-    ) -> Option<&'a mut Dependency> {
-        let (group, i) = self.locate(string_buf, catalog_name, dep_name)?;
-        let map = match group {
-            Some(g) => &mut self.groups.values_mut()[g],
-            None => &mut self.default,
-        };
-        Some(&mut map.values_mut()[i])
     }
 
     pub(crate) fn get_ref<'a>(

@@ -804,25 +804,32 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             scripts: Default::default(),
         })?;
 
-        if let Some(resolutions) = package_json.as_property(b"resolutions") {
+        if package_json.as_property(b"resolutions").is_some() {
             let root_package = *this.packages.get(0);
             let (mut string_builder, lf) = this.string_builder_split();
 
-            if let bun_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
-                string_builder.cap += e_object.properties.len_u32() as usize * 128;
-            }
-            if string_builder.cap > 0 {
-                string_builder.allocate()?;
-            }
+            let workspace_names =
+                crate::lockfile_real::package::workspace_map::WorkspaceMap::init();
+            lf.overrides.parse_count(
+                manager,
+                log,
+                &package_json_source,
+                &workspace_names,
+                package_json,
+                &mut string_builder,
+            );
+            string_builder.allocate()?;
             lf.overrides.parse_append(
                 manager,
                 lf.dependencies.as_slice(),
                 &root_package,
                 log,
                 &package_json_source,
+                &workspace_names,
                 package_json,
                 &mut string_builder,
             )?;
+            string_builder.clamp();
             this.packages.set(0, root_package);
         }
     }

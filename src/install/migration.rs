@@ -21,7 +21,7 @@ use crate::lockfile::{
     Migrated, PackageListEntry,
 };
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::package::workspace_map::{NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -326,7 +326,7 @@ fn migrate_npm_lockfile<'a>(
                 &json_src,
                 wksp_loc,
                 None,
-                false,
+                MissingWorkspace::Error,
             )?;
             debug!("found {} workspace packages", workspace_packages_count);
             num_deps += workspace_packages_count;

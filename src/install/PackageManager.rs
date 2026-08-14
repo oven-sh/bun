@@ -59,6 +59,8 @@ pub mod command_line_arguments;
 pub mod install_with_manager;
 #[path = "PackageManager/PackageJSONEditor.rs"]
 pub mod package_json_editor;
+#[path = "PackageManager/package_json_write_back.rs"]
+pub mod package_json_write_back;
 #[path = "PackageManager/PackageManagerDirectories.rs"]
 pub mod package_manager_directories;
 #[path = "PackageManager/PackageManagerEnqueue.rs"]
@@ -419,8 +421,11 @@ pub struct PackageManager {
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
-    // `bun add/remove --filter`: package.json edits written as soon as the lockfile is saved.
+    // bun add --filter: which target received which request; consumed by bind_update_requests and package_json_write_back.
     pub(crate) pending_filtered_write: Option<Box<add_remove_with_filter::PendingWrite>>,
+
+    // package.json cache entries that differ from disk; written by package_json_write_back::flush.
+    pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
 
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
@@ -664,7 +669,8 @@ impl WorkspaceFilter {
 #[derive(Default)]
 pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
-    pub(crate) is_alias: bool,
+    // set by the post-install write-back; the install summary still needs the entry
+    pub(crate) written_back: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
 }
@@ -674,8 +680,7 @@ pub struct CatalogUpdateInfo {
     pub catalog_name: Box<[u8]>,
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
-    pub is_alias: bool,
-    /// Set by `Lockfile::clean_with_logger`; `None` leaves the entry as written.
+    /// Set by package_json_editor::resolve_catalog_literals; None leaves the entry as written.
     pub new_version_literal: Option<Box<[u8]>>,
 }
 
@@ -1453,7 +1458,15 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// bunfig beats npmrc per field; a registry npmrc left at bunfig's URL is kept since npmrc attached credentials to it.
+fn registry_has_credentials(registry: &Api::NpmRegistry) -> bool {
+    !registry.token.is_empty() || !registry.username.is_empty() || !registry.password.is_empty()
+}
+
+/// bunfig beats npmrc per field; a credential-less bunfig registry left at the same URL is kept since npmrc attached credentials to it.
+fn bunfig_registry_wins(current: Option<&Api::NpmRegistry>, bunfig: &Api::NpmRegistry) -> bool {
+    current.is_none_or(|current| current.url != bunfig.url) || registry_has_credentials(bunfig)
+}
+
 fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall) {
     let Api::BunInstall {
         default_registry,
@@ -1492,11 +1505,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     } = bunfig;
 
     if let Some(registry) = default_registry {
-        if install
-            .default_registry
-            .as_ref()
-            .is_none_or(|current| current.url != registry.url)
-        {
+        if bunfig_registry_wins(install.default_registry.as_ref(), &registry) {
             install.default_registry = Some(registry);
         }
     }
@@ -1504,10 +1513,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     if let Some(bunfig_scopes) = scoped {
         let scopes = &mut install.scoped.get_or_insert_with(Default::default).scopes;
         for (name, registry) in bunfig_scopes.scopes.iter() {
-            if scopes
-                .get(name)
-                .is_none_or(|current| current.url != registry.url)
-            {
+            if bunfig_registry_wins(scopes.get(name), registry) {
                 scopes.insert(name, registry.clone());
             }
         }
@@ -1851,7 +1857,7 @@ pub fn init(
                             &json_source,
                             prop.loc,
                             None,
-                            true,
+                            Package::WorkspaceMap::MissingWorkspace::Skip,
                         ) {
                             Ok(v) => v,
                             Err(_) => break,
@@ -2211,6 +2217,7 @@ pub fn init(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(pending_filtered_write, None);
+        wr!(edited_package_jsons, Vec::new());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2652,6 +2659,7 @@ fn init_with_runtime_once(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(pending_filtered_write, None);
+        wr!(edited_package_jsons, Vec::new());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

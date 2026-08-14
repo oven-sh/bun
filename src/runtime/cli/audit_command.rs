@@ -8,10 +8,11 @@ use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
 use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
+use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{CommandLineArguments, Lockfile, PackageID, PackageManager, Subcommand};
+use bun_install::{CommandLineArguments, PackageManager, Subcommand};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
@@ -67,7 +68,6 @@ impl AuditCommand {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
-        let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
         let fix = cli.positionals.len() > 1 && cli.positionals[1] == b"fix";
         if fix && cli.positionals.len() > 2 {
@@ -106,26 +106,15 @@ impl AuditCommand {
             return Self::audit_fix(ctx, manager, audit_level, audit_ignore_list, &original_cwd);
         }
 
-        let code = Self::audit(
-            ctx,
-            manager,
-            json_output,
-            audit_level,
-            production,
-            audit_ignore_list,
-        )?;
+        let code = Self::audit(ctx, manager, json_output, audit_level, audit_ignore_list)?;
         Global::exit(code);
     }
 
-    /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
-    /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
-    /// for the audit information"
     fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
         audit_level: Option<AuditLevel>,
-        audit_prod_only: bool,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
         bun_core::pretty_error!(
@@ -144,7 +133,7 @@ impl AuditCommand {
 
         let dependency_tree = build_dependency_tree(pm)?;
 
-        let packages_result = collect_packages_for_audit(pm, audit_prod_only)?;
+        let packages_result = collect_packages_for_audit(pm, true)?;
 
         let response_text = send_audit_request(pm, &packages_result.audit_body)?;
 
@@ -152,33 +141,19 @@ impl AuditCommand {
             let _ = Output::writer().write_all(&response_text);
             let _ = Output::writer().write_all(b"\n");
 
-            if !response_text.is_empty() {
-                let source =
-                    bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
-                let mut log = bun_ast::Log::init();
-
-                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        bun_core::pretty_errorln!(
-                            "<red>error<r>: audit request failed to parse json. Is the registry down?"
-                        );
-                        return Ok(1); // If we can't parse then safe to assume a similar failure
-                    }
-                };
-
-                // If the response is an empty object, no vulnerabilities
-                if let ExprData::EObjectJSON(obj) = &parsed.root.data {
-                    if obj.get().properties().is_empty() {
-                        return Ok(0);
-                    }
-                }
-
-                // If there's any content in the response, there are vulnerabilities
-                return Ok(1);
+            if response_text.is_empty() {
+                return Ok(0);
             }
 
-            return Ok(0);
+            return match collect_vulnerabilities(&response_text, audit_level, ignore_list)? {
+                Some(vulnerabilities) => Ok(u32::from(!vulnerabilities.is_empty())),
+                None => {
+                    bun_core::pretty_errorln!(
+                        "<red>error<r>: audit request failed to parse json. Is the registry down?"
+                    );
+                    Ok(1)
+                }
+            };
         } else if !response_text.is_empty() {
             let exit_code = print_enhanced_audit_report(
                 &response_text,
@@ -342,41 +317,6 @@ fn build_dependency_tree(
     Ok(dependency_tree)
 }
 
-fn build_production_package_set(lockfile: &Lockfile, root_id: PackageID) -> Vec<bool> {
-    let packages = lockfile.packages.slice();
-    let pkg_dependencies = packages.items_dependencies();
-    let pkg_resolutions = packages.items_resolutions();
-    let dependencies = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-
-    let mut prod_set = vec![false; packages.len()];
-    let mut queue: std::collections::VecDeque<PackageID> = std::collections::VecDeque::new();
-    if (root_id as usize) < packages.len() {
-        prod_set[root_id as usize] = true;
-        queue.push_back(root_id);
-    }
-
-    while let Some(current_pkg_id) = queue.pop_front() {
-        let dep_slice = pkg_dependencies[current_pkg_id as usize].get(dependencies);
-        let res_slice = pkg_resolutions[current_pkg_id as usize].get(resolutions);
-
-        for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-            if dep.behavior.is_dev() || dep.behavior.is_optional_peer() {
-                continue;
-            }
-            let Some(seen) = prod_set.get_mut(resolved_pkg_id as usize) else {
-                continue;
-            };
-            if !*seen {
-                *seen = true;
-                queue.push_back(resolved_pkg_id);
-            }
-        }
-    }
-
-    prod_set
-}
-
 struct CollectPackagesResult {
     audit_body: Box<[u8]>,
     skipped_packages: Vec<Box<[u8]>>,
@@ -389,15 +329,33 @@ struct PackageVersions {
 
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
-    prod_only: bool,
+    apply_omit: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let mut packages_list: Vec<PackageVersions> = Vec::new();
     let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
 
-    let prod_packages: Option<Vec<bool>> =
-        prod_only.then(|| build_production_package_set(&pm.lockfile, root_id));
+    let features = pm.options.local_package_features;
+    let omits_something = apply_omit
+        && !(features.dev_dependencies
+            && features.optional_dependencies
+            && features.peer_dependencies);
+    let wanted_packages: Option<Vec<bool>> = omits_something.then(|| {
+        reachable::packages(
+            &pm.lockfile,
+            pm.lockfile.buffers.resolutions.as_slice(),
+            reachable::Options {
+                root: root_id,
+                dev: features.dev_dependencies,
+                optional: features.optional_dependencies,
+                peer: features.peer_dependencies,
+                optional_peer: false,
+                bundled: true,
+                platform: None,
+            },
+        )
+    });
 
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
@@ -414,7 +372,7 @@ fn collect_packages_for_audit(
             continue;
         }
 
-        if prod_packages.as_ref().is_some_and(|prod| !prod[idx]) {
+        if wanted_packages.as_ref().is_some_and(|wanted| !wanted[idx]) {
             continue;
         }
 
@@ -1036,7 +994,7 @@ fn print_enhanced_audit_report(
         let total =
             vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if total > 0 {
-            pretty!("<b>{} vulnerabilities<r> (", total);
+            pretty!("<b>{} {}<r> (", total, audit_fix::vuln_word(total));
 
             let mut has_previous = false;
             if vuln_counts.critical > 0 {
@@ -1065,6 +1023,9 @@ fn print_enhanced_audit_report(
             }
             prettyln!(")");
 
+            prettyln!("");
+            prettyln!("To upgrade only the vulnerable packages, within their declared ranges:");
+            prettyln!("  <green>bun audit fix<r>");
             prettyln!("");
             prettyln!("To update all dependencies to the latest compatible versions:");
             prettyln!("  <green>bun update<r>");

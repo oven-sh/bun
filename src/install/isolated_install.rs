@@ -2005,6 +2005,7 @@ pub(crate) fn install_isolated_packages(
                     // placeholder is never dereferenced
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
+                    relink: installer::Relink::Off,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),
@@ -2036,6 +2037,8 @@ pub(crate) fn install_isolated_packages(
             },
             store: &store,
             tasks,
+            waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
+            next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(
@@ -2084,6 +2087,47 @@ pub(crate) fn install_isolated_packages(
             let _ = crate::package_manager_real::directories::global_link_dir_path(
                 installer.manager_mut(),
             );
+        }
+
+        let force_install = installer.manager().options.enable.force_install();
+        let store_hash_path = paths::path_literal!("node_modules/.bun/.store-hash");
+        let store_graph_hex: [u8; 16] = {
+            let mut hasher = Wyhash::init(0);
+            for _entry_id in 0..store.entries.len() {
+                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
+                {
+                    let mut hw = WyhashWriter {
+                        hasher: &mut hasher,
+                    };
+                    write!(
+                        hw,
+                        "{}\0",
+                        store::entry::fmt_store_path(entry_id, &store, lockfile_ro)
+                    )
+                    .expect("unreachable");
+                }
+                for dep in entry_dependencies[_entry_id].slice() {
+                    hasher.update(
+                        lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                            .name
+                            .slice(string_buf),
+                    );
+                    hasher.update(b"\0");
+                    hasher.update(&dep.entry_id.get().to_le_bytes());
+                }
+            }
+            let mut hex = [0u8; 16];
+            write!(&mut hex[..], "{:016x}", hasher.final_()).expect("unreachable");
+            hex
+        };
+        let relink_needed = !is_new_bun_modules && !force_install && {
+            let mut stamp = [0u8; 17];
+            let read = sys::File::openat(Fd::cwd(), store_hash_path, sys::O::RDONLY, 0)
+                .and_then(|file| file.read_all(&mut stamp));
+            !matches!(read, Ok(n) if n == store_graph_hex.len() && stamp[..n] == store_graph_hex)
+        };
+        if relink_needed {
+            let _ = sys::unlinkat(Fd::cwd(), store_hash_path);
         }
 
         // add the pending task count upfront
@@ -2294,6 +2338,10 @@ pub(crate) fn install_isolated_packages(
                         }
                         if entry_hoisted[entry_id.get() as usize] {
                             installer.link_to_hidden_node_modules(entry_id);
+                        }
+                        if relink_needed && !uses_global_store {
+                            installer.start_relink_task(entry_id);
+                            continue;
                         }
                         // .monotonic is okay because the task isn't running on another thread.
                         entry_steps[entry_id.get() as usize]
@@ -2632,6 +2680,11 @@ pub(crate) fn install_isolated_packages(
             }
 
             debug_assert!(done);
+        }
+
+        if installer.summary.fail == 0 && (relink_needed || is_new_bun_modules || force_install) {
+            let _ = sys::File::create(Fd::cwd(), store_hash_path, true)
+                .and_then(|file| file.write_all(&store_graph_hex));
         }
 
         let mut summary = core::mem::take(&mut installer.summary);

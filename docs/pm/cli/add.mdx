@@ -19,6 +19,8 @@ bun add zod@^3.0.0
 bun add zod@latest
 ```
 
+The package is written to `dependencies` unless `--dev`, `--optional` or `--peer` is given; if the current `package.json` already lists it in another group, that entry is updated in place instead.
+
 ## `--dev`
 
 <Note>**Alias** — `--development`, `-d`, `-D`</Note>
@@ -45,6 +47,8 @@ To add a package as a peer dependency (`"peerDependencies"`):
 ```bash terminal icon="terminal"
 bun add --peer @types/bun
 ```
+
+Only `peerDependencies` is written; because Bun installs peer dependencies by default, no `devDependencies` entry is needed for the package to be installed locally (pnpm's `--save-peer` adds one).
 
 ## `--exact`
 
@@ -113,6 +117,7 @@ A few things to know, some of which differ from pnpm's `--save-catalog`:
 - `--catalog` and `--catalog=default` are the same catalog: the entry is written to whichever of `catalog` or `catalogs.default` the root `package.json` already defines (`catalog` is created when there is neither), so a repository migrated from pnpm never ends up with the package in both.
 - The recorded version is the one that was installed, so an entry in [`overrides`](/pm/overrides) for the package ends up in the catalog too.
 - The name must be attached with `=` (`--catalog=testing`); `--catalog testing` adds a package called `testing`.
+- pnpm's `--save-catalog` is spelled `--catalog` and `--save-catalog-name testing` is `--catalog=testing`; Bun silently skips flags it does not know, so the pnpm spellings add the package as an ordinary dependency (and `--save-catalog-name testing` also tries to add a package called `testing`) instead of failing.
 - Packages must be added by name (`react`, `react@^18`, `alias@npm:react`). Bare URLs, paths and `workspace:` versions are rejected.
 - The root `package.json` must have a `workspaces` field.
 
@@ -137,6 +142,7 @@ A few things to know, some of which differ from pnpm:
 - Path patterns must match a workspace directory exactly, relative to the current directory: `--filter ./packages` selects nothing, `--filter ./packages/*` selects every package in it, and `--filter .` only works from a workspace's own directory.
 - Local paths (`./vendor/logger`, `file:../logger`, `./logger.tgz`) are relative to the current directory and are re-spelled relative to each selected package (`"logger": "../../vendor/logger"` in `packages/api/package.json`).
 - The flag chooses which `package.json` files are edited, not what is installed: a single install of the whole workspace runs afterwards. The `package.json` files are written as soon as the lockfile is saved, so they agree with `bun.lock` even if a root `postinstall` script then fails.
+- The install summary is printed from the point of view of one selected workspace (the first one that received every requested package); the other selected `package.json` files get the same edits even though they are not listed in the output.
 - `--dry-run` skips writing; `--filter` cannot be combined with `--global`.
 
 ## `--global`

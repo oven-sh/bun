@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
+import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tempDir, tmpdirSync } from "harness";
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
@@ -340,3 +341,83 @@ it.concurrent("should remove peerDependencies", async () => {
     destroyTestContext(ctx);
   }
 });
+
+const local = (name: string) => ({ [`${name}/package.json`]: JSON.stringify({ name, version: "1.0.0" }) });
+
+async function remove(dir: string, ...names: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "remove", ...names],
+    cwd: dir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it.concurrent("bun remove drops every duplicate key of the removed package", async () => {
+  using dir = tempDir("bun-remove-dup", {
+    ...local("foo"),
+    ...local("bar"),
+    "package.json": `{
+  "name": "dup",
+  "dependencies": {
+    "foo": "file:./foo",
+    "bar": "file:./bar",
+    "foo": "file:./foo"
+  }
+}
+`,
+  });
+
+  const { stderr, exitCode } = await remove(String(dir), "foo");
+
+  expect(stderr).not.toContain("error:");
+  expect(await file(join(String(dir), "package.json")).json()).toEqual({
+    name: "dup",
+    dependencies: { bar: "file:./bar" },
+  });
+  expect(existsSync(join(String(dir), "node_modules", "foo"))).toBe(false);
+  expect(existsSync(join(String(dir), "node_modules", "bar", "package.json"))).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("bun remove drops the list when the removed package is its only (duplicated) entry", async () => {
+  using dir = tempDir("bun-remove-dup-only", {
+    ...local("foo"),
+    ...local("bar"),
+    "package.json": `{
+  "name": "dup",
+  "dependencies": { "bar": "file:./bar" },
+  "devDependencies": {
+    "foo": "file:./foo",
+    "foo": "file:./foo"
+  }
+}
+`,
+  });
+
+  const { stderr, exitCode } = await remove(String(dir), "foo");
+
+  expect(stderr).not.toContain("error:");
+  expect(await file(join(String(dir), "package.json")).json()).toEqual({
+    name: "dup",
+    dependencies: { bar: "file:./bar" },
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent(
+  "bun remove rejects a dependency list that is not an object and leaves package.json untouched",
+  async () => {
+    const pkg = JSON.stringify({ name: "x", dependencies: ["foo"], devDependencies: { bar: "file:./bar" } });
+    using dir = tempDir("bun-remove-malformed", { ...local("bar"), "package.json": pkg });
+
+    const { stderr, exitCode } = await remove(String(dir), "bar");
+
+    expect(stderr).toContain("dependencies expects a map of specifiers");
+    expect(await file(join(String(dir), "package.json")).text()).toBe(pkg);
+    expect(exitCode).toBe(1);
+  },
+);

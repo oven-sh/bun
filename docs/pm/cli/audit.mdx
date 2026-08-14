@@ -11,6 +11,8 @@ bun audit
 
 Bun sends the list of installed packages and versions to npm, and prints a report of any vulnerabilities found. Packages installed from registries other than the default registry are skipped.
 
+The package list comes from `bun.lock` alone, so `node_modules` does not need to exist, and `bun audit` writes nothing: `package.json`, `bun.lock` and `node_modules` are left as they are (only `bun audit fix`, below, changes `bun.lock` and `node_modules`).
+
 If no vulnerabilities are found, the command prints:
 
 ```
@@ -29,13 +31,13 @@ To update all dependencies to the latest versions (including breaking changes):
 
 ### Filtering options
 
-**`--audit-level=<low|moderate|high|critical>`** - Only show vulnerabilities at this severity level or higher:
+**`--audit-level=<low|moderate|high|critical>`** - Only show vulnerabilities at this severity level or higher. Without the flag nothing is filtered out; an advisory whose severity is not one of these four values is counted and filtered as `moderate`:
 
 ```bash terminal icon="terminal"
 bun audit --audit-level=high
 ```
 
-**`--prod`** - Audit only production dependencies. A package is production when it is reachable from the root through `dependencies`, `optionalDependencies` or `peerDependencies` edges; packages that are only reached through `devDependencies` or an optional peer dependency are excluded, even when another version of the same package is a production dependency:
+**`--prod`** (also `-P`, `-p` or `--production`) - Audit only production dependencies. A package is production when it is reachable from the root through `dependencies`, `optionalDependencies` or `peerDependencies` edges; packages that are only reached through `devDependencies` or an optional peer dependency are excluded, even when another version of the same package is a production dependency. There is no flag for auditing only `devDependencies`:
 
 ```bash terminal icon="terminal"
 bun audit --prod
@@ -47,6 +49,8 @@ bun audit --prod
 bun audit --ignore GHSA-c2qf-rxjj-qqgw --ignore 1112918
 ```
 
+These filters cannot be set in `bunfig.toml`; to ignore an advisory or raise the level for every run, put the flags in a `package.json` script.
+
 ### `--json`
 
 Use the `--json` flag to print the raw JSON response from the registry instead of the formatted report:
@@ -55,9 +59,11 @@ Use the `--json` flag to print the raw JSON response from the registry instead o
 bun audit --json
 ```
 
+The response is printed as received: `--prod` still limits which packages are sent, and `--audit-level` and `--ignore` do not remove anything from the printed JSON. They do decide the exit code, which is `1` only if an advisory is left after both filters are applied (and `0` otherwise), so `bun audit --json --audit-level=high` prints every advisory but only fails the run for high or critical ones. If the response cannot be parsed, it is still printed and the command exits with `1`.
+
 ### `bun audit fix`
 
-`bun audit fix` runs the audit and then upgrades each vulnerable package in `bun.lock` to the lowest version that is not affected by any advisory and still satisfies every range that depends on it (including `overrides` and catalog entries), then installs. `package.json` is never modified and unrelated packages are not touched.
+`bun audit fix` runs the audit and then upgrades each vulnerable package in `bun.lock` to the lowest version that is not affected by any advisory and still satisfies every range that depends on it (including `overrides` and catalog entries), then installs. `package.json` is never modified (Bun does not add `overrides` on your behalf; see `requires a semver-major update:` below) and unrelated packages are not touched. `fix` is a subcommand, not a flag: `bun audit --fix` is rejected as an unknown flag.
 
 ```bash terminal icon="terminal"
 bun audit fix
@@ -86,4 +92,6 @@ Fixed 1 vulnerability in 1 package
 
 ### Exit code
 
-`bun audit` exits with code `0` if no vulnerabilities are found and `1` if the report lists any, including when `--json` is passed. `bun audit fix` exits with `0` when nothing vulnerable remains after the fix (or, with `--dry-run`, would remain) and `1` otherwise.
+`bun audit` exits with code `0` if no vulnerabilities are found and `1` if any are left after `--audit-level` and `--ignore` are applied; `--json` uses the same rule even though it prints the unfiltered response. `bun audit fix` exits with `0` when nothing vulnerable remains after the fix (or, with `--dry-run`, would remain) and `1` otherwise.
+
+When the registry cannot be reached, or answers with a 4xx or 5xx status, both commands print `audit request failed` to stderr and also exit with `1`; there is no flag to turn a registry failure into a passing run, so a CI step that wants to distinguish an outage from a vulnerable tree has to look at stderr.

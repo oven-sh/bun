@@ -22,7 +22,7 @@ impl PruneCommand {
         let (manager, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Prune)
         {
             Ok(v) => v,
-            Err(err) if err == bun_install::Error::MissingPackageJSON => {
+            Err(bun_install::Error::MissingPackageJSON) => {
                 Output::err_generic("missing package.json, nothing to prune", ());
                 Global::exit(1);
             }

@@ -5,7 +5,7 @@ description: "Select packages by pattern in a monorepo using the --filter flag"
 
 The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. Patterns match package names or package paths, with full glob syntax.
 
-`bun install` and `bun outdated` support `--filter`, and you can use it to run scripts in multiple packages at once.
+`bun install`, `bun add`, `bun remove`, `bun update` and `bun outdated` support `--filter` (pass it after the subcommand, or as `--filter=<pattern>` before it); for `bun add`/`bun remove` it selects which workspace `package.json` files are edited. You can also use it to run scripts in multiple packages at once.
 
 ---
 
@@ -18,6 +18,8 @@ Name patterns select packages by the `name` field in `package.json`. For example
 ### Package Path `--filter ./<glob>`
 
 Path patterns start with `./` and select all packages in directories matching the pattern. For example, to match all packages in subdirectories of `packages`, use `--filter './packages/**'`. To match the package in `packages/foo`, use `--filter ./packages/foo`.
+
+Patterns are matched against the full package name -- `--filter core` does not select `@acme/core` (use `@acme/core` or `@acme/*`), and `*` does not cross `/`. Path patterns must match a workspace's directory itself: `--filter ./packages` selects nothing, `--filter './packages/*'` selects every workspace directly inside it, and `--filter '!./lib'` only excludes a workspace located at `./lib`.
 
 ---
 

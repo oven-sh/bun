@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, join } from "path";
 import {
   dummyAfterAll,
@@ -689,52 +689,64 @@ it("--filter with multiple patterns selects the union of matching workspaces", a
 // `bun update <name>` re-resolves every `<name>` entry in the lockfile, but
 // only the cwd package.json is rewritten. Named updates don't fan the
 // package.json edit out to members.
-it("named update with --recursive rewrites only the cwd package.json", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+// `bun update <name>` already re-resolves <name> in every workspace, so the workspace selectors are rejected rather than silently ignored.
+for (const flags of [["--recursive"], ["--filter", "pkg-a"]]) {
+  it(`named update rejects ${flags[0]}`, async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
 
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "root",
-      private: true,
-      workspaces: ["packages/*"],
-      dependencies: { baz: "~0.0.3" },
-    }),
-  );
-  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
-  await writeFile(
-    join(package_dir, "packages", "pkg-a", "package.json"),
-    JSON.stringify({ name: "pkg-a", dependencies: { baz: "~0.0.3" } }),
-  );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { baz: "~0.0.3" },
+      }),
+    );
+    await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "pkg-a", "package.json"),
+      JSON.stringify({ name: "pkg-a", dependencies: { baz: "~0.0.3" } }),
+    );
 
-  {
     const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cmd: [bunExe(), "update", "baz", ...flags, "--linker=hoisted"],
       cwd: package_dir,
       stdout: "ignore",
       stderr: "pipe",
       env,
     });
-    expect(await new Response(stderr).text()).not.toContain("error:");
-    expect(await exited).toBe(0);
-  }
+    expect(await new Response(stderr).text()).toContain(
+      "error: --recursive and --filter cannot be combined with package names",
+    );
+    expect(await exited).not.toBe(0);
 
-  const { stderr, exited } = spawn({
-    cmd: [bunExe(), "update", "baz", "--recursive", "--linker=hoisted"],
-    cwd: package_dir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
+    const root = await file(join(package_dir, "package.json")).json();
+    const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+    expect(root.dependencies.baz).toBe("~0.0.3");
+    expect(a.dependencies.baz).toBe("~0.0.3");
+    expect(urls).toStrictEqual([]);
   });
-  expect(await new Response(stderr).text()).not.toContain("error:");
-  expect(await exited).toBe(0);
+}
 
-  const root = await file(join(package_dir, "package.json")).json();
-  const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
-  expect(root.dependencies.baz).toBe("~0.0.5");
-  // Named updates do not fan the package.json edit out to members.
-  expect(a.dependencies.baz).toBe("~0.0.3");
+it("--production is rejected", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, latest: "0.0.3" }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", dependencies: { baz: "~0.0.3" } }));
+
+  for (const flag of ["--production", "-p", "--prod", "-P"]) {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "update", flag],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).toContain("error: --production cannot be used with bun update");
+    expect(await exited).not.toBe(0);
+  }
+  expect(urls).toStrictEqual([]);
 });
 
 // https://github.com/oven-sh/bun/issues/33176
@@ -1453,31 +1465,217 @@ it("should update transitive resolutions of a named package", async () => {
   ).toMatchObject({ version: "1.1.0" });
 });
 
-// `<name>` appears only transitively: nothing in any package.json depends on
-// it directly. `bun update <name>` promotes it to a direct dependency of the
-// invoking package.json, and the transitive slot must re-resolve too.
-it("should update a resolution reachable only through a transitive dependency", async () => {
+// `shared` appears only transitively (dep-x@1.0.0 depends on `shared@^1.0.0`); shared@1.1.0 is published after
+// the lockfile pinned 1.0.0.
+async function setupTransitiveOnlyShared() {
   const tgzDir = join(package_dir, ".tarballs");
   const depX = { "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.0" } } }, latest: "1.0.0" } };
-  // Only shared@1.0.0 exists when the lockfile is created.
   setHandler(await perNameRegistry(tgzDir, { ...depX, shared: { versions: { "1.0.0": {} }, latest: "1.0.0" } }));
   await writePerNameBunfig();
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({ name: "root", dependencies: { "dep-x": "^1.0.0" } }),
-  );
+  const packageJson = { name: "root", dependencies: { "dep-x": "^1.0.0" } };
+  await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJson));
   await runInPackageDir("install");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
-
-  // shared@1.1.0 is published after the lockfile pinned 1.0.0.
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
   setHandler(
     await perNameRegistry(tgzDir, { ...depX, shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" } }),
   );
+  return packageJson;
+}
 
-  // Both the new root entry and dep-x's `^1.0.0` must land on 1.1.0.
+it("bun update <name> updates a package that is only a transitive dependency without adding it to package.json", async () => {
+  const packageJson = await setupTransitiveOnlyShared();
   await runInPackageDir("update", "shared");
-  expect(await file(join(package_dir, "package.json")).json()).toMatchObject({
-    dependencies: { "dep-x": "^1.0.0", shared: "^1.1.0" },
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"']);
+  expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
   });
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"']);
+});
+
+it("bun update updates transitive dependencies", async () => {
+  const packageJson = await setupTransitiveOnlyShared();
+  const out = await runInPackageDir("update");
+  expect(out).toContain("updating:\n  shared@1.0.0 → 1.1.0\n");
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"']);
+  expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
+});
+
+it("bun update <name> rejects a name that is not in the lockfile", async () => {
+  const packageJson = await setupTransitiveOnlyShared();
+  const lockBefore = await file(join(package_dir, "bun.lock")).text();
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "not-a-dep"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toContain('error: "not-a-dep" is not in the lockfile, so there is nothing to update');
+  expect(await exited).toBe(1);
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
+  expect(await file(join(package_dir, "bun.lock")).text()).toBe(lockBefore);
+});
+
+// Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0 (latest 2.0.0); a-dep 1.0.1..1.0.10; dep-with-tags latest=3.0.0, pre-2=2.0.1.
+describe("bun update <name> semantics", () => {
+  type Json = Record<string, any>;
+  const verdaccio = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await verdaccio.start();
+  });
+
+  afterAll(() => {
+    verdaccio.stop();
+  });
+
+  const manifest = (dependencies: Json): Json => ({ name: "foo", dependencies });
+  const stringify = (json: Json) => JSON.stringify(json, null, 2) + "\n";
+  const packageJsonOf = (dir: string): Promise<Json> => file(join(dir, "package.json")).json();
+  const packageJsonText = (dir: string) => file(join(dir, "package.json")).text();
+  const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
+  const lock = async (dir: string): Promise<Json> => Bun.JSONC.parse(await lockText(dir)) as Json;
+  const installedVersion = async (dir: string, name: string): Promise<string> =>
+    (await file(join(dir, "node_modules", name, "package.json")).json()).version;
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function install(dir: string, ...args: string[]) {
+    const { stderr, exitCode } = await run(dir, "install", ...args);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  async function update(dir: string, ...args: string[]) {
+    const result = await run(dir, "update", ...args);
+    expect(result.stderr).not.toContain("error:");
+    expect(result.exitCode).toBe(0);
+    return result;
+  }
+
+  async function setup(dependencies: Json) {
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+      files: { "package.json": stringify(manifest(dependencies)) },
+    });
+    await install(packageDir);
+    return packageDir;
+  }
+
+  // Pin exactly, then widen: the locked versions still satisfy the new ranges, so only `bun update` moves them.
+  async function stale(pinned: Json, widened: Json) {
+    const dir = await setup(pinned);
+    await writeFile(join(dir, "package.json"), stringify(manifest(widened)));
+    expect(await install(dir)).toContain("Saved lockfile");
+    for (const [name, literal] of Object.entries(pinned as Record<string, string>)) {
+      expect(await installedVersion(dir, name)).toBe(literal.replace(/^npm:[^@]+@/, ""));
+    }
+    return dir;
+  }
+
+  // Every version of `name` resolved anywhere in bun.lock, including behind an alias.
+  async function lockedVersions(dir: string, name: string) {
+    const { packages } = await lock(dir);
+    const versions = Object.values(packages as Record<string, [string]>)
+      .map(([resolution]) => resolution)
+      .filter(resolution => resolution.startsWith(`${name}@`))
+      .map(resolution => resolution.slice(name.length + 1));
+    return [...new Set(versions)].sort();
+  }
+
+  async function expectInSync(dir: string, dependencies: Json) {
+    expect((await packageJsonOf(dir)).dependencies).toEqual(dependencies);
+    expect((await lock(dir)).workspaces[""].dependencies).toEqual(dependencies);
+    await install(dir, "--frozen-lockfile");
+  }
+
+  const SIBLINGS_PINNED = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
+  const SIBLINGS_WIDENED = { "no-deps": "^1.0.0", "a-dep": "^1.0.1" };
+
+  for (const flags of [[], ["--latest"]]) {
+    it(`bun update ${["a-dep", ...flags].join(" ")} leaves a stale unnamed sibling alone`, async () => {
+      const dir = await stale(SIBLINGS_PINNED, SIBLINGS_WIDENED);
+      await update(dir, "a-dep", ...flags);
+      await expectInSync(dir, { "no-deps": "^1.0.0", "a-dep": "^1.0.10" });
+      expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.10"]);
+      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+      expect(await installedVersion(dir, "a-dep")).toBe("1.0.10");
+      expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+    });
+  }
+
+  it("bun update <name> keeps a dist-tag literal as written", async () => {
+    const dir = await setup({ "dep-with-tags": "pre-2" });
+    expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");
+    await update(dir, "dep-with-tags");
+    await expectInSync(dir, { "dep-with-tags": "pre-2" });
+    expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["2.0.1"]);
+  });
+
+  it("bun update <name> --latest replaces a dist-tag literal with a caret range on latest", async () => {
+    const dir = await setup({ "dep-with-tags": "pre-2" });
+    await update(dir, "dep-with-tags", "--latest");
+    await expectInSync(dir, { "dep-with-tags": "^3.0.0" });
+    expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["3.0.0"]);
+    expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.0");
+  });
+
+  it("bun update <real name> reaches a dependency declared behind an npm: alias", async () => {
+    const dir = await stale({ aliased: "npm:no-deps@1.0.0" }, { aliased: "npm:no-deps@~1.0.0" });
+    expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+    await update(dir, "no-deps");
+    await expectInSync(dir, { aliased: "npm:no-deps@~1.0.1" });
+    expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.1"]);
+    expect(await installedVersion(dir, "aliased")).toBe("1.0.1");
+  });
+
+  it("bun update <name>@<version> --latest is an error and writes nothing", async () => {
+    const dir = await setup({ "no-deps": "~1.0.0" });
+    const packageJsonBefore = await packageJsonText(dir);
+    const lockBefore = await lockText(dir);
+    const { stderr, exitCode } = await run(dir, "update", "no-deps@1", "--latest");
+    expect(stderr).toMatch(/error: .*--latest/);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("bun update <name> --dry-run writes nothing", async () => {
+    const dir = await stale({ "no-deps": "1.0.0" }, { "no-deps": "^1.0.0" });
+    const packageJsonBefore = await packageJsonText(dir);
+    const lockBefore = await lockText(dir);
+    const { stderr } = await update(dir, "no-deps", "--dry-run");
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  });
+
+  it("bun update leaves an =x.y.z pin untouched", async () => {
+    const dir = await setup({ "no-deps": "=1.0.0" });
+    const packageJsonBefore = await packageJsonText(dir);
+    const lockBefore = await lockText(dir);
+    await update(dir);
+    expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, { "no-deps": "=1.0.0" });
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  });
 });

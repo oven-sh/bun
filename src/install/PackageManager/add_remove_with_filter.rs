@@ -3,7 +3,7 @@ use bstr::BStr;
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::value_loc_of;
-use crate::lockfile_real::package::workspace_map::{NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
@@ -15,6 +15,7 @@ use super::add_catalog;
 use super::install_with_manager::install_with_manager;
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
+use super::package_json_write_back;
 use super::update_package_json_and_install::{
     print_package_json_into_cache_entry, remove_dependencies_from_package_json,
     remove_leftover_node_modules,
@@ -22,6 +23,7 @@ use super::update_package_json_and_install::{
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::{Command, PackageManager, Subcommand, UpdateRequest, WorkspaceFilter};
 
+#[derive(Clone)]
 pub(crate) struct WorkspaceTarget {
     pub(crate) name: Box<[u8]>,
     /// `None` = the workspace root.
@@ -29,7 +31,7 @@ pub(crate) struct WorkspaceTarget {
     pub(crate) package_json_path: Box<[u8]>,
 }
 
-fn root_package_json_path() -> Box<[u8]> {
+pub(crate) fn root_package_json_path() -> Box<[u8]> {
     let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let mut buf = path_buffer_pool::get();
     let path: Box<[u8]> =
@@ -119,7 +121,7 @@ pub(crate) fn select_targets(
             &root_source,
             loc,
             None,
-            false,
+            MissingWorkspace::Error,
         ) {
             if log.has_errors() {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -244,7 +246,10 @@ fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-fn fetch_entry<'a>(manager: &'a mut PackageManager, target: &WorkspaceTarget) -> &'a mut MapEntry {
+pub(crate) fn fetch_entry<'a>(
+    manager: &'a mut PackageManager,
+    target: &WorkspaceTarget,
+) -> &'a mut MapEntry {
     let log = manager.log_mut();
     match manager.workspace_package_json_cache.get_with_path(
         log,
@@ -265,28 +270,28 @@ fn fetch_entry<'a>(manager: &'a mut PackageManager, target: &WorkspaceTarget) ->
     }
 }
 
-fn fetch_entry_root(manager: &mut PackageManager, target: &WorkspaceTarget) -> bun_ast::Expr {
+pub(crate) fn fetch_entry_root(
+    manager: &mut PackageManager,
+    target: &WorkspaceTarget,
+) -> bun_ast::Expr {
     fetch_entry(manager, target).root
 }
 
-fn store_entry(
+pub(crate) fn store_entry(
     manager: &mut PackageManager,
     target: &WorkspaceTarget,
     root: bun_ast::Expr,
-    reparse: bool,
 ) {
     let log = manager.log_mut();
     let entry = fetch_entry(manager, target);
     print_package_json_into_cache_entry(entry, root);
-    if reparse {
-        if let Err(err) = entry.reparse_root(log) {
-            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-            Global::crash();
-        }
+    if let Err(err) = entry.reparse_root(log) {
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+        Global::crash();
     }
 }
 
-fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
+pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let entry = fetch_entry(manager, target);
     let mut zbuf = path_buffer_pool::get();
     let path = resolve_path::z(&target.package_json_path, &mut zbuf);
@@ -302,7 +307,7 @@ fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool 
     }
 }
 
-fn reset_e_strings(updates: &mut [UpdateRequest]) {
+pub(crate) fn reset_e_strings(updates: &mut [UpdateRequest]) {
     // `e_string` points into the previous target's AST; `edit` skips requests that already have one.
     for request in updates.iter_mut() {
         request.e_string = None;
@@ -439,26 +444,11 @@ fn assign_requests(
     (requests, assigned)
 }
 
-/// The targets whose package.json changed and, for `add`, the requests each one received.
+/// The `add`/`link --filter` targets and the requests each one received; edited again once resolved.
 pub(crate) struct PendingWrite {
     targets: Vec<(WorkspaceTarget, Box<[PackageNameHash]>)>,
-    subcommand: Subcommand,
     catalog_mode: bool,
     root_target: WorkspaceTarget,
-}
-
-/// Runs once: from `install_with_manager` right after the lockfile is saved, else after it returns.
-pub(crate) fn flush_pending_write(manager: &mut PackageManager) -> Result<(), Error> {
-    let Some(pending) = manager.pending_filtered_write.take() else {
-        return Ok(());
-    };
-    if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        return Ok(());
-    }
-    let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-    let result = pending.write(manager, &mut updates);
-    manager.update_requests = updates;
-    result
 }
 
 impl PendingWrite {
@@ -478,34 +468,18 @@ impl PendingWrite {
             .collect()
     }
 
-    fn write(
+    /// Writes the resolved versions into every target's cache entry; `flush` puts them on disk.
+    pub(crate) fn edit_entries(
         &self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
     ) -> Result<(), Error> {
-        let mut any_failed = false;
-        if self.subcommand == Subcommand::Remove {
-            for (target, _) in &self.targets {
-                any_failed |= !write_target(manager, target);
-            }
-            if any_failed {
-                Global::exit(1);
-            }
-            return Ok(());
-        }
-
         let dependency_list: &'static [u8] = manager.options.update.prop;
         let exact_versions = manager.options.enable.exact_versions();
-        let add_trusted_dependencies = manager
-            .options
-            .do_
-            .contains(Do::TRUST_DEPENDENCIES_FROM_ARGS);
-        let trusted_snapshot = manager.trusted_deps_to_add_to_package_json.clone();
         let summary_order: Vec<PackageNameHash> = updates.iter().map(|r| r.name_hash).collect();
 
         for (target, received) in &self.targets {
             let kept = move_to_front(updates, received);
-            manager.trusted_deps_to_add_to_package_json = trusted_snapshot.clone();
             let mut root = fetch_entry_root(manager, target);
             reset_e_strings(updates);
             let mut slice: &mut [UpdateRequest] = &mut updates[..kept];
@@ -516,28 +490,21 @@ impl PendingWrite {
                 dependency_list,
                 EditOptions {
                     exact_versions,
-                    add_trusted_dependencies,
                     ..Default::default()
                 },
             )?;
             if self.catalog_mode {
                 add_catalog::rewrite_references(manager, &updates[..kept]);
             }
-            let is_catalog_root = self.catalog_mode && target.name_hash.is_none();
-            store_entry(manager, target, root, is_catalog_root);
-            if !is_catalog_root {
-                any_failed |= !write_target(manager, target);
-            }
+            store_entry(manager, target, root);
         }
         updates.sort_by_key(|r| summary_order.iter().position(|&h| h == r.name_hash));
-        if any_failed {
-            Global::exit(1);
-        }
+
         if self.catalog_mode {
-            let mut zbuf = path_buffer_pool::get();
-            let root_package_json_path =
-                resolve_path::z(&self.root_target.package_json_path, &mut zbuf);
-            add_catalog::write_root_after_install(manager, root_package_json_path, updates)?;
+            let root = fetch_entry_root(manager, &self.root_target);
+            if add_catalog::edit_root_after_install(manager, &root, updates)? {
+                store_entry(manager, &self.root_target, root);
+            }
         }
         Ok(())
     }
@@ -607,8 +574,11 @@ pub(super) fn update_filtered_workspaces_and_install(
             }
             updates[..kept].iter().map(|r| r.name_hash).collect()
         };
-        store_entry(manager, &target, root, true);
+        store_entry(manager, &target, root);
         changed.push((target, received));
+    }
+    for (target, _) in &changed {
+        package_json_write_back::record(manager, target.clone(), subcommand != Subcommand::Remove);
     }
     let any_changed = !changed.is_empty();
 
@@ -619,33 +589,35 @@ pub(super) fn update_filtered_workspaces_and_install(
                 .any(|(_, received)| received.contains(&r.name_hash))
         });
     }
-    if catalog_mode {
+    if catalog_mode && !updates.is_empty() {
         let root = fetch_entry_root(manager, &root_target);
         add_catalog::edit_root_before_install(manager, &root, &updates)?;
-        store_entry(manager, &root_target, root, true);
+        store_entry(manager, &root_target, root);
+        package_json_write_back::record(manager, root_target.clone(), false);
     }
 
     // The install summary is printed from this workspace's point of view.
     let summary_target = changed
         .iter()
         .find(|(_, received)| received.len() == updates.len())
-        .or(changed.first());
+        .or_else(|| changed.first());
     manager.workspace_name_hash = summary_target.and_then(|(target, _)| target.name_hash);
     manager.to_update = false;
     manager.update_requests = updates.into_boxed_slice();
-    manager.pending_filtered_write = Some(Box::new(PendingWrite {
-        targets: changed,
-        subcommand,
-        catalog_mode,
-        root_target,
-    }));
+    if subcommand != Subcommand::Remove {
+        manager.pending_filtered_write = Some(Box::new(PendingWrite {
+            targets: changed,
+            catalog_mode,
+            root_target,
+        }));
+    }
 
     {
         let mut zbuf = path_buffer_pool::get();
         let root_package_json_path = resolve_path::z(&root_package_json_path, &mut zbuf);
         install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
     }
-    flush_pending_write(manager)?;
+    package_json_write_back::flush(manager)?;
 
     if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         if !any_changed {

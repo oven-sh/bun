@@ -16,3 +16,12 @@ pub(crate) fn workspace_is_missing_on_disk(
     let _ = package_json_path.append(b"package.json");
     !bun_sys::exists_z(package_json_path.slice_z())
 }
+
+pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path: &[u8]) -> bool {
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    lockfile
+        .workspace_paths
+        .values()
+        .iter()
+        .any(|path| path.slice(string_bytes) == workspace_path)
+}

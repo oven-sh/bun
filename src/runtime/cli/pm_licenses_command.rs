@@ -6,9 +6,8 @@ use bun_ast::{Expr, Log, Source};
 use bun_collections::StringHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
-use bun_install::lockfile::{Lockfile, package::PackageColumns as _, tree};
-use bun_install::npm::{Architecture, OperatingSystem};
-use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
+use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
+use bun_install::{PackageManager, Resolution, ResolutionTag};
 use bun_parsers::json as JSON;
 use bun_paths::AutoAbsPath;
 use bun_sys::{self, Dir, Fd, File};
@@ -50,7 +49,7 @@ impl PmLicensesCommand {
     pub(crate) fn exec(
         pm: &mut PackageManager,
         positionals: &[&[u8]],
-        production: bool,
+        _production: bool,
     ) -> crate::Result<()> {
         if positionals.len() > 1
             && !strings::eql_comptime(positionals[1], b"list")
@@ -65,6 +64,7 @@ impl PmLicensesCommand {
         PackageManagerCommand::handle_load_lockfile_errors(&load, log_level);
 
         let json_output = pm.options.json_output;
+        let features = pm.options.local_package_features;
         let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -77,8 +77,19 @@ impl PmLicensesCommand {
         }
         path.set_length(top_len);
 
-        let wanted =
-            reachable_packages(lockfile, root_id, production, pm.options.cpu, pm.options.os);
+        let wanted = reachable::packages(
+            lockfile,
+            lockfile.buffers.resolutions.as_slice(),
+            reachable::Options {
+                root: root_id,
+                dev: features.dev_dependencies,
+                optional: features.optional_dependencies,
+                peer: features.peer_dependencies,
+                optional_peer: features.peer_dependencies,
+                bundled: true,
+                platform: Some((pm.options.cpu, pm.options.os)),
+            },
+        );
         let locations = tree_locations(lockfile);
 
         let packages = lockfile.packages.slice();
@@ -166,11 +177,11 @@ impl PmLicensesCommand {
         }
 
         if missing > 0 {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "omitted {} {} from the lockfile not found in node_modules",
                 missing,
-                if missing == 1 { "package" } else { "packages" },
-            ));
+                if missing == 1 { "package" } else { "packages" }
+            );
         }
 
         entries.sort_by(|a, b| {
@@ -202,58 +213,6 @@ fn sort_key(e: &Entry) -> (bool, &[u8], &[u8]) {
         &e.license[..],
         &e.name[..],
     )
-}
-
-fn reachable_packages(
-    lockfile: &Lockfile,
-    root_id: PackageID,
-    production: bool,
-    cpu: Architecture,
-    os: OperatingSystem,
-) -> Vec<bool> {
-    let packages = lockfile.packages.slice();
-    let pkg_resolution = packages.items_resolution();
-    let pkg_metas = packages.items_meta();
-    let pkg_dependencies = packages.items_dependencies();
-    let pkg_resolutions = packages.items_resolutions();
-    let dependencies = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let len = packages.len();
-
-    let mut marked = vec![false; len];
-    if (root_id as usize) >= len {
-        return marked;
-    }
-    marked[root_id as usize] = true;
-    let mut work: Vec<PackageID> = vec![root_id];
-
-    while let Some(pkg) = work.pop() {
-        let skip_dev = production
-            && matches!(
-                pkg_resolution[pkg as usize].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            );
-        let dep_slice = pkg_dependencies[pkg as usize].get(dependencies);
-        let res_slice = pkg_resolutions[pkg as usize].get(resolutions);
-
-        for (dep, &dep_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-            if (dep_pkg_id as usize) >= len {
-                continue;
-            }
-            if skip_dev && dep.behavior.is_dev() {
-                continue;
-            }
-            if pkg_metas[dep_pkg_id as usize].is_disabled(cpu, os) {
-                continue;
-            }
-            if !marked[dep_pkg_id as usize] {
-                marked[dep_pkg_id as usize] = true;
-                work.push(dep_pkg_id);
-            }
-        }
-    }
-
-    marked
 }
 
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
@@ -443,7 +402,7 @@ impl BunStore {
             );
         }
 
-        let i = entries.partition_point(|e| &e[..] < &key[..]);
+        let i = entries.partition_point(|e| e[..] < key[..]);
         let entry = entries.get(i)?;
         let exact = entry[..] == key[..];
         let peer_suffixed =
@@ -455,16 +414,16 @@ impl BunStore {
         path.set_length(top_len);
         let _ = path.append(b"node_modules");
         let _ = path.append(b".bun");
-        let mut names: Vec<Box<[u8]>> = list_dir(path.slice())
+        let names: Vec<Box<[u8]>> = list_dir(path.slice())
             .into_iter()
             .map(|(name, _)| name)
             .collect();
         path.set_length(top_len);
-        names.sort_unstable();
         names
     }
 }
 
+/// Sorted by name: readdir order differs per filesystem and `DiskIndex` keeps the first copy it sees.
 fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
     let mut out: Vec<(Box<[u8]>, FileKind)> = Vec::new();
     let Ok(dir) = Dir::open(path) else {
@@ -474,6 +433,7 @@ fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
     while let Ok(Some(entry)) = iter.next() {
         out.push((entry.name.slice_u8().into(), entry.kind));
     }
+    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     out
 }
 

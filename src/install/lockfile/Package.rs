@@ -925,12 +925,17 @@ pub struct DiffSummary {
 
 impl DiffSummary {
     #[inline]
-    pub(crate) fn has_diffs(&self) -> bool {
+    pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
             || self.remove > 0
             || self.update > 0
             || self.overrides_changed
             || self.catalogs_changed
+    }
+
+    #[inline]
+    pub(crate) fn has_diffs(&self) -> bool {
+        self.changes_resolutions()
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
@@ -983,50 +988,16 @@ impl Diff {
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
-        if from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count() {
+        if lockfile::OverrideMap::changed(
+            &mut from_lockfile.overrides,
+            from_lockfile.buffers.string_bytes.as_slice(),
+            &mut to_lockfile.overrides,
+            to_lockfile.buffers.string_bytes.as_slice(),
+        ) {
             summary.overrides_changed = true;
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!("Overrides changed since last install");
-            }
-        } else {
-            // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
-            // so split the borrow at the field.
-            lockfile::OverrideMap::sort(
-                &mut from_lockfile.overrides,
-                from_lockfile.buffers.string_bytes.as_slice(),
-            );
-            lockfile::OverrideMap::sort(
-                &mut to_lockfile.overrides,
-                to_lockfile.buffers.string_bytes.as_slice(),
-            );
-            debug_assert_eq!(
-                from_lockfile.overrides.map.keys().len(),
-                to_lockfile.overrides.map.keys().len()
-            );
-            for (((from_k, from_override), to_k), to_override) in from_lockfile
-                .overrides
-                .map
-                .keys()
-                .iter()
-                .zip(from_lockfile.overrides.map.values())
-                .zip(to_lockfile.overrides.map.keys())
-                .zip(to_lockfile.overrides.map.values())
-            {
-                if (from_k != to_k)
-                    || (!Dependency::eql(
-                        from_override,
-                        to_override,
-                        from_lockfile.buffers.string_bytes.as_slice(),
-                        to_lockfile.buffers.string_bytes.as_slice(),
-                    ))
-                {
-                    summary.overrides_changed = true;
-                    if PackageManager::verbose_install() {
-                        bun_core::pretty_errorln!("Overrides changed since last install");
-                    }
-                    break;
-                }
             }
         }
 
@@ -1485,7 +1456,7 @@ impl Diff {
                             );
                         }
 
-                        !diff.has_diffs()
+                        !diff.changes_resolutions()
                     };
 
                     if update_mapping {
@@ -2238,6 +2209,12 @@ impl Package<u64> {
             }
         }
 
+        let missing_workspace = if pm.options.enable.frozen_lockfile() {
+            workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
+        } else {
+            workspace_map::MissingWorkspace::Error
+        };
+
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
@@ -2264,7 +2241,7 @@ impl Package<u64> {
                             source,
                             dependencies_q.loc,
                             Some(&mut string_builder),
-                            pm.options.enable.frozen_lockfile(),
+                            missing_workspace,
                         )?;
                         break 'brk;
                     }
@@ -2311,7 +2288,7 @@ impl Package<u64> {
                                     source,
                                     packages_loc,
                                     Some(&mut string_builder),
-                                    pm.options.enable.frozen_lockfile(),
+                                    missing_workspace,
                                 )?;
                             }
 
@@ -2394,7 +2371,14 @@ impl Package<u64> {
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(json, &mut string_builder);
+            lockfile.overrides.parse_count(
+                pm,
+                log,
+                source,
+                &workspace_names,
+                json,
+                &mut string_builder,
+            );
 
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 lockfile
@@ -2932,6 +2916,7 @@ impl Package<u64> {
                 self,
                 log,
                 source,
+                &workspace_names,
                 json,
                 &mut string_builder,
             )?;

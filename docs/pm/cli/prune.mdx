@@ -3,7 +3,7 @@ title: "bun prune"
 description: "Remove packages that are not in bun.lock from node_modules"
 ---
 
-`bun prune` deletes everything in `node_modules` that the current `bun.lock` does not install there — packages left behind after switching branches, editing `bun.lock`, or installing with another package manager. It only reads `bun.lock`; it never contacts the registry and never changes `bun.lock` or `package.json`.
+`bun prune` deletes everything in `node_modules` that the current `bun.lock` does not install there — packages left behind after switching branches, editing `bun.lock`, or installing with another package manager. It only reads `bun.lock`; it never contacts the registry and never changes `bun.lock` or `package.json`. It takes no package names: passing one is an error, because it always removes every package `bun.lock` does not account for.
 
 ```bash terminal icon="terminal"
 bun prune
@@ -23,7 +23,7 @@ Nothing to prune.
 
 ### `--production`
 
-`bun prune --production` (alias `--prod`) additionally removes every package that is only needed by `devDependencies`, leaving exactly what a fresh `bun install --production` would install. `--omit=dev`, `--omit=optional` and `--omit=peer` work the same way as they do for `bun install`.
+`bun prune --production` (alias `--prod`) additionally removes every package that is only needed by `devDependencies`, leaving exactly what a fresh `bun install --production` would install. `--omit=dev`, `--omit=optional` and `--omit=peer` work the same way as they do for `bun install`; there is no `--no-optional` flag, use `--omit=optional`.
 
 This makes it possible to build with `devDependencies` installed and ship without them:
 
@@ -50,12 +50,12 @@ Would remove 1 package
 
 ### Notes
 
-- Works with both linkers. With the hoisted linker it checks every `node_modules` folder `bun install` would install into — including workspace folders and the nested `node_modules` folders of installed packages, so copies left behind by an earlier install are removed too; with the isolated linker it removes unused entries in `node_modules/.bun` and the symlinks that pointed at them.
+- Works with both linkers. With the hoisted linker it checks every `node_modules` folder `bun install` would install into — including workspace folders and the nested `node_modules` folders of installed packages, so copies left behind by an earlier install are removed too (subject to the version check below); with the isolated linker it removes unused entries in `node_modules/.bun` and the symlinks that pointed at them. With `--production`, the symlink of a dev-only dependency is removed and listed even when its `node_modules/.bun` entry stays because a production dependency also uses it.
 - The linker is chosen the same way `bun install` chooses it. If `node_modules` was installed with the other linker (for example `bun install --linker hoisted` in a project that defaults to isolated), `bun prune` refuses to run instead of removing packages the other layout needs; pass the same `--linker` you installed with, or run `bun install` to switch layouts.
-- Always runs against the workspace root, even when invoked inside a workspace package.
+- Always runs against the workspace root, even when invoked inside a workspace package, and prunes the `node_modules` folder of every workspace package in that one run; with `--production`, a package that only a workspace's `devDependencies` need is removed too.
 - Workspace symlinks (even `--production` keeps a workspace linked from another workspace's `devDependencies`), `.bin` entries that are still in use, dot-entries such as `.cache`, plain files, and dependencies bundled inside a package's tarball are never removed. `.bin` entries whose package was removed are cleaned up on every platform.
 - Nothing outside `node_modules` is ever deleted. A package folder that you replaced with a symlink is left alone, and the `node_modules` folder inside it is not pruned. With `install.globalStore`, only the project's links into the store are removed.
 - Packages disabled for the current `os`/`cpu` are removed, just as `bun install` would skip them. Pass `--os` / `--cpu` to prune for another platform.
-- Only package names are compared, and only `bun.lock` is consulted: a dependency removed from `package.json` is pruned after the next `bun install` updates `bun.lock`. Run `bun install` if you also want the versions on disk re-verified.
+- Only `bun.lock` is consulted, and packages are matched by name: a package that is installed under the right name at the wrong version is left for `bun install` to replace, and a dependency removed from `package.json` is pruned only after the next `bun install` updates `bun.lock`. A copy nested inside another package (`node_modules/a/node_modules/b`) is only removed once the copy that replaces it higher up is installed at the version `bun.lock` expects (checked from its `package.json`, or `.bun-tag` for git dependencies); until then it is kept and `bun prune` prints a `warn:` line naming both folders — typically after `bun prune --production` when a `devDependency` pinned a different version of `b` at the root. Run `bun install` (with the same flags), then `bun prune` again.
 - Lifecycle scripts are never run.
-- Equivalent to `pnpm prune` and `npm prune`.
+- Equivalent to `pnpm prune` and `npm prune`. It does not touch the global cache; the counterpart of `pnpm store prune` is [`bun pm cache rm`](/pm/cli/pm#cache). Not related to `turbo prune`, which copies a subset of a monorepo's workspaces, `package.json` files and `bun.lock` into an output directory: `bun prune` only deletes from `node_modules`, so a Dockerfile can use `turbo prune`, then `bun install`, then `bun prune --production` after building.

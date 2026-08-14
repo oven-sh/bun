@@ -169,6 +169,10 @@ To list every installed package grouped by its license (read from the `license` 
 
 ```bash terminal icon="terminal"
 bun pm licenses
+# or
+bun pm licenses list
+# or
+bun pm licenses ls
 ```
 
 ```txt
@@ -183,7 +187,9 @@ Unknown (4)
 └── one-dep@1.0.0
 ```
 
-Pass `--prod` to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order) and, when present, the `homepage` and `author` of the newest listed version:
+License groups are printed in name order with `Unknown` always last, and packages within a group are sorted by name and then version; if nothing is installed the text output is empty and `--json` prints `{}`.
+
+Pass `--prod` (or `-P`, `-p`, `--production`) to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order) and, when present, the `homepage` and `author` of the newest listed version:
 
 ```bash terminal icon="terminal"
 bun pm licenses --json --prod
@@ -202,7 +208,13 @@ bun pm licenses --json --prod
 }
 ```
 
-`--prod` only drops the `devDependencies` of the root package and of workspace packages; `optionalDependencies` and everything a production dependency pulls in are still listed, and from a workspace root every workspace's production dependencies are included. Run it inside a workspace package to list only that package's dependencies, and use [`bun why`](/pm/cli/why) to see which dependency pulls in an unexpected package.
+There is no `--long` flag; the text output only shows names and versions, so use `--json` when you need `author` or `homepage`.
+
+`--prod` drops every `devDependencies` edge — the same packages `bun install --production` leaves out, including the `devDependencies` of `file:` dependencies; `optionalDependencies`, `peerDependencies` and everything a production dependency pulls in are still listed, and from a workspace root every workspace's production dependencies are included. Run it inside a workspace package to list only that package's dependencies, and use [`bun why`](/pm/cli/why) to see which dependency pulls in an unexpected package.
+
+`--omit=dev` is the same as `--prod` (as is [`install.production`](/runtime/bunfig#install-production) in `bunfig.toml`), and `--omit=optional` / `--omit=peer` skip `optionalDependencies` / `peerDependencies` as well, so the listing follows the same dependency types `bun install` would with those flags.
+
+`bun pm licenses` only reads `bun.lock` and `node_modules`; it never writes to either of them or to `package.json`, and it prints an error and exits with code `1` when the project has no lockfile or no `node_modules` directory.
 
 Packages that are in the lockfile but not in `node_modules` (for example after `bun install --production`) are omitted, and a `warn:` line with the number of omitted packages is printed to stderr. Packages that don't apply to the current platform (`os`/`cpu`) are omitted silently.
 

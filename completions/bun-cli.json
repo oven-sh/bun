@@ -503,6 +503,7 @@
         },
         {
           "name": "filter",
+          "shortName": "F",
           "description": "Install packages for the matching workspaces",
           "hasValue": true,
           "valueType": "val",
@@ -521,6 +522,14 @@
           "name": "only-missing",
           "description": "Only add dependencies to package.json if they are not already present",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "catalog",
+          "description": "Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -814,6 +823,15 @@
           "multiple": false
         },
         {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Add the package(s) to the matching workspaces instead of the current package",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "analyze",
           "shortName": "a",
           "description": "Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)",
@@ -825,6 +843,14 @@
           "name": "only-missing",
           "description": "Only add dependencies to package.json if they are not already present",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "catalog",
+          "description": "Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -1094,6 +1120,15 @@
           "shortName": "h",
           "description": "Print this help menu",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Remove the package(s) from the matching workspaces instead of the current package",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -1420,6 +1455,22 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "audit-level",
+          "description": "Only print advisories with severity greater than or equal to  (low, moderate, high, critical)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore",
+          "description": "Ignore advisories by GHSA or numeric advisory ID (repeatable)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -1430,9 +1481,396 @@
           "type": "string"
         }
       ],
-      "examples": ["bun audit", "bun audit --json"],
+      "examples": ["bun audit", "bun audit --json", "bun audit fix", "bun audit fix --dry-run"],
       "usage": "Usage: bun audit [flags]",
       "documentationUrl": "https://bun.com/docs/install/audit.",
+      "dynamicCompletions": {},
+      "subcommands": {
+        "fix": {
+          "name": "fix",
+          "description": "Upgrade vulnerable packages to the lowest safe version that still satisfies every dependent's range",
+          "flags": [
+            {
+              "name": "dry-run",
+              "description": "Show what bun audit fix would change without changing anything",
+              "hasValue": false,
+              "required": false,
+              "multiple": false
+            }
+          ]
+        }
+      }
+    },
+    "dedupe": {
+      "name": "dedupe",
+      "description": "Remove duplicate versions from bun.lock by re-resolving dependency ranges onto versions that are already in the lockfile, then install.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Perform a dry run without making changes",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "2x",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "check",
+          "description": "Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": ["bun dedupe", "bun dedupe --check", "bun dedupe --lockfile-only"],
+      "usage": "Usage: bun dedupe [flags]",
+      "documentationUrl": "https://bun.com/docs/pm/cli/dedupe.",
+      "dynamicCompletions": {}
+    },
+    "prune": {
+      "name": "prune",
+      "description": "Remove packages from node_modules that are not in bun.lock. With --production, also remove packages that are only needed by devDependencies.",
+      "flags": [
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Also remove packages that are only needed by devDependencies (alias: --prod)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Also remove packages that are only needed by the given dependency types",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Print what would be removed without deleting anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Prune for a different operating system than the current one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Prune for a different CPU architecture than the current one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run"],
+      "usage": "Usage: bun prune [flags]",
+      "documentationUrl": "https://bun.com/docs/pm/cli/prune.",
       "dynamicCompletions": {}
     },
     "outdated": {
@@ -2855,6 +3293,12 @@
         "why": {
           "name": "why",
           "description": "<pkg>            show dependency tree explaining why a package is installed",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "licenses": {
+          "name": "licenses",
+          "description": "list installed packages grouped by license",
           "flags": [],
           "positionalArgs": []
         },

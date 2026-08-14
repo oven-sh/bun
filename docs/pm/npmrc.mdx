@@ -5,7 +5,9 @@ description:
 
 Bun loads configuration options from [`.npmrc`](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) files, so you can reuse your existing registry and scope configuration.
 
-Bun reads `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc` if it exists), then the project's `./.npmrc`, then `bunfig.toml`. When the same option is set in more than one place, `./.npmrc` overrides `~/.npmrc`, `bunfig.toml` overrides both `.npmrc` files, and command-line flags override everything. Options that only appear in `.npmrc` (such as `//<registry>/:_authToken`) still apply, including to registries configured in `bunfig.toml`.
+Bun reads `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc` if it exists), then the project's `./.npmrc`, then `bunfig.toml`; `NPM_CONFIG_USERCONFIG` is not consulted. When the same option is set in more than one place, `./.npmrc` overrides `~/.npmrc`, `bunfig.toml` overrides both `.npmrc` files (the project's `bunfig.toml` overriding the global `~/.bunfig.toml`), the `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables override the default registry and its token from any of those files, and command-line flags such as `--registry` override everything. Options that only appear in `.npmrc` (such as `//<registry>/:_authToken`) still apply, including to registries configured in `bunfig.toml`.
+
+Values in both `~/.npmrc` and `./.npmrc` may reference environment variables: `${NAME}` is replaced with the variable's value and left as the literal text `${NAME}` when the variable is unset, while `${NAME?}` becomes an empty string when unset.
 
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more

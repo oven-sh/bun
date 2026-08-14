@@ -164,15 +164,19 @@ To install in production mode (without `devDependencies`):
 bun install --production
 ```
 
+`--production` (`--prod`, `-p`, `-P`) also implies `--frozen-lockfile`: it never writes `bun.lock`, and it exits with an error if `package.json` and `bun.lock` disagree. It only controls which packages Bun links; anything already in `node_modules` that it would not install (for example `devDependencies` from an earlier `bun install`) is left there — run [`bun prune --production`](/pm/cli/prune) to delete it.
+
 For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
 
 ```bash terminal icon="terminal"
 bun install --frozen-lockfile
 ```
 
-`--frozen-lockfile` also works on a pruned copy of a monorepo (for example the output of `turbo prune`, or a Docker context that copies `bun.lock` with only some workspace folders): workspaces listed in `bun.lock` whose `package.json` is not on disk are skipped rather than treated as a lockfile change, and packages the pruned lockfile still lists are installed as written. This works whether the root `workspaces` field uses globs or lists each folder explicitly, and Bun prints a `note:` with the number of skipped workspaces (`--verbose` names them), so a `bun.lock` that is stale because a workspace was deleted without re-running `bun install` is still visible in CI logs. A workspace is only skipped when its `package.json` is missing — removing it from the `workspaces` globs while the folder is still present, changing any `package.json` that is on disk, or trimming `overrides` or `catalog` entries from `bun.lock` still fails the install. The skipped workspaces' exclusive dependencies are not downloaded or installed, but they remain in `bun.lock`, so `bun pm ls` and `bun audit` still report them. A package that a surviving workspace lists as an optional peer dependency is installed if the pruned `bun.lock` still contains it, even when only a skipped workspace depended on it.
+Bun does not enable `--frozen-lockfile` on its own when it detects a CI environment (`CI=1` only turns off the progress bar); pass the flag or run `bun ci` if a stale `bun.lock` should fail the build. When there is no `bun.lock` at all, `bun install --frozen-lockfile` (and `bun ci`) resolves and installs from `package.json` without writing a lockfile; the error is only raised when a lockfile exists and does not match `package.json`.
 
-`--frozen-lockfile` never writes `bun.lock`, including with `--lockfile-only`; the one exception is the `bun.lockb` to `bun.lock` migration requested with `--save-text-lockfile`. To check a lockfile without installing anything, use `bun install --frozen-lockfile --dry-run`.
+`--frozen-lockfile` also works on a pruned copy of a monorepo (for example the output of `turbo prune`, or a Docker context that copies `bun.lock` with only some workspace folders): workspaces listed in `bun.lock` whose `package.json` is not on disk are skipped rather than treated as a lockfile change, and packages the pruned lockfile still lists are installed as written. This works whether the root `workspaces` field uses globs or lists each folder explicitly, and Bun prints a `note:` with the number of skipped workspaces (`--verbose` names them), so a `bun.lock` that is stale because a workspace was deleted without re-running `bun install` is still visible in CI logs. Only workspaces that `bun.lock` knows about are skipped: a `workspaces` entry whose folder is missing and which `bun.lock` does not list (for example a typo) still fails with `Workspace not found`, exactly as it does without `--frozen-lockfile`. A workspace is only skipped when its `package.json` is missing — removing it from the `workspaces` globs while the folder is still present, changing any `package.json` that is on disk, or trimming `overrides` or `catalog` entries from `bun.lock` still fails the install. The skipped workspaces' exclusive dependencies are not downloaded or installed, but they remain in `bun.lock`, so `bun pm ls` and `bun audit` still report them. A package that a surviving workspace lists as an optional peer dependency is installed if the pruned `bun.lock` still contains it, even when only a skipped workspace depended on it. This also holds when only `trustedDependencies` (which `turbo prune` leaves out of the pruned `bun.lock`) or `patchedDependencies` differ between `package.json` and `bun.lock`; a package is only dropped from the lockfile when a dependency, `overrides` or `catalog` entry actually changed, or when `bun audit fix` upgrades it.
+
+`--frozen-lockfile` never writes `bun.lock`, including with `--lockfile-only`. The one exception is a lockfile format migration: converting `bun.lockb` with `--save-text-lockfile`, or migrating from `package-lock.json`, `yarn.lock` or `pnpm-lock.yaml`, still writes `bun.lock`. To check a lockfile without installing anything, use `bun install --frozen-lockfile --dry-run`.
 
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
@@ -300,7 +304,7 @@ On `bun install`, `bun remove`, and `bun add`, Bun looks for `bunfig.toml` in:
 1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
 2. `./bunfig.toml`
 
-If both are found, the results are merged together.
+If both are found, both are loaded, and keys set in the project's `bunfig.toml` override the same keys in the global file.
 
 Configuring with `bunfig.toml` is optional. These are the default values:
 

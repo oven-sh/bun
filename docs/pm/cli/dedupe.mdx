@@ -23,7 +23,7 @@ Already deduplicated.
 
 ### `--check`
 
-`bun dedupe --check` prints the versions that would be removed and exits with code `1` without writing anything. It exits with code `0` when the lockfile is already deduplicated, which makes it usable in CI. `--dry-run` is an alias.
+`bun dedupe --check` prints the versions that would be removed and exits with code `1` without installing packages or modifying `bun.lock`. It exits with code `0` when the lockfile is already deduplicated, which makes it usable in CI. `--dry-run` is an alias.
 
 ```bash terminal icon="terminal"
 bun dedupe --check
@@ -40,6 +40,7 @@ bun dedupe --check
 - Dependencies pointing at a version listed in `patchedDependencies` are never moved, bundled dependencies stay on the copy inside their tarball, and dependencies specified as a dist-tag (such as `latest`), a git URL, or a tarball keep the version they resolved to.
 - Only the ranges of packages that remain installed are counted; a version that the same run removes does not influence where its own dependencies end up, so running the command twice never changes anything the second time.
 - It works from the ranges recorded in `bun.lock`; changes made to `package.json` since the last install are applied by the install that follows.
+- The command needs an existing `bun.lock` to work from: when there is none, `bun dedupe` (and `bun dedupe --check`) reports `missing lockfile, nothing to dedupe` and exits with code `1`, so run `bun install` first.
 - `bun.lock` and `node_modules` change; `package.json` never does. The result only lives in `bun.lock`: deleting the lockfile and reinstalling can bring the duplicates back. Add an [override](/pm/overrides) to pin a version permanently.
 - `--lockfile-only` rewrites `bun.lock` without installing.
 - `--frozen-lockfile`, `--production`, and `--no-save` cannot be combined with removing duplicates; the command exits with code `1` and lists the duplicates instead. Use `--check` in CI.

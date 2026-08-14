@@ -1,8 +1,9 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { exists, mkdir } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -40,12 +41,26 @@ async function makeMonorepo(extra: Partial<Record<Workspace, object | string>> =
   return packageDir;
 }
 
+// CI exports BUN_INSTALL_CACHE_DIR (one per test file), which overrides the per-test-dir bunfig `cache`; concurrent cases racing on one cache fail on Windows.
+function envFor(cwd: string) {
+  let root = cwd;
+  while (!existsSync(join(root, "bunfig.toml"))) {
+    const parent = dirname(root);
+    if (parent === root) {
+      root = cwd;
+      break;
+    }
+    root = parent;
+  }
+  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache") };
+}
+
 // `--linker` is passed explicitly: an `install-strategy` in the user's ~/.npmrc overrides the bunfig linker.
 async function run(args: string[], cwd: string, linker?: Linker) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args, ...(linker ? ["--linker", linker] : [])],
     cwd,
-    env: bunEnv,
+    env: envFor(cwd),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -761,7 +776,7 @@ test.concurrent("--filter with --global is rejected", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "add", "no-deps", "-g", "--filter", "api"],
     cwd: dir,
-    env: { ...bunEnv, BUN_INSTALL: globalDir, BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global") },
+    env: { ...envFor(dir), BUN_INSTALL: globalDir, BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global") },
     stdout: "pipe",
     stderr: "pipe",
   });

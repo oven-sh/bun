@@ -293,7 +293,9 @@ const AUDIT_PARAMS: &[ParamType] = &[
     clap::param!(
         "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
     ),
-    clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
+    clap::param!(
+        "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
+    ),
 ];
 
 static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
@@ -1466,6 +1468,17 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.latest = args.flag(b"--latest");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
+            if cli.production {
+                Output::err_generic("--production cannot be used with bun update\n", ());
+                Global::crash();
+            }
+            if cli.positionals.len() > 1 && (cli.recursive || !cli.filters.is_empty()) {
+                Output::err_generic(
+                    "--recursive and --filter cannot be combined with package names\n",
+                    (),
+                );
+                Global::crash();
+            }
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {

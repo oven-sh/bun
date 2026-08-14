@@ -18,10 +18,11 @@ afterAll(() => {
   registry.stop();
 });
 
-const rootPackageJson: PackageJson = { name: "mono", workspaces: ["packages/*"] };
+const rootPackageJson: PackageJson = { name: "mono", workspaces: ["packages/*"], trustedDependencies: ["a-dep"] };
 const appPackageJson: PackageJson = {
   name: "app",
   version: "1.0.0",
+  bin: { "app-cli": "cli.js" },
   dependencies: { shared: "workspace:*", "a-dep": "1.0.1" },
 };
 const sharedPackageJson: PackageJson = {
@@ -46,6 +47,8 @@ async function writeTree(dir: string, tree: Tree, workspaces: string[] = Object.
   ]);
 }
 
+const survivors = ["packages/app", "packages/shared"];
+
 const monorepo: Tree = {
   root: rootPackageJson,
   packages: {
@@ -53,17 +56,15 @@ const monorepo: Tree = {
     "packages/shared": sharedPackageJson,
     "packages/other": otherPackageJson,
   },
+  files: { "packages/app/cli.js": "" },
 };
 
-const survivors = ["packages/app", "packages/shared"];
-
-async function writeMonorepo(dir: string, { withOther }: { withOther: boolean }) {
-  await writeTree(dir, monorepo, withOther ? undefined : survivors);
-}
+// turbo prune rewrites the root workspaces list to the survivors and copies everything else, trustedDependencies included.
+const turboOutput: Tree = { ...monorepo, root: { ...rootPackageJson, workspaces: survivors } };
 
 const explicitMonorepo: Tree = {
   ...monorepo,
-  root: { name: "mono", workspaces: ["packages/app", "packages/shared", "packages/other"] },
+  root: { ...rootPackageJson, workspaces: ["packages/app", "packages/shared", "packages/other"] },
 };
 
 // `--linker` is passed explicitly: an `install-strategy` in the user's ~/.npmrc overrides the bunfig linker.
@@ -71,7 +72,8 @@ async function raw(dir: string, linker: Linker, args: string[], cwd = dir) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args, "--linker", linker],
     cwd,
-    env: bunEnv,
+    // CI exports BUN_INSTALL_CACHE_DIR, which overrides the bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -124,6 +126,8 @@ function fullLockfile(linker: Linker): Promise<string> {
       expect(full).toContain('"no-deps"');
       expect(full).toContain('"left-pad"');
       expect(full).toContain('"packages/other"');
+      expect(full).toContain('"trustedDependencies"');
+      expect(full).toContain('"app-cli"');
       return full;
     });
     fullLockfiles.set(linker, lock);
@@ -131,20 +135,35 @@ function fullLockfile(linker: Linker): Promise<string> {
   return lock;
 }
 
-// Same shape `turbo prune` emits: the workspace and its exclusive packages go, the peer-reachable no-deps entry stays.
-function turboPrune(lock: string): string {
+const trustedDependenciesSection = /\n  "trustedDependencies": \[\n(?:    [^\n]*\n)*  \],/;
+const workspaceBinField = /,\n      "bin": \{\n(?:        [^\n]*\n)*      \}/;
+
+// The three edits turbo prune makes to Bun's own bun.lock: workspace + exclusive packages removed, trustedDependencies emitted empty (i.e. omitted), workspace bin dropped.
+function stripTurboFields(lock: string): string {
+  expect(lock).toContain('"trustedDependencies"');
+  expect(lock).toContain('"app-cli"');
   const pruned = lock
     .replace(/    "packages\/other": \{\n(?:      .*\n)*    \},\n/, "")
-    .replace(/\n    "(?:other|left-pad)": \[[^\n]*\],\n\n?/g, "\n");
-  expect(pruned).toContain('"no-deps": ["no-deps@1.0.0"');
+    .replace(/\n    "(?:other|left-pad)": \[[^\n]*\],\n\n?/g, "\n")
+    .replace(trustedDependenciesSection, "")
+    .replace(workspaceBinField, "");
+  expect(pruned).not.toContain('"trustedDependencies"');
+  expect(pruned).not.toContain('"bin"');
+  expect(pruned).toContain('"packages/app"');
   expect(pruned).not.toContain('"other"');
   expect(pruned).not.toContain('"left-pad"');
   return pruned;
 }
 
+function turboPrune(lock: string): string {
+  const pruned = stripTurboFields(lock);
+  expect(pruned).toContain('"no-deps": ["no-deps@1.0.0"');
+  return pruned;
+}
+
 async function prunedTree(linker: Linker) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
-  await writeMonorepo(packageDir, { withOther: false });
+  await writeTree(packageDir, turboOutput, survivors);
   const pruned = turboPrune(await fullLockfile(linker));
   await write(join(packageDir, "bun.lock"), pruned);
   return { packageDir, pruned };
@@ -152,7 +171,7 @@ async function prunedTree(linker: Linker) {
 
 async function verbatimTree(linker: Linker) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
-  await writeMonorepo(packageDir, { withOther: false });
+  await writeTree(packageDir, monorepo, survivors);
   const full = await fullLockfile(linker);
   await write(join(packageDir, "bun.lock"), full);
   return { packageDir, full };
@@ -175,27 +194,42 @@ function installedPath(dir: string, linker: Linker, name: string, version: strin
 
 describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
   // Also pins that the optional-peer-bound no-deps is installed even though only the pruned workspace needed it (pnpm#6264).
-  test.concurrent("turbo-pruned lockfile: package held only by an optional peer passes --frozen-lockfile", async () => {
-    const { packageDir, pruned } = await prunedTree(linker);
+  test.concurrent(
+    "turbo output: peer-held package survives --frozen-lockfile although turbo dropped trustedDependencies and the workspace bin from bun.lock",
+    async () => {
+      const { packageDir, pruned } = await prunedTree(linker);
 
-    await frozen(packageDir, linker, 0);
+      await frozen(packageDir, linker, 0);
 
-    expect(await lockText(packageDir)).toBe(pruned);
-    const noDeps =
-      linker === "hoisted"
-        ? join(packageDir, "node_modules", "no-deps", "package.json")
-        : join(packageDir, "packages", "shared", "node_modules", "no-deps", "package.json");
-    expect(await file(noDeps).json()).toEqual({ name: "no-deps", version: "1.0.0" });
-  });
+      expect(await lockText(packageDir)).toBe(pruned);
+      const noDeps =
+        linker === "hoisted"
+          ? join(packageDir, "node_modules", "no-deps", "package.json")
+          : join(packageDir, "packages", "shared", "node_modules", "no-deps", "package.json");
+      expect(await file(noDeps).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+    },
+  );
 
-  test.concurrent("turbo-pruned lockfile: plain bun install does not rewrite it", async () => {
-    const { packageDir, pruned } = await prunedTree(linker);
+  test.concurrent(
+    "turbo output: plain bun install writes only trustedDependencies back and keeps the peer-held package",
+    async () => {
+      const { packageDir } = await prunedTree(linker);
 
-    const { stderr } = await install(packageDir, linker);
+      const { stderr } = await install(packageDir, linker);
 
-    expect(stderr).not.toContain("Saved lockfile");
-    expect(await lockText(packageDir)).toBe(pruned);
-  });
+      expect(stderr).toContain("Saved lockfile");
+      const lock = await lockText(packageDir);
+      expect(lock).toContain('"trustedDependencies": [\n    "a-dep",\n  ],');
+      expect(lock).toContain('"no-deps": ["no-deps@1.0.0"');
+      expect(lock).not.toContain('"other"');
+      expect(lock).not.toContain('"left-pad"');
+
+      const second = await frozen(packageDir, linker, 0);
+
+      expect(second.stderr).not.toContain("Saved lockfile");
+      expect(await lockText(packageDir)).toBe(lock);
+    },
+  );
 
   test.concurrent("verbatim full lockfile with a workspace folder missing passes --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimTree(linker);
@@ -319,7 +353,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
   });
 
-  // pnpm#11364: the root lists workspaces by path instead of a glob (what `turbo prune` copies verbatim).
+  // pnpm#11364: explicit workspaces list plus a hand-copied full bun.lock; turbo instead rewrites the list (see turboOutput).
   test.concurrent("explicitly listed workspace whose folder is missing passes --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimScenario(linker, explicitMonorepo, survivors);
 
@@ -366,10 +400,33 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await lockText(packageDir)).toBe(canary);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
+
+  // Guard that passes on main too: the dropped trustedDependencies/bin alone are not a frozen failure.
+  test.concurrent("turbo output without a peer-held package passes --frozen-lockfile too", async () => {
+    const tree: Tree = {
+      root: rootPackageJson,
+      packages: {
+        "packages/app": appPackageJson,
+        "packages/shared": { name: "shared", version: "1.0.0" },
+        "packages/other": otherPackageJson,
+      },
+      files: monorepo.files,
+    };
+    const { full } = await fullInstall(linker, tree);
+    const pruned = stripTurboFields(full).replace(/\n    "no-deps": \[[^\n]*\],\n\n?/, "\n");
+    expect(pruned).not.toContain('"no-deps"');
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+    await writeTree(packageDir, { ...tree, root: { ...rootPackageJson, workspaces: survivors } }, survivors);
+    await write(join(packageDir, "bun.lock"), pruned);
+
+    await frozen(packageDir, linker, 0);
+
+    expect(await lockText(packageDir)).toBe(pruned);
+  });
 });
 
 describe("hoisted", () => {
-  test.concurrent("bun ci behaves the same on the pruned turbo lockfile", async () => {
+  test.concurrent("bun ci behaves the same on turbo output", async () => {
     const { packageDir, pruned } = await prunedTree("hoisted");
 
     await frozen(packageDir, "hoisted", 0, ["ci"]);
@@ -381,24 +438,25 @@ describe("hoisted", () => {
     });
   });
 
-  // pnpm#11364, turbo shape: bun.lock no longer lists the workspace but the copied root package.json still does.
-  test.concurrent("explicitly listed workspace missing from disk and from a turbo-pruned bun.lock", async () => {
-    const { full } = await fullInstall("hoisted", explicitMonorepo);
-    const pruned = turboPrune(full);
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
-    await writeTree(packageDir, explicitMonorepo, survivors);
-    await write(join(packageDir, "bun.lock"), pruned);
+  // pnpm#11364: not on disk and not in bun.lock is a broken workspaces list, not a pruned checkout.
+  test.concurrent(
+    "explicitly listed workspace missing from disk and from a turbo-pruned bun.lock fails --frozen-lockfile",
+    async () => {
+      const { full } = await fullInstall("hoisted", explicitMonorepo);
+      const pruned = turboPrune(full);
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+      await writeTree(packageDir, explicitMonorepo, survivors);
+      await write(join(packageDir, "bun.lock"), pruned);
 
-    const { stderr } = await frozen(packageDir, "hoisted", 0);
+      const { stderr, exitCode } = await raw(packageDir, "hoisted", ["install", "--frozen-lockfile"]);
 
-    expect(stderr).not.toContain("Workspace not found");
-    expect(stderr).not.toContain("not on disk");
-    expect(await lockText(packageDir)).toBe(pruned);
-    expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
-    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
-      version: "1.0.0",
-    });
-  });
+      expect(stderr).toContain('Workspace not found "packages/other"');
+      expect(stderr).not.toContain("not on disk");
+      expect(await lockText(packageDir)).toBe(pruned);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test.concurrent(
     "explicitly listed workspace missing: --frozen-lockfile from inside a surviving workspace",
@@ -541,7 +599,7 @@ describe("hoisted", () => {
   test.concurrent("pruned bun.lock written with the hoisted linker passes frozen under other settings", async () => {
     const pruned = turboPrune(await fullLockfile("hoisted"));
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
-    await writeMonorepo(packageDir, { withOther: false });
+    await writeTree(packageDir, turboOutput, survivors);
     await write(join(packageDir, "bun.lock"), pruned);
 
     await frozen(packageDir, "isolated", 0);
@@ -764,6 +822,10 @@ describe("hoisted", () => {
         join(packageDir, "packages", "newpkg", "package.json"),
         JSON.stringify({ name: "newpkg", version: "1.0.0" }),
       );
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ ...rootPackageJson, workspaces: [...survivors, "packages/newpkg"] }),
+      );
 
       await frozen(packageDir, "hoisted", 1);
 
@@ -785,7 +847,7 @@ describe("hoisted", () => {
 
   test.concurrent("a workspace that is on disk but no longer globbed is not treated as pruned", async () => {
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
-    await writeMonorepo(packageDir, { withOther: true });
+    await writeTree(packageDir, monorepo);
     const full = await fullLockfile("hoisted");
     await write(join(packageDir, "bun.lock"), full);
     await write(
@@ -797,6 +859,44 @@ describe("hoisted", () => {
 
     expect(await lockText(packageDir)).toBe(full);
   });
+
+  test.concurrent(
+    "single-package project: trustedDependencies stripped from bun.lock does not drop a peer-held package under --frozen-lockfile",
+    async () => {
+      const single: Tree = {
+        root: {
+          name: "single",
+          dependencies: { "optional-peer-deps": "1.0.0", "no-deps": "1.0.0" },
+          trustedDependencies: ["optional-peer-deps"],
+        },
+        packages: {},
+      };
+      const { full } = await fullInstall("hoisted", single);
+      expect(full).toContain('"trustedDependencies"');
+      // The 8-space row is the root's declared dependency; the package entry stays, held only by optional-peer-deps' peer slot.
+      const pruned = full.replace(/\n        "no-deps": "1\.0\.0",/, "").replace(trustedDependenciesSection, "");
+      expect(pruned).not.toBe(full);
+      expect(pruned).toContain('"no-deps": ["no-deps@1.0.0"');
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "single",
+          dependencies: { "optional-peer-deps": "1.0.0" },
+          trustedDependencies: ["optional-peer-deps"],
+        }),
+      );
+      await write(join(packageDir, "bun.lock"), pruned);
+
+      await frozen(packageDir, "hoisted", 0);
+
+      expect(await lockText(packageDir)).toBe(pruned);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.0.0",
+      });
+    },
+  );
 
   // An invalid prune (turbo always keeps transitive workspace deps): the survivor's `workspace:` edge is reported.
   test.concurrent("a survivor depending on a pruned workspace fails naming the missing workspace", async () => {

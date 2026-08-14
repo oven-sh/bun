@@ -39,6 +39,8 @@ use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
+use super::override_map::ScopedOverride;
+use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
@@ -113,10 +115,13 @@ pub enum Version {
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
     V2 = 2,
+
+    /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped only while such rules exist
+    V3 = 3,
 }
 
 impl Version {
-    pub(crate) const CURRENT: Version = Version::V2;
+    pub(crate) const CURRENT: Version = Version::V3;
 
     #[inline]
     pub(crate) const fn current() -> Version {
@@ -128,6 +133,7 @@ impl Version {
             0 => Some(Version::V0),
             1 => Some(Version::V1),
             2 => Some(Version::V2),
+            3 => Some(Version::V3),
             _ => None,
         }
     }
@@ -179,8 +185,8 @@ impl Stringifier {
     /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
     /// parsed version when the lockfile was loaded from text, and defaults to
     /// `Version::CURRENT` otherwise (a fresh install, or a migration from
-    /// another lockfile format), which is the "no version previously" case that
-    /// does get the current version.
+    /// another lockfile format), the "no version previously" case whose stamp
+    /// is decided by the walk below.
     ///
     /// The one version that is *not* preserved is v0: v0→v1 was a content-format
     /// change (v1 stopped listing a workspace package's dependencies as a
@@ -191,34 +197,34 @@ impl Stringifier {
     /// v1→v2, by contrast, only added parse-time strictness on identical
     /// content, so v1 is preserved as-is.
     ///
-    /// When the target is the current version (v2), it is stamped only if every
-    /// serialized package satisfies the v2 invariants. v2 added parse-time
-    /// checks that reject entries older versions tolerated: an off-registry npm
-    /// tarball without a supported integrity hash, and an unsafe git `.bun-tag`.
-    /// The writer emits those fields verbatim (no backfill), so stamping v2 on a
-    /// lockfile that still carries such an entry — possible for a migrated
-    /// lockfile — would make the *next* parse reject it. Those stay at v1 so the
-    /// file round-trips (load → save → load) cleanly, across machines too, since
-    /// a lockfile is committed and shared. That decision is made without
-    /// consulting the writer's registry config: whether the *reader* will accept
-    /// the file must not depend on the writer's `~/.npmrc` / scoped registries.
+    /// v3 is stamped only while parent-scoped overrides exist (older readers
+    /// cannot parse the object rows, so the upgrade is forced like v0→v1); a
+    /// lockfile without them keeps its loaded v1/v2, and a fresh one — or a v3
+    /// whose nested rules were removed — is walked down to v2, or to v1 when a
+    /// serialized package violates a v2 invariant (an off-registry npm tarball
+    /// without a supported integrity hash, or an unsafe git `.bun-tag`), which
+    /// the writer emits verbatim and a v2 reader would reject on the next parse.
+    /// A loaded v3 with nested rules stays v3 without the walk, so the walk only
+    /// runs for fresh lockfiles and v2↔v3 transitions. The v2 decision must not
+    /// depend on the writer's `~/.npmrc` / scoped registries, since the reader
+    /// may not share them.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
-        // An older on-disk lockfile keeps its version; only a no-prior-version
-        // lockfile (the `Version::CURRENT` default) is a candidate for v2. v0 is
-        // the exception: the writer can't emit v0-format workspace entries, so a
-        // v0 lockfile is upgraded to v1 rather than preserved verbatim.
         let loaded = lockfile.text_lockfile_version;
-        if !loaded.at_least(Version::CURRENT) {
+        let has_scoped = lockfile.overrides.has_scoped();
+        if !has_scoped && !loaded.at_least(Version::V3) {
             return if loaded.at_least(Version::V1) {
                 loaded
             } else {
                 Version::V1
             };
+        }
+        if has_scoped && loaded == Version::V3 {
+            return Version::V3;
         }
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -281,7 +287,7 @@ impl Stringifier {
                 }
             }
         }
-        Version::CURRENT
+        if has_scoped { Version::V3 } else { Version::V2 }
     }
 
     fn save_from_binary_inner(
@@ -558,7 +564,7 @@ impl Stringifier {
                 writer.write_all(b"},\n")?;
             }
 
-            if lockfile.overrides.map.count() > 0 {
+            if !lockfile.overrides.is_empty() {
                 lockfile
                     .overrides
                     .sort(lockfile.buffers.string_bytes.as_slice());
@@ -566,17 +572,21 @@ impl Stringifier {
                 Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"overrides\": {\n")?;
                 *indent += 1;
-                for override_dep in lockfile.overrides.map.values() {
-                    Self::write_indent(writer, *indent)?;
-                    writeln!(
-                        writer,
-                        "{}: {},",
-                        override_dep.name.fmt_json(buf, Default::default()),
-                        override_dep
-                            .version
-                            .literal
-                            .fmt_json(buf, Default::default()),
-                    )?;
+                if !lockfile.overrides.has_scoped() {
+                    let mut key_buf: Vec<u8> = Vec::new();
+                    for override_dep in lockfile.overrides.map.values() {
+                        Self::write_override_rule(
+                            writer,
+                            *indent,
+                            &mut key_buf,
+                            override_dep.name.slice(buf),
+                            b"",
+                            override_dep.version.literal,
+                            buf,
+                        )?;
+                    }
+                } else {
+                    Self::write_override_rules(writer, *indent, &lockfile.overrides, buf)?;
                 }
 
                 Self::dec_indent(writer, indent)?;
@@ -1393,6 +1403,193 @@ impl Stringifier {
         Ok(())
     }
 
+    /// `name` when `range` is empty, else `name@range` built in `key_buf`.
+    fn override_selector_key<'a>(
+        key_buf: &'a mut Vec<u8>,
+        name: &'a [u8],
+        range: &[u8],
+    ) -> &'a [u8] {
+        if range.is_empty() {
+            return name;
+        }
+        key_buf.clear();
+        key_buf.extend_from_slice(name);
+        key_buf.push(b'@');
+        key_buf.extend_from_slice(range);
+        key_buf.as_slice()
+    }
+
+    fn write_override_rule(
+        writer: &mut Writer,
+        indent: u32,
+        key_buf: &mut Vec<u8>,
+        name: &[u8],
+        range: &[u8],
+        value: String,
+        buf: &[u8],
+    ) -> Result<(), WriteError> {
+        Self::write_indent(writer, indent)?;
+        writeln!(
+            writer,
+            "{}: {},",
+            bun_core::fmt::format_json_string_utf8(
+                Self::override_selector_key(key_buf, name, range),
+                Default::default()
+            ),
+            value.fmt_json(buf, Default::default()),
+        )?;
+        Ok(())
+    }
+
+    /// Scoped rules live in selector-keyed objects; a flat rule folds into its name's unranged group as `"."`.
+    fn write_override_rules(
+        writer: &mut Writer,
+        indent: u32,
+        overrides: &OverrideMap,
+        buf: &[u8],
+    ) -> Result<(), WriteError> {
+        struct GroupKey<'a> {
+            name_hash: PackageNameHash,
+            name: &'a [u8],
+            literal: &'a [u8],
+        }
+
+        fn order_keys(lhs: &GroupKey<'_>, rhs: &GroupKey<'_>) -> core::cmp::Ordering {
+            strings::order(lhs.name, rhs.name)
+                .then_with(|| strings::order(lhs.literal, rhs.literal))
+        }
+
+        let flat: &[Dependency] = overrides.map.values();
+        let scoped: &[ScopedOverride] = overrides.scoped.as_slice();
+        let solo_end = scoped
+            .iter()
+            .position(|rule| rule.parent.is_some())
+            .unwrap_or(scoped.len());
+        let mut key_buf: Vec<u8> = Vec::new();
+        let mut f = 0usize;
+        let mut s = 0usize;
+        let mut g = solo_end;
+
+        while f < flat.len() || s < solo_end || g < scoped.len() {
+            let solo_key = (s < solo_end).then(|| GroupKey {
+                name_hash: scoped[s].dep.name_hash,
+                name: scoped[s].dep.name.slice(buf),
+                literal: scoped[s].target_range.literal.slice(buf),
+            });
+            let parented_key = scoped.get(g).map(|rule| {
+                let parent = rule
+                    .parent
+                    .as_ref()
+                    .expect("OverrideMap::sort places parent-less rules first");
+                GroupKey {
+                    name_hash: parent.name_hash,
+                    name: parent.name.slice(buf),
+                    literal: parent.version.literal.slice(buf),
+                }
+            });
+            let group = match (solo_key, parented_key) {
+                (Some(solo), Some(parented)) => Some(if order_keys(&parented, &solo).is_lt() {
+                    parented
+                } else {
+                    solo
+                }),
+                (solo, parented) => solo.or(parented),
+            };
+
+            if let Some(flat_dep) = flat.get(f) {
+                let flat_first = match &group {
+                    None => true,
+                    Some(group) => match strings::order(flat_dep.name.slice(buf), group.name) {
+                        core::cmp::Ordering::Less => true,
+                        core::cmp::Ordering::Equal => !group.literal.is_empty(),
+                        core::cmp::Ordering::Greater => false,
+                    },
+                };
+                if flat_first {
+                    Self::write_override_rule(
+                        writer,
+                        indent,
+                        &mut key_buf,
+                        flat_dep.name.slice(buf),
+                        b"",
+                        flat_dep.version.literal,
+                        buf,
+                    )?;
+                    f += 1;
+                    continue;
+                }
+            }
+
+            let Some(group) = group else {
+                break;
+            };
+
+            Self::write_indent(writer, indent)?;
+            writeln!(
+                writer,
+                "{}: {{",
+                bun_core::fmt::format_json_string_utf8(
+                    Self::override_selector_key(&mut key_buf, group.name, group.literal),
+                    Default::default()
+                ),
+            )?;
+
+            let dot: Option<String> = if group.literal.is_empty() {
+                match flat.get(f) {
+                    Some(flat_dep) if flat_dep.name_hash == group.name_hash => {
+                        f += 1;
+                        Some(flat_dep.version.literal)
+                    }
+                    _ => None,
+                }
+            } else {
+                match (s < solo_end).then(|| &scoped[s]) {
+                    Some(rule)
+                        if rule.dep.name_hash == group.name_hash
+                            && rule.target_range.literal.slice(buf) == group.literal =>
+                    {
+                        s += 1;
+                        Some(rule.dep.version.literal)
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(value) = dot {
+                Self::write_indent(writer, indent + 1)?;
+                writeln!(
+                    writer,
+                    "\".\": {},",
+                    value.fmt_json(buf, Default::default())
+                )?;
+            }
+
+            while let Some(rule) = scoped.get(g) {
+                let in_group = rule.parent.as_ref().is_some_and(|parent| {
+                    parent.name_hash == group.name_hash
+                        && parent.version.literal.slice(buf) == group.literal
+                });
+                if !in_group {
+                    break;
+                }
+                Self::write_override_rule(
+                    writer,
+                    indent + 1,
+                    &mut key_buf,
+                    rule.dep.name.slice(buf),
+                    rule.target_range.literal.slice(buf),
+                    rule.dep.version.literal,
+                    buf,
+                )?;
+                g += 1;
+            }
+
+            Self::write_indent(writer, indent)?;
+            writer.write_all(b"},\n")?;
+        }
+
+        Ok(())
+    }
+
     fn write_indent(writer: &mut Writer, indent: u32) -> Result<(), WriteError> {
         const INDENT: &[u8] = b"  "; // " " ** indent_scalar (2)
         const _: () = assert!(INDENT.len() == Stringifier::INDENT_SCALAR);
@@ -1784,48 +1981,91 @@ pub(crate) fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let name_hash = StringBuilder::string_hash(name_str);
-            let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
+            if let Some(version_str) = row.value.as_str() {
+                let ok = lockfile
+                    .overrides
+                    .put_lockfile_rule(
+                        None,
+                        PackageSelector {
+                            name: name_str,
+                            range: b"",
+                        },
+                        version_str,
+                        &mut sbuf!(lockfile),
+                        &mut *log,
+                        manager.as_deref_mut(),
+                    )
+                    .map_err(|_| ParseError::OutOfMemory)?;
+                if !ok {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, row.key_loc),
+                        b"Invalid override version",
+                    );
+                    return Err(ParseError::InvalidOverridesObject);
+                }
+                continue;
+            }
 
-            // TODO(dylan-conway) also accept object when supported
-            let Some(version_str) = row.value.as_str() else {
+            let Some(group_obj) = row.value.as_object() else {
                 log.add_error(
                     Some(source),
                     value_loc_of(source, row.key_loc),
-                    b"Expected a string",
+                    b"Expected a string or an object",
                 );
                 return Err(ParseError::InvalidOverridesObject);
             };
 
-            let version_hash = StringBuilder::string_hash(version_str);
-            let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
-            let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
-
-            let dep = Dependency {
-                name,
-                name_hash,
-                version: match dependency::parse(
-                    name,
-                    name_hash,
-                    version_sliced.slice,
-                    &version_sliced,
-                    &mut *log,
-                    manager.as_deref_mut(),
-                ) {
-                    Some(v) => v,
-                    None => {
-                        log.add_error(
-                            Some(source),
-                            value_loc_of(source, row.key_loc),
-                            b"Invalid override version",
-                        );
-                        return Err(ParseError::InvalidOverridesObject);
-                    }
-                },
-                ..Default::default()
+            let Ok(parent) = parse_package_segment(name_str) else {
+                log.add_error(Some(source), row.key_loc, b"Invalid override key");
+                return Err(ParseError::InvalidOverridesObject);
             };
 
-            lockfile.overrides.map.insert(name_hash, dep);
+            for child in group_obj.properties() {
+                let child_key = child.key.slice();
+                let Some(version_str) = child.value.as_str() else {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, child.key_loc),
+                        b"Expected a string",
+                    );
+                    return Err(ParseError::InvalidOverridesObject);
+                };
+
+                let group_selector = PackageSelector {
+                    name: parent.name,
+                    range: parent.range,
+                };
+                let (rule_parent, rule_target) = if child_key == b"." {
+                    (None, group_selector)
+                } else {
+                    let Ok(target) = parse_package_segment(child_key) else {
+                        log.add_error(Some(source), child.key_loc, b"Invalid override key");
+                        return Err(ParseError::InvalidOverridesObject);
+                    };
+                    (Some(group_selector), target)
+                };
+
+                let ok = lockfile
+                    .overrides
+                    .put_lockfile_rule(
+                        rule_parent,
+                        rule_target,
+                        version_str,
+                        &mut sbuf!(lockfile),
+                        &mut *log,
+                        manager.as_deref_mut(),
+                    )
+                    .map_err(|_| ParseError::OutOfMemory)?;
+                if !ok {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, child.key_loc),
+                        b"Invalid override version",
+                    );
+                    return Err(ParseError::InvalidOverridesObject);
+                }
+            }
         }
     }
 
@@ -3137,7 +3377,7 @@ fn resolve_peer_dep_version_based(
     } else {
         name_hash
     };
-    if overridable && overrides.get(override_name_hash).is_some() {
+    if overridable && overrides.has_rule_for_name(override_name_hash) {
         return None;
     }
 

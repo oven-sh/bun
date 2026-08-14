@@ -77,9 +77,17 @@ impl UpdateRequest {
         name_hash: PackageNameHash,
         name: &[u8],
     ) -> bool {
+        Self::index_of_name(requests, name_hash, name).is_some()
+    }
+
+    pub(crate) fn index_of_name(
+        requests: &[UpdateRequest],
+        name_hash: PackageNameHash,
+        name: &[u8],
+    ) -> Option<usize> {
         requests
             .iter()
-            .any(|r| r.name_hash == name_hash && (r.name.is_empty() || r.name == name))
+            .position(|r| r.name_hash == name_hash && (r.name.is_empty() || r.name == name))
     }
 
     /// Borrow the backing string buffer.

@@ -13,6 +13,7 @@ use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile};
 use crate::resolution::Tag as ResolutionTag;
+use crate::update_transitive::{DirectDependencies, TransitiveUpdate, redirect_moved_edges};
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
     invalid_package_id,
@@ -113,9 +114,19 @@ pub fn install_with_manager(
         crate::dedupe::dedupe_before_install(manager, &load_result)?;
     }
 
+    let transitive = if manager.subcommand == Subcommand::Update
+        && manager.update_requests.is_empty()
+        && matches!(load_result, lockfile::LoadResult::Ok { .. })
+    {
+        TransitiveUpdate::plan(manager)?
+    } else {
+        TransitiveUpdate::default()
+    };
+
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
+    let mut direct_deps_before = DirectDependencies::default();
     manager.progress = Default::default();
 
     match &load_result {
@@ -256,6 +267,9 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                if manager.summary.changes_resolutions() {
+                    direct_deps_before = DirectDependencies::snapshot(&manager.lockfile);
+                }
 
                 // Split-borrow `manager.lockfile` so the `StringBuilder`
                 // (which owns `buffers.string_bytes` + `string_pool`) and the
@@ -317,29 +331,15 @@ pub fn install_with_manager(
                         lockfile::PackageIDSlice::new(off, len);
                     builder.allocate()?;
 
-                    let all_name_hashes: Vec<PackageNameHash> = 'brk: {
-                        if !summary.overrides_changed {
-                            break 'brk Vec::new();
-                        }
-                        let hashes_len = lf.overrides.map.len() + lockfile.overrides.map.len();
-                        if hashes_len == 0 {
-                            break 'brk Vec::new();
-                        }
-                        let mut all_name_hashes: Vec<PackageNameHash> =
-                            Vec::with_capacity(hashes_len);
-                        all_name_hashes.extend_from_slice(lf.overrides.map.keys());
-                        all_name_hashes.extend_from_slice(lockfile.overrides.map.keys());
-                        let mut i = lf.overrides.map.len();
-                        while i < all_name_hashes.len() {
-                            if all_name_hashes[..i].contains(&all_name_hashes[i]) {
-                                let last = all_name_hashes.len() - 1;
-                                all_name_hashes[i] = all_name_hashes[last];
-                                all_name_hashes.truncate(last);
-                            } else {
-                                i += 1;
-                            }
-                        }
-                        break 'brk all_name_hashes;
+                    let all_name_hashes: Vec<PackageNameHash> = if !summary.overrides_changed {
+                        Vec::new()
+                    } else {
+                        let mut v = Vec::new();
+                        lf.overrides.append_overridden_name_hashes(&mut v);
+                        lockfile.overrides.append_overridden_name_hashes(&mut v);
+                        v.sort_unstable();
+                        v.dedup();
+                        v
                     };
 
                     *lf.overrides = lockfile.overrides.clone(
@@ -491,7 +491,7 @@ pub fn install_with_manager(
                         for dependency_i in 0..dependencies_len {
                             let dependency =
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if all_name_hashes.contains(&dependency.name_hash) {
+                            if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
                                 manager.lockfile.buffers.resolutions[dependency_i] =
                                     invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
@@ -508,12 +508,22 @@ pub fn install_with_manager(
                     }
 
                     if manager.summary.catalogs_changed {
+                        let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
+                        manager
+                            .lockfile
+                            .overrides
+                            .append_catalog_valued_name_hashes(&mut catalog_overridden);
+                        catalog_overridden.sort_unstable();
+                        catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                             let dep =
                                 manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-                            if dep.version.tag != DependencyVersionTag::Catalog {
+                            if dep.version.tag != DependencyVersionTag::Catalog
+                                && (catalog_overridden.is_empty()
+                                    || catalog_overridden.binary_search(&dep.name_hash).is_err())
+                            {
                                 continue;
                             }
 
@@ -527,34 +537,6 @@ pub fn install_with_manager(
                                 false,
                             ) {
                                 add_dependency_error(manager, &dep, err);
-                            }
-                        }
-                    }
-
-                    // `bun update <name>`: drop and re-enqueue every `<name>` slot, not just root-level.
-                    if manager.to_update && !manager.update_requests.is_empty() {
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for dependency_i in 0..dependencies_len {
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if UpdateRequest::contains_name(
-                                &manager.update_requests,
-                                dependency.name_hash,
-                                dependency
-                                    .name
-                                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
-                            ) {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i as u32,
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
                             }
                         }
                     }
@@ -598,11 +580,22 @@ pub fn install_with_manager(
         _ => {}
     }
 
-    if !manager.audit_fix_pins.is_empty() && !needs_new_lockfile {
-        crate::audit_fix::enqueue_planned_fixes(manager)?;
+    let named_update = manager.to_update && !manager.update_requests.is_empty();
+    let mut named_moves: Vec<(DependencyID, PackageID)> = Vec::new();
+    if !needs_new_lockfile {
+        if named_update {
+            named_moves = enqueue_named_updates(manager);
+        }
+        transitive.enqueue(manager)?;
+        if !manager.audit_fix_pins.is_empty() {
+            crate::audit_fix::enqueue_planned_fixes(manager)?;
+        }
     }
 
     if needs_new_lockfile {
+        if named_update {
+            reject_unknown_update_requests(manager, |_, request| request.e_string.is_none());
+        }
         root = create_new_lockfile_and_enqueue(
             manager,
             &load_result,
@@ -625,6 +618,10 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level)?;
     }
 
+    direct_deps_before.redirect_dependents(&mut manager.lockfile);
+    transitive.redirect_dependents(&mut manager.lockfile);
+    redirect_moved_edges(&mut manager.lockfile, &named_moves);
+
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
         .log_mut()
@@ -644,13 +641,11 @@ pub fn install_with_manager(
         // reborrows under one tag (PORTING.md §Aliasing-split-borrow).
         unsafe {
             let log = (*mgr).log;
-            let exact_versions = (*mgr).options.enable.exact_versions();
             Lockfile::clean_with_logger(
                 &mut (*mgr).lockfile,
                 &mut *mgr,
                 &mut (*mgr).update_requests,
                 &mut *log,
-                exact_versions,
                 log_level,
             )?
         }
@@ -674,6 +669,8 @@ pub fn install_with_manager(
         if manager.options.security_scanner.is_some() {
             run_security_scanner(manager, ctx, original_cwd);
         }
+
+        super::package_json_write_back::edit_after_resolve(manager)?;
     }
 
     // append scripts to lockfile before generating new metahash
@@ -875,9 +872,7 @@ pub fn install_with_manager(
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
     // existing `bun.lock` keeps the version it was written with.
-    let should_save_lockfile = (matches!(load_result, lockfile::LoadResult::Ok { .. })
-        && load_result.ok().format == lockfile::Format::Binary
-        && save_format == lockfile::Format::Text)
+    let should_save_lockfile = saves_migrated_lockfile(&load_result, save_format)
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -903,7 +898,7 @@ pub fn install_with_manager(
     }
 
     // Before root lifecycle scripts, which exit the process on failure.
-    super::add_remove_with_filter::flush_pending_write(manager)?;
+    super::package_json_write_back::flush(manager)?;
 
     if needs_new_lockfile {
         manager.summary.add = manager.lockfile.packages.len() as u32;
@@ -1452,6 +1447,101 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
+/// `bun update <name>…`: every row resolving to `<name>` (by alias or real package name), at any depth, re-resolves within its own range; rows the differ already re-enqueued are left to it, and peer/bundled rows only follow the moved package via `redirect_moved_edges`, as in the bare update.
+#[cold]
+#[inline(never)]
+fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, PackageID)> {
+    let mut matched = vec![false; manager.update_requests.len()];
+    let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
+    let dependencies_len = manager.lockfile.buffers.dependencies.len();
+    for dependency_i in 0..dependencies_len {
+        let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
+        let package_id = manager.lockfile.buffers.resolutions[dependency_i];
+        let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
+            continue;
+        };
+        matched[request] = true;
+        if package_id == invalid_package_id
+            || dependency.behavior.is_peer()
+            || dependency.behavior.is_bundled()
+        {
+            continue;
+        }
+        manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+        moved.push((dependency_i as DependencyID, package_id));
+        if let Err(err) = enqueue_dependency_with_main(
+            manager,
+            dependency_i as DependencyID,
+            &dependency,
+            invalid_package_id,
+            false,
+        ) {
+            add_dependency_error(manager, &dependency, err);
+        }
+    }
+
+    reject_unknown_update_requests(manager, |i, _| !matched[i]);
+    moved
+}
+
+fn index_of_named_update(
+    manager: &PackageManager,
+    dependency: &Dependency,
+    package_id: PackageID,
+) -> Option<usize> {
+    let requests = &manager.update_requests;
+    let buf = manager.lockfile.buffers.string_bytes.as_slice();
+    if let Some(i) =
+        UpdateRequest::index_of_name(requests, dependency.name_hash, dependency.name.slice(buf))
+    {
+        return Some(i);
+    }
+    if package_id != invalid_package_id {
+        let name_hash = manager.lockfile.packages.items_name_hash()[package_id as usize];
+        if name_hash == dependency.name_hash {
+            return None;
+        }
+        let name = manager.lockfile.packages.items_name()[package_id as usize].slice(buf);
+        return UpdateRequest::index_of_name(requests, name_hash, name);
+    }
+    let realname = dependency.realname();
+    if realname.eql(dependency.name, buf, buf) {
+        return None;
+    }
+    let realname = realname.slice(buf);
+    UpdateRequest::index_of_name(
+        requests,
+        bun_semver::string::Builder::string_hash(realname),
+        realname,
+    )
+}
+
+#[cold]
+#[inline(never)]
+fn reject_unknown_update_requests(
+    manager: &PackageManager,
+    is_unknown: impl Fn(usize, &UpdateRequest) -> bool,
+) {
+    let unknown: Vec<&UpdateRequest> = manager
+        .update_requests
+        .iter()
+        .enumerate()
+        .filter_map(|(i, request)| is_unknown(i, request).then_some(request))
+        .collect();
+    if unknown.is_empty() {
+        return;
+    }
+    for request in unknown {
+        Output::err_generic(
+            "\"{}\" is not in the lockfile, so there is nothing to update",
+            (bstr::BStr::new(request.get_name()),),
+        );
+    }
+    bun_core::note!("to add a dependency, use bun add");
+    Output::flush();
+    Global::exit(1);
+}
+
 #[cold]
 #[inline(never)]
 fn record_updating_package_versions(manager: &mut PackageManager) {
@@ -1758,6 +1848,19 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
     }
 }
 
+// bun.lockb / package-lock.json / yarn.lock / pnpm-lock.yaml -> bun.lock is written even under --frozen-lockfile.
+fn saves_migrated_lockfile(
+    load_result: &lockfile::LoadResult,
+    save_format: lockfile::Format,
+) -> bool {
+    save_format == lockfile::Format::Text
+        && matches!(
+            load_result,
+            lockfile::LoadResult::Ok(ok)
+                if ok.format == lockfile::Format::Binary || ok.migrated != lockfile::Migrated::None
+        )
+}
+
 #[cold]
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
@@ -1771,9 +1874,9 @@ fn save_lockfile_only(
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    let migrating_to_text =
-        load_result.loaded_from_binary_lockfile() && save_format == lockfile::Format::Text;
-    if manager.options.enable.frozen_lockfile() && !migrating_to_text {
+    if manager.options.enable.frozen_lockfile()
+        && !saves_migrated_lockfile(load_result, save_format)
+    {
         Output::flush();
         return Ok(());
     }

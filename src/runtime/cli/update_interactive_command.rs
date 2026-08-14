@@ -11,9 +11,10 @@ use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
-    install_with_manager, populate_manifest_cache,
+    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    update_package_json_and_install_with_manager,
 };
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
@@ -585,6 +586,9 @@ impl UpdateInteractiveCommand {
         // Collect all package updates with full information
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
 
+        // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
+        let mut positionals: Vec<&'static [u8]> = vec![&b"update"[..]];
+
         // Process selected packages
         debug_assert_eq!(outdated_packages.len(), selected.len());
         for (pkg, &is_selected) in outdated_packages.iter().zip(selected.iter()) {
@@ -601,6 +605,13 @@ impl UpdateInteractiveCommand {
 
             if strings::eql(&pkg.current_version, target_version) {
                 continue;
+            }
+
+            if !positionals[1..]
+                .iter()
+                .any(|name| strings::eql(name, &pkg.name))
+            {
+                positionals.push(crate::cli::cli_dupe(&pkg.name));
             }
 
             // For catalog dependencies, we need to collect them separately
@@ -710,23 +721,14 @@ impl UpdateInteractiveCommand {
                     Self::update_package_json_files_from_updates(manager, &package_updates)?;
                 }
 
-                manager.to_update = true;
-
                 // Reset the timer to show actual install time instead of total command time
                 ctx.start_time = bun_core::time::nano_timestamp();
 
-                // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
-                // `PackageManager::init` (single-threaded CLI startup).
-                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // `install_with_manager` takes the original cwd path slice.
-                // Snapshot before the `&mut manager` borrow.
-                let root_dir_path: &'static [u8] = manager.root_dir.dir;
-                install_with_manager::install_with_manager(
-                    manager,
-                    &mut *ctx,
-                    root_pkg_json,
-                    root_dir_path,
-                )?;
+                // The chosen versions are already in package.json; the flag would re-pin every selection to `latest`, ignoring per-package `l` toggles.
+                manager.options.do_.remove(Do::UPDATE_TO_LATEST);
+                manager.options.positionals =
+                    crate::cli::cli_arena().alloc_slice_copy(&positionals);
+                update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
             }
         }
         Ok(())

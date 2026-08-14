@@ -95,7 +95,7 @@ fn fmt_version(version: Semver::Version, buf: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-fn vuln_word(n: u32) -> &'static str {
+pub fn vuln_word(n: u32) -> &'static str {
     if n == 1 {
         "vulnerability"
     } else {
@@ -254,7 +254,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     dependent.extend_from_slice(b"package.json");
                 }
                 instances[instance as usize].edges.push(Edge {
-                    range: crate::dedupe::effective_npm_range(lockfile, dep),
+                    range: crate::dedupe::effective_npm_range(
+                        lockfile,
+                        dep_id as DependencyID,
+                        dep,
+                    ),
                     literal: Box::from(dep.version.literal.slice(buf)),
                     dependent: dependent.into_boxed_slice(),
                     bundled: dep.behavior.is_bundled(),
@@ -570,6 +574,8 @@ pub fn enqueue_planned_fixes(manager: &mut PackageManager) -> crate::Result<()> 
         .options
         .enable
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
+    // Counted as updates so clean drops the versions the peer slots skipped below still point at.
+    manager.summary.update += pins.len() as u32;
 
     let target_of: Vec<u32> = {
         let lockfile = &*manager.lockfile;
@@ -606,36 +612,41 @@ pub fn enqueue_planned_fixes(manager: &mut PackageManager) -> crate::Result<()> 
         {
             continue;
         }
-        let row = manager.lockfile.buffers.dependencies[dep_id].clone();
-        if row.behavior.is_optional_peer() || row.behavior.is_bundled() {
+        let behavior = manager.lockfile.buffers.dependencies[dep_id].behavior;
+        if behavior.is_optional_peer() || behavior.is_bundled() {
             continue;
         }
-        let pkg_name = manager.lockfile.packages.items_name()[target as usize];
         let pin = &pins[target_of[target as usize] as usize];
-        let pinned = Dependency {
-            name: row.name,
-            name_hash: row.name_hash,
-            behavior: row.behavior.with(Behavior::PEER, false),
-            version: dependency::Version {
-                tag: DependencyVersionTag::Npm,
-                literal: Semver::String::default(),
-                value: dependency::Value {
-                    npm: ManuallyDrop::new(dependency::NpmInfo {
-                        name: pkg_name,
-                        version: Group::from(pin.to_version),
-                        is_alias: true,
-                    }),
-                },
-            },
-        };
-        manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
-        enqueue_dependency_with_main(
-            manager,
-            dep_id as DependencyID,
-            &pinned,
-            invalid_package_id,
-            false,
-        )?;
+        enqueue_pinned(manager, dep_id as DependencyID, pin.to_version)?;
     }
     Ok(())
+}
+
+/// Re-resolves the edge `dep_id` (which must currently resolve to an npm package) to exactly `to_version`.
+pub(crate) fn enqueue_pinned(
+    manager: &mut PackageManager,
+    dep_id: DependencyID,
+    to_version: Semver::Version,
+) -> crate::Result<()> {
+    let target = manager.lockfile.buffers.resolutions[dep_id as usize];
+    let row = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+    let pkg_name = manager.lockfile.packages.items_name()[target as usize];
+    let pinned = Dependency {
+        name: row.name,
+        name_hash: row.name_hash,
+        behavior: row.behavior.with(Behavior::PEER, false),
+        version: dependency::Version {
+            tag: DependencyVersionTag::Npm,
+            literal: Semver::String::default(),
+            value: dependency::Value {
+                npm: ManuallyDrop::new(dependency::NpmInfo {
+                    name: pkg_name,
+                    version: Group::from(to_version),
+                    is_alias: true,
+                }),
+            },
+        },
+    };
+    manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+    enqueue_dependency_with_main(manager, dep_id, &pinned, invalid_package_id, false)
 }

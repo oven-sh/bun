@@ -125,6 +125,7 @@ pub mod pnpm;
 pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
+pub mod update_transitive;
 pub mod yarn;
 
 /// `repository` — re-export of the file-backed `repository_real` module

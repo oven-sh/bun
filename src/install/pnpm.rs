@@ -570,36 +570,33 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             bstr::BStr::new(name_str)
                         ),
                     );
-                } else if Dependency::split_name_and_maybe_version(name_str)
-                    .1
-                    .is_some()
-                    || strings::contains_char(name_str, b'>')
-                {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "pnpm-lock.yaml override '{}' is scoped to a version range or parent package, which bun does not support; it will not apply",
-                            bstr::BStr::new(name_str)
-                        ),
-                    );
                 }
 
-                let name_hash = semver::string::Builder::string_hash(name_str);
-                let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
+                let sel = match crate::lockfile_real::override_selector::parse_selector(name_str) {
+                    Ok(sel) => sel,
+                    Err(_) => {
+                        log.add_warning_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "pnpm-lock.yaml override '{}' uses a selector bun does not support; it will not apply",
+                                bstr::BStr::new(name_str)
+                            ),
+                        );
+                        continue;
+                    }
+                };
 
-                let version_hash = semver::string::Builder::string_hash(version_str);
-                let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
-                let version_sliced = version.sliced(string_bytes!(lockfile));
-
-                let Some(version) = Dependency::parse(
-                    name,
-                    name_hash,
-                    version_sliced.slice,
-                    &version_sliced,
-                    Some(&mut *log),
+                let ok = crate::lockfile_real::OverrideMap::put_lockfile_rule(
+                    &mut lockfile.overrides,
+                    sel.parent,
+                    sel.target,
+                    version_str,
+                    &mut sbuf!(lockfile),
+                    log,
                     Some(&mut *manager),
-                ) else {
+                )?;
+                if !ok {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -610,16 +607,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         ),
                     );
                     return Err(invalid_pnpm_lockfile());
-                };
-
-                let dep = Dependency {
-                    name,
-                    name_hash,
-                    version,
-                    ..Default::default()
-                };
-
-                lockfile.overrides.map.put(name_hash, dep)?;
+                }
             }
         }
 

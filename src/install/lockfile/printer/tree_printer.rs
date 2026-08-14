@@ -334,6 +334,47 @@ where
     Ok(())
 }
 
+fn print_installed_update_request<W, const ENABLE_ANSI_COLORS: bool>(
+    writer: &mut W,
+    dependency: &Dependency,
+    resolution: &Resolution,
+    string_buf: &[u8],
+    has_binaries: bool,
+) -> Result<(), crate::Error>
+where
+    W: Write,
+{
+    bun_core::write_pretty!(
+        writer,
+        ENABLE_ANSI_COLORS,
+        "<r><green>installed<r> <b>{s}<r>",
+        bstr::BStr::new(dependency.name.slice(string_buf)),
+    )?;
+
+    if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
+        bun_core::write_pretty!(
+            writer,
+            ENABLE_ANSI_COLORS,
+            "<d>@npm:<r><b>{s}<r>",
+            bstr::BStr::new(npm.name.slice(string_buf)),
+        )?;
+    }
+
+    bun_core::write_pretty!(
+        writer,
+        ENABLE_ANSI_COLORS,
+        "<d>@{f}<r>",
+        resolution.fmt(string_buf, PathSep::Posix),
+    )?;
+    writer.write_str(if has_binaries {
+        " with binaries:\n"
+    } else {
+        "\n"
+    })?;
+
+    Ok(())
+}
+
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
 pub(crate) fn print<W, const ENABLE_ANSI_COLORS: bool>(
@@ -500,22 +541,17 @@ where
             had_printed_new_install = true;
         }
 
-        let name = dependencies_buffer[dependency_id as usize].name;
+        let dependency = &dependencies_buffer[dependency_id as usize];
         let package_id = resolutions_buffer[dependency_id as usize];
         let bin = bins[package_id as usize];
-
-        let package_name = name.slice(string_buf);
+        let resolution = &resolved[package_id as usize];
 
         match bin.tag {
             bin::Tag::None | bin::Tag::Dir => {
                 printed_installed_update_request = true;
 
-                bun_core::write_pretty!(
-                    writer,
-                    ENABLE_ANSI_COLORS,
-                    "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
-                    bstr::BStr::new(package_name),
-                    resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
+                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
+                    writer, dependency, resolution, string_buf, false,
                 )?;
             }
             bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
@@ -526,7 +562,7 @@ where
                     i: 0,
                     done: false,
                     dir_iterator: None,
-                    package_name: name,
+                    package_name: dependency.name,
                     // Never read on the .map/.file/.named_file paths this arm covers.
                     destination_node_modules: Fd::INVALID,
                     buf: bun_paths::PathBuffer::uninit(),
@@ -534,15 +570,9 @@ where
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };
 
-                {
-                    bun_core::write_pretty!(
-                        writer,
-                        ENABLE_ANSI_COLORS,
-                        "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
-                        bstr::BStr::new(package_name),
-                        resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
-                    )?;
-                }
+                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
+                    writer, dependency, resolution, string_buf, true,
+                )?;
 
                 {
                     if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {

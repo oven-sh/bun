@@ -58,10 +58,14 @@ pub mod catalog_map;
 pub mod lockfile_json_stringify_for_debugging;
 #[path = "lockfile/OverrideMap.rs"]
 pub mod override_map;
+#[path = "lockfile/override_selector.rs"]
+pub(crate) mod override_selector;
 #[path = "lockfile/Package.rs"]
 pub mod package;
 #[path = "lockfile/pruned_workspaces.rs"]
 pub(crate) mod pruned_workspaces;
+#[path = "lockfile/reachable.rs"]
+pub mod reachable;
 #[path = "lockfile/Tree.rs"]
 pub mod tree;
 #[path = "lockfile/printer"]
@@ -692,162 +696,6 @@ impl Lockfile {
         dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
     }
 
-    fn preprocess_update_requests(
-        old: &mut Lockfile,
-        manager: &mut PackageManager,
-        updates: &mut [UpdateRequest],
-        exact_versions: bool,
-    ) -> Result<(), BunError> {
-        let workspace_ids: Vec<Vec<PackageID>> = updates
-            .iter()
-            .map(|update| {
-                let mut ids = old.update_request_workspace_ids(manager, update);
-                ids.retain(|&id| {
-                    (old.packages.items_dependencies()[id as usize].off as usize)
-                        < old.buffers.dependencies.len()
-                });
-                ids
-            })
-            .collect();
-        if workspace_ids.iter().all(Vec::is_empty) {
-            return Ok(());
-        }
-
-        // `bun add x --dev` seeds only the dev slot with a dist-tag; the name's other groups keep their own ranges.
-        let only_dist_tag_deps = manager.subcommand != crate::Subcommand::Update;
-
-        // Split-borrow: `string_builder!` takes only `string_bytes` + `string_pool`, leaving `packages`/`dependencies`/`resolutions` free.
-        let mut string_builder = string_builder!(old);
-
-        {
-            let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-            let packages_len = old.packages.len();
-
-            for (update, workspace_ids) in updates.iter().zip(&workspace_ids) {
-                if update.package_id != invalid_package_id {
-                    continue;
-                }
-                for &workspace_package_id in workspace_ids {
-                    let root_deps: &[Dependency] = old.packages.items_dependencies()
-                        [workspace_package_id as usize]
-                        .get(old.buffers.dependencies.as_slice());
-                    let old_resolutions: &[PackageID] = old.packages.items_resolutions()
-                        [workspace_package_id as usize]
-                        .get(old.buffers.resolutions.as_slice());
-                    debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                    for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
-                        if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                            if old_resolution as usize >= packages_len {
-                                continue;
-                            }
-                            let res = resolutions_of_yore[old_resolution as usize];
-                            if res.tag != ResolutionTag::Npm
-                                || update.version.tag != dependency::Tag::DistTag
-                                || dep.version.tag == dependency::Tag::Catalog
-                                || (only_dist_tag_deps
-                                    && dep.version.tag != dependency::Tag::DistTag)
-                            {
-                                continue;
-                            }
-
-                            // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
-
-                            let npm_ver = res.npm().version;
-                            let len = bun_core::fmt::count(format_args!(
-                                "{}{}",
-                                if exact_versions { "" } else { "^" },
-                                npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                            ));
-
-                            if len >= SemverString::MAX_INLINE_LEN {
-                                string_builder.cap += len;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        string_builder.allocate()?;
-        // `clamp()` runs once after the second pass; nothing below can `?` out before it.
-
-        {
-            let mut temp_buf = [0u8; 513];
-            let packages_len = old.packages.len();
-
-            for (update, workspace_ids) in updates.iter_mut().zip(&workspace_ids) {
-                update.e_string = None;
-                if update.package_id != invalid_package_id {
-                    continue;
-                }
-                for &workspace_package_id in workspace_ids {
-                    let root_deps_list: DependencySlice =
-                        old.packages.items_dependencies()[workspace_package_id as usize];
-                    let root_deps: &mut [Dependency] =
-                        root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
-                    let old_resolutions: &[PackageID] = old.packages.items_resolutions()
-                        [workspace_package_id as usize]
-                        .get(old.buffers.resolutions.as_slice());
-                    let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-                    debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                    for (dep, &old_resolution) in root_deps.iter_mut().zip(old_resolutions.iter()) {
-                        if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                            if old_resolution as usize >= packages_len {
-                                continue;
-                            }
-                            let res = resolutions_of_yore[old_resolution as usize];
-                            if res.tag != ResolutionTag::Npm
-                                || update.version.tag != dependency::Tag::DistTag
-                                || dep.version.tag == dependency::Tag::Catalog
-                                || (only_dist_tag_deps
-                                    && dep.version.tag != dependency::Tag::DistTag)
-                            {
-                                continue;
-                            }
-
-                            // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
-
-                            let npm_ver = res.npm().version;
-                            let buf = {
-                                let mut cursor: &mut [u8] = &mut temp_buf[..];
-                                let start_len = cursor.len();
-                                if write!(
-                                    cursor,
-                                    "{}{}",
-                                    if exact_versions { "" } else { "^" },
-                                    npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                )
-                                .is_err()
-                                {
-                                    break;
-                                }
-                                let written = start_len - cursor.len();
-                                &temp_buf[..written]
-                            };
-
-                            let external_version = string_builder.append::<ExternalString>(buf);
-                            let sliced = external_version
-                                .value
-                                .sliced(string_builder.string_bytes.as_slice());
-                            dep.version = dependency::parse(
-                                dep.name,
-                                dep.name_hash,
-                                sliced.slice,
-                                &sliced,
-                                None,
-                                &mut *manager,
-                            )
-                            .unwrap_or_default();
-                        }
-                    }
-                }
-            }
-        }
-
-        string_builder.clamp();
-        Ok(())
-    }
-
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
         if dep.version.tag != dependency::Tag::Catalog {
             return Some(dep.version.clone());
@@ -966,35 +814,66 @@ impl Lockfile {
         }
     }
 
-    /// Package ids of the workspaces whose package.json received `update`: the `--filter` targets, else the cwd workspace.
-    fn update_request_workspace_ids(
+    /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn bind_update_requests(
         &self,
-        manager: &mut PackageManager,
-        update: &UpdateRequest,
-    ) -> Vec<PackageID> {
-        match &manager.pending_filtered_write {
-            Some(pending) => pending.workspace_ids_receiving(self, update.name_hash),
-            None => vec![
-                manager
-                    .root_package_id
-                    .get(self, manager.workspace_name_hash),
-            ],
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        updates: &mut [UpdateRequest],
+    ) {
+        // `version_buf` is a raw (ptr, len) into `self.buffers.string_bytes`, finalized by now and outliving every `UpdateRequest`.
+        let string_buf = self.buffers.string_bytes.as_slice();
+        let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
+        let slice = self.packages.slice();
+        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
+
+        'request_updated: for update in updates.iter_mut() {
+            update.e_string = None;
+            let filtered: Vec<PackageID>;
+            let workspace_ids: &[PackageID] = match pending {
+                Some(pending) => {
+                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
+                    &filtered
+                }
+                None => &cwd_workspace,
+            };
+            for &workspace_package_id in workspace_ids {
+                let dep_list = slice.items_dependencies()[workspace_package_id as usize];
+                let res_list = slice.items_resolutions()[workspace_package_id as usize];
+                let workspace_deps: &[Dependency] =
+                    dep_list.get(self.buffers.dependencies.as_slice());
+                let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
+                debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
+                for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
+                    if update.matches(dep, string_buf) {
+                        if package_id as usize > self.packages.len() {
+                            continue;
+                        }
+                        update.version_buf = string_buf_ptr;
+                        update.version = dep.version.clone();
+                        update.package_id = package_id;
+
+                        continue 'request_updated;
+                    }
+                }
+            }
         }
     }
 
     // `#[inline(never)]` keeps the panic/format machinery from
     // `bun_core::output` (pulled in by the cold helpers below) out of callers;
-    // the hot copy/remap loop stays in this body while the three cold sections
-    // — update-request preprocessing, verbose timer reporting, and the
-    // trusted/patched-dependency migration — are outlined so a no-change
-    // `bun install` (install/fastify bench) does not page them in.
+    // the hot copy/remap loop stays in this body while the cold sections
+    // — update-request binding (`bind_update_requests`), verbose timer
+    // reporting, and the patched-dependency migration — are outlined so a
+    // no-change `bun install` (install/fastify bench) does not page them in.
     #[inline(never)]
     pub(crate) fn clean_with_logger(
         &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
         log: &mut bun_ast::Log,
-        exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         let old: &mut Lockfile = self;
@@ -1019,10 +898,6 @@ impl Lockfile {
         let preinstall_state = &mut manager.preinstall_state;
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
-
-        if !updates.is_empty() {
-            clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
-        }
 
         // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
         // it (never `Box::leak` to satisfy a lifetime).
@@ -1063,7 +938,7 @@ impl Lockfile {
         let clone_queue_ = PendingResolutions::new();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
-        let keep_optional_peer_targets = !manager.summary.has_diffs();
+        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
@@ -1189,63 +1064,12 @@ impl Lockfile {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
         }
 
-        // Read catalog resolutions from `new`: `old` still holds the stale dependency slots that `bun update` orphaned.
-        if !updates.is_empty() && manager.options.add_catalog.is_some() {
-            crate::package_manager_real::add_catalog::rewrite_lockfile_entries(
-                &mut new, manager, updates,
-            )?;
-        }
-        if !manager.updating_catalogs.is_empty() {
-            crate::package_manager_real::package_json_editor::resolve_catalog_updates(
-                &mut new,
-                manager,
-                exact_versions,
-            )?;
-        }
-
-        // Don't allow invalid memory to happen
         if !updates.is_empty() {
-            // `UpdateRequest.version_buf` is a raw `*const [u8]` (PORTING.md
-            // type-map: `[]const u8` struct-field, ARENA-class). The slice
-            // points into `new.buffers.string_bytes`; `new` is *returned* to
-            // the caller below and `string_bytes` is finalized at this point
-            // (cloner.flush() and the patched-dep StringBuilder have both
-            // run), so the storage outlives every `UpdateRequest` the caller
-            // threads it through. No lifetime extension — store the raw
-            // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
-            // each read site.
-            let string_buf = new.buffers.string_bytes.as_slice();
-            let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
-            let slice = new.packages.slice();
-
-            // updates might be applied to the root package.json or one
-            // of the workspace package.json files.
-            'request_updated: for update in updates.iter_mut() {
-                if update.package_id != invalid_package_id {
-                    continue;
-                }
-                for workspace_package_id in new.update_request_workspace_ids(manager, update) {
-                    let dep_list = slice.items_dependencies()[workspace_package_id as usize];
-                    let res_list = slice.items_resolutions()[workspace_package_id as usize];
-                    let workspace_deps: &[Dependency] =
-                        dep_list.get(new.buffers.dependencies.as_slice());
-                    let resolved_ids: &[PackageID] =
-                        res_list.get(new.buffers.resolutions.as_slice());
-                    debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
-                    for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
-                        if update.matches(dep, string_buf) {
-                            if package_id as usize > new.packages.len() {
-                                continue;
-                            }
-                            update.version_buf = string_buf_ptr;
-                            update.version = dep.version.clone();
-                            update.package_id = package_id;
-
-                            continue 'request_updated;
-                        }
-                    }
-                }
-            }
+            new.bind_update_requests(
+                manager.pending_filtered_write.as_deref(),
+                manager.workspace_name_hash,
+                updates,
+            );
         }
 
         if log_level.is_verbose() {
@@ -1259,20 +1083,9 @@ impl Lockfile {
 // ────────────────────────────────────────────────────────────────────────────
 // clean_with_logger cold helpers — outlined so the hot copy/remap loop in the
 // main body is contiguous in `.text` and the install/fastify no-change bench
-// does not fault in update-request rewriting, patched-dep migration, or the
+// does not fault in update-request binding, patched-dep migration, or the
 // verbose timer/format machinery.
 // ────────────────────────────────────────────────────────────────────────────
-
-#[cold]
-#[inline(never)]
-fn clean_preprocess_update_requests_cold(
-    old: &mut Lockfile,
-    manager: &mut PackageManager,
-    updates: &mut [UpdateRequest],
-    exact_versions: bool,
-) -> Result<(), BunError> {
-    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
-}
 
 #[cold]
 #[inline(never)]

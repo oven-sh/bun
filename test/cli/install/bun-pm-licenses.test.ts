@@ -18,6 +18,9 @@ afterAll(() => {
   registry.stop();
 });
 
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows and share hardlinked manifests on Linux.
+const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
+
 const gitEnv = {
   ...bunEnv,
   GIT_CONFIG_NOSYSTEM: "1",
@@ -64,7 +67,7 @@ const monorepoFiles: Files = {
 async function install(dir: string, linker: Linker, ...args: string[]) {
   await using proc = spawn({
     cmd: [bunExe(), "install", "--linker", linker, ...args],
-    env: bunEnv,
+    env: installEnv(dir),
     cwd: dir,
     stdin: "ignore",
     stdout: "pipe",
@@ -115,11 +118,18 @@ function names(parsed: Record<string, { name: string }[]>) {
     .sort();
 }
 
+// On Linux/Windows installed files are hardlinks into the cache; unlink first so the cache copy is left alone.
+function overwriteInstalledManifest(dir: string, pkg: string, contents: string) {
+  const path = join(dir, "node_modules", pkg, "package.json");
+  rmSync(path);
+  writeFileSync(path, contents);
+}
+
 function patchInstalledManifest(dir: string, pkg: string, fields: Record<string, unknown>) {
   const path = join(dir, "node_modules", pkg, "package.json");
   const manifest = { ...JSON.parse(readFileSync(path, "utf8")), ...fields };
   for (const [key, value] of Object.entries(fields)) if (value === undefined) delete manifest[key];
-  writeFileSync(path, JSON.stringify(manifest));
+  overwriteInstalledManifest(dir, pkg, JSON.stringify(manifest));
 }
 
 const fullJson = {
@@ -414,6 +424,20 @@ describe("bun pm licenses", () => {
     });
   });
 
+  test.concurrent("--prod omits a file: dependency's devDependencies, like bun install --production", async () => {
+    const dir = await setup("hoisted", {
+      "package.json": pkg({ dependencies: { "no-deps": "1.0.0", "sub-dep": "file:./sub-dep" } }),
+      "sub-dep/package.json": JSON.stringify({
+        name: "sub-dep",
+        version: "2.5.0",
+        devDependencies: { "a-dep": "1.0.1" },
+      }),
+    });
+
+    expect(names(await licensesJson(dir))).toEqual(["a-dep", "no-deps", "sub-dep"]);
+    expect(names(await licensesJson(dir, "--prod"))).toEqual(["no-deps", "sub-dep"]);
+  });
+
   test.concurrent.each(["hoisted", "isolated"] as Linker[])("link: dependency is not listed (%s)", async linker => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker },
@@ -422,7 +446,7 @@ describe("bun pm licenses", () => {
         "linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0", license: "MIT" }),
       },
     });
-    const env = { ...bunEnv, BUN_INSTALL_GLOBAL_DIR: join(packageDir, ".global") };
+    const env = { ...installEnv(packageDir), BUN_INSTALL_GLOBAL_DIR: join(packageDir, ".global") };
     for (const [cmd, cwd] of [
       [[bunExe(), "link"], join(packageDir, "linked")],
       [[bunExe(), "install", "--linker", linker], packageDir],
@@ -522,7 +546,7 @@ describe("bun pm licenses", () => {
     const { packageDir } = await registry.createTestDir({ files: { "package.json": fixturePackageJson } });
     await using install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      env: bunEnv,
+      env: installEnv(packageDir),
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -540,7 +564,7 @@ describe("bun pm licenses", () => {
     "unparsable package.json is reported as Unknown, missing ones are omitted with a warning",
     async () => {
       const dir = await setup();
-      writeFileSync(join(dir, "node_modules", "resolve", "package.json"), "{ not json");
+      overwriteInstalledManifest(dir, "resolve", "{ not json");
       rmSync(join(dir, "node_modules", "one-dep"), { recursive: true, force: true });
 
       const [stdout, stderr, exitCode] = await licenses(dir, "--json");

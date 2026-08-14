@@ -25,7 +25,7 @@ impl DedupeCommand {
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Dedupe)
         {
             Ok(v) => v,
-            Err(err) if err == bun_install::Error::MissingPackageJSON => {
+            Err(bun_install::Error::MissingPackageJSON) => {
                 Output::err_generic("missing package.json, nothing to dedupe", ());
                 Global::exit(1);
             }
@@ -34,7 +34,7 @@ impl DedupeCommand {
 
         if manager.options.should_print_command_name() {
             bun_core::prettyln!(
-                "<r><b>bun dedupe <r><d>v{}<r>\n\n",
+                "<r><b>bun dedupe <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,
             );
             Output::flush();

@@ -96,7 +96,7 @@ impl Pass<'_> {
                 let range = if self.pinned[target as usize] || dep.behavior.is_bundled() {
                     None
                 } else {
-                    effective_npm_range(lockfile, dep)
+                    effective_npm_range(lockfile, dep_id, dep)
                 };
                 match range {
                     None => row[cur_c] = true,
@@ -154,12 +154,11 @@ impl Pass<'_> {
 
     // Packages the pass itself removes must not vote (pnpm/pnpm#9213): shrink voters until the outcome agrees.
     fn settle(&mut self, cur: &[PackageID], live: &[bool]) -> Vec<PackageID> {
-        let dep_slices = self.lockfile.packages.items_dependencies();
         let mut voters = live.to_vec();
         let mut best: Option<Vec<PackageID>> = None;
         loop {
             let (next, voted) = self.vote(cur, live, &voters);
-            let after = reachable(dep_slices, &next);
+            let after = reachable(self.lockfile, &next);
             if (0..after.len()).any(|p| after[p] && !voters[p]) {
                 return best.unwrap_or(next);
             }
@@ -178,7 +177,7 @@ impl Pass<'_> {
     }
 }
 
-fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
+pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let mut label = Vec::new();
     let _ = write!(
@@ -195,7 +194,6 @@ fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
 
 pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
     let pkg_res = lockfile.packages.items_resolution();
-    let dep_slices = lockfile.packages.items_dependencies();
     let has_patches = lockfile.patched_dependencies.count() > 0;
 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
@@ -228,9 +226,9 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         return Vec::new();
     }
 
-    let initial = reachable(dep_slices, &lockfile.buffers.resolutions);
+    let initial = reachable(lockfile, &lockfile.buffers.resolutions);
     let mut live = initial.clone();
-    let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.to_vec();
+    let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
     {
         let mut pass = Pass {
             lockfile,
@@ -245,7 +243,7 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         };
         loop {
             cur = pass.settle(&cur, &live);
-            let after = reachable(dep_slices, &cur);
+            let after = reachable(lockfile, &cur);
             if after == live {
                 break;
             }
@@ -285,15 +283,17 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
 
 pub(crate) fn effective_npm_range(
     lockfile: &Lockfile,
+    dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = if dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias
+    let mut version = if dep.behavior.is_workspace()
+        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
     {
         dep.version.clone()
     } else {
         lockfile
             .overrides
-            .get(dep.name_hash)
+            .get(lockfile, dep_id, dep.name_hash)
             .unwrap_or_else(|| dep.version.clone())
     };
     if version.tag == DependencyVersionTag::Catalog {
@@ -306,33 +306,12 @@ pub(crate) fn effective_npm_range(
 }
 
 // Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
-fn reachable(
-    dep_slices: &[crate::lockfile::DependencySlice],
-    resolutions: &[PackageID],
-) -> Vec<bool> {
-    let mut seen = vec![false; dep_slices.len()];
-    if seen.is_empty() {
-        return seen;
-    }
-    seen[0] = true;
-    let mut worklist: Vec<PackageID> = vec![0];
-    while let Some(pkg_id) = worklist.pop() {
-        let slice = dep_slices[pkg_id as usize];
-        for i in slice.begin() as usize..slice.end() as usize {
-            let target = resolutions[i];
-            if target == invalid_package_id {
-                continue;
-            }
-            let Some(slot) = seen.get_mut(target as usize) else {
-                continue;
-            };
-            if !*slot {
-                *slot = true;
-                worklist.push(target);
-            }
-        }
-    }
-    seen
+fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> Vec<bool> {
+    crate::lockfile::reachable::packages(
+        lockfile,
+        resolutions,
+        crate::lockfile::reachable::Options::all(0),
+    )
 }
 
 fn load_step_verb(step: LoadStep) -> &'static str {

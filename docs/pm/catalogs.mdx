@@ -91,7 +91,7 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
 }
 ```
 
-`catalog:` also works in `peerDependencies`. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own.
+`catalog:` and `catalog:<name>` are accepted in `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, and as the value of a root [`overrides` / `resolutions`](/pm/overrides) rule. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own.
 
 ### 3. Run Bun Install
 
@@ -238,13 +238,15 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
-To add a new dependency to the catalog (or refresh an existing entry), run `bun add` with `--catalog` (or `--catalog=<name>` for a named catalog) inside the workspace package:
+To add a new dependency to the catalog (or refresh an existing entry), run `bun add` with `--catalog` (or `--catalog=<name>` for a named catalog) from the workspace package or from the root:
 
 ```bash terminal icon="terminal"
 bun add react --catalog
 ```
 
-Bun writes the resolved version to the catalog in the root `package.json` and `"catalog:"` to the package's `package.json`. See [`bun add --catalog`](/pm/cli/add#--catalog).
+Bun writes the resolved version to the catalog in the root `package.json` and `"catalog:"` to the `package.json` you ran the command in. See [`bun add --catalog`](/pm/cli/add#--catalog).
+
+The catalog is only consulted when `--catalog` is passed: `bun add react` writes a concrete range to the current `package.json` even if `react` is already in the catalog (Bun has no equivalent of pnpm's `catalogMode`).
 
 ## Lockfile Integration
 

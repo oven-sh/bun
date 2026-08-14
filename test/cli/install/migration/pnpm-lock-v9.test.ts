@@ -681,8 +681,16 @@ importers:
 `;
     }
 
-    // pnpm/pnpm#5928 (`-` removes the dependency) and pnpm/pnpm#6774 (`name@range` / `parent>child` keys)
-    test.concurrent("unsupported removal and selector keys warn but migrate", async () => {
+    function overridesSection(bunLock: string) {
+      const start = bunLock.indexOf(`  "overrides": {`);
+      expect(start).not.toBe(-1);
+      const end = bunLock.indexOf("\n  },", start);
+      expect(end).not.toBe(-1);
+      return bunLock.slice(start, end + "\n  },".length);
+    }
+
+    // pnpm/pnpm#5928 (`-` removes the dependency) warns; pnpm/pnpm#6774 (`name@range` keys) now migrates as ranged rules
+    test.concurrent("removal values warn; name@range keys migrate as ranged rules", async () => {
       using dir = tempDir("pnpm-v9-overrides-unsupported", {
         "package.json": JSON.stringify({ name: "overrides-unsupported" }),
         "pnpm-lock.yaml": overridesLockfile(`  left-pad: '-'
@@ -696,21 +704,68 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).toContain("pnpm-lock.yaml override 'left-pad' removes the dependency ('-')");
-      expect(stderr).toContain(
-        "pnpm-lock.yaml override 'semver@<7.5.2' is scoped to a version range or parent package",
-      );
-      expect(stderr).toContain("pnpm-lock.yaml override 'foo>bar' is scoped to a version range or parent package");
-      expect(stderr).toContain(
-        "pnpm-lock.yaml override '@scope/pkg@^1' is scoped to a version range or parent package",
-      );
+      expect(stderr).not.toContain("override 'semver@<7.5.2'");
+      expect(stderr).not.toContain("override '@scope/pkg@^1'");
+      expect(stderr).not.toContain("override 'foo>bar'");
       expect(stderr).not.toContain("override '@scope/plain'");
       expect(stderr).not.toContain("override 'plain'");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`"lockfileVersion": 3`);
+      expect(bunLock).toContain(`"semver@<7.5.2": {`);
+      expect(bunLock).toContain(`".": "7.5.2"`);
+      expect(bunLock).toContain(`"@scope/pkg@^1": {`);
+      expect(bunLock).toContain(`".": "1.9.0"`);
+      expect(bunLock).toContain(`"foo": {`);
+      expect(bunLock).toContain(`"bar": "2.0.0"`);
       expect(bunLock).toContain(`"plain": "1.0.0"`);
       expect(bunLock).toContain(`"@scope/plain": "3.0.0"`);
+    });
+
+    test.concurrent("parent selectors become nested rules", async () => {
+      using dir = tempDir("pnpm-v9-overrides-nested", {
+        "package.json": JSON.stringify({ name: "overrides-nested" }),
+        "pnpm-lock.yaml": overridesLockfile(`  foo>bar: 2.0.0
+  foo@^1>baz: 1.0.0
+  '@s/a>@t/b': 3.0.0`),
+      });
+      using tooDeep = tempDir("pnpm-v9-overrides-too-deep", {
+        "package.json": JSON.stringify({ name: "overrides-too-deep" }),
+        "pnpm-lock.yaml": overridesLockfile("  a>b>c: 1.0.0"),
+      });
+
+      const nested = await migrate(String(dir));
+
+      expect(nested.stderr).not.toContain("does not support");
+      expect(nested.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(nested.exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`"lockfileVersion": 3`);
+      expect(overridesSection(bunLock)).toMatchInlineSnapshot(`
+        "  "overrides": {
+            "@s/a": {
+              "@t/b": "3.0.0",
+            },
+            "foo": {
+              "bar": "2.0.0",
+            },
+            "foo@^1": {
+              "baz": "1.0.0",
+            },
+          },"
+      `);
+
+      const deep = await migrate(String(tooDeep));
+
+      expect(deep.stderr).toContain(
+        "pnpm-lock.yaml override 'a>b>c' uses a selector bun does not support; it will not apply",
+      );
+      expect(deep.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(deep.exitCode).toBe(0);
+      expect(await bunLockOf(String(tooDeep))).not.toContain("a>b");
     });
 
     test.concurrent("an unparsable value names the override", async () => {

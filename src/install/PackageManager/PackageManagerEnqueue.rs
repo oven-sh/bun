@@ -710,7 +710,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.npm().is_alias)
         {
-            if let Some(new) = this.lockfile.overrides.get(name_hash) {
+            if let Some(new) = this.lockfile.overrides.get(&this.lockfile, id, name_hash) {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
@@ -2567,6 +2567,12 @@ fn get_or_put_resolved_package(
                 }
             };
 
+            let find_result = if version_was_replaced {
+                find_result
+            } else {
+                keep_locked_if_ahead(this, dependency, version, manifest, find_result)
+            };
+
             // reshaped for borrowck — `manifest`/`find_result`
             // borrow `this.manifests`; detach via `BackRef` so the `&mut *this`
             // call can proceed (`this.manifests` is not mutated by the callee).
@@ -2810,6 +2816,43 @@ fn get_or_put_resolved_package(
 
         _ => Ok(None),
     }
+}
+
+/// `bun update --latest` rewrote this row to a dist-tag; a locked version already ahead of the tag (a prerelease) is kept rather than downgraded.
+fn keep_locked_if_ahead<'m>(
+    this: &PackageManager,
+    dependency: &Dependency,
+    version: &dependency::Version,
+    manifest: &'m Npm::PackageManifest,
+    found: Npm::FindResult<'m>,
+) -> Npm::FindResult<'m> {
+    if version.tag != dependency::version::Tag::DistTag
+        || !this.to_update
+        || !this
+            .options
+            .do_
+            .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+    {
+        return found;
+    }
+    let Some(entry) = this
+        .updating_packages
+        .get(this.lockfile.str(&dependency.name))
+    else {
+        return found;
+    };
+    let Some(locked) = entry.original_version else {
+        return found;
+    };
+    if found.version.order(
+        locked,
+        &manifest.string_buf,
+        &entry.original_version_string_buf,
+    ) != core::cmp::Ordering::Less
+    {
+        return found;
+    }
+    manifest.find_by_version(locked).unwrap_or(found)
 }
 
 fn resolution_satisfies_dependency(

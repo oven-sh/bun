@@ -62,6 +62,8 @@ async function install(root: string, args: string[] = []) {
       USERPROFILE: home,
       XDG_CONFIG_HOME: home,
       BUN_INSTALL_CACHE_DIR: join(root, "cache"),
+      // Authenticated requests leak their header buffer into the HTTP client (NetworkTask.rs); LSan would abort the install.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -181,6 +183,39 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@types", "no-deps", "package.json"))).toBe(true);
+  });
+
+  test("bunfig registry credentials survive a same-URL registry= line in project .npmrc", async () => {
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `registry=${registry.registryUrl()}\n`,
+      "project/bunfig.toml": bunfig({ registry: { url: registry.registryUrl(), token: authToken } }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
+      true,
+    );
+  });
+
+  test("bunfig scoped registry credentials survive the same scope URL in project .npmrc", async () => {
+    using dead = deadRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `@needs-auth:registry=${registry.registryUrl()}\n`,
+      "project/bunfig.toml": bunfig({
+        registry: dead.url,
+        scopes: { "needs-auth": { url: registry.registryUrl(), token: authToken } },
+      }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(dead.hits).toBe(0);
+    expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
+      true,
+    );
   });
 
   test("--linker beats ~/.npmrc, project .npmrc and bunfig", async () => {

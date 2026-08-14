@@ -4,17 +4,15 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData, Loc, StoreStr};
 use bun_collections::VecExt as _;
-use bun_core::{Global, Output, ZStr};
-use bun_semver::ExternalString;
-use bun_sys::{Fd, File};
+use bun_core::{Global, Output};
 
 use bun_install::dependency;
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{INVALID_PACKAGE_ID, Lockfile, resolution};
+use bun_install::{INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution};
 
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
-use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
+use super::workspace_package_json_cache::MapEntry;
 use super::{PackageManager, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -212,11 +210,15 @@ pub(crate) fn edit_root_entry_before_install(
     Ok(())
 }
 
+/// Runs after `clean_with_logger`: replaces the dist-tag seeds in the root's catalog entries with the resolved range; the lockfile catalog is re-derived from the file by `package_json_write_back`.
 pub(crate) fn edit_root_after_install(
     manager: &PackageManager,
     root_package_json: &Expr,
     updates: &[UpdateRequest],
 ) -> Result<bool, AllocError> {
+    if updates.is_empty() {
+        return Ok(false);
+    }
     let _guard = ExprDisabler::scope();
     let name = catalog_name(manager);
     let Some(mut entries) = entries_object(root_package_json, name, None) else {
@@ -224,14 +226,73 @@ pub(crate) fn edit_root_after_install(
     };
 
     let arena = &manager.ast_arena;
+    let exact = manager.options.enable.exact_versions();
     let lockfile: &Lockfile = &manager.lockfile;
-    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+
+    let mut resolved: Vec<(PackageNameHash, PackageID)> = Vec::with_capacity(updates.len());
+    for (dep, &pkg_id) in lockfile
+        .buffers
+        .dependencies
+        .iter()
+        .zip(lockfile.buffers.resolutions.iter())
+    {
+        if dep.version.tag != dependency::Tag::Catalog
+            || pkg_id == INVALID_PACKAGE_ID
+            || (pkg_id as usize) >= resolutions.len()
+            || resolutions[pkg_id as usize].tag != resolution::Tag::Npm
+            || !updates
+                .iter()
+                .any(|request| request.name_hash == dep.name_hash)
+            || resolved
+                .iter()
+                .any(|&(name_hash, _)| name_hash == dep.name_hash)
+            || !CatalogMap::same_name(dep.version.catalog().slice(buf), name)
+        {
+            continue;
+        }
+        resolved.push((dep.name_hash, pkg_id));
+        if resolved.len() == updates.len() {
+            break;
+        }
+    }
+    if resolved.is_empty() {
+        return Ok(false);
+    }
+
     let mut changed = false;
     for request in updates {
-        let Some(dep) = lockfile.catalogs.find(string_bytes, name, request.name) else {
+        let Some(&(_, pkg_id)) = resolved
+            .iter()
+            .find(|&&(name_hash, _)| name_hash == request.name_hash)
+        else {
             continue;
         };
-        let new_literal = dep.version.literal.slice(string_bytes);
+        // `request.version` was rebound to the `catalog:` row by `bind_update_requests`, so the dist-tag seed is read back from the lockfile catalog.
+        let Some(seed) = lockfile.catalogs.find(buf, name, request.name) else {
+            continue;
+        };
+        if seed.version.tag != dependency::Tag::DistTag {
+            continue;
+        }
+        let mut literal = Vec::new();
+        if seed.version.literal.slice(buf).starts_with(b"npm:") {
+            write!(
+                &mut literal,
+                "npm:{}@",
+                BStr::new(seed.version.dist_tag().name.slice(buf))
+            )
+            .expect("infallible: in-memory write");
+        }
+        write!(
+            &mut literal,
+            "{}{}",
+            if exact { "" } else { "^" },
+            resolutions[pkg_id as usize].npm().version.fmt(buf)
+        )
+        .expect("infallible: in-memory write");
+
         let obj = entries
             .data
             .e_object_mut()
@@ -239,143 +300,11 @@ pub(crate) fn edit_root_after_install(
         let Some(q) = obj.as_property(request.name) else {
             continue;
         };
-        if q.expr.as_utf8_string_literal() == Some(new_literal) {
+        if q.expr.as_utf8_string_literal() == Some(&literal[..]) {
             continue;
         }
-        obj.properties.slice_mut()[q.i as usize].value = Some(estring(arena, new_literal));
+        obj.properties.slice_mut()[q.i as usize].value = Some(estring(arena, &literal));
         changed = true;
     }
     Ok(changed)
-}
-
-pub(crate) fn write_root_after_install(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-    updates: &[UpdateRequest],
-) -> Result<(), crate::Error> {
-    if updates.is_empty() {
-        return Ok(());
-    }
-    let entry_ptr: *mut MapEntry = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
-        root_package_json_path.as_bytes(),
-        GetJSONOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
-        GetResult::ParseErr(err) => {
-            let _ = manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Output::err_generic(
-                "failed to parse package.json \"{s}\": {s}",
-                (BStr::new(root_package_json_path.as_bytes()), err.name()),
-            );
-            Global::crash();
-        }
-        GetResult::ReadErr(err) => {
-            Output::err_generic(
-                "failed to read package.json \"{s}\": {s}",
-                (BStr::new(root_package_json_path.as_bytes()), err.name()),
-            );
-            Global::crash();
-        }
-        GetResult::Entry(entry) => core::ptr::from_mut(entry),
-    };
-    // SAFETY: the cache is not touched again while `entry` is live; `edit_root_after_install` only reads disjoint manager fields.
-    let entry: &mut MapEntry = unsafe { &mut *entry_ptr };
-
-    let root = entry.root;
-    if edit_root_after_install(&*manager, &root, updates)? {
-        print_package_json_into_cache_entry(entry, root);
-    }
-
-    let file = File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
-        .map_err(crate::Error::from)?;
-    file.pwrite_all(&entry.source.contents, 0)
-        .map_err(crate::Error::from)?;
-    let _ = bun_sys::ftruncate(file.handle, entry.source.contents.len() as i64);
-    let _ = file.close();
-    Ok(())
-}
-
-pub(crate) fn rewrite_lockfile_entries(
-    lockfile: &mut Lockfile,
-    manager: &mut PackageManager,
-    updates: &[UpdateRequest],
-) -> crate::Result<()> {
-    let name = catalog_name(manager);
-    let exact = manager.options.enable.exact_versions();
-
-    let mut rewrites: Vec<(&[u8], Vec<u8>)> = Vec::new();
-    {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let resolutions = lockfile.packages.items_resolution();
-        for request in updates {
-            if request.version.tag != dependency::Tag::DistTag {
-                continue;
-            }
-            let found = lockfile
-                .buffers
-                .dependencies
-                .iter()
-                .zip(lockfile.buffers.resolutions.iter())
-                .find(|&(dep, &pkg_id)| {
-                    dep.version.tag == dependency::Tag::Catalog
-                        && dep.name_hash == request.name_hash
-                        && CatalogMap::same_name(dep.version.catalog().slice(buf), name)
-                        && pkg_id != INVALID_PACKAGE_ID
-                        && (pkg_id as usize) < resolutions.len()
-                        && resolutions[pkg_id as usize].tag == resolution::Tag::Npm
-                });
-            let Some((_, &pkg_id)) = found else {
-                continue;
-            };
-            let version = resolutions[pkg_id as usize].npm().version.fmt(buf);
-            let request_literal = request.version.literal.slice(request.version_buf());
-            let mut literal = Vec::new();
-            if request_literal.starts_with(b"npm:") {
-                write!(
-                    &mut literal,
-                    "npm:{}@",
-                    BStr::new(request.version.dist_tag().name.slice(request.version_buf()))
-                )
-                .expect("infallible: in-memory write");
-            }
-            write!(&mut literal, "{}{}", if exact { "" } else { "^" }, version)
-                .expect("infallible: in-memory write");
-            rewrites.push((request.name, literal));
-        }
-    }
-    if rewrites.is_empty() {
-        return Ok(());
-    }
-
-    let (mut builder, lf) = lockfile.string_builder_split();
-    for (_, literal) in &rewrites {
-        builder.count(literal);
-    }
-    builder.allocate()?;
-    for (dep_name, literal) in &rewrites {
-        let external = builder.append::<ExternalString>(literal);
-        let string_bytes = builder.string_bytes.as_slice();
-        let sliced = external.value.sliced(string_bytes);
-        let Some(entry) = lf.catalogs.find_mut(string_bytes, name, dep_name) else {
-            continue;
-        };
-        let (entry_name, entry_name_hash) = (entry.name, entry.name_hash);
-        if let Some(version) = dependency::parse(
-            entry_name,
-            entry_name_hash,
-            sliced.slice,
-            &sliced,
-            None,
-            &mut *manager,
-        ) {
-            entry.version = version;
-        }
-    }
-    builder.clamp();
-    Ok(())
 }

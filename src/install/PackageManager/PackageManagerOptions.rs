@@ -34,7 +34,7 @@ pub struct Options {
     pub dry_run: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
-    pub(crate) local_package_features: Features,
+    pub local_package_features: Features,
     pub(crate) patch_features: PatchFeatures,
 
     pub filter_patterns: &'static [&'static [u8]],

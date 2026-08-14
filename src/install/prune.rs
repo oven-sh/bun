@@ -1,15 +1,17 @@
+use core::cell::{Cell, RefCell};
+use core::ops::Range;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_core::{Global, Output, ZStr, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
-use bun_sys::{self as sys, Dir, E, EntryKind};
+use bun_sys::{self as sys, Dir, E, EntryKind, O};
 
 use crate::config_version::ConfigVersion;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, tree};
+use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
 use crate::package_manager::Options::LogLevel;
 use crate::{PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
@@ -125,13 +127,14 @@ pub fn prune(manager: &mut PackageManager) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
-    let load = manager.load_lockfile_from_cwd::<false>();
-    let loaded = match &load {
-        LoadResult::NotFound => Err(None),
-        LoadResult::Err(cause) => Err(Some(cause.value.name())),
-        LoadResult::Ok(_) => Ok(load.choose_config_version().0),
+    let loaded = {
+        let load = manager.load_lockfile_from_cwd::<false>();
+        match &load {
+            LoadResult::NotFound => Err(None),
+            LoadResult::Err(cause) => Err(Some(cause.value.name())),
+            LoadResult::Ok(_) => Ok(load.choose_config_version().0),
+        }
     };
-    drop(load);
     let config_version = match loaded {
         Ok(config_version) => config_version,
         Err(None) => {
@@ -276,6 +279,195 @@ fn hoist_filtered(manager: &mut PackageManager) {
     }
 }
 
+struct TreeFolder {
+    path: Range<u32>,
+    expected: Range<u32>,
+}
+
+struct HoistedTree<'a> {
+    lockfile: &'a Lockfile,
+    trees: &'a [tree::Tree],
+    folders: Vec<TreeFolder>,
+    paths: Vec<u8>,
+    expected: Vec<(&'a [u8], PackageID)>,
+    workspace_names: &'a [Box<[u8]>],
+    quiet: bool,
+    kept_mismatched: Cell<bool>,
+    verified: RefCell<Vec<(tree::Id, &'a [u8], bool)>>,
+}
+
+impl<'a> HoistedTree<'a> {
+    fn init(
+        lockfile: &'a Lockfile,
+        workspace_names: &'a [Box<[u8]>],
+        quiet: bool,
+    ) -> HoistedTree<'a> {
+        let trees = lockfile.buffers.trees.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut folders: Vec<TreeFolder> = Vec::with_capacity(trees.len());
+        folders.resize_with(trees.len(), || TreeFolder {
+            path: 0..0,
+            expected: 0..0,
+        });
+        let mut paths: Vec<u8> = Vec::new();
+        let mut expected: Vec<(&'a [u8], PackageID)> =
+            Vec::with_capacity(lockfile.buffers.hoisted_dependencies.len());
+
+        let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+        while let Some(folder) = it.next(None) {
+            let path_start = paths.len();
+            paths.extend_from_slice(folder.relative_path.as_bytes());
+
+            let start = expected.len();
+            expected.extend(folder.dependencies.iter().map(|&dep_id| {
+                (
+                    deps[dep_id as usize].name.slice(buf),
+                    resolutions[dep_id as usize],
+                )
+            }));
+            expected[start..].sort_unstable();
+            let mut len = start;
+            for i in start..expected.len() {
+                if len == start || expected[len - 1].0 != expected[i].0 {
+                    expected[len] = expected[i];
+                    len += 1;
+                }
+            }
+            expected.truncate(len);
+
+            folders[folder.tree_id as usize] = TreeFolder {
+                path: path_start as u32..paths.len() as u32,
+                expected: start as u32..len as u32,
+            };
+        }
+
+        HoistedTree {
+            lockfile,
+            trees,
+            folders,
+            paths,
+            expected,
+            workspace_names,
+            quiet,
+            kept_mismatched: Cell::new(false),
+            verified: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn path(&self, tree_id: usize) -> &[u8] {
+        let range = &self.folders[tree_id].path;
+        &self.paths[range.start as usize..range.end as usize]
+    }
+
+    fn expected(&self, tree_id: usize) -> &[(&'a [u8], PackageID)] {
+        let range = &self.folders[tree_id].expected;
+        &self.expected[range.start as usize..range.end as usize]
+    }
+
+    fn expected_in(&self, tree_id: tree::Id, alias: &[u8]) -> Option<(&'a [u8], PackageID)> {
+        if (tree_id as usize) >= self.folders.len() {
+            return None;
+        }
+        let expected = self.expected(tree_id as usize);
+        expected
+            .binary_search_by(|(name, _)| (*name).cmp(alias))
+            .ok()
+            .map(|i| expected[i])
+    }
+
+    fn removable(&self, from: tree::Id, alias: &[u8], entry_folder: &[u8]) -> bool {
+        let mut id = from;
+        while (id as usize) < self.trees.len() {
+            if let Some((alias, pkg_id)) = self.expected_in(id, alias) {
+                if self.verified_installed(id, alias, pkg_id) {
+                    return true;
+                }
+                self.kept_mismatched.set(true);
+                if !self.quiet {
+                    bun_core::warn!(
+                        "{} is not the version bun.lock installs there; keeping {}",
+                        BStr::new(&join(self.path(id as usize), alias)),
+                        BStr::new(&join(entry_folder, alias))
+                    );
+                }
+                return false;
+            }
+            id = self.trees[id as usize].parent;
+        }
+        true
+    }
+
+    fn verified_installed(&self, tree_id: tree::Id, alias: &'a [u8], pkg_id: PackageID) -> bool {
+        if let Some(&(_, _, matches)) = self
+            .verified
+            .borrow()
+            .iter()
+            .find(|(id, name, _)| *id == tree_id && *name == alias)
+        {
+            return matches;
+        }
+        let matches = self.installed_matches(tree_id, alias, pkg_id);
+        self.verified.borrow_mut().push((tree_id, alias, matches));
+        matches
+    }
+
+    fn installed_matches(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> bool {
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let deps = self.lockfile.buffers.dependencies.as_slice();
+        let Some(res) = self
+            .lockfile
+            .packages
+            .items_resolution()
+            .get(pkg_id as usize)
+        else {
+            return false;
+        };
+        let Some(folder) = open_tree_folder(self.trees, deps, buf, tree_id, self.workspace_names)
+        else {
+            return false;
+        };
+        let Some(package) = descend(&folder, alias, false) else {
+            return false;
+        };
+        match res.tag {
+            ResolutionTag::Npm => {
+                let Ok(bytes) = sys::File::read_from(package.fd(), b"package.json") else {
+                    return false;
+                };
+                crate::initialize_store();
+                let source = bun_ast::Source::init_path_string_owned(b"package.json", bytes);
+                let mut log = bun_ast::Log::init();
+                let mut checker =
+                    crate::bun_json::PackageJSONVersionChecker::init(&source, &mut log);
+                if checker.parse().is_err()
+                    || checker.has_errors()
+                    || !checker.has_found_name
+                    || !checker.has_found_version
+                {
+                    return false;
+                }
+                let expected = res.npm().version.fmt(buf).to_string();
+                without_build(checker.found_version()) == without_build(expected.as_bytes())
+                    && checker.found_name()
+                        == self.lockfile.packages.items_name()[pkg_id as usize].slice(buf)
+            }
+            ResolutionTag::Git | ResolutionTag::Github => {
+                sys::File::read_from(package.fd(), b".bun-tag")
+                    .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
+            }
+            _ => false,
+        }
+    }
+}
+
+// https://github.com/oven-sh/bun/issues/13563
+fn without_build(version: &[u8]) -> &[u8] {
+    &version[..strings::last_index_of_char(version, b'+').unwrap_or(version.len())]
+}
+
 fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], plan: &mut Plan) {
     let keep_workspaces = |entry: &Entry| contains(workspace_names, entry.alias);
     if manager.lockfile.packages.len() == 0 {
@@ -287,7 +479,9 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
 
     hoist_filtered(manager);
 
+    let quiet = manager.options.log_level == LogLevel::Silent;
     let lockfile: &Lockfile = &manager.lockfile;
+    let hoisted = HoistedTree::init(lockfile, workspace_names, quiet);
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -308,10 +502,13 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
     nested_trees.sort_unstable();
 
     let mut visited = vec![false; pkg_res.len()];
-    let mut expected: Vec<(&[u8], PackageID)> = Vec::new();
-    let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
-    while let Some(folder) = it.next(None) {
-        let owner: PackageID = match trees[folder.tree_id as usize].dependency_id {
+    for tree_idx in 0..hoisted.folders.len() {
+        let folder_path = hoisted.path(tree_idx);
+        if folder_path.is_empty() {
+            continue;
+        }
+        let tree_id = tree_idx as tree::Id;
+        let owner: PackageID = match trees[tree_idx].dependency_id {
             tree::ROOT_DEP_ID => 0,
             dep_id => resolutions[dep_id as usize],
         };
@@ -326,24 +523,15 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
             }
         }
 
-        expected.clear();
-        expected.extend(folder.dependencies.iter().map(|&dep_id| {
-            (
-                deps[dep_id as usize].name.slice(buf),
-                resolutions[dep_id as usize],
-            )
-        }));
-        expected.sort_unstable();
-        expected.dedup_by_key(|(alias, _)| *alias);
+        let expected = hoisted.expected(tree_idx);
 
-        let Some(dir) = open_tree_folder(trees, deps, buf, folder.tree_id, workspace_names) else {
+        let Some(dir) = open_tree_folder(trees, deps, buf, tree_id, workspace_names) else {
             continue;
         };
-        let folder_path = folder.relative_path.as_bytes();
 
-        for &(alias, pkg_id) in &expected {
+        for &(alias, pkg_id) in expected {
             if (pkg_id as usize) >= pkg_res.len()
-                || nested_trees.binary_search(&(folder.tree_id, alias)).is_ok()
+                || nested_trees.binary_search(&(tree_id, alias)).is_ok()
             {
                 continue;
             }
@@ -364,9 +552,19 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
                 continue;
             };
             let nested_path = join(&join(folder_path, alias), b"node_modules");
-            scan_folder(nested, &nested_path, false, &keep_workspaces, plan);
+            scan_folder(
+                nested,
+                &nested_path,
+                false,
+                &|entry: &Entry| {
+                    contains(workspace_names, entry.alias)
+                        || !hoisted.removable(tree_id, entry.alias, &nested_path)
+                },
+                plan,
+            );
         }
 
+        let parent = trees[tree_idx].parent;
         scan_folder(
             dir,
             folder_path,
@@ -376,6 +574,7 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
                     .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
                     .is_ok()
                     || contains(workspace_names, entry.alias)
+                    || !hoisted.removable(parent, entry.alias, folder_path)
             },
             plan,
         );
@@ -396,8 +595,23 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
         }
         let folder_path = join(path, b"node_modules");
         if let Ok(dir) = Dir::open(&folder_path) {
-            scan_folder(dir, &folder_path, false, &keep_workspaces, plan);
+            scan_folder(
+                dir,
+                &folder_path,
+                false,
+                &|entry: &Entry| {
+                    contains(workspace_names, entry.alias)
+                        || !hoisted.removable(0, entry.alias, &folder_path)
+                },
+                plan,
+            );
         }
+    }
+
+    if hoisted.kept_mismatched.get() && !quiet {
+        bun_core::note!(
+            "run 'bun install' with the same flags to install the versions bun.lock expects, then run 'bun prune' again"
+        );
     }
 }
 
@@ -444,11 +658,31 @@ fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
     if lstat_kind(dir, name) != EntryKind::Directory {
         return None;
     }
-    dir.open_at(name).ok()
+    dir.open_at_with(name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
+        .ok()
 }
 
+#[cfg(not(windows))]
 fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     match sys::lstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(name))) {
+        Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
+        Err(_) => EntryKind::Unknown,
+    }
+}
+
+// `sys::lstatat` fstats the opened reparse point, which reports junctions as directories.
+#[cfg(windows)]
+fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
+    let mut dir_buf = bun_paths::path_buffer_pool::get();
+    let Ok(dir_path) = dir.get_fd_path(&mut dir_buf) else {
+        return EntryKind::Unknown;
+    };
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
+        &mut path_buf[..],
+        &[&*dir_path, name],
+    );
+    match sys::lstat(path) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -528,40 +762,11 @@ fn scan_folder(
 
 fn wanted_packages(manager: &PackageManager) -> Vec<bool> {
     let lockfile: &Lockfile = &manager.lockfile;
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let dep_slices = lockfile.packages.items_dependencies();
-    let mut wanted = vec![false; dep_slices.len()];
-    if wanted.is_empty() {
-        return wanted;
-    }
-    wanted[0] = true;
-    let mut worklist: Vec<PackageID> = vec![0];
-    while let Some(parent) = worklist.pop() {
-        let slice = dep_slices[parent as usize];
-        for dep_id in slice.begin()..slice.end() {
-            if is_filtered_dependency_or_workspace(
-                dep_id,
-                parent,
-                &[],
-                true,
-                manager,
-                lockfile,
-                resolutions,
-            ) {
-                continue;
-            }
-            let target = resolutions[dep_id as usize];
-            if target == invalid_package_id
-                || (target as usize) >= wanted.len()
-                || wanted[target as usize]
-            {
-                continue;
-            }
-            wanted[target as usize] = true;
-            worklist.push(target);
-        }
-    }
-    wanted
+    reachable::packages(
+        lockfile,
+        lockfile.buffers.resolutions.as_slice(),
+        reachable::Options::install(manager),
+    )
 }
 
 fn store_keys(lockfile: &Lockfile, wanted: &[bool]) -> Vec<Box<[u8]>> {
@@ -619,7 +824,7 @@ fn strip_peer_hash(name: &[u8]) -> Option<&[u8]> {
     (suffix[0] == b'+' && suffix[1..].iter().all(u8::is_ascii_hexdigit)).then_some(base)
 }
 
-fn direct_aliases(manager: &PackageManager, pkg_id: PackageID, filtered: bool) -> Vec<Box<[u8]>> {
+fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -627,22 +832,20 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID, filtered: bool) -
     let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
     let mut direct: Vec<Box<[u8]>> = Vec::new();
     for dep_id in slice.begin()..slice.end() {
-        if filtered {
-            if is_filtered_dependency_or_workspace(
-                dep_id,
-                pkg_id,
-                &[],
-                true,
-                manager,
-                lockfile,
-                resolutions,
-            ) {
-                continue;
-            }
-            let target = resolutions[dep_id as usize];
-            if target == invalid_package_id || (target as usize) >= lockfile.packages.len() {
-                continue;
-            }
+        if is_filtered_dependency_or_workspace(
+            dep_id,
+            pkg_id,
+            &[],
+            true,
+            manager,
+            lockfile,
+            resolutions,
+        ) {
+            continue;
+        }
+        let target = resolutions[dep_id as usize];
+        if target == invalid_package_id || (target as usize) >= lockfile.packages.len() {
+            continue;
         }
         direct.push(deps[dep_id as usize].name.slice(buf).into());
     }
@@ -700,24 +903,18 @@ fn plan_isolated(manager: &PackageManager, workspace_names: &[Box<[u8]>], plan: 
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
-        let direct = direct_aliases(manager, pkg_id as PackageID, true);
-        let declared = direct_aliases(manager, pkg_id as PackageID, false);
+        let direct = direct_aliases(manager, pkg_id as PackageID);
         let folder_idx = scan_folder(
             dir,
             &folder_path,
             store_touched,
             &|entry| {
-                let known = match entry.kind {
-                    EntryKind::SymLink => {
-                        contains(&declared, entry.alias)
-                            || store_link_target(entry.dir, entry.name)
-                                .is_some_and(|target| contains(&removed_store, &target))
-                    }
-                    _ => contains(&direct, entry.alias),
-                };
-                known
+                contains(&direct, entry.alias)
                     || contains(workspace_names, entry.alias)
                     || public_hoist_matches(manager, entry.alias)
+                    || (entry.kind == EntryKind::SymLink
+                        && store_link_target(entry.dir, entry.name)
+                            .is_some_and(|target| contains(&removed_store, &target)))
             },
             plan,
         );
@@ -807,7 +1004,7 @@ fn rmdir(dir: &Dir, name: &[u8]) {
 
 fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     let z = zname(name);
-    match sys::exists_at_type(dir.fd(), ZStr::from_slice_with_nul(&z)) {
+    match sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
         Ok(_) => false,
         Err(err) => matches!(err.get_errno(), E::ENOENT | E::ENOTDIR),
     }

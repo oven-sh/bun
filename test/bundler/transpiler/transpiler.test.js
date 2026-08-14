@@ -2085,6 +2085,9 @@ export default class {
         ["function declaration", `export default function Page() { return ${deadCall}; }`],
         ["class declaration", `export default class Page { method() { return ${deadCall}; } }`],
         ["anonymous class", `export default class { method() { return ${deadCall}; } }`],
+        // The import is referenced outside of any method body here, so the class itself must go.
+        ["class extending the import", `export default class Page extends deadFS {}`],
+        ["class with a static initializer", `export default class { static contents = ${deadCall}; }`],
       ])("export default %s, replaced: trims an import only the discarded value used", (_, source) => {
         expect(replacingDefault.transformSync(deadImport + source)).toBe("export default 42;\n");
         expect(replacingDefault.scan(deadImport + source)).toEqual({ exports: ["default"], imports: [] });

@@ -183,6 +183,14 @@ This page is updated regularly and reflects the latest version of Bun's compatib
 
 🟢 Fully implemented. `createTracing()`, `getEnabledCategories()` and the `--trace-events-enabled`, `--trace-event-categories` and `--trace-event-file-pattern` flags are supported; the trace is written at exit. Some categories record less than in Node.js (for example `node.async_hooks` only records timers, and the `v8` category is a placeholder, since JavaScriptCore has no V8 GC or compile events).
 
+### [`node:quic`](https://github.com/nodejs/node/blob/main/doc/api/quic.md)
+
+🟢 Implemented: `listen()`, `connect()`, `QuicEndpoint`, `QuicSession` and `QuicStream`. 99% of Node.js's test suite passes. The API is experimental in Node.js, and importing it emits an `ExperimentalWarning` in Bun too.
+
+### [`node:sea`](https://nodejs.org/api/single-executable-applications.html)
+
+🔴 Not implemented. Use [`bun build --compile`](/bundler/executables) to build single-file executables instead.
+
 ## Node.js globals
 
 The following list covers the globals implemented by Node.js and Bun's compatibility status for each.

@@ -451,9 +451,10 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
-    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
+    /// Tear down a subprocess whose stdio start() failed. Releases the buffer-stdin
+    /// writer, marks pending pipe readers as errored so PipeReader.deinit's done-assert
+    /// passes (a reader that never started closes its pipe fd there), drops the exit
+    /// handler so a later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
@@ -467,6 +468,21 @@ impl ShellSubprocess {
         }
         #[cfg(not(windows))]
         {
+            // Release the slot's `create()` ref ourselves: a writer whose
+            // `start()` failed never reaches `on_close_io`, and one that did
+            // start (a sibling failed) must not reach it after we free `this`.
+            // `close()` re-enters `on_close_io` (and releases `start()`'s ref
+            // if it was taken), so the slot is emptied first, through `this`
+            // rather than a `Box` the re-entry would alias.
+            // SAFETY: `this` is the live subprocess from `spawn`; the borrow of
+            // the slot ends with the `replace`, before `close()` re-enters.
+            let stdin = unsafe { core::mem::replace(&mut (*this).stdin, Writable::Ignore) };
+            if let Writable::Buffer(buffer) = stdin {
+                // SAFETY: single-threaded; the slot held the only handle to the
+                // writer, so no other borrow of it is live.
+                unsafe { buffer_mut(&buffer) }.close();
+                buffer.deref();
+            }
             // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
             // uniquely owned here; reclaim and tear down.
             let mut subproc = unsafe { bun_core::heap::take(this) };
@@ -1004,6 +1020,9 @@ pub enum WritableInitError {
 pub enum Writable {
     Pipe(FileSinkPtr),
     Fd(Fd),
+    /// Holds `create()`'s ref (`RefPtr` has no `Drop`). Released by
+    /// `ShellSubprocess::on_close_io` once the writer closes, or by
+    /// `abort_after_failed_start` when the spawn is abandoned before then.
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
     Inherit,
@@ -1199,9 +1218,9 @@ impl Writable {
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
                 unsafe { buffer_mut(buffer) }.update_ref(false);
-                // Intentionally does NOT reassign `*self` — the variant tag is
-                // left as `Writable::Buffer`. RefPtr's Drop (on
-                // Subprocess teardown) handles the final deref.
+                // A writer still here is in flight (see the variant's doc for
+                // who releases the ref); closing it would re-enter this
+                // subprocess mid-drop, so it is left alone.
             }
             Writable::Memfd(fd) => {
                 fd.close();
@@ -1539,6 +1558,9 @@ pub struct PipeReader {
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
+    /// POSIX: our end of the child's stdio pipe, owned here until `start()`
+    /// hands it to `reader`. Still `Some` on a reader that never started
+    /// (the spawn was aborted first), in which case `drop` closes it.
     #[cfg_attr(windows, allow(dead_code))]
     pub(crate) stdio_result: StdioResult,
     pub(crate) out_type: OutKind,
@@ -1868,7 +1890,7 @@ impl PipeReader {
         }
 
         #[cfg(not(windows))]
-        match self.reader.start(self.stdio_result.unwrap(), true) {
+        match self.reader.start(self.stdio_result.take().unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
                 // `reader.start` reports a poll-registration failure through
@@ -2194,6 +2216,11 @@ impl Drop for PipeReader {
         #[cfg(unix)]
         {
             debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
+        }
+        #[cfg(not(windows))]
+        if let Some(fd) = self.stdio_result.take() {
+            // Never started, so `reader` never took the fd over.
+            fd.close();
         }
 
         #[cfg(windows)]

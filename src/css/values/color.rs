@@ -818,15 +818,11 @@ impl CssColor {
         let converted_second = !is_in_space::<T>(other)?;
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
-        // Operands outside the gamut of the interpolation space are interpolated as-is
-        // (https://www.w3.org/TR/css-color-4/#interpolation-space); gamut mapping only
-        // happens when the result is converted to rgb for output.
+        // Out-of-gamut operands stay as-is: https://www.w3.org/TR/css-color-4/#interpolation-space
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
 
         // https://www.w3.org/TR/css-color-4/#powerless
-        // Components made powerless by the conversion become missing. A color specified
-        // directly in the interpolation space keeps them as written.
         if converted_first {
             first_color.adjust_powerless_components();
         }
@@ -1645,11 +1641,7 @@ macro_rules! define_colorspace {
     };
     (@interp none $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
-    // Only hues are powerless (https://www.w3.org/TR/css-color-4/#powerless): a hue produced
-    // by converting a color into a polar space is powerless when the color is achromatic,
-    // i.e. its colorfulness is within the "powerless hue ε" css-color-4 lists for that
-    // space. The ε is given in this file's units (chroma as written, saturation, white and
-    // black as fractions of 1).
+    // $eps is the space's "powerless hue ε" (https://www.w3.org/TR/css-color-4/#powerless).
     (@powerless none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
     (@powerless lch($eps:literal) $name:ident { $l:ident, $c:ident, $h:ident }) => {
         fn adjust_powerless_components(&mut self) {

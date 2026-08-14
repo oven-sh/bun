@@ -812,3 +812,47 @@ test("terminate() stops a worker blocked in Atomics.wait()", async () => {
   expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
   expect(exitCode).toBe(0);
 });
+
+// crypto.generatePrime()/generatePrimeSync()/checkPrime() with `safe: true` (or awkward add/rem
+// constraints) can grind for minutes. The worker's teardown waits for its pool job, and the sync
+// form cannot observe the termination at all, so terminate() used to hang for as long as BoringSSL
+// took. The generation's progress callback now gives up once the worker has been asked to stop.
+test(
+  "terminate() does not wait for a prime generation the worker no longer needs",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        async function run(body) {
+          const w = new Worker('require("node:worker_threads").parentPort.postMessage("go");' + body, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          await new Promise((r) => w.once("message", r));
+          await Bun.sleep(100);
+          return await w.terminate();
+        }
+        (async () => {
+          const t = performance.now();
+          const codes = await Promise.all([
+            run('for (;;) require("node:crypto").generatePrimeSync(2048, { safe: true });'),
+            run('require("node:crypto").generatePrime(2048, { safe: true }, () => {}); setInterval(() => {}, 1000);'),
+            run('require("node:crypto").checkPrime((1n << 4423n) - 1n, { checks: 200 }, () => {}); setInterval(() => {}, 1000);'),
+          ]);
+          console.log(codes.join(","), performance.now() - t < 20000 ? "promptly" : "after " + Math.round(performance.now() - t) + "ms");
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1,1,1 promptly\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

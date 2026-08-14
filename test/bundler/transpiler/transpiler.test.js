@@ -2043,6 +2043,66 @@ export default class {
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
     });
+
+    it("string replacement values survive other modules being loaded after the transpiler is created", async () => {
+      // String values are the only replacement values that are heap-allocated
+      // AST nodes. They used to be allocated in the thread-local AST store,
+      // which every synchronous parse on the main thread (a require() of a
+      // CommonJS file, an import of a JSON file, ...) resets, so a transform
+      // after such a parse printed the replacement from freed memory. Debug
+      // builds poison the store on reset, which makes the stale read a crash
+      // of the child process; release builds silently reuse the memory.
+      using dir = tempDir("transpiler-replace-string-values", {
+        "reset.cjs": `module.exports = {};`,
+        "reset.json": `{}`,
+        "entry.mjs": `
+          const transpiler = new Bun.Transpiler({
+            exports: {
+              replace: {
+                foo: "bar",
+                getStaticProps: ["__N_SSG", "ssg"],
+                default: "dflt",
+              },
+            },
+          });
+
+          require("./reset.cjs");
+          await import("./reset.json");
+
+          console.log(
+            JSON.stringify([
+              transpiler.transformSync("export const foo = 1;"),
+              transpiler.transformSync("export function getStaticProps() {}"),
+              transpiler.transformSync("export default 1;"),
+              await transpiler.transform("export const foo = 1;"),
+              await transpiler.transform("export function getStaticProps() {}"),
+              await transpiler.transform("export default 1;"),
+            ]),
+          );
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+      ]);
+      expect(exitCode).toBe(0);
+      // Only the failing case is slow: symbolizing the sanitizer report of the
+      // crashed child takes longer than the default timeout.
+    }, 60_000);
   });
 
   const bunTranspiler = new Bun.Transpiler({

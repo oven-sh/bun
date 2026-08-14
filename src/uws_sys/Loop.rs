@@ -82,10 +82,19 @@ const _: () = {
         offset_of!(PosixLoop, ready_polls)
             == (offset_of!(PosixLoop, pending_wakeups) + 4).next_multiple_of(16)
     );
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     assert!(
         size_of::<PosixLoop>()
             == (offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>())
                 .next_multiple_of(16)
+    );
+    // kqueue: `unsigned char ready_flags[1024]` follows `ready_polls`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    assert!(
+        offset_of!(PosixLoop, ready_flags)
+            == offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>()
+            && size_of::<PosixLoop>()
+                == (offset_of!(PosixLoop, ready_flags) + 1024).next_multiple_of(16)
     );
 };
 

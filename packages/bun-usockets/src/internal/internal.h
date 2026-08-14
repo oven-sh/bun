@@ -362,7 +362,8 @@ extern unsigned int Bun__runEpochCounter;
 /* Is `epoch` older than the domain run active on this loop's thread (if any)? */
 static inline int us_internal_epoch_is_foreign(struct us_loop_t *loop, unsigned int epoch) {
     unsigned int run_start = loop->data.run_start_epoch;
-    return UNLIKELY(run_start != 0) && epoch < run_start;
+    /* (This header is also compiled as C++, where the UNLIKELY macro's _Bool is not a type.) */
+    return __builtin_expect(run_start != 0, 0) && epoch < run_start;
 }
 
 void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch);

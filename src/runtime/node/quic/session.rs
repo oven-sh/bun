@@ -267,15 +267,20 @@ pub(super) struct DeferredAbort {
     marker: u64,
 }
 
+/// The `{type, code, reason}` of one CONNECTION_CLOSE, the peer's or this side's.
+#[derive(Clone)]
+pub(super) struct CloseInfo {
+    /// Frame type 0x1d (application error) rather than 0x1c (transport error), RFC 9000 §19.19.
+    pub(super) app: bool,
+    pub(super) code: u64,
+    pub(super) reason: Vec<u8>,
+}
+
 pub(super) enum SessionEvent {
     HandshakeDone {
         ok: bool,
     },
-    PeerClose {
-        app_error: bool,
-        code: u64,
-        reason: Vec<u8>,
-    },
+    PeerClose(CloseInfo),
     Closed,
     StreamReady {
         stream: *mut super::stream::QuicStream,
@@ -368,10 +373,10 @@ pub struct QuicSession {
     /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
     /// a flight with data written by the same dispatch (node's close lands an
     /// RTT after the data because its stream close is ack-gated).
-    pending_graceful: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    pending_graceful: JsCell<Option<CloseInfo>>,
     pub(super) verneg: Cell<Option<(u32, u32)>>,
-    peer_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    self_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    peer_close: JsCell<Option<CloseInfo>>,
+    self_close: JsCell<Option<CloseInfo>>,
     datagram_drop_newest: Cell<bool>,
     qlog_enabled: Cell<bool>,
     qlog_fin_sent: Cell<bool>,
@@ -389,7 +394,7 @@ pub struct QuicSession {
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
     close_when_bound: Cell<bool>,
-    deferred_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    deferred_close: JsCell<Option<CloseInfo>>,
     handshake_pending_ok: Cell<bool>,
     reject_unverified_peer: Cell<bool>,
     peer_cert_rejected: Cell<bool>,
@@ -524,8 +529,8 @@ impl QuicSession {
         if self.close_when_bound.get() {
             // Carry the user's {type, code, reason} through rather than
             // sending a bare close.
-            if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
-                self.apply_graceful_close(app, code, reason);
+            if let Some(close) = self.pending_graceful.with_mut(Option::take) {
+                self.apply_graceful_close(close);
             }
         }
     }
@@ -944,10 +949,8 @@ impl QuicSession {
                                         // A refusal means never accepted, so
                                         // `opened` must not settle; a clean
                                         // close reports the handshake first.
-                                        SessionEvent::PeerClose {
-                                            app_error, code, ..
-                                        } => {
-                                            return !*app_error && *code != 0;
+                                        SessionEvent::PeerClose(close) => {
+                                            return !close.app && close.code != 0;
                                         }
                                         SessionEvent::Closed => return true,
                                         _ => {}
@@ -961,12 +964,8 @@ impl QuicSession {
                         }
                     }
                 }
-                SessionEvent::PeerClose {
-                    app_error,
-                    code,
-                    reason,
-                } => {
-                    self.peer_close.set(Some((app_error, code, reason)));
+                SessionEvent::PeerClose(close) => {
+                    self.peer_close.set(Some(close));
                 }
                 SessionEvent::Closed => {
                     self.report_close(global);
@@ -1623,11 +1622,11 @@ impl QuicSession {
         // certificate_required transport error.
         if !cert_ok && !self.destroyed.get() && !self.conn.get().is_null() {
             self.self_close.with_mut(|s| {
-                *s = Some((
-                    false,
-                    CRYPTO_ERROR_CERTIFICATE_REQUIRED,
-                    b"peer did not provide a certificate".to_vec(),
-                ));
+                *s = Some(CloseInfo {
+                    app: false,
+                    code: CRYPTO_ERROR_CERTIFICATE_REQUIRED,
+                    reason: b"peer did not provide a certificate".to_vec(),
+                });
             });
             if let Some(c) = self.conn() {
                 c.abort_error(
@@ -1729,14 +1728,21 @@ impl QuicSession {
             );
             self.emit_qlog(global, &chunk, true);
         }
-        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken {
-            Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
+        let (error_type, code, reason): (CloseErrorType, u64, Option<Vec<u8>>) = match taken {
+            Some(CloseInfo { app, code, reason }) => {
+                let error_type = if app {
+                    CloseErrorType::Application
+                } else {
+                    CloseErrorType::Transport
+                };
+                (error_type, code, Some(reason))
+            }
             None if self.conn.get().is_null() => {
                 match self.final_conn_status.with_mut(Option::take) {
                     Some((status, msg)) => {
                         map_conn_status(status, msg, self.handshake_reported.get())
                     }
-                    None => (0, 0, None),
+                    None => (CloseErrorType::Transport, 0, None),
                 }
             }
             None => {
@@ -1780,7 +1786,7 @@ impl QuicSession {
                 global,
                 self.handle(),
                 &[
-                    JSValue::js_number(error_type as f64),
+                    JSValue::js_number(error_type as u8 as f64),
                     code_js,
                     reason_js,
                     JSValue::UNDEFINED,
@@ -1849,52 +1855,51 @@ impl QuicSession {
         &self,
         global: &JSGlobalObject,
         options: JSValue,
-    ) -> JsResult<(bool, u64, Vec<u8>)> {
-        let mut app = false;
-        let mut code = 0u64;
-        let mut reason = Vec::new();
-        if options.is_object() {
-            app = options
-                .get(global, "type")?
-                .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
-                })
-                .transpose()?
-                .unwrap_or(false);
-            code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
-            reason = options
-                .get(global, "reason")?
-                .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes()))
-                .transpose()?
-                .unwrap_or_default();
-            self.self_close.with_mut(|s| {
-                *s = Some((app, code, reason.clone()));
+    ) -> JsResult<CloseInfo> {
+        if !options.is_object() {
+            return Ok(CloseInfo {
+                app: false,
+                code: 0,
+                reason: Vec::new(),
             });
         }
-        reason.push(0);
-        Ok((app, code, reason))
+        let app = options
+            .get(global, "type")?
+            .map(|v| {
+                bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes() == b"application")
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
+        let reason = options
+            .get(global, "reason")?
+            .filter(|v| v.is_string())
+            .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes()))
+            .transpose()?
+            .unwrap_or_default();
+        let close = CloseInfo { app, code, reason };
+        self.self_close.with_mut(|s| {
+            *s = Some(close.clone());
+        });
+        Ok(close)
     }
 
-    fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
+    fn apply_graceful_close(&self, close: CloseInfo) {
         let is_http = self
             .endpoint_ref()
             .map(|ep| ep.is_http(self.is_server.get()))
             .unwrap_or(false);
-        if is_http && !app && code == 0 && !self.streams.get().is_empty() {
+        if is_http && !close.app && close.code == 0 && !self.streams.get().is_empty() {
             // RFC 9114 §5.2.
             if let Some(c) = self.conn() {
                 c.going_away();
             }
             self.close_after_streams.set(true);
-            self.deferred_close
-                .with_mut(|d| *d = Some((app, code, reason)));
+            self.deferred_close.with_mut(|d| *d = Some(close));
         } else if self.any_stream_undelivered() {
-            self.deferred_close
-                .with_mut(|d| *d = Some((app, code, reason)));
+            self.deferred_close.with_mut(|d| *d = Some(close));
         } else {
-            self.apply_close(app, code, &reason);
+            self.apply_close(close);
         }
     }
 
@@ -1907,17 +1912,23 @@ impl QuicSession {
         if self.conn.get().is_null() {
             return false;
         }
-        if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
-            self.apply_graceful_close(app, code, reason);
+        if let Some(close) = self.pending_graceful.with_mut(Option::take) {
+            self.apply_graceful_close(close);
             return true;
         }
         false
     }
 
-    fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
+    fn apply_close(&self, close: CloseInfo) {
         let Some(c) = self.conn() else { return };
-        if app || code != 0 || reason.len() > 1 {
-            let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
+        let CloseInfo {
+            app,
+            code,
+            mut reason,
+        } = close;
+        if app || code != 0 || !reason.is_empty() {
+            reason.push(0);
+            let creason = core::ffi::CStr::from_bytes_until_nul(&reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
         } else {
             c.close();
@@ -1925,8 +1936,8 @@ impl QuicSession {
     }
 
     fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
-        self.apply_close(app, code, &reason);
+        let close = self.parse_close_options(global, options)?;
+        self.apply_close(close);
         Ok(())
     }
 
@@ -1948,8 +1959,8 @@ impl QuicSession {
         if self.close_after_streams.get() && !self.streams.get().is_empty() {
             return;
         }
-        if let Some((app, code, reason)) = self.deferred_close.with_mut(Option::take) {
-            self.apply_close(app, code, &reason);
+        if let Some(close) = self.deferred_close.with_mut(Option::take) {
+            self.apply_close(close);
             self.schedule_process();
         }
     }
@@ -1963,13 +1974,11 @@ impl QuicSession {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
-            let (app, code, reason) =
-                self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
+            let close = self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
-                    self.pending_graceful
-                        .with_mut(|p| *p = Some((app, code, reason)));
+                    self.pending_graceful.with_mut(|p| *p = Some(close));
                     self.close_when_bound.set(true);
                 } else {
                     self.report_close(global);
@@ -1977,10 +1986,9 @@ impl QuicSession {
             } else {
                 let scope_held = self.endpoint_ref().is_some_and(|ep| ep.scope_held());
                 if scope_held {
-                    self.pending_graceful
-                        .with_mut(|p| *p = Some((app, code, reason)));
+                    self.pending_graceful.with_mut(|p| *p = Some(close));
                 } else {
-                    self.apply_graceful_close(app, code, reason);
+                    self.apply_graceful_close(close);
                 }
                 self.schedule_process();
             }
@@ -2437,27 +2445,34 @@ lsquic_callback! {
     }
 }
 
-/// Map an `lsquic_conn_status` to Node's `onSessionClose(type, code,
-/// reason)` shape (`type`: 0=transport, 1=application, 2=version-neg,
-/// 3=idle).
+/// `onSessionClose`'s `type` argument; quic.ts `kFinishClose` switches on these values.
+#[repr(u8)]
+enum CloseErrorType {
+    Transport = 0,
+    Application = 1,
+    VersionNegotiation = 2,
+    IdleClose = 3,
+}
+
+/// Map an `lsquic_conn_status` to Node's `onSessionClose(type, code, reason)` shape.
 fn map_conn_status(
     status: c_int,
     msg: Vec<u8>,
     handshake_reported: bool,
-) -> (i32, u64, Option<Vec<u8>>) {
+) -> (CloseErrorType, u64, Option<Vec<u8>>) {
     match status {
         // Node rejects `opened` with a transport error.
         lsquic::LSCONN_ST_TIMED_OUT if !handshake_reported => (
-            0,
+            CloseErrorType::Transport,
             CRYPTO_ERROR_HANDSHAKE_FAILURE,
             Some(b"handshake timed out".to_vec()),
         ),
-        lsquic::LSCONN_ST_TIMED_OUT => (3, 0, None),
-        lsquic::LSCONN_ST_VERNEG_FAILURE => (2, 0, None),
+        lsquic::LSCONN_ST_TIMED_OUT => (CloseErrorType::IdleClose, 0, None),
+        lsquic::LSCONN_ST_VERNEG_FAILURE => (CloseErrorType::VersionNegotiation, 0, None),
         lsquic::LSCONN_ST_RESET | lsquic::LSCONN_ST_HSK_FAILURE | lsquic::LSCONN_ST_ERROR => {
-            (0, 1, Some(msg))
+            (CloseErrorType::Transport, 1, Some(msg))
         }
-        _ => (0, 0, None),
+        _ => (CloseErrorType::Transport, 0, None),
     }
 }
 
@@ -2500,11 +2515,11 @@ lsquic_callback! {
                 core::slice::from_raw_parts(reason.cast::<u8>(), reason_len as usize).to_vec()
             }
         };
-        session.push_event(SessionEvent::PeerClose {
-            app_error: app_error == 1,
+        session.push_event(SessionEvent::PeerClose(CloseInfo {
+            app: app_error == 1,
             code,
             reason,
-        });
+        }));
     }
 }
 

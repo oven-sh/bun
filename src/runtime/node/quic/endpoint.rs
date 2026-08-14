@@ -20,7 +20,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use super::callbacks;
 use super::ffi::lsquic_callback;
 use super::now_ns;
-use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
+use super::session::{self, CloseInfo, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
 use super::stream;
 use super::tls::{TlsConfig, TlsContext};
 
@@ -664,11 +664,11 @@ lsquic_callback! {
                     // Not a failure: the client closed during the handshake
                     // (connect() then immediate close()). Report the peer's
                     // own code so `closed` settles the way node's does.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
+                    session.push_event(session::SessionEvent::PeerClose(CloseInfo {
+                        app: false,
                         code: error_code & !PEER_CLOSE_BIT,
                         reason: Vec::new(),
-                    });
+                    }));
                     session.push_event(session::SessionEvent::Closed);
                     session.schedule_process();
                     return;
@@ -677,11 +677,11 @@ lsquic_callback! {
                     // The peer went away without a frame (destroyed client,
                     // dropped packets): node's server surfaces the idle death
                     // of a handshaking session as a clean close, not an error.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
+                    session.push_event(session::SessionEvent::PeerClose(CloseInfo {
+                        app: false,
                         code: 0,
                         reason: Vec::new(),
-                    });
+                    }));
                     session.push_event(session::SessionEvent::Closed);
                     session.schedule_process();
                     return;
@@ -692,11 +692,11 @@ lsquic_callback! {
                 } else {
                     b"handshake failed"
                 };
-                session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
+                session.push_event(session::SessionEvent::PeerClose(CloseInfo {
+                    app: false,
                     code,
                     reason: reason.to_vec(),
-                });
+                }));
                 session.push_event(session::SessionEvent::Closed);
                 session.schedule_process();
             }
@@ -1751,11 +1751,11 @@ impl QuicEndpoint {
         let Some(session) = self.live_session(session) else {
             return false;
         };
-        session.push_event(session::SessionEvent::PeerClose {
-            app_error: false,
+        session.push_event(session::SessionEvent::PeerClose(CloseInfo {
+            app: false,
             code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
             reason: b"handshake failed".to_vec(),
-        });
+        }));
         session.push_event(session::SessionEvent::Closed);
         true
     }

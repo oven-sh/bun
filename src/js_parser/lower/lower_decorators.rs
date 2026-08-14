@@ -356,12 +356,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    /// Emit the `__privateAdd(this, storage[, init])` that installs a lowered
-    /// private. Static ones run from a static block. Instance method brands
-    /// (`init` is `None`) are collected in `method_brands`, which the caller
-    /// places ahead of every field, as InitializeInstanceElements does;
-    /// instance field brands carry their initializer and stay at their source
-    /// position in `fields`.
+    /// `__privateAdd(this, storage[, init])` for a lowered private. Instance
+    /// method brands (`init == None`) go to `method_brands`, which the caller
+    /// puts before every field per InitializeInstanceElements.
     fn emit_private_add(
         &mut self,
         is_static: bool,

@@ -116,12 +116,12 @@ macro_rules! match_socket {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
-                super::uws_handlers::fold(crate::dispatch::LiftJsResult::lift($body))
+                crate::dispatch::fold(crate::dispatch::LiftJsResult::lift($body))
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
-                super::uws_handlers::fold(crate::dispatch::LiftJsResult::lift($body))
+                crate::dispatch::fold(crate::dispatch::LiftJsResult::lift($body))
             }
             SocketType::None => {}
         }
@@ -194,14 +194,14 @@ impl WindowsNamedPipeContext {
         // Only the TLS wrapper parks sessions; the TCP arm can never get here.
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            super::uws_handlers::fold(TLSSocket::on_session(s, session));
+            crate::dispatch::fold(TLSSocket::on_session(s, session));
         }
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            super::uws_handlers::fold(TLSSocket::on_keylog(s, line));
+            crate::dispatch::fold(TLSSocket::on_keylog(s, line));
         }
     }
 

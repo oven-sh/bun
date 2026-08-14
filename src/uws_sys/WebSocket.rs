@@ -285,30 +285,6 @@ impl Default for WebSocketBehavior {
     }
 }
 
-/// A handler that entered JS returns the exception it left pending.
-pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
-
-unsafe extern "Rust" {
-    /// `bun_jsc`: report the exception a loop-level callback left pending as
-    /// uncaught (or stand down on the VM's termination), then run the
-    /// microtask checkpoint. Shared with `bun_io`.
-    fn __bun_fold_loop_js_error(err: bun_core::JsError);
-}
-
-/// The fold for the uWS WebSocket/upgrade trampolines below.
-#[inline(always)]
-fn fold(handled: JsResult<()>) {
-    #[cold]
-    #[inline(never)]
-    fn report(err: bun_core::JsError) {
-        // SAFETY: link-time resolved; defined `#[no_mangle]` in `bun_jsc`.
-        unsafe { __bun_fold_loop_js_error(err) }
-    }
-    if let Err(err) = handled {
-        report(err);
-    }
-}
-
 /// User-data type stored on a uWS WebSocket.
 ///
 /// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
@@ -322,9 +298,6 @@ fn fold(handled: JsResult<()>) {
 /// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
 /// the re-entrant write. Implementors materialise short-lived `&mut *this`
 /// reborrows only — none spanning a JS callback.
-///
-/// Every handler returns the exception it left pending and never reports it;
-/// [`Wrap`] — the one trampoline from uWS into these — folds it.
 pub trait WebSocketHandler: Sized + 'static {
     const HAS_ON_MESSAGE: bool = true;
     const HAS_ON_DRAIN: bool = true;
@@ -334,32 +307,22 @@ pub trait WebSocketHandler: Sized + 'static {
     /// # Safety
     /// `this` is the live `*mut Self` from the socket's user-data slot;
     /// JS-thread only.
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) -> JsResult<()>;
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_message(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        message: &[u8],
-        opcode: Opcode,
-    ) -> JsResult<()>;
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) -> JsResult<()>;
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) -> JsResult<()>;
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) -> JsResult<()>;
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_close(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        code: i32,
-        message: &[u8],
-    ) -> JsResult<()>;
+    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
 }
 
 /// Server type that handles the HTTP→WS upgrade.
@@ -379,7 +342,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
-    ) -> JsResult<()>;
+    );
 }
 
 /// `extern "C"` trampolines that downcast user-data and forward to `Type`'s
@@ -413,7 +376,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time.
-        fold(unsafe { T::on_open(this, ws) });
+        unsafe { T::on_open(this, ws) };
     }
 
     extern "C" fn on_message(
@@ -428,7 +391,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        fold(unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) });
+        unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
     extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
@@ -438,7 +401,7 @@ where
             return;
         }
         // SAFETY: see `on_open`.
-        fold(unsafe { T::on_drain(this, ws) });
+        unsafe { T::on_drain(this, ws) };
     }
 
     extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -448,7 +411,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        fold(unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) });
+        unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
     extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -458,7 +421,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        fold(unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) });
+        unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
     extern "C" fn on_close(
@@ -473,7 +436,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
-        fold(unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) });
+        unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
     extern "C" fn on_upgrade(
@@ -492,15 +455,15 @@ where
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a
         // typed reference here would be UB when `id` selects a different type.
-        fold(unsafe {
+        unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),
                 thunk::handle_mut(req),
                 thunk::handle_mut(context),
                 id,
-            )
-        });
+            );
+        }
     }
 
     pub fn apply(behavior: &WebSocketBehavior) -> WebSocketBehavior {

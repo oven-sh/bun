@@ -1542,10 +1542,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
         DevHandlerId::Request => {
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
-            if let Err(err) = on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp) {
-                let _ =
-                    bun_jsc::task::report_error_or_terminate(unsafe { &*dev }.vm().global(), err);
-            }
+            crate::dispatch::fold(on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp));
         }
     }
 }
@@ -1598,10 +1595,9 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
     // dispatch-frame borrow).
     #[inline]
-    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) -> HmrResult {
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
         // SAFETY: `this` is the live user-data pointer (per trait contract).
-        HmrSocket::on_open(unsafe { &mut *this }, ws);
-        Ok(())
+        HmrSocket::on_open(unsafe { &mut *this }, ws)
     }
     #[inline]
     unsafe fn on_message(
@@ -1609,35 +1605,19 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         ws: bun_uws_sys::AnyWebSocket,
         message: &[u8],
         opcode: bun_uws_sys::Opcode,
-    ) -> HmrResult {
+    ) {
         // SAFETY: see `on_open`.
-        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode);
-        Ok(())
+        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
     }
     #[inline]
-    unsafe fn on_close(
-        this: *mut Self,
-        ws: bun_uws_sys::AnyWebSocket,
-        code: i32,
-        message: &[u8],
-    ) -> HmrResult {
+    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: see `on_open`.
-        HmrSocket::on_close(this, ws, code, message);
-        Ok(())
+        HmrSocket::on_close(this, ws, code, message)
     }
-    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) -> HmrResult {
-        Ok(())
-    }
-    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _: &[u8]) -> HmrResult {
-        Ok(())
-    }
-    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _: &[u8]) -> HmrResult {
-        Ok(())
-    }
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
+    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
-/// The HMR socket speaks a binary protocol and never enters user JS.
-type HmrResult = bun_uws_sys::web_socket::JsResult<()>;
-
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
@@ -1645,7 +1625,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
-    ) -> HmrResult {
+    ) {
         debug_assert_eq!(id, 0);
         // Note: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
@@ -1661,12 +1641,12 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         if !is_allowed_dev_host(unsafe { &*this }, req) {
             // SAFETY: `res` is live for this callback (see Note above).
             host_forbidden(unsafe { &mut *res }.as_any_response());
-            return Ok(());
+            return;
         }
         if !is_allowed_dev_origin(req) {
             // SAFETY: `res` is live for this callback (see Note above).
             origin_forbidden(unsafe { &mut *res }.as_any_response());
-            return Ok(());
+            return;
         }
         // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
         let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
@@ -1683,7 +1663,6 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
                 Some(upgrade_ctx),
             )
         };
-        Ok(())
     }
 }
 
@@ -5193,15 +5172,10 @@ impl DevServer {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(jsc::JsError::Thrown) => {
-                // This is the dev server's entry from Bun.serve's static-route
-                // trampoline (`StaticRouteLike`, which otherwise never enters
-                // JS): what bundling left pending is folded at this boundary.
-                let _ = bun_jsc::task::report_error_or_terminate(
-                    self.vm().global(),
-                    jsc::JsError::Thrown,
-                );
-            }
+            // This is the dev server's entry from Bun.serve's static-route
+            // trampoline (`StaticRouteLike`, which otherwise never enters
+            // JS): what bundling left pending is folded at this boundary.
+            Err(jsc::JsError::Thrown) => crate::dispatch::fold(Err(jsc::JsError::Thrown)),
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())

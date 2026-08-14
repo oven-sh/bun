@@ -74,20 +74,13 @@ pub trait BufferedReaderParent {
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;
 
-    /// `Ok(false)` stops the reader from reading more; `Err` is the exception
-    /// the callback left pending (also stops it) — the reader's trampoline
-    /// folds it, the parent never reports.
-    unsafe fn on_read_chunk(
-        this: *mut Self,
-        chunk: &[u8],
-        has_more: ReadState,
-    ) -> crate::JsResult<bool> {
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = (this, chunk, has_more);
         // Default: should not be called when HAS_ON_READ_CHUNK == false.
-        Ok(true)
+        true
     }
-    unsafe fn on_reader_done(this: *mut Self) -> crate::JsResult<()>;
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) -> crate::JsResult<()>;
+    unsafe fn on_reader_done(this: *mut Self);
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
     unsafe fn ref_(this: *mut Self) {
@@ -128,29 +121,16 @@ impl BufferedReaderVTable {
     /// When the reader has read a chunk of data
     /// and hasMore is true, it means that there might be more data to read.
     /// Returning false prevents the reader from reading more data.
-    ///
-    /// These three are the reader's trampoline into its parent, and the one
-    /// place a parent callback's exception is folded.
     fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
-        match self.link().on_read_chunk(chunk, has_more) {
-            Ok(keep_going) => keep_going,
-            Err(err) => {
-                crate::fold_loop_js_error(err);
-                false
-            }
-        }
+        self.link().on_read_chunk(chunk, has_more)
     }
 
     fn on_reader_done(&self) {
-        if let Err(err) = self.link().on_reader_done() {
-            crate::fold_loop_js_error(err);
-        }
+        self.link().on_reader_done()
     }
 
     fn on_reader_error(&self, err: sys::Error) {
-        if let Err(err) = self.link().on_reader_error(err) {
-            crate::fold_loop_js_error(err);
-        }
+        self.link().on_reader_error(err)
     }
 
     #[must_use]

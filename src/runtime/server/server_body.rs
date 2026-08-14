@@ -1333,16 +1333,13 @@ where
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
-    ) -> uws_sys::web_socket::JsResult<()> {
-        // A throwing `fetch`/route handler is the request's error response
-        // (`RequestContext::on_response`), so nothing is left pending here.
+    ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
         unsafe {
             Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
         };
-        Ok(())
     }
 }
 
@@ -3858,7 +3855,7 @@ fn server_set_on_client_error(
                             &[]
                         };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        crate::socket::uws_handlers::fold(this.on_client_error_callback(
+                        crate::dispatch::fold(this.on_client_error_callback(
                             bun_opaque::opaque_deref_mut(socket),
                             error_code,
                             packet,
@@ -3928,9 +3925,7 @@ fn server_set_on_connection(
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::socket::uws_handlers::fold(
-                            this.on_connection_callback(socket.cast::<c_void>()),
-                        );
+                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());

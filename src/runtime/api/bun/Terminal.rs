@@ -1925,12 +1925,12 @@ impl Terminal {
 
     // Called when data is available from the reader
     // Returns true to continue reading, false to pause
-    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> JsResult<bool> {
+    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
         if self.flags.get().contains(Flags::FINALIZED) {
-            return Ok(true);
+            return true;
         }
 
         // First data received - upgrade to strong ref (connected)
@@ -1941,10 +1941,10 @@ impl Terminal {
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
-            return Ok(true);
+            return true;
         };
         let Some(callback) = js::gc::get(js::GcValue::Data, this_jsvalue) else {
-            return Ok(true);
+            return true;
         };
 
         let global_this = self.global();
@@ -1957,15 +1957,24 @@ impl Terminal {
                 "onReadChunk: dupe failed (OOM), dropping {} bytes",
                 chunk.len()
             );
-            return Ok(true);
+            return true;
         }
         v.extend_from_slice(chunk);
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
-        // OOM / a termination request: the reader's trampoline folds it.
-        let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this)?;
+        // This is the pipe reader's landing frame: a buffer that cannot be
+        // built (allocation failure, a terminating VM) is folded here and
+        // reading goes on.
+        let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
+            .to_node_buffer(global_this)
+        {
+            Ok(data) => data,
+            Err(err) => {
+                crate::dispatch::fold(Err(err));
+                return true;
+            }
+        };
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
@@ -1976,7 +1985,7 @@ impl Terminal {
             &[this_jsvalue, data],
         );
 
-        Ok(true) // Continue reading
+        true // Continue reading
     }
 
     fn loop_(&self) -> *mut AsyncLoop {
@@ -2036,20 +2045,14 @@ impl BufferedReaderParent for Terminal {
         bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
-    unsafe fn on_read_chunk(
-        this: *mut Self,
-        chunk: &[u8],
-        has_more: ReadState,
-    ) -> bun_io::JsResult<bool> {
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
     }
-    unsafe fn on_reader_done(this: *mut Self) -> bun_io::JsResult<()> {
+    unsafe fn on_reader_done(this: *mut Self) {
         Self::from_parent_ptr(this).on_reader_done();
-        Ok(())
     }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) -> bun_io::JsResult<()> {
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_reader_error(&err);
-        Ok(())
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:

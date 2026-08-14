@@ -1380,6 +1380,24 @@ pub(crate) unsafe fn __bun_fire_timer(
     fired
 }
 
+/// The fold for a foreign dispatcher's landing frame — a uSockets / uWS /
+/// lsquic / pipe-reader callback that returns `void`, so what its JS left
+/// pending has nowhere to go but here: reported as uncaught (or, for the VM's
+/// termination, left for the loop to stand down on), on the JS thread this
+/// dispatch runs on, rather than left pending for whatever enters JS next.
+#[inline]
+pub(crate) fn fold(result: JsResult<()>) {
+    #[cold]
+    #[inline(never)]
+    fn report(err: bun_jsc::JsError) {
+        let global = VirtualMachine::get().global();
+        let _ = report_error_or_terminate(global, err);
+    }
+    if let Err(err) = result {
+        report(err);
+    }
+}
+
 /// Lifts what a dispatcher's callee returns into the `JsResult<()>` its fold
 /// reads: `()` for owners that never enter JS, identity otherwise. Shared by
 /// the timer switch here and the socket trampolines (`uws_handlers`).

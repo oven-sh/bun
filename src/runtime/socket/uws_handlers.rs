@@ -30,23 +30,7 @@ use bun_sql_jsc::postgres;
 // A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
 // `JsResult<()>` (valkey, Bun.connect/listen sockets); `LiftJsResult` makes both the `JsResult<()>`
 // the dispatcher folds at the entry.
-use crate::dispatch::LiftJsResult;
-
-/// The fold at a socket callback that entered JS (WebCore's "returned exception is termination or we
-/// are terminating => stand down, else report"): a uSockets callback returns `void`, so a pending
-/// exception has nowhere to propagate -- it is reported as uncaught here, on the JS thread this
-/// dispatch runs on, rather than left pending for whatever enters JS next; a stop just returns.
-#[inline]
-pub(crate) fn fold(result: bun_jsc::JsResult<()>) {
-    #[cold]
-    fn report(err: bun_jsc::JsError) {
-        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-        let _ = bun_jsc::task::report_error_or_terminate(global, err);
-    }
-    if let Err(err) = result {
-        report(err);
-    }
-}
+use crate::dispatch::{LiftJsResult, fold};
 
 #[inline(always)]
 fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {

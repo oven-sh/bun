@@ -56,16 +56,6 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
     Ok(())
 }
 
-/// `__bun_fold_loop_js_error` — the fold for the trampolines that sit below
-/// this tier (`bun_io`'s pipe reader/writer, `bun_uws_sys`'s WebSocket
-/// `Wrap`). `Stopped` has no one to return to there; the tick reads the gate
-/// after the I/O phase.
-#[unsafe(no_mangle)]
-fn __bun_fold_loop_js_error(err: bun_core::JsError) {
-    let global = crate::virtual_machine::VirtualMachine::get().global();
-    let _ = report_error_or_terminate(global, err);
-}
-
 // The full ~96-arm `match` (previously in this file) has been hoisted to
 // `bun_runtime::dispatch::run_tasks` per §Dispatch hot-path — every arm names
 // a `bun_runtime`/`bun_shell`/`bun_s3` type and so cannot compile at this tier.

@@ -604,14 +604,6 @@ mod windows_impl {
         }
     }
 
-    /// A libuv completion callback returns void: an exception left pending by delivering the write's
-    /// result is reported as uncaught here (a termination just stands the loop down).
-    #[cold]
-    fn report(err: jsc::JsError) {
-        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-        let _ = bun_jsc::task::report_error_or_terminate(global, err);
-    }
-
     impl WriteFileWindows {
         pub(crate) fn create_with_ctx(
             file_blob: Blob,
@@ -880,7 +872,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -893,7 +885,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -942,7 +934,7 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -951,7 +943,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -1017,7 +1009,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -1028,7 +1020,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Js(err) => report(err),
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }

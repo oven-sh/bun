@@ -158,7 +158,7 @@ extern "C" fn select_alpn_callback(
             if let Some(err_value) = result.to_error() {
                 // BoringSSL's ALPN callback is these sockets' trampoline for this
                 // event: fold what the `error` handler left pending here.
-                super::uws_handlers::fold(
+                crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),
                 );
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
@@ -2083,7 +2083,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
             // this socket's own close proceeds regardless.
-            super::uws_handlers::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
+            crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
         }
         let cleanup = CloseTeardown {
             socket: this,
@@ -4319,7 +4319,7 @@ impl DuplexUpgradeContext {
             (*this).is_open = true;
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_open(tls, socket));
+                crate::dispatch::fold(TLSSocket::on_open(tls, socket));
             }
         }
     }
@@ -4330,7 +4330,7 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_data(tls, socket, decoded_data));
+                crate::dispatch::fold(TLSSocket::on_data(tls, socket, decoded_data));
             }
         }
     }
@@ -4339,7 +4339,7 @@ impl DuplexUpgradeContext {
         // SAFETY: fn contract — `this` is the live ctx; all accesses are
         // scoped raw place reads/writes to disjoint fields.
         if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
-            super::uws_handlers::fold(TLSSocket::on_session(tls, session));
+            crate::dispatch::fold(TLSSocket::on_session(tls, session));
         }
     }
 
@@ -4347,7 +4347,7 @@ impl DuplexUpgradeContext {
         // SAFETY: fn contract — `this` is the live ctx; all accesses are
         // scoped raw place reads/writes to disjoint fields.
         if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
-            super::uws_handlers::fold(TLSSocket::on_keylog(tls, line));
+            crate::dispatch::fold(TLSSocket::on_keylog(tls, line));
         }
     }
 
@@ -4357,7 +4357,7 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_handshake(
+                crate::dispatch::fold(TLSSocket::on_handshake(
                     tls,
                     socket,
                     success as i32,
@@ -4373,7 +4373,7 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_end(tls, socket));
+                crate::dispatch::fold(TLSSocket::on_end(tls, socket));
             }
         }
     }
@@ -4384,7 +4384,7 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_writable(tls, socket));
+                crate::dispatch::fold(TLSSocket::on_writable(tls, socket));
             }
         }
     }
@@ -4395,7 +4395,7 @@ impl DuplexUpgradeContext {
             // SAFETY: fn contract; `handle_error(&self)` takes `this_ptr` copied
             // out, so no borrow of `*this` spans the JS call.
             if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
-                super::uws_handlers::fold(tls.handle_error(err_value));
+                crate::dispatch::fold(tls.handle_error(err_value));
             }
         } else {
             // SAFETY: fn contract; take the tls out (disjoint field).
@@ -4424,7 +4424,7 @@ impl DuplexUpgradeContext {
                 // `upgrade` field, borrow ends at `;`.
                 unsafe { (*this).upgrade.teardown() };
                 let p = tls.into_this_ptr();
-                super::uws_handlers::fold(TLSSocket::handle_connect_error(
+                crate::dispatch::fold(TLSSocket::handle_connect_error(
                     p,
                     sys::SystemErrno::ECONNREFUSED as c_int,
                     0,
@@ -4439,7 +4439,7 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_timeout(tls, socket));
+                crate::dispatch::fold(TLSSocket::on_timeout(tls, socket));
             }
         }
     }
@@ -4459,7 +4459,7 @@ impl DuplexUpgradeContext {
             // in `on_error` instead of reading the Handlers that `TLSSocket::on_close`
             // → `mark_inactive` just released.
             let p = tls.into_this_ptr();
-            super::uws_handlers::fold(TLSSocket::on_close(p, socket, 0, None));
+            crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, None));
         }
 
         // SAFETY: fn contract; may enqueue this ctx for deinit.
@@ -4535,7 +4535,7 @@ impl DuplexUpgradeContext {
                         // SAFETY: `this` is live; `&mut` ends before `deinit`.
                         unsafe { (*this).upgrade.teardown() };
                         let p = tls.into_this_ptr();
-                        super::uws_handlers::fold(TLSSocket::handle_connect_error(p, errno, 0));
+                        crate::dispatch::fold(TLSSocket::handle_connect_error(p, errno, 0));
                     }
                     // `start_tls`/`start_tls_with_ctx` failed before the
                     // SSLWrapper was assigned, so its close callback

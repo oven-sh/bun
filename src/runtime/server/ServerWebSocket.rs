@@ -1575,54 +1575,37 @@ impl WebSocketHandler for ServerWebSocket {
     // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
     // provenance); the single `&*this` reborrow here is the ONE audited unsafe
     // boundary. Inherent `on_*` take `&self`, so the re-entrant JS dispatch
-    // never stacks a `noalias` `&mut ServerWebSocket`.
+    // never stacks a `noalias` `&mut ServerWebSocket`. These are the uWS
+    // callbacks' landing frames: what a handler left pending is folded here.
     #[inline(always)]
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        unsafe { &*this }.on_open(ws)
+        crate::dispatch::fold(unsafe { &*this }.on_open(ws));
     }
     #[inline(always)]
-    unsafe fn on_message(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        message: &[u8],
-        opcode: Opcode,
-    ) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_message(ws, message, opcode)
+        crate::dispatch::fold(unsafe { &*this }.on_message(ws, message, opcode));
     }
     #[inline(always)]
-    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_drain(ws)
+        crate::dispatch::fold(unsafe { &*this }.on_drain(ws));
     }
     #[inline(always)]
-    unsafe fn on_ping(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        message: &[u8],
-    ) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_ping(ws, message)
+        crate::dispatch::fold(unsafe { &*this }.on_ping(ws, message));
     }
     #[inline(always)]
-    unsafe fn on_pong(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        message: &[u8],
-    ) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_pong(ws, message)
+        crate::dispatch::fold(unsafe { &*this }.on_pong(ws, message));
     }
     #[inline(always)]
-    unsafe fn on_close(
-        this: *mut Self,
-        ws: AnyWebSocket,
-        code: i32,
-        message: &[u8],
-    ) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_close(ws, code, message)
+        crate::dispatch::fold(unsafe { &*this }.on_close(ws, code, message));
     }
 }
 

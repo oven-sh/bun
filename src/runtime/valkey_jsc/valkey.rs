@@ -644,7 +644,7 @@ impl ValkeyClient {
             self.status = Status::Disconnected;
             // A half-open socket never gets uSockets' close dispatch, so this is
             // its trampoline for the event: fold what `onclose` left pending here.
-            crate::socket::uws_handlers::fold(self.on_close());
+            crate::dispatch::fold(self.on_close());
         }
     }
 

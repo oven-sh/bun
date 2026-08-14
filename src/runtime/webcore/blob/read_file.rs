@@ -1087,10 +1087,7 @@ impl<'a> ReadFileUV<'a> {
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /
         // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).
-        if let Err(err) = completion.complete(result) {
-            let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-            let _ = bun_jsc::task::report_error_or_terminate(global, err);
-        }
+        crate::dispatch::fold(completion.complete(result));
 
         // store.deref runs via StoreRef's Drop when the Box drops.
         this_box.req.deinit();

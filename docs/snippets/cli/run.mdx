@@ -29,7 +29,7 @@ bun run <file or script>
 ### Workspace Management
 
 <ParamField path="--elide-lines" type="number" default="10">
-  Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines
+  Number of lines of script output shown when using `--filter` (default: 10). Set to 0 to show all lines
 </ParamField>
 
 <ParamField path="--filter" type="string">
@@ -49,7 +49,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-exit-on-error" type="boolean">
-  When using <code>--parallel</code> or <code>--sequential</code>, continue running other scripts when one fails
+  When using `--parallel` or `--sequential`, continue running other scripts when one fails
 </ParamField>
 
 ### Runtime &amp; Process Control
@@ -63,10 +63,9 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--interactive" type="boolean">
-  Open the Node.js-compatible REPL (<code>node:repl</code>). When combined with <code>-e</code>, starts the REPL and
-  then evaluates the script. Under <code>--interactive</code>, <code>-e</code> is raw JavaScript (matching{" "}
-  <code>node -i -e</code>); use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
-  Bun's native REPL.
+  Open the Node.js-compatible REPL (`node:repl`). When combined with `-e`, starts the REPL and then evaluates the
+  script. Under `--interactive`, `-e` is raw JavaScript (matching `node -i -e`); use `bun repl` for TypeScript. Distinct
+  from `bun repl`, which is Bun's native REPL.
 </ParamField>
 
 <ParamField path="--smol" type="boolean">
@@ -113,7 +112,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--watch-kill-signal" type="string" default="SIGTERM">
-  Signal whose handlers run when --watch restarts the process
+  Signal whose handlers run when `--watch` restarts the process
 </ParamField>
 
 <ParamField path="--hot" type="boolean">
@@ -121,7 +120,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-clear-screen" type="boolean">
-  Disable clearing the terminal screen on reload when --hot or --watch is enabled
+  Disable clearing the terminal screen on reload when `--hot` or `--watch` is enabled
 </ParamField>
 
 ### Debugging
@@ -145,11 +144,11 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--require" type="string">
-  Alias of --preload, for Node.js compatibility
+  Alias of `--preload`, for Node.js compatibility
 </ParamField>
 
 <ParamField path="--import" type="string">
-  Alias of --preload, for Node.js compatibility
+  Alias of `--preload`, for Node.js compatibility
 </ParamField>
 
 <ParamField path="--no-install" type="boolean">
@@ -162,7 +161,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="-i" type="boolean">
-  Auto-install dependencies during execution. Equivalent to --install=fallback
+  Auto-install dependencies during execution. Equivalent to `--install=fallback`
 </ParamField>
 
 <ParamField path="--prefer-offline" type="boolean">
@@ -178,7 +177,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--main-fields" type="string">
-  Main fields to lookup in <code>package.json</code>. Defaults to --target dependent
+  Main fields to lookup in `package.json`. Defaults to `--target` dependent
 </ParamField>
 
 <ParamField path="--preserve-symlinks" type="boolean">
@@ -200,18 +199,17 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--define" type="string">
-  Substitute K:V while parsing, e.g. <code>--define process.env.NODE_ENV:"development"</code>. Values are parsed as
-  JSON. Alias: <code>-d</code>
+  Substitute K:V while parsing, e.g. `--define process.env.NODE_ENV:"development"`. Values are parsed as JSON. Alias:
+  `-d`
 </ParamField>
 
 <ParamField path="--drop" type="string">
-  Remove function calls, e.g. <code>--drop=console</code> removes all <code>console.*</code> calls
+  Remove function calls, e.g. `--drop=console` removes all `console.*` calls
 </ParamField>
 
 <ParamField path="--loader" type="string">
-  Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. Valid loaders: <code>js</code>,{" "}
-  <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>json</code>, <code>toml</code>, <code>text</code>,{" "}
-  <code>file</code>, <code>wasm</code>, <code>napi</code>. Alias: <code>-l</code>
+  Parse files with `.ext:loader`, e.g. `--loader .js:jsx`. Valid loaders: `js`, `jsx`, `ts`, `tsx`, `json`, `toml`,
+  `text`, `file`, `wasm`, `napi`. Alias: `-l`
 </ParamField>
 
 <ParamField path="--no-macros" type="boolean">
@@ -239,7 +237,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--ignore-dce-annotations" type="boolean">
-  Ignore tree-shaking annotations such as <code>@__PURE__</code>
+  Ignore tree-shaking annotations such as `@__PURE__`
 </ParamField>
 
 ### Networking &amp; Security

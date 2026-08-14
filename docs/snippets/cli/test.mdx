@@ -15,7 +15,7 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--retry" type="number">
-  Retry failed tests up to <code>NUMBER</code> times. Overridden by per-test <code>{`{ retry: N }`}</code>
+  Retry failed tests up to `NUMBER` times. Overridden by per-test `{ retry: N }`
 </ParamField>
 
 <ParamField path="--concurrent" type="boolean">
@@ -51,16 +51,15 @@ bun test <patterns>
 ### Reporting
 
 <ParamField path="--reporter" type="string">
-  Test output reporter format. Available: <code>junit</code> (requires --reporter-outfile), <code>dots</code>. Default:
-  console output.
+  Test output reporter format. Available: `junit` (requires `--reporter-outfile`), `dots`. Default: console output.
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter)
+  Output file path for the reporter format (required with `--reporter`)
 </ParamField>
 
 <ParamField path="--dots" type="boolean">
-  Enable dots reporter. Shorthand for --reporter=dots
+  Enable dots reporter. Shorthand for `--reporter=dots`
 </ParamField>
 
 ### Coverage

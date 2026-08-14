@@ -842,13 +842,9 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
 
-        // Propagate to the dispatcher rather than swallowing: a termination
-        // exception is not cleared by `report_active_exception_as_unhandled`,
-        // so swallowing it here leaves the VM with an exception pending and
-        // the next queued task re-enters JS under a
-        // `scope.assertNoException()` RELEASE_ASSERT.
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_core::JsError>::into)?;
+        // Propagated to the task fold: reporting here would leave a
+        // termination pending for the next queued task's JS entry.
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -873,8 +869,7 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_core::JsError>::into)?;
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -896,7 +891,7 @@ impl StatWatcher {
         // Swallowing the error here leaves a termination exception on the VM
         // and the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        result.map(drop).map_err(Into::into)
+        result.map(drop)
     }
 
     /// Pool thread (the scheduler's pass).
@@ -962,8 +957,7 @@ impl StatWatcher {
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
-            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-                .map_err(Into::<bun_core::JsError>::into)?;
+            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
@@ -979,7 +973,6 @@ impl StatWatcher {
                 &[current_jsvalue, prev_jsvalue],
             )
             .map(drop)
-            .map_err(Into::into)
     }
 
     fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {

@@ -192,7 +192,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* arg0, JSC::JSGlobalObje
 CPP_DECL bool JSC__JSMap__has(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL bool JSC__JSMap__remove(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSMap__set(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);
-CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1);
+CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0);
 
 #pragma mark - JSC::JSValue
 
@@ -310,7 +310,6 @@ CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
-CPP_DECL void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);

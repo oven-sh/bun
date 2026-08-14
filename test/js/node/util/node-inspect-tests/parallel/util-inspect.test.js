@@ -3187,9 +3187,7 @@ test("no assertion failures 3", () => {
 });
 
 // Utility functions
-function runCallChecks(exitCode) {
-  if (exitCode !== 0) return;
-
+afterAll(function runCallChecks() {
   const failed = mustCallChecks.filter(function (context) {
     if ("minimum" in context) {
       context.messageSegment = `at least ${context.minimum}`;
@@ -3199,21 +3197,17 @@ function runCallChecks(exitCode) {
     return context.actual !== context.exact;
   });
 
-  failed.forEach(function (context) {
-    console.log(
-      "Mismatched %s function calls. Expected %s, actual %d.",
-      context.name,
-      context.messageSegment,
-      context.actual,
-    );
-    console.log(context.stack.split("\n").slice(2).join("\n"));
-  });
-
-  if (failed.length) process.exit(1);
-}
+  assert.deepStrictEqual(
+    failed.map(
+      context =>
+        `Mismatched ${context.name} function calls. Expected ${context.messageSegment}, actual ${context.actual}.\n` +
+        context.stack.split("\n").slice(2).join("\n"),
+    ),
+    [],
+  );
+});
 
 function mustCall(fn, criteria = 1) {
-  if (process._exiting) throw new Error("Cannot use mustCall() in process exit handler");
   if (typeof fn === "number") {
     criteria = fn;
     fn = noop;
@@ -3229,8 +3223,6 @@ function mustCall(fn, criteria = 1) {
     name: fn.name || "<anonymous>",
   };
 
-  // Add the exit listener only once to avoid listener leak warnings
-  if (mustCallChecks.length === 0) process.on("exit", runCallChecks);
   mustCallChecks.push(context);
 
   const _return = function () {

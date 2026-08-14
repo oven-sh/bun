@@ -1329,30 +1329,25 @@ impl Run<'_> {
             // Go through the global object's getter because `Bun.redis` is a
             // PropertyCallback (no direct WriteBarrier handle to read).
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(redis) = bun_object.get(global, "redis")? else {
+                    return Ok(());
+                };
+                let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                else {
+                    return Ok(());
+                };
+                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // wrapper; accessed here under the API lock.
+                unsafe { &*client }.do_connect(global, redis)?;
+                Ok(())
             };
-            let redis = match bun_object.get(global, "redis") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
-            };
-            let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>() else {
-                break 'do_redis_preconnect;
-            };
-            // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
-            // wrapper; accessed here under the API lock.
-            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            // The process entry is the outermost frame: a preconnect that threw
+            // is reported here, before the entry point loads.
+            crate::dispatch::fold(preconnect());
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1361,33 +1356,20 @@ impl Run<'_> {
                 break 'do_postgres_preconnect;
             }
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(sql_object) = bun_object.get(global, "sql")? else {
+                    return Ok(());
+                };
+                let Some(connect_fn) = sql_object.get(global, "connect")? else {
+                    return Ok(());
+                };
+                connect_fn.call(global, sql_object, &[])?;
+                Ok(())
             };
-            let sql_object = match bun_object.get(global, "sql") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            let connect_fn = match sql_object.get(global, "connect") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            if let Err(e) = connect_fn.call(global, sql_object, &[]) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            crate::dispatch::fold(preconnect());
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
@@ -2644,18 +2626,6 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // `bun feedback`.
-        // SAFETY: `cli::CMD` is written once during single-threaded CLI
-        // startup before any worker thread is spawned; read-only here.
-        let current_cmd = unsafe { cli::CMD.read() };
-        if ctx.filters.is_empty()
-            && !ctx.workspaces
-            && current_cmd == Some(CommandTag::AutoCommand)
-            && target_name == b"feedback"
-        {
-            Self::bun_feedback(ctx)?;
-        }
-
         if log_errors {
             if let Some((path, loader)) = resolved_to_unrunnable_file {
                 bun_core::pretty_error!(
@@ -3116,33 +3086,6 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
-    fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
-        // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd_or_exe_dir(unsafe {
-            &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
-        });
-        let cwd_len = cwd.as_bytes().len();
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-
-        ctx.runtime_options.eval.script =
-            bun_core::runtime_embed_file!(Codegen, "eval/feedback.ts")
-                .as_bytes()
-                .to_vec()
-                .into_boxed_slice();
-
-        Self::boot(
-            ctx,
-            entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice(),
-            None,
-        )?;
-        Global::exit(0);
-    }
-
     fn unlink_staged_path(path: &[u8]) {
         let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
         if path.len() >= zbuf.len() {

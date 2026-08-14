@@ -551,6 +551,8 @@ pub fn is_smol_mode() -> bool {
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
+    /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
+    pub skip_exit_listeners: bool,
 }
 
 impl ExitHandler {
@@ -599,7 +601,7 @@ impl ExitHandler {
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
         // `process.on('exit')` handlers are user script (see `on_exit`).
-        if vm.script_allowed() {
+        if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
             Process__dispatchOnExit(vm.global(), exit_code);
         }
         if vm.worker.is_none() {
@@ -1683,6 +1685,13 @@ impl VirtualMachine {
             };
             for hook in hooks {
                 (hook.func)(hook.ctx);
+                // A hook's C signature returns nothing, so one that entered JS
+                // (an addon finalizer) leaves what it threw pending: fold it here,
+                // this loop being its dispatcher.
+                let global = self.global();
+                if global.has_exception() {
+                    let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
+                }
             }
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
@@ -2609,7 +2618,7 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
     }
 

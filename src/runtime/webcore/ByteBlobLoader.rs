@@ -49,7 +49,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         Self::on_pull(self, buf, view)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
@@ -223,7 +223,7 @@ impl ByteBlobLoader {
         if let Some(mut blob) = self.to_any_blob(global) {
             let result = blob.to_promise(global, action);
             blob.detach();
-            return Ok(result?);
+            return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()

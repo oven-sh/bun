@@ -393,9 +393,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
-// Node's `typeof x !== "object" || x === null`: primitives, null, and callables. Such a value
-// never matches structurally; in compareBranch full strict deep equality decides it, and as a
-// Set member or Map key only an identical counterpart can satisfy it.
+// Node's `typeof x !== "object" || x === null`: such a value matches only an identical counterpart.
 static bool isSpecialValue(JSValue value)
 {
     return !value.isObject() || value.isCallable();
@@ -404,8 +402,7 @@ static bool isSpecialValue(JSValue value)
 enum class Pairing { Open,
     Complete };
 
-// The expected Set members / Map entries a hash lookup could not settle (copies; the caller
-// rooted them in gcBuffer), claimed one by one while actual is walked once.
+// Expected entries no lookup could settle; copies, kept alive by the caller's gcBuffer appends.
 template<typename Entry>
 struct PendingExpected {
     using Queue = WTF::Vector<Entry, 8>;
@@ -413,8 +410,7 @@ struct PendingExpected {
     Queue entries;
     size_t first { 0 };
     size_t last;
-    // Front guesses keep hitting while actual arrives in expected's order, back guesses while
-    // it arrives reversed; only when both miss is the rest of the window scanned.
+    // Node's guess: keep probing the end that hit last, so same-order and reversed inputs stay linear.
     bool probeFront { true };
 
     explicit PendingExpected(Queue&& queued)
@@ -426,11 +422,7 @@ struct PendingExpected {
 
     size_t openCount() const { return last - first + 1; }
 
-    // One actual entry against the open window, in node's order (partialObjectSetEquiv /
-    // partialObjectMapEquiv, down to which entry is claimed when several would do): the front
-    // guess, the back guess, then the rest back to front. A claimed entry is swap-removed so it
-    // is never compared again; Complete means nothing is left to claim. `matches` may throw;
-    // callers RETURN_IF_EXCEPTION after this returns.
+    // Node's partialObject{Set,Map}Equiv probe order: front guess, back guess, then the rest back to front.
     template<typename Matches>
     Pairing claimWith(JSC::ThrowScope& scope, const Matches& matches)
     {
@@ -475,11 +467,7 @@ struct PendingMapEntry {
     JSValue value;
 };
 
-// Expected's entries as a subset of actual's (node's mapEquiv + partialObjectMapEquiv). A
-// special (non-object or callable) key is settled by one lookup: actual must hold that key and
-// the values must match, since no other entry can stand in for it. Object keys, identical ones
-// included, are queued and matched structurally, key and value together, while actual's
-// object-keyed entries are walked once; its other entries are passed over, as in node.
+// Node's mapEquiv: special keys are settled by lookup; object keys, identical ones included, are paired off.
 static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -543,12 +531,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return false;
 }
 
-// Expected's members as a subset of actual's (node's setEquiv + partialObjectSetEquiv). A
-// member actual holds by identity is settled by one lookup, and a special (non-object or
-// callable) member it does not hold can match nothing else. The remaining objects are matched
-// with subset semantics (Set([{a:1,b:2}]) partially contains Set([{a:1}])) while actual is
-// walked once; the actual members expected also holds were settled by the lookup and stay
-// reserved for their twin.
+// Node's setEquiv: members actual holds are settled by lookup; the other objects are paired off partially.
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -585,9 +568,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         RETURN_IF_EXCEPTION(scope, false);
         if (!reserved) {
             if (isSpecialValue(actualMember)) {
-                // Node probes such a stray member too (unlike a stray Map key, which it passes
-                // over): every probe misses, and all a full miss leaves behind is the direction
-                // reset, which the pairing of the members after it depends on.
+                // Node probes a stray member too (unlike a stray Map key); all its misses leave behind is this.
                 pending.probeFront = true;
             } else {
                 Pairing pairing = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {

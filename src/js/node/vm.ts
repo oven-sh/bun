@@ -89,11 +89,15 @@ function createContext(contextObject?, options?) {
   return context;
 }
 
+// runInContext/runInNewContext compile the script inside the context it will
+// run in, like Node (lib/vm.js sets options[kParsingContext] on a copy of the
+// options), so a compile error is that context's SyntaxError. The marker is a
+// private name: user options cannot set it, and a plain `new Script` still
+// compiles in the main realm.
 function runInContext(code, context, options) {
   validateContext(context);
-  if (typeof options === "string") {
-    options = { filename: options };
-  }
+  options = typeof options === "string" ? { filename: options } : { ...options };
+  $putByIdDirectPrivate(options, "vmParsingContext", context);
   return new Script(code, options).runInContext(context, options);
 }
 
@@ -112,6 +116,8 @@ function runInNewContext(code, context, options) {
     options = { filename: options };
   }
   context = createContext(context, options);
+  options = { ...options };
+  $putByIdDirectPrivate(options, "vmParsingContext", context);
   return createScript(code, options).runInNewContext(context, options);
 }
 

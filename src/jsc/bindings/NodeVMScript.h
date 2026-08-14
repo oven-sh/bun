@@ -14,7 +14,12 @@ public:
 
     using BaseVMOptions::BaseVMOptions;
 
-    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer);
+    // `parsingContext` receives the context named by the private
+    // vmParsingContext option, which only vm.ts sets (Node's kParsingContext:
+    // runInContext/runInNewContext compile inside the context they run in).
+    // Left untouched when the option is absent, so `new vm.Script` keeps
+    // compiling in the caller's realm.
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, NodeVMGlobalObject** parsingContext = nullptr);
 };
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {

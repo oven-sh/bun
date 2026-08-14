@@ -681,7 +681,12 @@ export default function IndexPage() {
             ...bunEnv,
             BUN_DESTRUCT_VM_ON_EXIT: "1",
             ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-            LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+            LSAN_OPTIONS: [
+              bunEnv.LSAN_OPTIONS,
+              `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+            ]
+              .filter(Boolean)
+              .join(":"),
           })
           .quiet()
           .throws(false);

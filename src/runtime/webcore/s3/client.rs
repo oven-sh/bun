@@ -612,7 +612,11 @@ impl S3UploadStreamWrapper {
         unsafe { &*self.task }
     }
 
-    pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) -> JsResult<()> {
+    pub(crate) fn on_writable(
+        task: &MultiPartUpload,
+        self_: &mut Self,
+        flushed: u64,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(
             S3UploadStream,
             "onWritable {} {}",

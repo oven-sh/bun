@@ -71,7 +71,6 @@ pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(),
     Ok(())
 }
 
-
 /// `__bun_fold_loop_js_error` — the fold for the trampolines that sit below
 /// this tier (`bun_io`'s pipe reader/writer, `bun_uws_sys`'s WebSocket
 /// `Wrap`). `Stopped` has no one to return to there; the tick reads the gate

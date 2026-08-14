@@ -947,12 +947,18 @@ impl FSWatcher {
 /// Each event's listener call is a top-level call of its own: what it throws
 /// is reported there and the batch goes on (node: `'change'` events keep
 /// arriving after a throwing listener).
-fn emit_js<const EVENT_TYPE: EventType>(listener: JSValue, global_object: &JSGlobalObject, filename: JSValue) {
+fn emit_js<const EVENT_TYPE: EventType>(
+    listener: JSValue,
+    global_object: &JSGlobalObject,
+    filename: JSValue,
+) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
-    global_object
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(listener, global_object, global_object.to_js_value(), &args);
+    global_object.bun_vm().event_loop_mut().run_callback(
+        listener,
+        global_object,
+        global_object.to_js_value(),
+        &args,
+    );
 }
 
 impl FSWatcher {

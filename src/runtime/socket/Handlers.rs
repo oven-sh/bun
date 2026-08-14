@@ -263,7 +263,11 @@ impl Handlers {
     /// Route an error a socket handler produced to the `error` handler, or —
     /// with none registered — to the VM's uncaught-exception path. `Err` is what
     /// the `error` handler itself left pending.
-    pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> JsResult<()> {
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<()> {
         let global_object = self.global_object;
         // Termination raised inside the preceding callback.call() cannot be
         // cleared; it is the caller's `Err`, not an error to hand to `error`.

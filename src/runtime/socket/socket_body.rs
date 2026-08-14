@@ -159,8 +159,7 @@ extern "C" fn select_alpn_callback(
                 // BoringSSL's ALPN callback is these sockets' trampoline for this
                 // event: fold what the `error` handler left pending here.
                 super::uws_handlers::fold(
-                    handlers
-                        .call_error_handler(this_value, &[this_value, err_value]),
+                    handlers.call_error_handler(this_value, &[this_value, err_value]),
                 );
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
@@ -942,8 +941,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
-            let handled = handlers
-                .call_error_handler(this_value, &[this_value, err_value]);
+            let handled = handlers.call_error_handler(this_value, &[this_value, err_value]);
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close) —
@@ -1573,8 +1571,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             let rejected = match handlers.reject_promise(err) {
                 Ok(true) => Ok(()),
-                Ok(false) => handlers
-                    .call_error_handler(this_value, &[this_value, err]),
+                Ok(false) => handlers.call_error_handler(this_value, &[this_value, err]),
                 Err(e) => Err(e),
             };
             // `mark_inactive` closes the socket, which dispatches `on_close`.
@@ -1907,8 +1904,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handled = match result.to_error() {
-            Some(err_value) => handlers
-                .call_error_handler(this_value, &[this_value, err_value]),
+            Some(err_value) => handlers.call_error_handler(this_value, &[this_value, err_value]),
             None => Ok(()),
         };
         drop(scope);

@@ -1328,10 +1328,9 @@ pub(crate) fn edit(
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
                                 let original: &[u8] = &entry.value.original_version_literal;
-                                // `<name>@npm:<other>` retargeted the entry; keep its pin style.
-                                // Plain literals may come from `preprocess_update_requests`.
                                 let installed =
                                     request.version.literal.slice(request.version_buf());
+                                // None: `preprocess_update_requests` may have rewritten plain ones.
                                 let original = match split_npm_alias(installed) {
                                     Some(_) => with_alias_of(
                                         arena,

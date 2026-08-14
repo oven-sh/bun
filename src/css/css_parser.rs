@@ -2555,6 +2555,35 @@ mod stylesheet_impl {
             return Ok(ToCssResult { code: dest });
         }
 
+        /// The `local_names` to print this sheet with when it is not part of a
+        /// bundle. Every css-modules local (class and id selector) gets the
+        /// configured pattern applied with the hash of this sheet's filename,
+        /// which is also the suffix the printer gives its keyframes and custom
+        /// idents. Empty when css modules are off. The bundler does not use
+        /// this: it names locals across the whole graph instead.
+        ///
+        /// `source_index` must be the index the sheet was parsed with, since
+        /// the local refs embed it.
+        pub fn local_names(&self, arena: &Bump, source_index: SrcIndex) -> LocalsResultsMap {
+            let mut local_names = LocalsResultsMap::default();
+            let Some(config) = &self.options.css_modules else {
+                return local_names;
+            };
+            let filename = self.options.filename;
+            let hash = config.hash_source(arena, filename);
+            for (local, entry) in self.local_scope.iter() {
+                let name = config.pattern.write_to_string(
+                    arena,
+                    bun_alloc::ArenaVec::new_in(arena),
+                    hash,
+                    filename,
+                    local,
+                );
+                local_names.insert(entry.ref_.to_real_ref(source_index.get()), name.into());
+            }
+            local_names
+        }
+
         pub fn parse(
             arena: &'static Bump,
             code: &[u8],

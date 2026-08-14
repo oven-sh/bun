@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -10,7 +11,7 @@ import {
   indoc,
   minify_error_test_with_options,
   minify_test,
-  minifyTestWithOptions as minify_test_with_options,
+  minify_test_with_options,
   ParserFlags,
   ParserOptions,
   prefix_test,
@@ -5728,6 +5729,7 @@ describe("css tests", () => {
     minify_test_with_options(".foo >>> .bar {width: 20px}", ".foo>>>.bar{width:20px}", deep_options);
     minify_test_with_options(".foo /deep/ .bar {width: 20px}", ".foo /deep/ .bar{width:20px}", deep_options);
 
+    // Bun has no "pure" css modules mode (see `ParserOptions` in ./util.ts), so these stay skipped.
     let pure_css_module_options: ParserOptions = {
       css_modules: {
         pure: true,
@@ -5754,39 +5756,9 @@ describe("css tests", () => {
       "MinifyErrorKind::ImpureCSSModuleSelector",
       pure_css_module_options,
     );
-    minify_test_with_options(":local(.foo) {width: 20px}", "._8Z4fiW_foo{width:20px}", pure_css_module_options);
-    minify_test_with_options("div.my-class {color: red;}", "div._8Z4fiW_my-class{color:red}", pure_css_module_options);
-    minify_test_with_options("#id {color: red;}", "#_8Z4fiW_id{color:red}", pure_css_module_options);
-    minify_test_with_options("a .my-class{color: red;}", "a ._8Z4fiW_my-class{color:red}", pure_css_module_options);
-    minify_test_with_options(".my-class a {color: red;}", "._8Z4fiW_my-class a{color:red}", pure_css_module_options);
-    minify_test_with_options(
-      ".my-class:is(a) {color: red;}",
-      "._8Z4fiW_my-class:is(a){color:red}",
-      pure_css_module_options,
-    );
-    minify_test_with_options(
-      "div:has(.my-class) {color: red;}",
-      "div:has(._8Z4fiW_my-class){color:red}",
-      pure_css_module_options,
-    );
-    minify_test_with_options(
-      ".foo { html &:hover { a_value: some-value; } }",
-      "._8Z4fiW_foo{html &:hover{a_value:some-value}}",
-      pure_css_module_options,
-    );
-    minify_test_with_options(
-      ".foo { span { color: red; } }",
-      "._8Z4fiW_foo{& span{color:red}}",
-      pure_css_module_options,
-    );
     minify_error_test_with_options(
       "html { .foo { span { color: red; } } }",
       "MinifyErrorKind::ImpureCSSModuleSelector",
-      pure_css_module_options,
-    );
-    minify_test_with_options(
-      ".foo { div { span { color: red; } } }",
-      "._8Z4fiW_foo{& div{& span{color:red}}}",
       pure_css_module_options,
     );
     minify_error_test_with_options(
@@ -5804,10 +5776,61 @@ describe("css tests", () => {
       "MinifyErrorKind::ImpureCSSModuleSelector",
       pure_css_module_options,
     );
+    test("css_modules: { pure: true } is rejected rather than silently ignored", () => {
+      expect(() => cssInternals.minifyTestWithOptions(".foo {}", "", pure_css_module_options)).toThrow(
+        "css_modules.pure is not supported",
+      );
+    });
+
+    // With css modules on, the binding parses the source as `test.module.css`, so every local is
+    // suffixed with that filename's hash, `_SsLGXg` (what `bun build test.module.css` emits too).
+    let css_module_options: ParserOptions = {
+      css_modules: true,
+    };
+
+    // Without the option nothing is scoped and :local() is left alone like any unknown pseudo-class.
+    minify_test(":local(.foo) {width: 20px}", ":local(.foo){width:20px}");
+    minify_test_with_options(".foo {width: 20px}", ".foo{width:20px}", { css_modules: false });
+    minify_test_with_options(".foo {color: red}", ".foo_SsLGXg{color:red}", { css_modules: { pure: false } });
+    minify_test_with_options(":local(.foo) {width: 20px}", ".foo_SsLGXg{width:20px}", css_module_options);
+    minify_test_with_options(":global(.foo) .bar {width: 20px}", ".foo .bar_SsLGXg{width:20px}", css_module_options);
+    minify_test_with_options("div.my-class {color: red;}", "div.my-class_SsLGXg{color:red}", css_module_options);
+    minify_test_with_options("#id {color: red;}", "#id_SsLGXg{color:red}", css_module_options);
+    minify_test_with_options(".foo #bar {color: red;}", ".foo_SsLGXg #bar_SsLGXg{color:red}", css_module_options);
+    minify_test_with_options("a .my-class{color: red;}", "a .my-class_SsLGXg{color:red}", css_module_options);
+    minify_test_with_options(".my-class a {color: red;}", ".my-class_SsLGXg a{color:red}", css_module_options);
+    minify_test_with_options(
+      ".foo {color: red} .bar .foo {color: blue}",
+      ".foo_SsLGXg{color:red}.bar_SsLGXg .foo_SsLGXg{color:#00f}",
+      css_module_options,
+    );
+    minify_test_with_options(".my-class:is(a) {color: red;}", ".my-class_SsLGXg:is(a){color:red}", css_module_options);
+    minify_test_with_options(
+      "div:has(.my-class) {color: red;}",
+      "div:has(.my-class_SsLGXg){color:red}",
+      css_module_options,
+    );
+    minify_test_with_options(
+      ".foo { html &:hover { a_value: some-value; } }",
+      ".foo_SsLGXg{html &:hover{a_value:some-value}}",
+      css_module_options,
+    );
+    minify_test_with_options(".foo { span { color: red; } }", ".foo_SsLGXg{& span{color:red}}", css_module_options);
+    minify_test_with_options(
+      ".foo { div { span { color: red; } } }",
+      ".foo_SsLGXg{& div{& span{color:red}}}",
+      css_module_options,
+    );
     minify_test_with_options(
       "@scope (.a) to (.b) { .foo { color: red } }",
-      "@scope(._8Z4fiW_a) to (._8Z4fiW_b){._8Z4fiW_foo{color:red}}",
-      pure_css_module_options,
+      "@scope(.a_SsLGXg) to (.b_SsLGXg){.foo_SsLGXg{color:red}}",
+      css_module_options,
+    );
+    // Keyframes names are scoped by the printer itself; they must get the same suffix as the selectors.
+    minify_test_with_options(
+      ".foo { animation: spin 1s } @keyframes spin { to { opacity: 0 } }",
+      ".foo_SsLGXg{animation:1s spin_SsLGXg}@keyframes spin_SsLGXg{to{opacity:0}}",
+      css_module_options,
     );
 
     error_test(

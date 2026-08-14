@@ -45,11 +45,7 @@ impl<'a> CssModule<'a> {
                 };
                 // `source` is arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
-                hashes.push(hash(
-                    bump,
-                    format_args!("{}", bstr::BStr::new(source)),
-                    matches!(config.pattern.segments.at(0), Segment::Hash),
-                ));
+                hashes.push(config.hash_source(bump, source));
             }
             break 'hashes hashes;
         };
@@ -267,6 +263,17 @@ impl Default for Config {
             animation: true,
             custom_idents: true,
         }
+    }
+}
+
+impl Config {
+    /// The `[hash]` segment of every name generated for the stylesheet at `source`.
+    pub(crate) fn hash_source<'a>(&self, bump: &'a Bump, source: &[u8]) -> &'a [u8] {
+        hash(
+            bump,
+            format_args!("{}", bstr::BStr::new(source)),
+            matches!(self.pattern.segments.at(0), Segment::Hash),
+        )
     }
 }
 

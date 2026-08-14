@@ -418,8 +418,9 @@ describe("bundler metafile", () => {
 
   test("metafile tracks dynamic-import imports with code splitting", async () => {
     using dir = tempDir("metafile-dynamic-import-test", {
-      "entry.js": `import("./dynamic.js").then(m => console.log(m));`,
+      "entry.js": `import("./dynamic.js").then(m => console.log(m)); import("./styles.css");`,
       "dynamic.js": `export const value = 123;`,
+      "styles.css": `.dynamic { color: red; }`,
     });
 
     const result = await Bun.build({
@@ -433,12 +434,15 @@ describe("bundler metafile", () => {
     const inputKeys = Object.keys(metafile.inputs);
     const entryKey = inputKeys.find(k => k.endsWith("entry.js"))!;
     const dynamicKey = inputKeys.find(k => k.endsWith("dynamic.js"))!;
+    const stylesKey = entryKey.replace(/entry\.js$/, "styles.css");
 
-    // Splitting turns dynamic.js into its own chunk, but the inputs graph still links
-    // source files to source files: the import resolves to the "inputs" key of the
-    // imported file and is not external (esbuild reports it the same way).
+    // Splitting gives each import() target a chunk of its own (a JS chunk for dynamic.js,
+    // a CSS chunk for styles.css), but the inputs graph still links source files to
+    // source files: the import resolves to the "inputs" key of the imported file and is
+    // not external (esbuild reports it the same way).
     expect(metafile.inputs[entryKey].imports).toEqual([
       { path: dynamicKey, kind: "dynamic-import", original: "./dynamic.js" },
+      { path: stylesKey, kind: "dynamic-import", original: "./styles.css" },
     ]);
 
     // The chunk itself is what the outputs graph links to.
@@ -486,7 +490,8 @@ describe("bundler metafile", () => {
     ]);
     expect(withSplitting.inputs).toEqual(withoutSplitting.inputs);
 
-    // Every import edge in the inputs graph points at another input.
+    // Everything this fixture imports ends up in the bundle, so every import edge in the
+    // inputs graph points at another input, splitting or not.
     const inputKeys = Object.keys(withSplitting.inputs);
     for (const input of Object.values(withSplitting.inputs)) {
       for (const imp of input.imports) {

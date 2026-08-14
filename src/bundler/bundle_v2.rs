@@ -3982,7 +3982,10 @@ pub mod bv2_impl {
 
                 // Generate metafile if requested (the CLI build command writes the files)
                 let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
-                    match crate::linker_context::metafile_builder::generate(&this.linker, &chunks) {
+                    match crate::linker_context::metafile_builder::generate(
+                        &mut this.linker,
+                        &mut chunks,
+                    ) {
                         Ok(m) => Some(m),
                         Err(err) => {
                             bun_core::warn!("Failed to generate metafile: {}", err);
@@ -5094,7 +5097,10 @@ pub mod bv2_impl {
 
             // Generate metafile if requested
             let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
-                match crate::linker_context::metafile_builder::generate(&self.linker, &chunks) {
+                match crate::linker_context::metafile_builder::generate(
+                    &mut self.linker,
+                    &mut chunks,
+                ) {
                     Ok(m) => Some(m),
                     Err(err) => {
                         bun_core::warn!("Failed to generate metafile: {}", err.name());

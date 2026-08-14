@@ -5230,15 +5230,15 @@ pub(crate) fn write_file_internal(
             match archive.gzip_level() {
                 None => break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this),
                 Some(level) => {
-                    // Gzip on the thread pool; the task takes ownership of
+                    // Gzip on the thread pool; the job takes ownership of
                     // `destination_blob`.
-                    return crate::api::archive::start_archive_compress_write_task(
+                    return Ok(crate::api::archive::start_archive_compress_write_task(
                         global_this,
                         archive.store_ref().clone(),
                         level,
                         core::mem::replace(&mut destination_blob, Blob::init_empty(global_this)),
                         &options,
-                    );
+                    ));
                 }
             }
         }

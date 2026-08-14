@@ -12,6 +12,7 @@ use bun_core::{self, Output, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
+    Protected,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
@@ -1045,78 +1046,84 @@ enum CompressWriteResult {
     Err(&'static str),
 }
 
-pub struct ArchiveCompressWriteContext {
+pub struct CompressWriteOff {
     store: StoreRef,
     level: u8,
     destination: Blob,
     mkdirp_if_not_exists: Option<bool>,
     mode: Option<Mode>,
-    /// GC-protected until `Drop`; only read on the JS thread.
-    extra_options: Option<JSValue>,
     result: CompressWriteResult,
 }
 
-// SAFETY: the only `!Send` field is `extra_options: Option<JSValue>`; it is
-// GC-protected before scheduling and never touched on the worker thread
-// (`run` reads only `store`/`level`). `StoreRef` and `Blob` are `Send`.
-unsafe impl Send for ArchiveCompressWriteContext {}
+/// Unlike the other archive tasks, the completion needs JS-affine state
+/// (`extra_options`, kept as a [`Protected`] on the `Js` side), so this
+/// implements [`jsc::JobContext`] directly instead of going through
+/// [`AsyncTask`].
+pub struct ArchiveCompressWriteJob;
 
-impl Drop for ArchiveCompressWriteContext {
-    fn drop(&mut self) {
-        if let Some(v) = self.extra_options {
-            v.unprotect();
-        }
-    }
-}
+impl jsc::JobContext for ArchiveCompressWriteJob {
+    type OffThread = CompressWriteOff;
+    type Js = (JSPromiseStrong, Option<Protected>);
 
-impl TaskContext for ArchiveCompressWriteContext {
-    fn run(&mut self) {
-        self.result = match compress_gzip(self.store.shared_view(), self.level) {
+    fn run(
+        off: &mut CompressWriteOff,
+        done: jsc::Completion<Self>,
+    ) -> Option<jsc::Completion<Self>> {
+        off.result = match compress_gzip(off.store.shared_view(), off.level) {
             Ok(v) => CompressWriteResult::Ok(v),
             Err(e) => CompressWriteResult::Err(e.into()),
         };
+        Some(done)
     }
 
-    fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
-        let bytes = match core::mem::replace(&mut self.result, CompressWriteResult::Pending) {
+    fn then(
+        mut off: CompressWriteOff,
+        (mut promise, extra_options): Self::Js,
+        cx: &jsc::JsThread<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let promise = promise.swap();
+
+        let bytes = match core::mem::replace(&mut off.result, CompressWriteResult::Pending) {
             CompressWriteResult::Ok(v) => v,
             CompressWriteResult::Err(e) => {
-                return Ok(PromiseResult::Reject(global.create_error_instance(
-                    format_args!("Failed to gzip archive: {e}"),
-                )));
+                return Ok(promise.reject(
+                    global,
+                    Ok(global.create_error_instance(format_args!("Failed to gzip archive: {e}"))),
+                )?);
             }
             CompressWriteResult::Pending => unreachable!("run() always sets result"),
         };
 
         let write_options = WriteFileOptions {
-            mkdirp_if_not_exists: self.mkdirp_if_not_exists,
-            extra_options: self.extra_options,
-            mode: self.mode,
+            mkdirp_if_not_exists: off.mkdirp_if_not_exists,
+            extra_options: extra_options.as_ref().map(Protected::value),
+            mode: off.mode,
         };
         let mut source = Blob::create_with_bytes_and_allocator(bytes, global, false);
-        let new_promise = write_file_with_source_destination(
+        let new_promise = match write_file_with_source_destination(
             global,
             &mut source,
-            &mut self.destination,
+            &mut off.destination,
             &write_options,
-        )?;
+        ) {
+            Ok(p) => p,
+            Err(e) => return Ok(promise.reject(global, Err(e))?),
+        };
 
         // Forward the inner write promise onto the task's promise.
-        if let Some(p) = new_promise.as_any_promise() {
-            Ok(
-                match p.unwrap(global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                    jsc::PromiseResult::Pending => PromiseResult::Resolve(new_promise),
-                    jsc::PromiseResult::Fulfilled(v) => PromiseResult::Resolve(v),
-                    jsc::PromiseResult::Rejected(err) => PromiseResult::Reject(err),
-                },
-            )
+        let result = if let Some(p) = new_promise.as_any_promise() {
+            match p.unwrap(global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                jsc::PromiseResult::Pending => PromiseResult::Resolve(new_promise),
+                jsc::PromiseResult::Fulfilled(v) => PromiseResult::Resolve(v),
+                jsc::PromiseResult::Rejected(err) => PromiseResult::Reject(err),
+            }
         } else {
-            Ok(PromiseResult::Resolve(new_promise))
-        }
+            PromiseResult::Resolve(new_promise)
+        };
+        Ok(result.fulfill(global, promise)?)
     }
 }
-
-pub(crate) type ArchiveCompressWriteTask = AsyncTask<ArchiveCompressWriteContext>;
 
 pub(crate) fn start_archive_compress_write_task(
     global: &JSGlobalObject,
@@ -1124,24 +1131,22 @@ pub(crate) fn start_archive_compress_write_task(
     level: u8,
     destination: Blob,
     options: &WriteFileOptions,
-) -> JsResult<JSValue> {
-    // Pin `extra_options` for the duration of the async task; `Drop` unprotects.
-    if let Some(v) = options.extra_options {
-        v.protect();
-    }
-
-    Ok(ArchiveCompressWriteTask::start(
-        global,
-        ArchiveCompressWriteContext {
+) -> JSValue {
+    let promise = JSPromiseStrong::init(global);
+    let value = promise.value();
+    jsc::Job::<ArchiveCompressWriteJob>::schedule(
+        &global.js_thread(),
+        CompressWriteOff {
             store,
             level,
             destination,
             mkdirp_if_not_exists: options.mkdirp_if_not_exists,
             mode: options.mode,
-            extra_options: options.extra_options,
             result: CompressWriteResult::Pending,
         },
-    ))
+        (promise, options.extra_options.map(Protected::new)),
+    );
+    value
 }
 
 struct FileEntry {

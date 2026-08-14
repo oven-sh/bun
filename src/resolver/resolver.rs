@@ -4218,14 +4218,9 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// The tsconfig whose compiler options (JSX pragma, decorators,
-    /// `useDefineForClassFields`) configure the transpiler as a whole, given
-    /// the working directory's `dir_info`: the `tsconfig.json` / `jsconfig.json`
-    /// in that directory, or the `--tsconfig-override` file standing in for it.
-    /// `dir_info_uncached` parses the override onto the filesystem root's
-    /// `DirInfo` and skips per-directory discovery, so under an override
-    /// `dir_info.tsconfig_json()` is `None` and the override is only reachable
-    /// as the inherited enclosing tsconfig.
+    /// The working directory's own tsconfig, or the `--tsconfig-override` file
+    /// standing in for it. `dir_info_uncached` attaches the override to the
+    /// filesystem root only, so it reaches `dir_info` as its enclosing tsconfig.
     pub fn tsconfig_for_top_level_dir(
         &self,
         dir_info: &DirInfo::DirInfo,

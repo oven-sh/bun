@@ -45,6 +45,17 @@ describe.concurrent("ShadowRealm event delivery", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("process.nextTick inside a realm is a realm-owned function that validates its callback there", () => {
+    const realm = new ShadowRealm();
+    expect(realm.evaluate(`process.nextTick instanceof Function && process.nextTick === process.nextTick`)).toBe(true);
+    expect(
+      realm.evaluate(`
+        try { process.nextTick(1); "did not throw"; }
+        catch (e) { String(e instanceof TypeError && e.code); }
+      `),
+    ).toBe("ERR_INVALID_ARG_TYPE");
+  });
+
   it("a throwing nextTick callback inside a realm reaches process.on('uncaughtException')", async () => {
     const { stdout, stderr, exitCode } = await runScript(`
       process.on("uncaughtException", err => {

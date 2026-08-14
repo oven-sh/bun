@@ -4428,21 +4428,25 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     return mainModule;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickOnDefaultGlobal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::V::validateFunction(scope, lexicalGlobalObject, callFrame->argument(0), "callback"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* globalObject = defaultGlobalObject();
+    globalObject->processObject()->queueNextTick(globalObject, ArgList(callFrame));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    // GlobalObject::drainMicrotasks drains the default global's queue only.
-    auto* eventLoopGlobalObject = defaultGlobalObject();
-    if (eventLoopGlobalObject != globalObject) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue nextTickFunction = eventLoopGlobalObject->processObject()->get(eventLoopGlobalObject, Identifier::fromString(vm, "nextTick"_s));
-        if (auto* exception = scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(eventLoopGlobalObject, exception);
-            return JSC::jsUndefined();
-        }
-        if (nextTickFunction.isObject()) {
-            this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
-        }
+    // GlobalObject::drainMicrotasks drains the default global's queue only, so a
+    // ShadowRealm's process.nextTick forwards to it.
+    if (globalObject != defaultGlobalObject()) {
+        auto* nextTickFunction = JSC::JSFunction::create(vm, globalObject, 1, "nextTick"_s, jsFunctionNextTickOnDefaultGlobal, ImplementationVisibility::Public);
+        this->m_nextTickFunction.set(vm, this, nextTickFunction);
         return nextTickFunction;
     }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -571,6 +572,72 @@ describe("web worker", () => {
       expect(stdout).toBe("PASS\n");
       expect(exitCode).toBe(0);
     });
+
+    // A worker's import()s are transpiled on the thread pool, in job slots that
+    // live inside the worker's VM, and come back to the JS thread in batches.
+    // Each worker keeps 64 imports in flight (every module that evaluates
+    // imports the next one; the query string makes each a fresh transpile) and
+    // asks to be terminated once the first one has evaluated, so the termination
+    // lands while the JS thread is part-way through a batch: the rest of that
+    // batch has to be released on the spot (the teardown never sees it), the
+    // jobs still queued or still out on the pool by the teardown. Under ASAN the
+    // host is leak-checked for all of them, minus the suppression covering
+    // everything allocated inside a transpile, which would hide the jobs' own
+    // storage; debug builds also log each job the store takes on, which rules
+    // out the imports having gone through the on-thread fallback instead.
+    const leakCheck = isASAN && isLinux;
+    test(
+      "terminate() while the worker's imports are still being transpiled",
+      async () => {
+        const files: Record<string, string> = {
+          "worker.js": `
+            let n = 0, posted = false;
+            function next() { const i = n++; import("./mod" + (i % 16) + ".js?v=" + i).then(done, done); }
+            function done() { if (!posted) { posted = true; postMessage("streaming"); } next(); }
+            for (let k = 0; k < 64; k++) next();
+          `,
+        };
+        for (let i = 0; i < 16; i++) files[`mod${i}.js`] = `export const value = ${i};`;
+        if (leakCheck) {
+          files["leaksan.supp"] = readFileSync(path.join(import.meta.dirname, "../../../leaksan.supp"), "utf8")
+            .split("\n")
+            .filter(line => line !== "leak:Bun__transpileFile")
+            .join("\n");
+        }
+        using dir = tempDir("worker-transpile-churn", files);
+        const debugLog = path.join(String(dir), "debug.log");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `await Promise.all(Array.from({ length: 3 }, () => new Promise(res => {
+               const w = new Worker(process.argv[1]); w.addEventListener("close", res);
+               w.onmessage = () => w.terminate() })));
+             console.log("PASS");`,
+            path.join(String(dir), "worker.js"),
+          ],
+          env: {
+            ...bunEnv,
+            ...(leakCheck
+              ? {
+                  BUN_DESTRUCT_VM_ON_EXIT: "1",
+                  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+                  LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(String(dir), "leaksan.supp")}`,
+                }
+              : {}),
+            ...(isDebug ? { BUN_DEBUG: debugLog, BUN_DEBUG_RuntimeTranspilerStore: "1" } : {}),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: "", exitCode: 0 });
+        if (isDebug) expect(readFileSync(debugLog, "utf8")).toContain("transpile(");
+      },
+      // A leak report's symbolization alone takes tens of seconds on the debug
+      // binary; the failure mode must get to print it.
+      leakCheck ? 90_000 : undefined,
+    );
   });
 });
 

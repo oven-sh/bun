@@ -14,6 +14,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Lints this repo has decided not to act on. Everything else in the pack is
 // on; add a lint here only with a reason.
@@ -51,6 +53,36 @@ const prep = spawnSync("bun", ["scripts/build.ts", "--quiet", "--target=codegen"
   stdio: "inherit",
 });
 if (prep.status !== 0) process.exit(prep.status ?? 1);
+
+// cargo-dylint builds each `[workspace.metadata.dylint]` entry out of cargo's
+// checkout of its rev (~/.cargo/git/checkouts/...) into
+// <target>/dylint/libraries/<toolchain>/, the same target dir whatever the rev.
+// Cargo treats sources under $CARGO_HOME/git as immutable and the rev is not in
+// the fingerprint, so after a bump the library built from the previous rev
+// still counts as fresh. Remember what the directory was built from and start
+// over when that changes. (The workspace itself does get re-linted: the driver
+// feeds the metadata and the library bytes into rustc's dependency tracking.)
+const metadata = spawnSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "inherit"],
+  // ~400 KB for this workspace today, against spawnSync's default cap of 1 MB.
+  maxBuffer: 1 << 26,
+});
+if (metadata.status !== 0) process.exit(metadata.status ?? 1);
+const workspace = JSON.parse(metadata.stdout);
+const libraries = join(workspace.target_directory, "dylint", "libraries");
+const builtFrom = join(libraries, "built-from.json");
+const pinned = JSON.stringify(workspace.metadata?.dylint ?? null);
+if (!existsSync(builtFrom) || readFileSync(builtFrom, "utf8") !== pinned) {
+  if (existsSync(libraries)) {
+    console.error(`rebuilding ${libraries}: it was not built from the current [workspace.metadata.dylint]`);
+  }
+  rmSync(libraries, { recursive: true, force: true });
+  mkdirSync(libraries, { recursive: true });
+  // Written before the build on purpose: it says which entries the directory
+  // is for; whether their builds finished is cargo's own bookkeeping.
+  writeFileSync(builtFrom, pinned);
+}
 
 const r = spawnSync("cargo", ["dylint", "--all", "--workspace", "--keep-going", "--", "--keep-going"], {
   stdio: "inherit",

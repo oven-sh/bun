@@ -99,6 +99,16 @@ bun publish --otp 123456
 bun publish --registry https://my-private-registry.com
 ```
 
+A package can pin the registry it is published to with `publishConfig.registry` in its `package.json` (`--registry` still overrides it). Like npm, this replaces the default registry only; a registry configured for the package's scope takes precedence unless `publishConfig` also sets `@scope:registry`.
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "registry": "https://my-private-registry.com" // [!code ++]
+  }
+}
+```
+
 #### SSL Certificates
 
 <ParamField path="--ca" type="string">

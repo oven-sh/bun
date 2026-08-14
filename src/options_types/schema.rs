@@ -183,6 +183,8 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// `.npmrc` `//host/path/:` credentials by registry; `url` is the `host/path/` as written.
+        pub registry_credentials: Vec<NpmRegistry>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

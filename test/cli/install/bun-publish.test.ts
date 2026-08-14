@@ -1049,6 +1049,288 @@ describe("tag", async () => {
   });
 });
 
+describe("publishConfig registry", () => {
+  // Every request a registry receives, so a test can assert that a registry
+  // received exactly one PUT carrying its own token, or nothing at all.
+  function mockRegistry() {
+    const requests: { method: string; path: string; authorization: string | null }[] = [];
+    let manifest: any;
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requests.push({
+          method: req.method,
+          path: new URL(req.url).pathname,
+          authorization: req.headers.get("authorization"),
+        });
+        if (req.method === "PUT") manifest = await req.json();
+        return new Response("OK");
+      },
+    });
+    return {
+      url: `http://127.0.0.1:${server.port}/`,
+      // What `//host/path/:_authToken=` lines in .npmrc key on.
+      npmrcToken: `//127.0.0.1:${server.port}/:_authToken=token-for-${server.port}`,
+      token: `token-for-${server.port}`,
+      requests,
+      get manifest() {
+        return manifest;
+      },
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  const put = (path: string, token: string) => [{ method: "PUT", path, authorization: `Bearer ${token}` }];
+
+  test.concurrent("is published to, with the credentials .npmrc configures for it", async () => {
+    using configured = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry", {
+      ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "@corp/secretpkg",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url, access: "restricted", tag: "internal" },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Tag: internal\nAccess: restricted\nRegistry: ${pinned.url}\n`);
+    expect(out).toContain(" + @corp/secretpkg@1.0.0");
+    expect(exitCode).toBe(0);
+
+    expect(configured.requests).toEqual([]);
+    expect(pinned.requests).toEqual(put("/@corp%2fsecretpkg", pinned.token));
+    expect(pinned.manifest).toMatchObject({
+      "dist-tags": { internal: "1.0.0" },
+      access: "restricted",
+      versions: { "1.0.0": { dist: { tarball: `${pinned.url}@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
+    });
+  });
+
+  test.concurrent("is published to when publishing a tarball", async () => {
+    using configured = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry-tarball", {
+      ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "@corp/secretpkg",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url, access: "restricted", tag: "internal" },
+      }),
+    });
+    await pack(String(dir), env);
+
+    const { out, err, exitCode } = await publish(env, String(dir), "./corp-secretpkg-1.0.0.tgz");
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Tag: internal\nAccess: restricted\nRegistry: ${pinned.url}\n`);
+    expect(out).toContain(" + @corp/secretpkg@1.0.0");
+    expect(exitCode).toBe(0);
+
+    expect(configured.requests).toEqual([]);
+    expect(pinned.requests).toEqual(put("/@corp%2fsecretpkg", pinned.token));
+    expect(pinned.manifest).toMatchObject({
+      "dist-tags": { internal: "1.0.0" },
+      access: "restricted",
+      versions: { "1.0.0": { dist: { tarball: `${pinned.url}@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
+    });
+  });
+
+  test.concurrent("is what --dry-run reports", async () => {
+    using configured = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry-dry-run", {
+      ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "dry-run-pinned",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--dry-run");
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: ${pinned.url}\n`);
+    expect(exitCode).toBe(0);
+    expect(configured.requests).toEqual([]);
+    expect(pinned.requests).toEqual([]);
+  });
+
+  test.concurrent("without credentials of its own, nothing is sent to the configured registry", async () => {
+    using configured = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry-no-auth", {
+      ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "@corp/secretpkg",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url },
+      }),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toContain("error: missing authentication");
+    expect(exitCode).toBe(1);
+    expect(configured.requests).toEqual([]);
+    expect(pinned.requests).toEqual([]);
+  });
+
+  test.concurrent("keeps the credentials of the configured registry when it pins that same registry", async () => {
+    using configured = mockRegistry();
+    using dir = tempDir("publish-config-registry-same", {
+      "bunfig.toml": `[install]\nregistry = { url = "${configured.url}", token = "${configured.token}" }\n`,
+      "package.json": JSON.stringify({
+        name: "pinned-to-configured",
+        version: "1.0.0",
+        // No trailing slash, unlike the bunfig.toml url: still the same registry.
+        publishConfig: { registry: configured.url.slice(0, -1) },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + pinned-to-configured@1.0.0");
+    expect(exitCode).toBe(0);
+    expect(configured.requests).toEqual(put("/pinned-to-configured", configured.token));
+  });
+
+  test.concurrent("on the same origin as the configured registry, its credentials carry over", async () => {
+    using configured = mockRegistry();
+    using dir = tempDir("publish-config-registry-same-origin", {
+      "bunfig.toml": `[install]\nregistry = { url = "${configured.url}", token = "${configured.token}" }\n`,
+      "package.json": JSON.stringify({
+        name: "pinned-to-path",
+        version: "1.0.0",
+        publishConfig: { registry: `${configured.url}publish/` },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: ${configured.url}publish/\n`);
+    expect(exitCode).toBe(0);
+    expect(configured.requests).toEqual(put("/publish/pinned-to-path", configured.token));
+  });
+
+  test.concurrent("loses to --registry", async () => {
+    using flag = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry-flag", {
+      ".npmrc": `registry=${flag.url}\n${flag.npmrcToken}\n${pinned.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "flag-wins",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--registry", flag.url);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: ${flag.url}\n`);
+    expect(exitCode).toBe(0);
+    expect(flag.requests).toEqual(put("/flag-wins", flag.token));
+    expect(pinned.requests).toEqual([]);
+  });
+
+  test.concurrent("--registry is given the credentials .npmrc configures for it", async () => {
+    using flag = mockRegistry();
+    using dir = tempDir("registry-flag-npmrc-auth", {
+      ".npmrc": `${flag.npmrcToken}\n`,
+      "package.json": JSON.stringify({ name: "flag-auth", version: "1.0.0" }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--registry", flag.url);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + flag-auth@1.0.0");
+    expect(exitCode).toBe(0);
+    expect(flag.requests).toEqual(put("/flag-auth", flag.token));
+  });
+
+  test.concurrent("does not override a registry configured for the package's scope", async () => {
+    using configured = mockRegistry();
+    using scoped = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-registry-scoped", {
+      ".npmrc": [
+        `registry=${configured.url}`,
+        `@corp:registry=${scoped.url}`,
+        configured.npmrcToken,
+        scoped.npmrcToken,
+        pinned.npmrcToken,
+        "",
+      ].join("\n"),
+      "package.json": JSON.stringify({
+        name: "@corp/scoped-wins",
+        version: "1.0.0",
+        publishConfig: { registry: pinned.url },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: ${scoped.url}\n`);
+    expect(exitCode).toBe(0);
+    expect(configured.requests).toEqual([]);
+    expect(scoped.requests).toEqual(put("/@corp%2fscoped-wins", scoped.token));
+    expect(pinned.requests).toEqual([]);
+  });
+
+  test.concurrent("@scope:registry overrides the registry configured for the scope", async () => {
+    using scoped = mockRegistry();
+    using pinned = mockRegistry();
+    using dir = tempDir("publish-config-scope-registry", {
+      ".npmrc": `@corp:registry=${scoped.url}\n${scoped.npmrcToken}\n${pinned.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "@corp/pinned-scope",
+        version: "1.0.0",
+        publishConfig: { "@corp:registry": pinned.url },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: ${pinned.url}\n`);
+    expect(exitCode).toBe(0);
+    expect(scoped.requests).toEqual([]);
+    expect(pinned.requests).toEqual(put("/@corp%2fpinned-scope", pinned.token));
+  });
+
+  const expected = "expected a URL starting with 'https://' or 'http://'";
+  test.concurrent.each([
+    [
+      "registry",
+      "ftp://127.0.0.1:1/",
+      `error: invalid \`registry\` value in \`publishConfig\`: "ftp://127.0.0.1:1/", ${expected}\n`,
+    ],
+    ["registry", ["http://127.0.0.1:1/"], `error: invalid \`registry\` value in \`publishConfig\`, ${expected}\n`],
+    ["registry", "", `error: invalid \`registry\` value in \`publishConfig\`: "", ${expected}\n`],
+    [
+      "@corp:registry",
+      "127.0.0.1:1",
+      `error: invalid \`@corp:registry\` value in \`publishConfig\`: "127.0.0.1:1", ${expected}\n`,
+    ],
+  ])("%s set to %j is an error, and nothing is published anywhere", async (key, value, message) => {
+    using configured = mockRegistry();
+    using dir = tempDir("publish-config-registry-invalid", {
+      ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n`,
+      "package.json": JSON.stringify({
+        name: "@corp/invalid-registry",
+        version: "1.0.0",
+        publishConfig: { [key]: value },
+      }),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toContain(message);
+    expect(exitCode).toBe(1);
+    expect(configured.requests).toEqual([]);
+  });
+});
+
 it("$npm_command is accurate during publish", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(

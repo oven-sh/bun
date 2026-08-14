@@ -113,16 +113,6 @@ pub struct ConfigItem {
 }
 
 impl ConfigItem {
-    /// Duplicate ConfigIterator.Item
-    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
-        Ok(Some(ConfigItem {
-            registry_url: Box::<[u8]>::from(&*self.registry_url),
-            optname: self.optname,
-            value: Box::<[u8]>::from(&*self.value),
-            loc: self.loc,
-        }))
-    }
-
     /// Duplicate the value, decoding it if it is base64 encoded.
     pub(crate) fn dupe_value_decoded(
         &self,
@@ -186,8 +176,8 @@ bun_core::comptime_string_map! {
 }
 
 pub use draft::{
-    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
-    load_npmrc_config,
+    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, credentials_for_registry,
+    load_npmrc, load_npmrc_config,
 };
 pub mod config_iterator {
     pub use super::ConfigItem as Item;
@@ -1607,8 +1597,13 @@ mod draft {
                         }
                         _ => {}
                     }
-                    if let Some(x) = conf_item_.dupe()? {
-                        configs.push(x);
+                    // Undecodable lines are reported once, against their own file, and not kept.
+                    let entry = credentials_entry(
+                        &mut install.registry_credentials,
+                        &conf_item.registry_url,
+                    );
+                    if apply_conf_item(entry, conf_item, iter.log, source)? {
+                        configs.push(conf_item_);
                     }
                 }
             }
@@ -1616,11 +1611,11 @@ mod draft {
             for conf_item in configs.iter() {
                 let conf_item_url = URL::parse(&conf_item.registry_url);
 
-                if bun_core::without_trailing_slash(&default_registry_host)
-                    == bun_core::without_trailing_slash(conf_item_url.host)
-                    && bun_core::without_trailing_slash(&default_registry_pathname)
-                        == bun_core::without_trailing_slash(conf_item_url.pathname)
-                {
+                if names_registry(
+                    &conf_item_url,
+                    &default_registry_host,
+                    &default_registry_pathname,
+                ) {
                     // Apply config to default registry
                     let v: &mut NpmRegistry = 'brk: {
                         if let Some(r) = install.default_registry.as_mut() {
@@ -1639,32 +1634,7 @@ mod draft {
                         install.default_registry.as_mut().unwrap()
                     };
 
-                    match conf_item.optname {
-                        ConfigOpt::_AuthToken => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.token = x;
-                            }
-                        }
-                        ConfigOpt::Username => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.username = x;
-                            }
-                        }
-                        ConfigOpt::_Password => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.password = x;
-                            }
-                        }
-                        ConfigOpt::_Auth => {
-                            handle_auth(v, conf_item, log, source)?;
-                        }
-                        ConfigOpt::Email => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.email = x;
-                            }
-                        }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                    }
+                    apply_conf_item(v, conf_item, log, source)?;
                 }
 
                 // `keys()`/`values_mut()` on the same map alias; since
@@ -1678,47 +1648,9 @@ mod draft {
                 {
                     let url = URL::parse(url_bytes);
 
-                    if bun_core::without_trailing_slash(url.host)
-                        == bun_core::without_trailing_slash(conf_item_url.host)
-                        && bun_core::without_trailing_slash(url.pathname)
-                            == bun_core::without_trailing_slash(conf_item_url.pathname)
-                    {
-                        if !conf_item_url.hostname.is_empty() {
-                            if bun_core::without_trailing_slash(url.hostname)
-                                != bun_core::without_trailing_slash(conf_item_url.hostname)
-                            {
-                                continue;
-                            }
-                        }
-                        // Apply config to scoped registry
-                        match conf_item.optname {
-                            ConfigOpt::_AuthToken => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.token = x;
-                                }
-                            }
-                            ConfigOpt::Username => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.username = x;
-                                }
-                            }
-                            ConfigOpt::_Password => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.password = x;
-                                }
-                            }
-                            ConfigOpt::_Auth => {
-                                handle_auth(v, conf_item, log, source)?;
-                            }
-                            ConfigOpt::Email => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.email = x;
-                                }
-                            }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                        }
-                        // We have to keep going as it could match multiple scopes
-                        continue;
+                    // A line can name more than one scope's registry, so keep going.
+                    if names_registry(&conf_item_url, url.host, url.pathname) {
+                        apply_conf_item(v, conf_item, log, source)?;
                     }
                 }
             }
@@ -1853,12 +1785,77 @@ mod draft {
         })
     }
 
+    /// Whether a `//host/path/:` line names the registry at `host` + `pathname`, trailing `/` aside.
+    fn names_registry(conf_item_url: &URL<'_>, host: &[u8], pathname: &[u8]) -> bool {
+        bun_core::without_trailing_slash(conf_item_url.host)
+            == bun_core::without_trailing_slash(host)
+            && bun_core::without_trailing_slash(conf_item_url.pathname)
+                == bun_core::without_trailing_slash(pathname)
+    }
+
+    /// The credentials entry for the registry a `//host/path/:` line names, created on first use.
+    fn credentials_entry<'a>(
+        entries: &'a mut Vec<NpmRegistry>,
+        registry_url: &[u8],
+    ) -> &'a mut NpmRegistry {
+        let url = URL::parse(registry_url);
+        let index = entries
+            .iter()
+            .position(|entry| names_registry(&URL::parse(&entry.url), url.host, url.pathname))
+            .unwrap_or_else(|| {
+                entries.push(NpmRegistry {
+                    url: Box::<[u8]>::from(registry_url),
+                    ..Default::default()
+                });
+                entries.len() - 1
+            });
+        &mut entries[index]
+    }
+
+    /// `registry_url`'s entry, if it holds a token or a username + password pair (npm's rule).
+    pub fn credentials_for_registry<'a>(
+        entries: &'a [NpmRegistry],
+        registry_url: &[u8],
+    ) -> Option<&'a NpmRegistry> {
+        let url = URL::parse(registry_url);
+        entries.iter().find(|entry| {
+            names_registry(&URL::parse(&entry.url), url.host, url.pathname)
+                && (!entry.token.is_empty()
+                    || (!entry.username.is_empty() && !entry.password.is_empty()))
+        })
+    }
+
+    /// Applies one `//host/path/:` line to `v`; `false` (already reported) if it does not decode.
+    fn apply_conf_item(
+        v: &mut NpmRegistry,
+        conf_item: &ConfigItem,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<bool> {
+        let field: &mut Box<[u8]> = match conf_item.optname {
+            ConfigOpt::_AuthToken => &mut v.token,
+            ConfigOpt::Username => &mut v.username,
+            ConfigOpt::_Password => &mut v.password,
+            ConfigOpt::Email => &mut v.email,
+            ConfigOpt::_Auth => return handle_auth(v, conf_item, log, source),
+            // `load_npmrc` warns about these and skips them before they get here.
+            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+        };
+        match conf_item.dupe_value_decoded(log, source)? {
+            Some(value) => {
+                *field = value;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     fn handle_auth(
         v: &mut NpmRegistry,
         conf_item: &ConfigItem,
         log: &mut Log,
         source: &Source,
-    ) -> OOM<()> {
+    ) -> OOM<bool> {
         if conf_item.value.is_empty() {
             log.add_error_opts(
             b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
@@ -1869,7 +1866,7 @@ mod draft {
                 ..Default::default()
             },
         );
-            return Ok(());
+            return Ok(false);
         }
         let decode_len = bun_base64::decode_len(&conf_item.value);
         let mut decoded = vec![0u8; decode_len].into_boxed_slice();
@@ -1884,7 +1881,7 @@ mod draft {
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return Ok(false);
         }
         let username_password = &decoded[..result.count];
         let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
@@ -1898,7 +1895,7 @@ mod draft {
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return Ok(false);
         };
         let username = &username_password[..colon_idx];
         if colon_idx + 1 >= username_password.len() {
@@ -1911,11 +1908,11 @@ mod draft {
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return Ok(false);
         }
         let password = &username_password[colon_idx + 1..];
         v.username = Box::<[u8]>::from(username);
         v.password = Box::<[u8]>::from(password);
-        Ok(())
+        Ok(true)
     }
 } // mod draft

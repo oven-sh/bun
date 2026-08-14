@@ -25,9 +25,8 @@ const kDefaultName = "<anonymous>";
 const kRootName = "<root>";
 const kDefaultFunction = () => {};
 // The runner's own timers must keep working while `mock.timers` replaces the
-// globals, so capture them at module load like Node's runner does.
-const realSetTimeout = setTimeout;
-const realClearTimeout = clearTimeout;
+// globals or bun:test's fake timers are active, like Node's runner's do.
+const { setTimeout: realSetTimeout, clearTimeout: realClearTimeout } = require("internal/timers");
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;

@@ -2,6 +2,7 @@ const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
+const { setInterval, clearInterval } = require("internal/timers");
 
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);

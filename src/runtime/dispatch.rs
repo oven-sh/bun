@@ -949,7 +949,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
     }
     match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
-        EventLoopTimerTag::TimeoutObject => {
+        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject => {
             let container = owner!(TimeoutObject, event_loop_timer);
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
             // form `&mut *container` — `internals.fire` may `deref()` and free.

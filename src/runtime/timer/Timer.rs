@@ -225,6 +225,7 @@ impl All {
         let wrapped_promise = promise.with_async_context_if_needed(global);
         Ok(TimeoutObject::init(
             global,
+            EventLoopTimerTag::TimeoutObject,
             id,
             Kind::SetTimeout,
             countdown_int,
@@ -253,8 +254,13 @@ impl All {
         ))
     }
 
-    pub(crate) fn set_timeout(
+    /// Body of `setTimeout`/`setInterval`; `tag` picks between the global
+    /// (fakeable) timers and the `internal/timers` ones, see
+    /// [`TimeoutObject::init`].
+    fn set_timeout_or_interval(
         global: &JSGlobalObject,
+        tag: EventLoopTimerTag,
+        kind: Kind,
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
@@ -270,12 +276,29 @@ impl All {
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
             global,
+            tag,
             id,
-            Kind::SetTimeout,
+            kind,
             countdown_int,
             wrapped_callback,
             arguments,
         ))
+    }
+
+    pub(crate) fn set_timeout(
+        global: &JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+        countdown: JSValue,
+    ) -> JsResult<JSValue> {
+        Self::set_timeout_or_interval(
+            global,
+            EventLoopTimerTag::TimeoutObject,
+            Kind::SetTimeout,
+            callback,
+            arguments,
+            countdown,
+        )
     }
 
     pub(crate) fn set_interval(
@@ -284,23 +307,50 @@ impl All {
         arguments: JSValue,
         countdown: JSValue,
     ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
-        debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
-        let id = all.last_id;
-        all.last_id = all.last_id.wrapping_add(1);
-
-        let wrapped_callback = callback.with_async_context_if_needed(global);
-        let countdown_int =
-            all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
-        Ok(TimeoutObject::init(
+        Self::set_timeout_or_interval(
             global,
-            id,
+            EventLoopTimerTag::TimeoutObject,
             Kind::SetInterval,
-            countdown_int,
-            wrapped_callback,
+            callback,
             arguments,
-        ))
+            countdown,
+        )
+    }
+
+    /// `internal/timers` `setTimeout`: a timer owned by a built-in JS module.
+    /// Not affected by `jest.useFakeTimers()` (not counted, advanced or
+    /// cleared by it), like the deadlines inside Node's `lib/`.
+    pub(crate) fn set_timeout_internal(
+        global: &JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+        countdown: JSValue,
+    ) -> JsResult<JSValue> {
+        Self::set_timeout_or_interval(
+            global,
+            EventLoopTimerTag::InternalTimeoutObject,
+            Kind::SetTimeout,
+            callback,
+            arguments,
+            countdown,
+        )
+    }
+
+    /// `internal/timers` `setInterval`; see [`Self::set_timeout_internal`].
+    pub(crate) fn set_interval_internal(
+        global: &JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+        countdown: JSValue,
+    ) -> JsResult<JSValue> {
+        Self::set_timeout_or_interval(
+            global,
+            EventLoopTimerTag::InternalTimeoutObject,
+            Kind::SetInterval,
+            callback,
+            arguments,
+            countdown,
+        )
     }
 
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
@@ -311,7 +361,11 @@ impl All {
             self.maps.set_interval.swap_remove_at(idx).1
         };
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
-        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
+        let tag = unsafe { (*value).tag };
+        debug_assert!(matches!(
+            tag,
+            EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject
+        ));
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
         Some(unsafe { TimeoutObject::from_timer_ptr(value) })
     }
@@ -511,7 +565,7 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
 }
 
 // `generate-host-exports.ts`
-// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
+// scrapes the `// HOST_EXPORT` markers below and emits one thunk per marker into
 // `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
@@ -553,6 +607,26 @@ pub fn set_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     All::set_interval(global, callback, arguments, countdown)
+}
+
+// HOST_EXPORT(Bun__Timer__setTimeoutInternal, c)
+pub fn set_timeout_internal_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    All::set_timeout_internal(global, callback, arguments, countdown)
+}
+
+// HOST_EXPORT(Bun__Timer__setIntervalInternal, c)
+pub fn set_interval_internal_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    All::set_interval_internal(global, callback, arguments, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

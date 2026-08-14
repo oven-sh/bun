@@ -10,6 +10,7 @@ const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
+const { setTimeout, clearTimeout } = require("internal/timers");
 
 const defineProperties = Object.defineProperties;
 

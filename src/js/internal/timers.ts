@@ -4,6 +4,20 @@ const NumberIsFinite = Number.isFinite;
 
 const TIMEOUT_MAX = 2 ** 31 - 1;
 
+// Timers for the runtime's own deadlines (socket idle timeouts, listen()
+// callbacks, child_process kill timers, ...). The globals belong to user code:
+// jest.useFakeTimers() freezes, counts, advances and clears every timer created
+// through them, and user code may replace them outright. These create the same
+// Timeout objects but never take part in fake timers, like the private timer
+// references Node's lib/ uses. Built-in modules take all four from here
+// (test/internal/source-lints/builtin-timer-globals.test.ts); the global
+// clearTimeout would clear these too, the private one just stays out of reach
+// of replaced globals.
+const setTimeout = $newCppFunction("node/NodeTimers.cpp", "functionSetTimeoutInternal", 1);
+const setInterval = $newCppFunction("node/NodeTimers.cpp", "functionSetIntervalInternal", 1);
+const clearTimeout = $newCppFunction("node/NodeTimers.cpp", "functionClearTimeout", 1);
+const clearInterval = $newCppFunction("node/NodeTimers.cpp", "functionClearInterval", 1);
+
 function getTimerDuration(msecs, name) {
   validateNumber(msecs, name);
   if (msecs < 0 || !NumberIsFinite(msecs)) {
@@ -29,4 +43,8 @@ export default {
   // tests that inspect socket[kTimeout].
   kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
+  setTimeout,
+  setInterval,
+  clearTimeout,
+  clearInterval,
 };

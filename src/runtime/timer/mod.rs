@@ -44,7 +44,6 @@ pub mod timer;
 //   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
 //   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
 //   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
 //   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
 //     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 //     `get_destroyed`/`dispose`.
@@ -56,7 +55,7 @@ pub mod timer;
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident, $js_name:literal) => {
+    ($T:ident, $js_name:literal) => {
         #[::bun_jsc::JsClass(name = $js_name)]
         pub struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -79,20 +78,6 @@ macro_rules! impl_timer_object {
                 // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
                 // consumes the `heap::alloc`'d allocation from `init_with()`.
                 unsafe { Self::deinit(this) }
-            }
-        }
-
-        impl ::core::default::Default for $T {
-            fn default() -> Self {
-                Self {
-                    ref_count: ::bun_ptr::RefCount::init(),
-                    // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
-                        super::EventLoopTimerTag::$tag,
-                    ),
-                    // Default-constructed here, then overwritten in `init()`.
-                    internals: super::TimerObjectInternals::default(),
-                }
             }
         }
 
@@ -125,9 +110,12 @@ macro_rules! impl_timer_object {
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
             /// heap-allocate → `to_js_ptr` → `internals.init` →
             /// inspector `did_schedule_async_call`. The per-type `init` fn
-            /// picks `kind`/`interval` and forwards here.
+            /// picks `tag`/`kind`/`interval` and forwards here. The node keeps
+            /// `tag` for its whole life (`js_timer_flags_ptr` and the fire
+            /// dispatch recover the container from it).
             pub fn init_with(
                 global: &::bun_jsc::JSGlobalObject,
+                tag: super::EventLoopTimerTag,
                 id: i32,
                 kind: super::Kind,
                 interval: u32,
@@ -138,8 +126,13 @@ macro_rules! impl_timer_object {
                 // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
                 // `deref → deinit → heap::take`.
-                let payload: *mut Self =
-                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
+                let payload: *mut Self = ::bun_core::heap::into_raw(::std::boxed::Box::new(Self {
+                    ref_count: ::bun_ptr::RefCount::init(),
+                    // `init_paused`: next=EPOCH, state=PENDING, heap links null.
+                    event_loop_timer: super::EventLoopTimer::init_paused(tag),
+                    // Overwritten by `internals.init()` below.
+                    internals: super::TimerObjectInternals::default(),
+                }));
                 // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
                 // shim; `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
@@ -555,8 +548,9 @@ pub use self::immediate_object::ImmediateObject;
 pub use self::timeout_object::TimeoutObject;
 
 /// Recover the
-/// [`TimerFlags`] slot for the three JS-timer container tags
-/// (`TimeoutObject` / `ImmediateObject` / `AbortSignalTimeout`), else `None`.
+/// [`TimerFlags`] slot for the three JS-timer container types
+/// (`TimeoutObject`, under either of its tags / `ImmediateObject` /
+/// `AbortSignalTimeout`), else `None`.
 ///
 /// Returns a raw `NonNull` so the caller decides read vs. write:
 /// [`EventLoopTimer::less`] reads `.epoch()` on the heap-compare hot path;
@@ -577,7 +571,7 @@ pub(crate) unsafe fn js_timer_flags_ptr(
     // SAFETY: caller contract — `t` is live; tag invariant per fn docs.
     unsafe {
         let p: *const TimerFlags = match (*t).tag {
-            EventLoopTimerTag::TimeoutObject => {
+            EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject => {
                 let parent = TimeoutObject::from_timer_ptr(t);
                 addr_of!((*parent).internals.flags).cast()
             }
@@ -1269,7 +1263,7 @@ impl All {
                 stack.push(next);
             }
             match tag {
-                EventLoopTimerTag::TimeoutObject => {
+                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject => {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live `TimeoutObject`.
                     let parent = unsafe { TimeoutObject::from_timer_ptr(node) };

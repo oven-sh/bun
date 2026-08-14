@@ -19,6 +19,7 @@ const {
   validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
+const { setTimeout, clearTimeout, setInterval, clearInterval } = require("internal/timers");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");

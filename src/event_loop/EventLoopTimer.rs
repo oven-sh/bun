@@ -4,6 +4,7 @@
 // — to convert at every assignment and risked silent layout drift).
 use Timespec as timespec;
 pub use bun_core::Timespec;
+use bun_core::TimespecMockMode;
 
 // Re-export so higher tiers see the *same* type they pass to
 // `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
@@ -179,6 +180,11 @@ impl EventLoopTimer {
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
     TimeoutObject,
+    /// A `TimeoutObject` scheduled by a built-in JS module through
+    /// `internal/timers` (socket idle timeouts, `child_process` kill timers,
+    /// ...): the same container as `TimeoutObject`, but a runtime-internal
+    /// timeout as far as `allow_fake_timers` is concerned.
+    InternalTimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
     UpgradedDuplex,
@@ -216,6 +222,18 @@ impl Tag {
             self,
             Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
         )
+    }
+
+    /// The clock an owner with this tag arms with (the rule stated on
+    /// [`Self::allow_fake_timers`]), for owners that exist under more than one
+    /// tag: a real-heap timer armed from the mocked clock is due immediately,
+    /// and re-arms due immediately.
+    pub fn clock(self) -> TimespecMockMode {
+        if self.allow_fake_timers() {
+            TimespecMockMode::AllowMockedTime
+        } else {
+            TimespecMockMode::ForceRealTime
+        }
     }
 }
 

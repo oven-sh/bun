@@ -1,4 +1,5 @@
 const { isIPv4 } = require("internal/net/isIP");
+const { setTimeout } = require("internal/timers");
 
 const {
   getHeader,

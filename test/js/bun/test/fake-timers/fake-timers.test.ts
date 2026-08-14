@@ -1,7 +1,11 @@
 import { RedisClient, SQL } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
-import { spawnSync as childProcessSpawnSync } from "node:child_process";
+import { spawnSync as childProcessSpawnSync, execFile } from "node:child_process";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -690,5 +694,189 @@ describe("useFakeTimers with options", () => {
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
     expect(vi.isFakeTimers()).toBe(false);
+  });
+});
+
+// Only timers user code creates through the globals are faked. The deadlines
+// built-in modules schedule for themselves (through internal/timers) keep
+// running on the real clock, as they do in Node under Jest's fake timers, and
+// are invisible to getTimerCount()/runAllTimers()/clearAllTimers(). Every test
+// here awaits the event the runtime is supposed to produce; before the fix the
+// timer behind it sat frozen in the fake heap and the test timed out.
+describe("built-in modules are not affected by fake timers", () => {
+  async function listening<T extends net.Server>(server: T): Promise<number> {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as net.AddressInfo).port;
+  }
+
+  test("internal/timers setTimeout fires in real time and is not a fake timer", async () => {
+    const { setTimeout: setInternalTimeout } = timerInternals.internalTimers;
+    vi.useFakeTimers();
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    setInternalTimeout((...args: string[]) => resolve(args), 1, "a", "b", "c");
+    expect(vi.getTimerCount()).toBe(0);
+    // Neither fires it early nor cancels it.
+    vi.runAllTimers();
+    vi.clearAllTimers();
+    expect(await promise).toEqual(["a", "b", "c"]);
+  });
+
+  test("internal/timers setInterval keeps firing in real time", async () => {
+    const { setInterval: setInternalInterval, clearInterval: clearInternalInterval } = timerInternals.internalTimers;
+    vi.useFakeTimers();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    let fired = 0;
+    const interval = setInternalInterval(() => {
+      if (++fired === 3) {
+        clearInternalInterval(interval);
+        resolve();
+      }
+    }, 1);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.runAllTimers();
+    await promise;
+    expect(fired).toBe(3);
+  });
+
+  test("internal/timers returns the same kind of Timeout the globals do", () => {
+    const { setTimeout: setInternalTimeout, clearTimeout: clearInternalTimeout } = timerInternals.internalTimers;
+    const internal = setInternalTimeout(() => {}, 1_000_000);
+    const global = setTimeout(() => {}, 1_000_000);
+    try {
+      expect(Object.getPrototypeOf(internal)).toBe(Object.getPrototypeOf(global));
+      expect(internal.hasRef()).toBe(true);
+      expect(internal.unref().hasRef()).toBe(false);
+      expect(internal.refresh()).toBe(internal);
+    } finally {
+      clearInternalTimeout(internal);
+      // The global clearTimeout clears internal timers too.
+      clearTimeout(internal);
+      clearTimeout(global);
+    }
+    expect((internal as any)._destroyed).toBe(true);
+  });
+
+  test("net.Server and http.Server emit 'listening'", async () => {
+    vi.useFakeTimers();
+    const netServer = net.createServer();
+    const httpServer = http.createServer();
+    try {
+      const { promise: callback, resolve } = Promise.withResolvers<void>();
+      netServer.listen(0, "127.0.0.1", resolve);
+      await Promise.all([callback, once(netServer, "listening"), listening(httpServer)]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      netServer.close();
+      httpServer.close();
+    }
+  });
+
+  test("socket.setTimeout() fires, and clearAllTimers()/useRealTimers() do not cancel it", async () => {
+    const accepted: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      accepted.push(socket);
+    });
+    const port = await listening(server);
+    vi.useFakeTimers();
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      const fakeTimers = vi.getTimerCount();
+      socket.setTimeout(1);
+      expect(vi.getTimerCount()).toBe(fakeTimers);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      await once(socket, "timeout");
+    } finally {
+      socket.destroy();
+      for (const s of accepted) s.destroy();
+      server.close();
+    }
+  });
+
+  test("http request.setTimeout() emits 'timeout' while the server stays silent", async () => {
+    const held: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      held.push(socket);
+    });
+    const port = await listening(server);
+    vi.useFakeTimers();
+    const req = http.get({ host: "127.0.0.1", port });
+    req.on("error", () => {});
+    try {
+      const [socket] = await once(req, "socket");
+      if (socket.connecting) await once(socket, "connect");
+      const fakeTimers = vi.getTimerCount();
+      req.setTimeout(1);
+      expect(vi.getTimerCount()).toBe(fakeTimers);
+      await once(req, "timeout");
+    } finally {
+      req.destroy();
+      for (const socket of held) socket.destroy();
+      server.close();
+    }
+  });
+
+  test("http.Server headersTimeout sweep (an internal setInterval) still runs", async () => {
+    vi.useFakeTimers();
+    // The sweep has to come around many times (re-arming itself each time)
+    // before the stalled request head is old enough to expire.
+    const server = http.createServer({ connectionsCheckingInterval: 1, headersTimeout: 20 }, (req, res) =>
+      res.end("unexpected"),
+    );
+    const { promise: clientError, resolve } = Promise.withResolvers<string>();
+    server.on("clientError", (err: any, socket) => {
+      resolve(err.code);
+      socket.destroy();
+    });
+    let socket: net.Socket | undefined;
+    try {
+      const port = await listening(server);
+      // 'listening' armed the sweep interval; it is not a fake timer.
+      expect(vi.getTimerCount()).toBe(0);
+      socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      // A request head that never completes.
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      expect(await clientError).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await once(socket, "close");
+    } finally {
+      socket?.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("child_process.execFile({ timeout }) kills the child", async () => {
+    vi.useFakeTimers();
+    const { promise, resolve } = Promise.withResolvers<{ killed: boolean; signal: string | null | undefined }>();
+    const child = execFile(bunExe(), ["-e", "setTimeout(() => {}, 1_000_000)"], { timeout: 1, env: bunEnv }, error =>
+      resolve({ killed: child.killed, signal: error?.signal }),
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await promise).toEqual({ killed: true, signal: "SIGTERM" });
+  });
+
+  // The same private references also keep the runtime working when user code
+  // replaces the globals (sinon-style fake timers, or any other monkeypatch).
+  test("listen() works after globalThis.setTimeout was replaced", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.setTimeout = globalThis.setInterval = () => { throw new Error("built-in module used the global timer"); };
+         const server = require("node:net").createServer();
+         server.listen(0, "127.0.0.1", () => { console.log("listening"); server.close(); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listening\n", stderr: "", exitCode: 0 });
   });
 });

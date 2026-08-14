@@ -54,6 +54,8 @@ test("unlike in jest", () => {
 });
 ```
 
+Like in Jest, fake timers apply to the timers your code creates with `setTimeout` and `setInterval`. The timers Bun's built-in modules schedule for themselves, such as `socket.setTimeout()`, the callback of `server.listen()` or the `timeout` option of `child_process.exec()`, keep running in real time while fake timers are active.
+
 ## Reset the system time
 
 To reset the system time, pass no arguments to `setSystemTime`:

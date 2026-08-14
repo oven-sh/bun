@@ -26,6 +26,10 @@ bun_core::declare_scope!(DomainRun, hidden);
 
 struct RunState {
     domain: u32,
+    /// The enclosing run's start epoch (0 if none), restored on exit. This run's
+    /// own start epoch lives where the gates read it (`bun_io::run_epoch` and the
+    /// uws loop data): I/O created before it is foreign to the run.
+    outer_start_epoch: u32,
     /// Foreign JS timers that became due during the run. Kept out of the timer
     /// heap for the run's duration (so the poll timeout ignores them) and
     /// reinserted with their original deadline on exit.
@@ -200,19 +204,39 @@ impl ScopedRun {
     /// `vm` is the live per-thread VM; the run must be dropped on this thread,
     /// innermost first.
     pub unsafe fn enter(vm: *mut VirtualMachine, domain: u32) -> ScopedRun {
+        // SAFETY: per fn contract.
+        unsafe { Self::enter_including_since(vm, domain, bun_io::run_epoch::bump()) }
+    }
+
+    /// Enter a run that also owns the I/O created since `since_epoch` (a value
+    /// from [`current_epoch`]): for a caller that must create what it waits for
+    /// before it can start waiting — spawnSync spawns the child, then runs.
+    ///
+    /// # Safety
+    /// As [`ScopedRun::enter`].
+    pub unsafe fn enter_including_since(
+        vm: *mut VirtualMachine,
+        domain: u32,
+        since_epoch: u32,
+    ) -> ScopedRun {
         debug_assert!(domain != 0);
+        debug_assert!(since_epoch != 0 && since_epoch <= bun_io::run_epoch::current());
         // SAFETY: per fn contract.
         unsafe { Bun__Domain__enterRun((*vm).global, domain) };
+        let outer_start_epoch = bun_io::run_epoch::active_run_start();
         RUNS.with_borrow_mut(|runs| {
             runs.push(RunState {
                 domain,
+                outer_start_epoch,
                 deferred_timers: Vec::new(),
                 parked_immediates: Vec::new(),
                 parked_tasks: Vec::new(),
             })
         });
         bun_event_loop::set_active_run_domain(domain);
-        bun_core::scoped_log!(DomainRun, "enter run {}", domain);
+        // SAFETY: per fn contract.
+        unsafe { set_run_start_epoch(vm, since_epoch) };
+        bun_core::scoped_log!(DomainRun, "enter run {} (epoch {})", domain, since_epoch);
         ScopedRun { vm, domain }
     }
 
@@ -225,6 +249,20 @@ impl ScopedRun {
         let domain = unsafe { Bun__Domain__allocate((*vm).global) };
         // SAFETY: per fn contract.
         unsafe { Self::enter(vm, domain) }
+    }
+
+    /// [`ScopedRun::enter_including_since`] for a freshly allocated domain.
+    ///
+    /// # Safety
+    /// As [`ScopedRun::enter`].
+    pub unsafe fn enter_new_including_since(
+        vm: *mut VirtualMachine,
+        since_epoch: u32,
+    ) -> ScopedRun {
+        // SAFETY: per fn contract.
+        let domain = unsafe { Bun__Domain__allocate((*vm).global) };
+        // SAFETY: per fn contract.
+        unsafe { Self::enter_including_since(vm, domain, since_epoch) }
     }
 
     #[inline]
@@ -299,6 +337,27 @@ impl Drop for ScopedRun {
     }
 }
 
+/// A fresh epoch boundary: I/O created after this call is stamped `>=` the
+/// returned value, everything created before is `<` it.
+pub fn current_epoch() -> u32 {
+    bun_io::run_epoch::bump()
+}
+
+/// Publish the innermost run's start epoch to the FilePoll gate (thread-local)
+/// and the usockets gate (loop data).
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn set_run_start_epoch(vm: *mut VirtualMachine, epoch: u32) {
+    bun_io::run_epoch::set_active_run_start(epoch);
+    // SAFETY: per fn contract; the uws loop exists before any run can start.
+    unsafe {
+        if (*vm).event_loop_handle.is_some() {
+            (*(*vm).uws_loop()).internal_loop_data.run_start_epoch = epoch;
+        }
+    }
+}
+
 /// # Safety
 /// `vm` is the live per-thread VM and `domain` is the innermost run.
 unsafe fn exit_run(vm: *mut VirtualMachine, domain: u32) {
@@ -310,6 +369,21 @@ unsafe fn exit_run(vm: *mut VirtualMachine, domain: u32) {
     });
     // SAFETY: per fn contract.
     unsafe { Bun__Domain__exitRun((*vm).global) };
+    // Foreign I/O that became ready during the run reports again from the next
+    // poll, to its owner (or stays parked if still foreign to an outer run).
+    // SAFETY: per fn contract.
+    unsafe {
+        bun_io::run_epoch::set_active_run_start(run.outer_start_epoch);
+        if (*vm).event_loop_handle.is_some() {
+            let uws_loop = (*vm).uws_loop();
+            #[cfg(not(windows))]
+            bun_io::run_epoch::rearm_after_run(
+                bun_io::uws_to_native(uws_loop),
+                run.outer_start_epoch,
+            );
+            (*uws_loop).scoped_run_ended(run.outer_start_epoch);
+        }
+    }
     bun_core::scoped_log!(
         DomainRun,
         "exit run {} (handing back {} timers, {} immediates, {} tasks)",

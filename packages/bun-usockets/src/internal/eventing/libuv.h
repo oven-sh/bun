@@ -45,6 +45,8 @@ struct us_poll_t {
   uv_poll_t *uv_p;
   LIBUS_SOCKET_DESCRIPTOR fd;
   unsigned char poll_type;
+  /* See epoll_kqueue.h; not consulted on the libuv backend yet. */
+  unsigned int bun_epoch;
 };
 
 #endif // LIBUV_H

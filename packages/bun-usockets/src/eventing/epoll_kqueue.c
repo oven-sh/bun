@@ -83,6 +83,7 @@ __attribute__((always_inline)) void *us_poll_ext(struct us_poll_t *p) {
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;
     p->state.poll_type = poll_type;
+    p->bun_epoch = Bun__runEpoch();
 }
 
 __attribute__((always_inline)) int us_poll_events(struct us_poll_t *p) {
@@ -691,6 +692,27 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
+}
+
+/* Take `p` out of the kernel set entirely (a later us_poll_change re-adds it:
+ * epoll via its ENOENT fallback, kqueue by re-adding the filters). Unlike
+ * us_poll_change(p, loop, 0) this also stops the implicit EPOLLHUP/EPOLLERR,
+ * so a hung-up socket parked by a scoped run cannot spin the loop. */
+void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop) {
+    int old_events = us_poll_events(p);
+    p->state.poll_type = us_internal_poll_type(p);
+#ifdef LIBUS_USE_EPOLL
+    struct epoll_event event;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+#else
+    if (old_events) {
+        kqueue_change(loop->fd, p->state.fd, old_events, 0, p);
+    }
+#endif
+    us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, 0);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

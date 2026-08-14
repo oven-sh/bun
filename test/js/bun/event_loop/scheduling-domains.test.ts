@@ -412,3 +412,147 @@ describe.skipIf(!hasDomains)("scoped runs: timers and immediates", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
+
+/**
+ * A TCP echo server in a child process (so its timing is independent of this
+ * process's loop): echoes each chunk back after `delayMs`.
+ */
+async function spawnEchoServer(delayMs: number) {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+         data(socket, data) { setTimeout(() => socket.write(data), ${delayMs}); },
+       }});
+       console.log(server.port);
+       process.stdin.on("end", () => process.exit(0)).resume();`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  let text = "";
+  while (!text.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += new TextDecoder().decode(value);
+  }
+  reader.releaseLock();
+  const port = Number(text.trim());
+  expect(port).toBeGreaterThan(0);
+  return {
+    port,
+    async [Symbol.asyncDispose]() {
+      proc.stdin.end();
+      await proc.exited;
+    },
+  };
+}
+
+describe.skipIf(!hasDomains)("scoped runs: I/O", () => {
+  test("outer connections ready during a run wait; a listener still accepts; inner I/O works", async () => {
+    const log: string[] = [];
+    await using echo = await spawnEchoServer(10);
+    // A server created outside the run. Its listen socket keeps accepting inside
+    // the run: a fetch from inside to it must not deadlock.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        log.push("served:" + new URL(req.url).pathname);
+        return new Response("hi:" + new URL(req.url).pathname);
+      },
+    });
+
+    // An outer connection whose reply arrives while the run is active.
+    const { promise: outerData, resolve: gotOuterData } = Promise.withResolvers<string>();
+    const outer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: echo.port,
+      socket: {
+        data(_socket, data) {
+          log.push("outer-data");
+          gotOuterData(data.toString());
+        },
+      },
+    });
+    outer.write("ping");
+
+    const inner = runUntil(async () => {
+      await sleep(50); // the echo reply to `outer` is now sitting in the kernel
+      log.push("inner-slept");
+      const res = await fetch(`http://127.0.0.1:${server.port}/inner`);
+      log.push("inner-fetched:" + (await res.text()));
+      // A connection opened inside the run is the run's own.
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const conn = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: echo.port,
+        socket: { data: (_s, d) => resolve(d.toString()) },
+      });
+      conn.write("inner-ping");
+      log.push("inner-echo:" + (await promise));
+      conn.end();
+      return "done";
+    });
+    expect(Bun.peek(inner)).toBe("done");
+    expect(log).toEqual(["inner-slept", "served:/inner", "inner-fetched:hi:/inner", "inner-echo:inner-ping"]);
+
+    // The outer reply was held, not lost.
+    expect(await outerData).toBe("ping");
+    expect(log.at(-1)).toBe("outer-data");
+    outer.end();
+  });
+
+  test("outer pipe readiness during a run waits and is delivered afterwards", async () => {
+    const log: string[] = [];
+    // An outer child that writes while the run is active.
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", "setTimeout(() => { process.stdout.write('outer-child'); }, 10)"],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const outerRead = (async () => {
+      const text = await child.stdout.text();
+      log.push("outer-read:" + text);
+      return text;
+    })();
+
+    runUntil(async () => {
+      await sleep(80); // outer child's write (and exit) happen in here
+      log.push("inner-slept");
+      await using innerChild = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('inner-child')"],
+        env: bunEnv,
+        stdout: "pipe",
+      });
+      log.push("inner-read:" + (await innerChild.stdout.text()));
+      log.push("inner-exit:" + (await innerChild.exited));
+    });
+    expect(log).toEqual(["inner-slept", "inner-read:inner-child", "inner-exit:0"]);
+    expect(await outerRead).toBe("outer-child");
+    expect(await child.exited).toBe(0);
+  });
+
+  test("a socket that predates the run but is written by it gets its reply inside the run", async () => {
+    // "The commons": a pooled/keep-alive connection created before the run and
+    // reused by code inside it. Writing is the ownership transfer.
+    await using echo = await spawnEchoServer(0);
+    let onData = (_: string) => {};
+    const conn = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: echo.port,
+      socket: { data: (_s, d) => onData(d.toString()) },
+    });
+    const reply = runUntil(() => {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      onData = resolve;
+      conn.write("reused");
+      return promise;
+    });
+    expect(Bun.peek(reply)).toBe("reused");
+    conn.end();
+  });
+});

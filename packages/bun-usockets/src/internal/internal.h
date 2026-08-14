@@ -320,6 +320,11 @@ struct us_socket_t {
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
+  /* Scoped event-loop runs (see us_poll_t.bun_epoch): the socket became ready during
+   * a run it is foreign to and was taken out of the poll set with these events;
+   * us_internal_run_ended re-arms it. */
+  unsigned char disarmed_by_run : 1;
+  unsigned char disarmed_events : 2;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -346,6 +351,22 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* Scoped event-loop runs — the epoch is kept by Rust (bun_io::run_epoch). */
+extern unsigned int Bun__runEpoch(void);
+static inline void us_internal_socket_stamp_epoch(struct us_socket_t *s) {
+    s->p.bun_epoch = Bun__runEpoch();
+    s->disarmed_by_run = 0;
+}
+/* `s` is being written by whatever code is running now: if that is a scoped run
+ * the socket predates, the socket (and the reply on it) becomes the run's. */
+static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
+    if (loop->data.run_start_epoch && s->p.bun_epoch < loop->data.run_start_epoch) {
+        us_internal_socket_stamp_epoch(s);
+    }
+}
+void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch);
+void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop);
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's

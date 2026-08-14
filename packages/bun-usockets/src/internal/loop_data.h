@@ -100,6 +100,10 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Start epoch of the innermost scoped event-loop run on this loop's thread
+     * (0 = none); mirrored here by Bun on run enter/exit so the ready-poll
+     * dispatch reads it without a call. See us_poll_t.bun_epoch. */
+    unsigned int run_start_epoch;
 };
 
 #endif // LOOP_DATA_H

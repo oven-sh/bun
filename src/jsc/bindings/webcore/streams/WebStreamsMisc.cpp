@@ -161,10 +161,11 @@ bool isNonNegativeNumber(JSValue value)
     return number >= 0;
 }
 
-// Queues handler(value, contextCell) — the reaction-convention argument order.
+// Queues handler(value, contextCell) — the reaction-convention argument order —
+// to run under the async context current now (which also names its scheduling domain).
 void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
+    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context, globalObject->m_asyncContextData.get()->getInternalField(0) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 

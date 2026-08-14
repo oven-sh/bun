@@ -354,6 +354,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     struct us_socket_t *s = &ls->s;
     s->group = group;
     s->kind = 0; /* listener itself never dispatches */
+    us_internal_socket_stamp_epoch(s);
     s->ssl = NULL;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -365,6 +366,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->disarmed_by_run = 0;
     s->fin_deferred = 0;
     s->next = 0;
     s->prev = 0;
@@ -533,6 +535,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
                                                    unsigned char kind, int options) {
     s->group = group;
     s->kind = kind;
+    us_internal_socket_stamp_epoch(s);
     s->ssl = NULL;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -545,6 +548,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->disarmed_by_run = 0;
     s->fin_deferred = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;

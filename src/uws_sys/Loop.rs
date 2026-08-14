@@ -288,6 +288,23 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    /// A scoped event-loop run on this loop's thread has ended and
+    /// `outer_start_epoch` is now the innermost run's start (0 if none): put
+    /// `run_start_epoch` back and re-arm every socket the run parked that is not
+    /// still foreign to the outer run. See `bun_runtime::domain_run`.
+    #[cfg(not(windows))]
+    pub fn scoped_run_ended(&mut self, outer_start_epoch: u32) {
+        self.internal_loop_data.run_start_epoch = outer_start_epoch;
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_internal_run_ended(self, outer_start_epoch) };
+    }
+
+    /// See [`Self::scoped_run_ended`]; libuv-backed sockets carry no epoch yet.
+    #[cfg(windows)]
+    pub fn scoped_run_ended(&mut self, outer_start_epoch: u32) {
+        self.internal_loop_data.run_start_epoch = outer_start_epoch;
+    }
+
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
@@ -633,6 +650,8 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        #[cfg(not(windows))]
+        pub(super) fn us_internal_run_ended(loop_: *mut Loop, outer_start_epoch: u32);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

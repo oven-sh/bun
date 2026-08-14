@@ -111,7 +111,14 @@ struct us_poll_t {
         signed int fd : 27; // we could have this unsigned if we wanted to, -1 should never be used
         unsigned int poll_type : 5;
     } state;
+    /* Bun run epoch (Bun__runEpoch) at creation, adoption or last write. While a
+     * scoped event-loop run is active on this loop's thread, readiness of a socket
+     * older than the run's start belongs to the code the run interrupted and is
+     * held until the run ends (see us_internal_defer_foreign_ready_poll). Lives
+     * in the alignment padding, so it costs nothing. */
+    unsigned int bun_epoch;
 };
+_Static_assert(sizeof(struct us_poll_t) == LIBUS_EXT_ALIGNMENT, "bun_epoch must fit us_poll_t's alignment padding");
 
 #undef FD_BITS
 

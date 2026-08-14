@@ -457,7 +457,55 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+/* Scoped event-loop runs: readiness of a socket that predates the active run
+ * belongs to the code the run interrupted. Readiness is level-triggered, so the
+ * socket is taken out of the poll set until us_internal_run_ended re-arms it,
+ * where it reports again for its real owner. Listen sockets are never foreign:
+ * a new connection is an external event, and serving it is what a server does. */
+static inline int us_internal_defer_foreign_ready_poll(struct us_poll_t *p) {
+    int type = us_internal_poll_type(p);
+    if (type != POLL_TYPE_SOCKET && type != POLL_TYPE_SOCKET_SHUT_DOWN && type != POLL_TYPE_SEMI_SOCKET) {
+        return 0;
+    }
+    if (type == POLL_TYPE_SEMI_SOCKET && !(us_poll_events(p) & LIBUS_SOCKET_WRITABLE)) {
+        return 0; /* listen socket */
+    }
+    struct us_socket_t *s = (struct us_socket_t *) p;
+    struct us_loop_t *loop = s->group->loop;
+    unsigned int run_start = loop->data.run_start_epoch;
+    if (LIKELY(!run_start) || s->p.bun_epoch >= run_start) {
+        return 0;
+    }
+    s->disarmed_events = us_poll_events(p);
+    s->disarmed_by_run = 1;
+    us_internal_poll_disarm(p, loop);
+    return 1;
+}
+
+void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch) {
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+            if (!s->disarmed_by_run || us_socket_is_closed(s)) continue;
+            /* Still foreign to an outer run that remains active: stays parked. */
+            if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) continue;
+            s->disarmed_by_run = 0;
+            us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
+        }
+        for (struct us_connecting_socket_t *c = g->head_connecting_sockets; c; c = c->next) {
+            for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
+                if (!s->disarmed_by_run || us_socket_is_closed(s)) continue;
+                if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) continue;
+                s->disarmed_by_run = 0;
+                us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
+            }
+        }
+    }
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
+    if (us_internal_defer_foreign_ready_poll(p)) {
+        return;
+    }
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -528,6 +576,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         s->group = accept_group;
                         s->kind = listen_socket->accept_kind;
+                        us_internal_socket_stamp_epoch(s);
                         s->ssl = NULL;
                         s->connect_state = NULL;
                         s->timeout = 255;
@@ -541,6 +590,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
+                        s->disarmed_by_run = 0;
                         s->fin_deferred = 0;
 
                         /* We always use nodelay */

@@ -63,6 +63,10 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// Start epoch of the innermost scoped event-loop run on this loop's
+    /// thread (0 = none). Written by `bun_runtime::domain_run`; read by the C
+    /// ready-poll dispatch to hold readiness of sockets that predate the run.
+    pub run_start_epoch: u32,
 }
 
 impl InternalLoopData {

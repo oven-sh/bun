@@ -671,7 +671,11 @@ impl FilePoll {
                 {
                     let what = std::format!(
                         "epoll_ctl({}, fd {}, {}) failed: {} (poll flags before: {})",
-                        if op == EPOLL::CTL_MOD { "CTL_MOD" } else { "CTL_ADD" },
+                        if op == EPOLL::CTL_MOD {
+                            "CTL_MOD"
+                        } else {
+                            "CTL_ADD"
+                        },
                         fd.native(),
                         <&'static str>::from(flag),
                         errno

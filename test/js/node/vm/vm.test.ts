@@ -1617,9 +1617,9 @@ test("nested vm runs each keep their own deadline", () => {
     ),
   ).toBe("inner:ERR_SCRIPT_EXECUTION_TIMEOUT");
   // Outer deadline passes while the inner run is on the stack: the outer run is what times out.
-  expect(() => vm.runInNewContext(`vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })`, { vm }, { timeout: 30 })).toThrow(
-    expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
-  );
+  expect(() =>
+    vm.runInNewContext(`vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })`, { vm }, { timeout: 30 }),
+  ).toThrow(expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }));
   // Both deadlines pass before the inner run ends (it is blocked off-CPU past both): the inner
   // run's error is caught by the outer script, which must nevertheless still be stopped by its own,
   // already-fired deadline rather than loop forever.

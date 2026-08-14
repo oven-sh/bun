@@ -62,10 +62,38 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
 
-      - name: Setup dylint
+      - name: Cache the dylint binaries
+        # Compiling cargo-dylint and dylint-link is ~100s; they only change on
+        # a DYLINT_VERSION bump.
+        id: dylint-bin
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-bin-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+
+      - name: Build the dylint binaries
+        if: steps.dylint-bin.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
+
+      - name: Read the mordant pin
+        # The driver dylint builds (~50s) is tied to the nightly that the pinned
+        # mordant revision names, so the revision is the right cache key for it.
+        id: pin
         run: |
-          cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
-          echo "::add-matcher::.github/rust-matcher.json"
+          rev=$(sed -n 's/.*scarletindustries\/mordant", rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)
+          test -n "$rev"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the dylint driver
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.dylint_drivers
+          key: dylint-driver-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
+
+      - name: Enable rustc annotations
+        run: echo "::add-matcher::.github/rust-matcher.json"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

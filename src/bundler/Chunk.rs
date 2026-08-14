@@ -459,7 +459,7 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
-/// How the text replacing a placeholder is written into the chunk.
+/// How the text replacing a placeholder is written into the output.
 #[derive(Clone, Copy)]
 enum SpliceEscape {
     /// CSS and HTML chunks (`url()`s and attributes).
@@ -467,6 +467,8 @@ enum SpliceEscape {
     /// JS chunks: the placeholder is the body of a `"..."` literal. Chunks with
     /// the `// @bun` pragma are loaded as Latin-1, so they must also stay ASCII.
     JsString { ascii_only: bool },
+    /// The metafile: the placeholder is the body of a JSON string.
+    JsonString,
 }
 
 impl SpliceEscape {
@@ -583,15 +585,14 @@ impl IntermediateOutput {
         path: &[u8],
         escape: SpliceEscape,
     ) -> Result<(), crate::Error> {
-        match escape {
-            SpliceEscape::Raw => writer.write_all(path)?,
-            SpliceEscape::JsString { ascii_only } => {
-                bun_js_printer::write_pre_quoted_string_inner::<
-                    _,
-                    { bun_js_printer::Encoding::Utf8 },
-                >(path, writer, b'"', ascii_only, false)?
-            }
-        }
+        let (ascii_only, json) = match escape {
+            SpliceEscape::Raw => return Ok(writer.write_all(path)?),
+            SpliceEscape::JsString { ascii_only } => (ascii_only, false),
+            SpliceEscape::JsonString => (false, true),
+        };
+        bun_js_printer::write_pre_quoted_string_inner::<_, { bun_js_printer::Encoding::Utf8 }>(
+            path, writer, b'"', ascii_only, json,
+        )?;
         Ok(())
     }
 
@@ -628,6 +629,7 @@ impl IntermediateOutput {
         enable_source_map_shifts: bool,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk, linker_graph);
         // switch (enable_source_map_shifts) { inline else => |b| ... }
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(
@@ -640,6 +642,7 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 None,
+                escape,
             )
         } else {
             self.code_with_source_map_shifts::<false>(
@@ -652,8 +655,33 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 None,
+                escape,
             )
         }
+    }
+
+    /// `code()` for the metafile, whose placeholders sit inside JSON strings.
+    /// `chunk` only supplies the directory paths are made relative to; the
+    /// metafile is not a chunk of its own.
+    pub(crate) fn code_for_metafile(
+        &mut self,
+        parse_graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunk: &Chunk,
+        chunks: &[Chunk],
+    ) -> Result<CodeResult, AllocError> {
+        self.code_with_source_map_shifts::<false>(
+            None,
+            parse_graph,
+            linker_graph,
+            b"",
+            chunk,
+            chunks,
+            None,
+            false,
+            None,
+            SpliceEscape::JsonString,
+        )
     }
 
     /// Like `code()` but with standalone HTML support.
@@ -678,6 +706,7 @@ impl IntermediateOutput {
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk, linker_graph);
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
@@ -689,6 +718,7 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 Some(standalone_chunk_contents),
+                escape,
             )
         } else {
             self.code_with_source_map_shifts::<false>(
@@ -701,12 +731,13 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 Some(standalone_chunk_contents),
+                escape,
             )
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
+    fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
@@ -718,6 +749,7 @@ impl IntermediateOutput {
         display_size: Option<&mut usize>,
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
+        escape: SpliceEscape,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
@@ -765,8 +797,6 @@ impl IntermediateOutput {
                 } else {
                     &[]
                 };
-
-                let escape = SpliceEscape::for_chunk(chunk, linker_graph);
 
                 for piece in pieces.slice() {
                     count += piece.data.len();

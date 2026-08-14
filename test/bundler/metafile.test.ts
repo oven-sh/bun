@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -456,6 +456,32 @@ describe("bundler metafile", () => {
     const outputs = (result.metafile as Metafile).outputs as Record<string, MetafileOutput>;
     const outputPaths = Object.keys(outputs);
     expect(outputPaths).toContain(dynamicImport!.path);
+  });
+
+  // The chunk path is spliced into the metafile after the JSON around it was
+  // written, so it has to be escaped as JSON string content: the quote must be
+  // escaped, and the non-ASCII characters must not be turned into the `\xNN`
+  // escapes a JS chunk built for bun would use. (Windows cannot create the file.)
+  test.skipIf(isWindows)("metafile escapes resolved chunk paths as JSON", async () => {
+    using dir = tempDir("metafile-chunk-path-escape", {
+      "entry.js": `import('./q"modülé.js').then(m => console.log(m.value));`,
+      'q"modülé.js': `export const value = 123;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      target: "bun",
+      splitting: true,
+      naming: { chunk: "[name]-[hash].[ext]" },
+      metafile: true,
+    });
+    expect(result.logs).toBeEmpty();
+
+    const metafile = result.metafile as Metafile;
+    const [, entry] = Object.entries(metafile.inputs).find(([path]) => path.endsWith("entry.js"))!;
+    const chunkPath = entry.imports.find(imp => imp.kind === "dynamic-import")!.path;
+    expect(chunkPath).toMatch(/^\.\/q"modülé-[a-z0-9]+\.js$/);
+    expect(Object.keys(metafile.outputs)).toContain(chunkPath);
   });
 
   test("metafile includes cssBundle for CSS outputs", async () => {

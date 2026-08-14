@@ -996,18 +996,8 @@ declare class ResolveMessage {
   readonly message: string;
   readonly referrer: string;
   readonly specifier: string;
-  readonly importKind:
-    | "entry_point"
-    | "stmt"
-    | "require"
-    | "import"
-    | "dynamic"
-    | "require_resolve"
-    | "at"
-    | "at_conditional"
-    | "url"
-    | "internal";
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly importKind: Bun.ImportKind;
+  readonly level: Bun.BuildMessageLevel;
 
   toString(): string;
 }
@@ -1016,7 +1006,7 @@ declare class BuildMessage {
   readonly name: "BuildMessage";
   readonly position: Position | null;
   readonly message: string;
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly level: Bun.BuildMessageLevel;
 }
 
 interface ErrorOptions {

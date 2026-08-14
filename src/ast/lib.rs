@@ -549,6 +549,7 @@ impl Kind {
         }
     }
 
+    /// Public API (`BuildMessage.level`); mirrored by bun-types `BuildMessageLevel`.
     #[inline]
     pub fn string(self) -> &'static [u8] {
         match self {

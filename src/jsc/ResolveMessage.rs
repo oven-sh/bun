@@ -35,27 +35,6 @@ impl Default for ResolveMessage {
     }
 }
 
-/// `ImportKind.label()` — the canonical table lives in
-/// `bun_ast::ImportKind::label`, but
-/// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.
-/// Replicate the table here verbatim.
-fn import_kind_label(kind: ImportKind) -> &'static [u8] {
-    match kind {
-        ImportKind::EntryPointRun => b"entry-point-run",
-        ImportKind::EntryPointBuild => b"entry-point-build",
-        ImportKind::Stmt => b"import-statement",
-        ImportKind::Require => b"require-call",
-        ImportKind::Dynamic => b"dynamic-import",
-        ImportKind::RequireResolve => b"require-resolve",
-        ImportKind::At => b"import-rule",
-        ImportKind::AtConditional => b"",
-        ImportKind::Url => b"url-token",
-        ImportKind::Composes => b"composes",
-        ImportKind::Internal => b"internal",
-        ImportKind::HtmlManifest => b"html_manifest",
-    }
-}
-
 /// Host-agnostic bare-specifier check for Node ESM error shaping. Must not vary by host:
 /// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
 /// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
@@ -479,7 +458,7 @@ impl ResolveMessage {
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
+                ZigString::init(resolve.import_kind.label()).to_js(global)
             }
             _ => ZigString::init(b"").to_js(global),
         })

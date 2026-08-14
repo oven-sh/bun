@@ -756,7 +756,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn as_mut(&self) -> &mut VirtualMachine {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
-        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // SAFETY: JS thread only (`VirtualMachine` is `!Send + !Sync`).
         // Provenance comes from the thread-local `*mut` set in `init()`.
         unsafe { &mut *Self::get_mut_ptr() }
     }
@@ -775,7 +775,7 @@ impl VirtualMachine {
     /// `BackRef<VirtualMachine>` was constructed.
     #[inline(always)]
     pub fn get_mut() -> &'static mut VirtualMachine {
-        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // SAFETY: JS thread only (`VirtualMachine` is `!Send + !Sync`).
         // Provenance comes from the thread-local `*mut` set in `init()`.
         unsafe { &mut *Self::get_mut_ptr() }
     }
@@ -831,7 +831,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_mut(&self) -> &mut EventLoop {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
-        // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
+        // after `init()`; JS thread only (`VirtualMachine` is `!Sync`).
         unsafe { &mut *self.event_loop }
     }
 
@@ -1024,8 +1024,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn uws_loop_mut(&self) -> &mut uws::Loop {
         // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
-        // the JS thread once `init()` ran. Single-JS-thread invariant per
-        // `unsafe impl Sync`.
+        // the JS thread once `init()` ran; JS thread only (`!Sync`).
         unsafe { &mut *self.uws_loop() }
     }
 

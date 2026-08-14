@@ -261,17 +261,14 @@ public:
     {
     }
 
-    // A frame is either "functionName (location)" or, when the frame has no
-    // function name (module top-level code, "unknown", "native"), a bare
-    // "location". Only the former ends with a parenthesis. Returns the index of
-    // the "(" opening the location, or notFound for a bare location.
+    // Index of the "(" before the location in "name (location)", or notFound for a
+    // bare "location", which is how frames without a function name are printed.
     static size_t locationOpeningParenthesis(StringView line)
     {
         if (!line.endsWith(')'))
             return WTF::notFound;
 
-        // Match the final ")" so that parentheses inside the location
-        // ("/app/(group)/page.js") or the function name are skipped over.
+        // Balance the final ")" so that a "(group)" inside the location is skipped.
         unsigned depth = 0;
         for (unsigned i = line.length(); i-- > 0;) {
             if (line[i] == ')')
@@ -280,7 +277,7 @@ public:
                 return i;
         }
 
-        // Unbalanced: more ")" than "(".
+        // More ")" than "(".
         return line.find('(');
     }
 

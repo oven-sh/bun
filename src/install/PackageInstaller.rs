@@ -1541,11 +1541,13 @@ impl<'a> PackageInstaller<'a> {
                     let len = global_link_dir.len() + sep_len + folder.len();
                     // `folder` is the `link:` specifier as written in package.json.
                     if len >= self.folder_path_buf.len() {
-                        Output::err(
-                            "ENAMETOOLONG",
-                            "link path for package <b>{}<r> is too long",
-                            (bstr::BStr::new(pkg_name.slice(string_buf!())),),
-                        );
+                        if log_level != Options::LogLevel::Silent {
+                            Output::err(
+                                "ENAMETOOLONG",
+                                "link path for package <b>{}<r> is too long",
+                                (bstr::BStr::new(pkg_name.slice(string_buf!())),),
+                            );
+                        }
                         self.summary.fail += 1;
                         self.increment_tree_install_count(
                             !is_pending_package_install,

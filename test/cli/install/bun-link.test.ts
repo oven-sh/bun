@@ -529,6 +529,9 @@ describe("link: specifier longer than the path buffers", () => {
       expect(out).toContain("Failed to install 1 package");
       expect(await file(join(package_dir, "node_modules", link_name, "package.json")).exists()).toBe(false);
       expect(exitCode).toBe(1);
+
+      // Like the other per-package failures, the error respects --silent.
+      expect(await run(package_dir, "install", "--silent")).toEqual({ out: "", err: "", exitCode: 1 });
     } finally {
       await run(link_dir, "unlink");
     }

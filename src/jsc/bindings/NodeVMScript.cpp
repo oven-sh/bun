@@ -19,7 +19,7 @@
 namespace Bun {
 using namespace NodeVM;
 
-bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
+bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, NodeVMGlobalObject** parsingContext)
 {
     if (importer) {
         *importer = jsUndefined();
@@ -82,6 +82,18 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         }
+
+        if (parsingContext) {
+            // A private name, so only vm.ts can set it; a user-supplied
+            // `parsingContext` property is not an option of vm.Script.
+            JSValue parsingContextValue = options->getDirect(vm, WebCore::builtinNames(vm).vmParsingContextPrivateName());
+            if (parsingContextValue) {
+                *parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                ASSERT(*parsingContext);
+                any = true;
+            }
+        }
     }
 
     return any;
@@ -105,13 +117,14 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     JSValue optionsArg = args.at(1);
     ScriptOptions options(""_s);
     JSValue importer;
+    NodeVMGlobalObject* parsingContext = nullptr;
 
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         // `new Script(src, "name")` is a provided filename, "" included.
         options.filenameProvided = true;
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer, &parsingContext)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
@@ -140,7 +153,13 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
-        auto exception = parseError.toErrorObject(globalObject, source, -1);
+        // Node compiles inside the parsing context, so a compile error is that
+        // realm's SyntaxError/RangeError and that realm's Error.prepareStackTrace
+        // formats it. Both follow from where the error object is created: its
+        // structure decides instanceof, and the stack formatter looks the hook
+        // up on the error's own realm.
+        JSGlobalObject* errorGlobalObject = parsingContext ? parsingContext : globalObject;
+        auto exception = parseError.toErrorObject(errorGlobalObject, source, -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError
         // anyway. tryClearException leaves a termination for the check below.
@@ -152,7 +171,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         // An absent filename becomes evalmachine.<anonymous>; an explicitly
         // provided one — including "" — is used verbatim.
         String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
+        decorateParseErrorStack(errorGlobalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
         throwException(globalObject, scope, exception);
         return {};
     }

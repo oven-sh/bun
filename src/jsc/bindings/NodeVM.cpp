@@ -601,7 +601,12 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
 {
     UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
-    if (!errorInstance)
+    // Stack overflow and out-of-memory ParserErrors have no position to point
+    // at. toErrorObject() also builds those without materializing a stack, so
+    // returning here is what makes the materialization below a no-op rather
+    // than a first materialization that runs a user Error.prepareStackTrace
+    // outside the caller's exception handling.
+    if (!errorInstance || parseError.line() < 0)
         return;
 
     // The caller's toErrorObject() already materialized the stack (running any

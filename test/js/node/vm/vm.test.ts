@@ -463,6 +463,187 @@ describe("Script", () => {
   });
 });
 
+describe("compile errors come from the context the code is compiled in", () => {
+  // Node's runInContext/runInNewContext compile the source inside the target
+  // context (lib/vm.js passes it as the Script's parsing context), so an error
+  // the compile throws is an instance of that context's constructors, not the
+  // caller's. A bare `new Script` has no parsing context and compiles in the
+  // caller's realm.
+  const thrownBy = (fn: () => unknown): any => {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected a throw");
+  };
+  const realmOf = (context: object) => ({
+    Error: runInContext("Error", context),
+    SyntaxError: runInContext("SyntaxError", context),
+    RangeError: runInContext("RangeError", context),
+  });
+  const header = (err: any) => err.stack.split("\n").slice(0, 4);
+
+  test("runInContext throws the context's SyntaxError, still decorated with the arrow header", () => {
+    const context = createContext({});
+    const realm = realmOf(context);
+    const cases: [options: any, url: string][] = [
+      [undefined, "evalmachine.<anonymous>"],
+      ["named.js", "named.js"],
+      [{ filename: "opts.js" }, "opts.js"],
+      [{ filename: "opts.js", displayErrors: false }, "opts.js"],
+    ];
+    for (const [options, url] of cases) {
+      const err = thrownBy(() => runInContext("%%", context, options));
+      expect(err).toBeInstanceOf(realm.SyntaxError);
+      expect(err).not.toBeInstanceOf(Error);
+      expect(err.message).toBe("Unexpected token '%'");
+      expect(header(err)).toEqual([`${url}:1`, "%%", "^", ""]);
+    }
+  });
+
+  test("runInContext with a DONT_CONTEXTIFY context", () => {
+    const context = createContext(constants.DONT_CONTEXTIFY);
+    const err = thrownBy(() => runInContext("%%", context));
+    expect(err).toBeInstanceOf(realmOf(context).SyntaxError);
+    expect(err).not.toBeInstanceOf(Error);
+  });
+
+  test("runInNewContext throws the SyntaxError of the context it creates for (or finds on) the sandbox", () => {
+    const sandbox = {};
+    const err = thrownBy(() => runInNewContext("%%", sandbox));
+    // runInNewContext contextified the sandbox; runInContext now resolves to
+    // that same context.
+    expect(err).toBeInstanceOf(realmOf(sandbox).SyntaxError);
+    expect(err).not.toBeInstanceOf(Error);
+    expect(header(err)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+
+    const context = createContext({});
+    const realm = realmOf(context);
+    expect(thrownBy(() => runInNewContext("%%", context))).toBeInstanceOf(realm.SyntaxError);
+    expect(thrownBy(() => runInNewContext("%%", context, "named.js"))).toBeInstanceOf(realm.SyntaxError);
+    expect(thrownBy(() => runInNewContext("%%", context, { filename: "opts.js" }))).toBeInstanceOf(realm.SyntaxError);
+
+    // No handle on the context at all: the error is still not the caller's.
+    for (const err of [
+      thrownBy(() => runInNewContext("%%")),
+      thrownBy(() => runInNewContext("%%", constants.DONT_CONTEXTIFY)),
+    ]) {
+      expect(err.name).toBe("SyntaxError");
+      expect(err).not.toBeInstanceOf(Error);
+    }
+  });
+
+  test("the parser's stack overflow RangeError comes from the context too, and gets no arrow header", () => {
+    const context = createContext({});
+    const realm = realmOf(context);
+    const tooDeep = Buffer.alloc(100_000, "(").toString();
+    for (const err of [
+      thrownBy(() => runInContext(tooDeep, context)),
+      thrownBy(() => runInNewContext(tooDeep, context)),
+    ]) {
+      expect(err).toBeInstanceOf(realm.RangeError);
+      expect(err).not.toBeInstanceOf(Error);
+      // There is no source position to point at, so the stack starts with the
+      // error itself rather than a "<url>:-1" header. (Node's header here
+      // points at a line inside its own lib/vm.js, which has no equivalent.)
+      expect(err.stack.split("\n")[0]).toStartWith("RangeError: ");
+    }
+    // Same for the other compile path that shares the decoration; this one
+    // compiles in the caller's realm.
+    for (const err of [thrownBy(() => new Script(tooDeep)), thrownBy(() => compileFunction(tooDeep))]) {
+      expect(err).toBeInstanceOf(RangeError);
+      expect(err.stack.split("\n")[0]).toStartWith("RangeError: ");
+    }
+  });
+
+  test("the context's Error.prepareStackTrace formats the error, under the arrow header", () => {
+    const calls: string[] = [];
+    const context = createContext({ calls });
+    runInContext(
+      `Error.prepareStackTrace = err => {
+        calls.push("context:" + err.constructor.name);
+        return "formatted by the context";
+      };`,
+      context,
+    );
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = err => {
+      calls.push("caller:" + err.constructor.name);
+      return "formatted by the caller";
+    };
+    let inContext: any, inNewContext: any, bare: any;
+    try {
+      inContext = thrownBy(() => runInContext("%%", context, { filename: "a.js" }));
+      inNewContext = thrownBy(() => runInNewContext("%%", context, { filename: "b.js" }));
+      bare = thrownBy(() => new Script("%%", { filename: "c.js" }));
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+    expect(calls).toEqual(["context:SyntaxError", "context:SyntaxError", "caller:SyntaxError"]);
+    expect(inContext.stack).toBe("a.js:1\n%%\n^\n\nformatted by the context");
+    expect(inNewContext.stack).toBe("b.js:1\n%%\n^\n\nformatted by the context");
+    expect(bare.stack).toBe("c.js:1\n%%\n^\n\nformatted by the caller");
+  });
+
+  test("a throwing Error.prepareStackTrace in the context does not escape the compile error", () => {
+    // Context-realm counterpart of the main-realm test in describe("Script"):
+    // the stack is materialized while the error is built, the hook's throw is
+    // dropped, and the SyntaxError with its header is what comes out.
+    const context = createContext({});
+    runInContext(
+      `Error.prepareStackTrace = () => {
+        throw new Error("boom-from-prepareStackTrace");
+      };`,
+      context,
+    );
+    const err = thrownBy(() => runInContext("%%", context));
+    expect(err).toBeInstanceOf(realmOf(context).SyntaxError);
+    expect(err.message).toBe("Unexpected token '%'");
+    expect(header(err)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+  });
+
+  test("new Script and runInThisContext keep compiling in the caller's realm", () => {
+    const context = createContext({});
+    const realm = realmOf(context);
+    const errors = [
+      thrownBy(() => new Script("%%")),
+      thrownBy(() => runInThisContext("%%")),
+      // compileFunction's option name is not a vm.Script option; Node ignores it here too.
+      thrownBy(() => new Script("%%", { parsingContext: context } as any)),
+      thrownBy(() => runInThisContext("%%", { parsingContext: context } as any)),
+    ];
+    for (const err of errors) {
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err).not.toBeInstanceOf(realm.SyntaxError);
+    }
+  });
+
+  test("options are copied like Node's { ...options }: getters run once, frozen objects work, defaults apply", () => {
+    const context = createContext({});
+    const realm = realmOf(context);
+    let reads = 0;
+    const options = Object.freeze({
+      get filename() {
+        reads++;
+        return "getter.js";
+      },
+    });
+    expect(runInContext("new Error().stack", context, options)).toContain("getter.js");
+    expect(reads).toBe(1);
+    reads = 0;
+    expect(runInNewContext("new Error().stack", {}, options)).toContain("getter.js");
+    expect(reads).toBe(1);
+    // The parsing context travels on the copy, so a frozen options object still gets it.
+    expect(thrownBy(() => runInContext("%%", context, options))).toBeInstanceOf(realm.SyntaxError);
+    expect(thrownBy(() => runInNewContext("%%", context, options))).toBeInstanceOf(realm.SyntaxError);
+
+    // With no options at all the script is still named the way Node names it.
+    expect(runInContext("new Error().stack", context)).toContain("at evalmachine.<anonymous>:1");
+    expect(runInNewContext("new Error().stack", {})).toContain("at evalmachine.<anonymous>:1");
+  });
+});
+
 type TestRunInContextArg =
   | { fn: typeof runInContext; isIsolated: true; isNew?: boolean }
   | { fn: typeof runInThisContext; isIsolated?: false; isNew?: boolean };

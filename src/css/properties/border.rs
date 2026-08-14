@@ -1260,12 +1260,9 @@ mod border_handler_body {
                 }};
             }
 
-            // A 4-side shorthand overrides the logical values of its component in every
-            // writing mode, so drop them before `property_helper!` flushes the buffer.
-            // A target that rejects the shorthand still applies them: keep those as
-            // fallbacks, the same way `flush_helper!` does for physical values.
             macro_rules! rect_shorthand_helper {
                 ($prop:ident, $val:expr) => {{
+                    // Buffered logical values stay live only for a target that rejects the shorthand.
                     let rejected_by_a_target = match context.targets.browsers {
                         Some(browsers) => [&$val.top, &$val.right, &$val.bottom, &$val.left]
                             .into_iter()
@@ -1273,6 +1270,7 @@ mod border_handler_body {
                         None => false,
                     };
                     if !rejected_by_a_target {
+                        // Dead in every writing mode; clear before `property_helper!` flushes them.
                         self.border_block_start.$prop = None;
                         self.border_block_end.$prop = None;
                         self.border_inline_start.$prop = None;

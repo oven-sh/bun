@@ -9987,6 +9987,57 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
   }
 });
 
+for (const lockfile of ["bun.lock", "bun.lockb"]) {
+  it(`installs a file: dependency whose version literal has leading whitespace (${lockfile})`, async () => {
+    // The folder path is longer than an inline string so that it has to be appended to the
+    // lockfile's string buffer, which only has room for it if the literal was classified as a folder.
+    const literal = " file:./vendor/some-long-directory-name/lib";
+    using dir = tempDir("whitespace-file-dep", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          lib: literal,
+        },
+      }),
+      "vendor/some-long-directory-name/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+      }),
+      "bunfig.toml": `install.saveTextLockfile = ${lockfile === "bun.lock"}`,
+    });
+
+    // The first pass resolves from package.json; the second installs from the lockfile the first
+    // pass wrote, which stores the literal as written and has to parse it as a folder again.
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+
+      expect(await file(join(String(dir), "node_modules", "lib", "package.json")).json()).toEqual({
+        name: "lib",
+        version: "1.0.0",
+      });
+      if (lockfile === "bun.lock") {
+        expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"lib": ${JSON.stringify(literal)}`);
+      } else {
+        expect(await exists(join(String(dir), "bun.lockb"))).toBe(true);
+      }
+    }
+  });
+}
+
 it("fails when a transitive file: dependency's folder does not exist", async () => {
   using dir = tempDir("transitive-file-dep-missing", {
     "package.json": JSON.stringify({

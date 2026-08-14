@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, canCreateNonUtf8FileNames, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, canCreateNonUtf8FileNames, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1750,40 +1750,97 @@ describe.concurrent("test file discovery (scanner)", () => {
   });
 });
 
-// Such a path does not survive becoming a module specifier, so the file cannot
-// be loaded (Node cannot load it either); what is tested here is that this is
-// reported as a failed file and the rest of the run still happens. The names
-// need Buffer paths, so they cannot be part of the tempDir tree.
-describe.concurrent.skipIf(!canCreateNonUtf8FileNames())("files whose path is not valid UTF-8", () => {
-  const invalidByte = Buffer.from([0xff]);
+// A scanned file, and each --preload, is handed to the module loader as the
+// specifier itself. When that specifier does not resolve, the failure used to
+// end the whole run: the file's header, then exit 1 with nothing else printed.
+// Each case below is one way to make such a specifier; what is asserted is that
+// the failure is reported under the file and the other files still run.
+describe.concurrent("test files and preloads the module loader cannot resolve", () => {
+  const passing = (name: string) =>
+    `import { test } from "bun:test"; test("t", () => { console.log("RAN ${name}"); });`;
 
-  test("a scanned test file that cannot be loaded fails without stopping the run", async () => {
-    using dir = tempDir("scanner-non-utf8-path", {
-      "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,
-      "z_last.test.ts": `import { test } from "bun:test"; test("z", () => { console.log("RAN z_last"); });`,
-    });
-    const source = `import { test } from "bun:test"; test("t", () => { console.log("RAN unloadable"); });`;
-    const root = Buffer.from(String(dir) + "/");
-    // Once in the file name itself, once in a directory on the way to the file.
-    writeFileSync(Buffer.concat([root, Buffer.from("b"), invalidByte, Buffer.from(".test.ts")]), source);
-    const subdir = Buffer.concat([root, Buffer.from("dir"), invalidByte]);
-    mkdirSync(subdir);
-    writeFileSync(Buffer.concat([subdir, Buffer.from("/inner.test.ts")]), source);
-
+  async function runBunTest(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
+      cmd: [bunExe(), "test", ...args],
       env: bunEnv,
-      cwd: String(dir),
+      cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a preload plugin whose onResolve throws for a file fails that file with the thrown error", async () => {
+    using dir = tempDir("unresolvable-plugin-throw", {
+      "plugin.ts": `
+        Bun.plugin({
+          name: "refuse",
+          setup(build) {
+            build.onResolve({ filter: /refused\\.test\\.ts$/ }, () => {
+              throw new Error("refused by onResolve");
+            });
+          },
+        });
+      `,
+      "a_first.test.ts": passing("a_first"),
+      "refused.test.ts": passing("refused"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir), "--preload", "./plugin.ts");
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN refused");
+    expect(stderr).toContain("\nrefused.test.ts:\n");
+    expect(stderr).toContain("error: refused by onResolve\n");
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(stderr).toMatch(/\bacross 3 files\./);
+    expect(exitCode).toBe(1);
+  });
+
+  // '?' is not a legal file name character on Windows. Elsewhere the loader
+  // reads it as the start of a query string, so the file itself is not found.
+  test.skipIf(isWindows)("a file whose name contains '?' fails without stopping the run", async () => {
+    using dir = tempDir("unresolvable-question-mark", {
+      "a_first.test.ts": passing("a_first"),
+      "what?.test.ts": passing("what"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir));
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN what");
+    expect(stderr).toContain("\nwhat?.test.ts:\n");
+    // Named as the entry point it was loaded as: no "from", nothing imported it.
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/what\?\.test\.ts'\n/);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(stderr).toMatch(/\bacross 3 files\./);
+    expect(exitCode).toBe(1);
+  });
+
+  // Such a name only survives as raw bytes; as a specifier it holds U+FFFD and
+  // no longer names the file (Node cannot load it either). Buffer paths are the
+  // only way to create one, so these files cannot be part of the tempDir tree.
+  test.skipIf(!canCreateNonUtf8FileNames())("file and directory names that are not valid UTF-8", async () => {
+    using dir = tempDir("unresolvable-non-utf8", {
+      "a_first.test.ts": passing("a_first"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const invalidByte = Buffer.from([0xff]);
+    const root = Buffer.from(String(dir) + "/");
+    writeFileSync(Buffer.concat([root, Buffer.from("b"), invalidByte, Buffer.from(".test.ts")]), passing("unloadable"));
+    const subdir = Buffer.concat([root, Buffer.from("dir"), invalidByte]);
+    mkdirSync(subdir);
+    writeFileSync(Buffer.concat([subdir, Buffer.from("/inner.test.ts")]), passing("unloadable"));
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir));
 
     expect(stdout).toContain("RAN a_first");
     expect(stdout).toContain("RAN z_last");
     expect(stdout).not.toContain("RAN unloadable");
-    // Each unloadable file gets its header and a load error naming it (the
-    // invalid byte prints as U+FFFD), with no "from" since nothing imported it.
     expect(stderr).toContain("\nb\uFFFD.test.ts:\n");
     expect(stderr).toMatch(/error: Cannot find module '[^']*\/b\uFFFD\.test\.ts'\n/);
     expect(stderr).toContain("\ndir\uFFFD/inner.test.ts:\n");
@@ -1794,28 +1851,15 @@ describe.concurrent.skipIf(!canCreateNonUtf8FileNames())("files whose path is no
     expect(exitCode).toBe(1);
   });
 
-  test("--preload naming a file that cannot be loaded reports the error", async () => {
-    using dir = tempDir("preload-non-utf8-path", {
-      "a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
-    });
-    writeFileSync(
-      Buffer.concat([Buffer.from(String(dir) + "/p"), invalidByte, Buffer.from(".ts")]),
-      `console.log("RAN preload");`,
-    );
+  // node: specifiers skip the file resolver, so the module loader is the first
+  // thing that rejects this one.
+  test("--preload of a node: module that does not exist reports it", async () => {
+    using dir = tempDir("unresolvable-node-preload", { "a.test.ts": passing("a") });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir), "--preload", "node:does_not_exist");
 
-    await using proc = Bun.spawn({
-      // A JS string cannot carry the raw byte into argv; the shell can.
-      cmd: ["sh", "-c", `exec "$0" test --preload "./$(printf 'p\\377.ts')"`, bunExe()],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).not.toContain("RAN preload");
     expect(stdout).not.toContain("RAN a");
-    expect(stderr).toMatch(/error: Cannot find module '[^']*\/p\uFFFD\.ts'\n/);
+    expect(stderr).toContain("\na.test.ts:\n");
+    expect(stderr).toContain("error: No such built-in module: node:does_not_exist\n");
     expect(stderr).toContain(" 0 pass");
     expect(stderr).toContain(" 1 fail");
     expect(exitCode).toBe(1);

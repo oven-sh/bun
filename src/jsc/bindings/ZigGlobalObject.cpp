@@ -3609,7 +3609,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     ErrorableString res;
-    res.success = false;
+    memset(&res, 0, sizeof(res));
 
     BunString keyZ;
     if (key.isString()) {
@@ -3682,7 +3682,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         return result;
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        throwException(scope, res.result.err, globalObject);
+        // The resolver leaves `res` untouched when it threw (a plugin's onResolve
+        // throwing, for instance); that exception is the one to keep. Same shape
+        // as moduleLoaderImportModule below.
+        if (!scope.exception())
+            throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;
     }
 }

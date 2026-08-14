@@ -111,6 +111,12 @@ function runInNewContext(code, context, options) {
   if (typeof options === "string") {
     options = { filename: options };
   }
+  // Node's getContextOptions() type-checks microtaskMode before createContext() checks its value:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L219-L220
+  const microtaskMode = options?.microtaskMode;
+  if (microtaskMode !== undefined) {
+    validateString(microtaskMode, "options.microtaskMode");
+  }
   context = createContext(context, options);
   return createScript(code, options).runInNewContext(context, options);
 }

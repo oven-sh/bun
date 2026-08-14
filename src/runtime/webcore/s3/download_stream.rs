@@ -280,17 +280,25 @@ impl S3HttpDownloadStreamingTask {
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
         let is_done = !result.has_more;
         // The final callback is where the HTTP thread hands the request back:
-        // move the ticket out (the JS thread may free `this` the moment the
-        // task is queued); otherwise post through a clone for the same reason.
+        // move the ticket out (the JS thread may free `this` the moment that
+        // task is queued). Before that `this` — and the ticket inside it —
+        // stays alive across the post.
         // SAFETY: `this` is live for the duration of the request; HTTP-thread field.
-        let ticket = unsafe {
-            if is_done {
-                (*this).http_ticket.take()
-            } else {
-                (*this).http_ticket.clone()
-            }
-        }
-        .expect("S3 download on the HTTP thread holds a ticket");
+        let done_ticket = if is_done {
+            Some(
+                // SAFETY: as above.
+                unsafe { (*this).http_ticket.take() }
+                    .expect("S3 download on the HTTP thread holds a ticket"),
+            )
+        } else {
+            None
+        };
+        let ticket: &bun_jsc::Ticket = match &done_ticket {
+            Some(t) => t,
+            // SAFETY: as above.
+            None => unsafe { (*this).http_ticket.as_ref() }
+                .expect("S3 download on the HTTP thread holds a ticket"),
+        };
         // SAFETY: as above; the HTTP thread is the only one touching it here.
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
@@ -303,7 +311,7 @@ impl S3HttpDownloadStreamingTask {
                 ticket.post(task);
             }
         }
-        drop(ticket);
+        drop(done_ticket);
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main

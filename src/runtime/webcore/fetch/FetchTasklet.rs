@@ -2402,14 +2402,24 @@ impl FetchTasklet {
         let task_ref = Self::from_raw_mut(task);
         // The final callback is where the HTTP thread hands the fetch back:
         // move the ticket out (our deref below may free the tasklet the moment
-        // its deinit hop is queued); otherwise post through a clone for the
-        // same reason.
-        let ticket = if is_done {
-            task_ref.http_ticket.take()
+        // its deinit hop is queued). Before that, this thread's ref keeps the
+        // tasklet — and the ticket inside it — alive across the post.
+        let done_ticket = if is_done {
+            Some(
+                task_ref
+                    .http_ticket
+                    .take()
+                    .expect("fetch on the HTTP thread holds a ticket"),
+            )
         } else {
-            task_ref.http_ticket.clone()
-        }
-        .expect("fetch on the HTTP thread holds a ticket");
+            None
+        };
+        let ticket: &jsc::Ticket = match &done_ticket {
+            Some(t) => t,
+            // SAFETY: `task` is live (fn contract); the field is HTTP-thread-only.
+            None => unsafe { (*task).http_ticket.as_ref() }
+                .expect("fetch on the HTTP thread holds a ticket"),
+        };
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
@@ -2481,7 +2491,7 @@ impl FetchTasklet {
                 // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                 task_ref.mutex.unlock();
                 if is_done {
-                    FetchTasklet::deref_from_thread(task, &ticket);
+                    FetchTasklet::deref_from_thread(task, ticket);
                 }
                 return;
             }
@@ -2532,7 +2542,7 @@ impl FetchTasklet {
             if has_schedule_callback {
                 task_ref.mutex.unlock();
                 if is_done {
-                    FetchTasklet::deref_from_thread(task, &ticket);
+                    FetchTasklet::deref_from_thread(task, ticket);
                 }
                 return;
             }
@@ -2551,7 +2561,7 @@ impl FetchTasklet {
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         if is_done {
-            FetchTasklet::deref_from_thread(task, &ticket);
+            FetchTasklet::deref_from_thread(task, ticket);
         }
     }
 }

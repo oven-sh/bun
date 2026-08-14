@@ -47,6 +47,82 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
 });
 
+it("each instance keeps using its own bindings.fs after another instance is constructed", () => {
+  using dir = tempDir("wasi-bindings-fs", {
+    "file.txt": "",
+  });
+  const file = path.join(String(dir), "file.txt");
+
+  // Every fs call an instance makes is recorded under the tag of the fs it was given.
+  const calls = { first: [], second: [] };
+  const recordingFs = tag =>
+    new Proxy(fs, {
+      get(target, name) {
+        const value = target[name];
+        if (typeof value !== "function") return value;
+        return (...args) => {
+          calls[tag].push(name);
+          return value.apply(target, args);
+        };
+      },
+    });
+  const drain = () => {
+    const recorded = { first: calls.first, second: calls.second };
+    calls.first = [];
+    calls.second = [];
+    return recorded;
+  };
+  const bindingsWith = tag => ({ ...new WASI().bindings, fs: recordingFs(tag) });
+
+  const first = new WASI({ preopens: { "/": String(dir) }, bindings: bindingsWith("first") });
+  const second = new WASI({ preopens: { "/": String(dir) }, bindings: bindingsWith("second") });
+  expect(drain()).toEqual({ first: ["openSync"], second: ["openSync"] });
+
+  // WASI#fstatSync, both the stdio branch (fd <= 2) and the general one
+  first.fstatSync(1);
+  const realFd = fs.openSync(file, "r");
+  try {
+    first.fstatSync(realFd);
+  } finally {
+    fs.closeSync(realFd);
+  }
+  expect(drain()).toEqual({ first: ["fstatSync", "fstatSync"], second: [] });
+
+  second.fstatSync(1);
+  expect(drain()).toEqual({ first: [], second: ["fstatSync"] });
+
+  // The syscalls the guest imports (here: open a file, write to it, close it)
+  const WASI_ESUCCESS = 0;
+  const WASI_RIGHT_FD_WRITE = BigInt(64);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const iovPtr = 2048;
+  const dataPtr = 4096;
+  const fdPtr = 8192;
+  const nwrittenPtr = fdPtr + 8;
+
+  first.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(first.memory.buffer);
+  const view = new DataView(first.memory.buffer);
+  const pathLen = memory.write("file.txt", pathPtr);
+  const dataLen = memory.write("written by first", dataPtr);
+  view.setUint32(iovPtr, dataPtr, true);
+  view.setUint32(iovPtr + 4, dataLen, true);
+
+  expect(first.wasiImport.path_open(preopenFd, 0, pathPtr, pathLen, 0, WASI_RIGHT_FD_WRITE, BigInt(0), 0, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
+  const guestFd = view.getUint32(fdPtr, true);
+  expect(first.wasiImport.fd_write(guestFd, iovPtr, 1, nwrittenPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getUint32(nwrittenPtr, true)).toBe(dataLen);
+  expect(first.wasiImport.fd_close(guestFd)).toBe(WASI_ESUCCESS);
+
+  const syscalls = drain();
+  expect(syscalls.second).toEqual([]);
+  expect(syscalls.first).toEqual(expect.arrayContaining(["openSync", "fstatSync", "writeSync", "closeSync"]));
+  expect(fs.readFileSync(file, "utf8")).toBe("written by first");
+});
+
 it("random_get fills only the requested window", () => {
   const wasi = new WASI({});
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));

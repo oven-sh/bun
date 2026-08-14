@@ -614,21 +614,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     let name = dependencies[dependency_id as usize]
                         .name
                         .slice(string_bytes);
-                    let resolution =
-                        resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+                    let name = bun_fmt::escape_control_chars(name);
+                    let resolution = bun_fmt::EscapeControlChars(
+                        resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
+                    );
 
                     if index < sorted_dependencies.len() - 1 {
-                        bun_core::prettyln!(
-                            "<d>├──<r> {}<r><d>@{}<r>\n",
-                            bstr::BStr::new(name),
-                            resolution,
-                        );
+                        bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
                     } else {
-                        bun_core::prettyln!(
-                            "<d>└──<r> {}<r><d>@{}<r>\n",
-                            bstr::BStr::new(name),
-                            resolution,
-                        );
+                        bun_core::prettyln!("<d>└──<r> {}<r><d>@{}<r>\n", name, resolution);
                     }
                 }
             }
@@ -771,14 +765,14 @@ fn print_node_modules_folder_structure(
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 bun_core::prettyln!(
                     "{}<d>@{}<r>",
-                    bstr::BStr::new(&path[0..j - 1]),
-                    bstr::BStr::new(directory_version),
+                    bun_fmt::escape_control_chars(&path[0..j - 1]),
+                    bun_fmt::escape_control_chars(directory_version),
                 );
             } else {
                 bun_core::prettyln!(
                     "{}<d>@{}<r>",
-                    bstr::BStr::new(path),
-                    bstr::BStr::new(directory_version),
+                    bun_fmt::escape_control_chars(path),
+                    bun_fmt::escape_control_chars(directory_version),
                 );
             }
         } else {
@@ -896,8 +890,8 @@ fn print_node_modules_folder_structure(
         );
         bun_core::prettyln!(
             "{}<d>@{}<r>",
-            bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
+            bun_fmt::escape_control_chars(package_name),
+            bun_fmt::escape_control_chars(package_version),
         );
     }
 
@@ -963,19 +957,14 @@ fn print_trusted_dependencies_flat(
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
-        let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+        let name = bun_fmt::escape_control_chars(name);
+        let resolution = bun_fmt::EscapeControlChars(
+            resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
+        );
         if index + 1 < trusted.len() {
-            bun_core::prettyln!(
-                "<d>├──<r> {}<r><d>@{}<r>\n",
-                bstr::BStr::new(name),
-                resolution,
-            );
+            bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
         } else {
-            bun_core::prettyln!(
-                "<d>└──<r> {}<r><d>@{}<r>\n",
-                bstr::BStr::new(name),
-                resolution,
-            );
+            bun_core::prettyln!("<d>└──<r> {}<r><d>@{}<r>\n", name, resolution);
         }
     }
 }

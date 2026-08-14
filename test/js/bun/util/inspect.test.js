@@ -928,3 +928,72 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("exceptions thrown while walking properties", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("a throwing Proxy get trap in the prototype chain skips that property", async () => {
+    const { stdout, exitCode } = await run(`
+      const proto = new Proxy(
+        { a: 1, b: 2, c: 3 },
+        {
+          get(target, key, receiver) {
+            if (key === "a" || key === "b") throw new Error("no " + key);
+            return Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toBe("{\n  c: 3,\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a throwing Proxy getPrototypeOf trap in the prototype chain stops the walk", async () => {
+    const { stdout, exitCode } = await run(`
+      const proto = new Proxy(
+        { a: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("no prototype");
+          },
+        },
+      );
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toBe("{\n  a: 1,\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun.$ is a lazy property whose initializer calls into JS. Inspecting the Bun
+  // object right after a stack overflow makes that initializer throw; the
+  // properties after it must still be visited.
+  it.concurrent("a lazy property initializer that throws does not hide the remaining properties", async () => {
+    const { stdout, exitCode } = await run(`
+      let result;
+      function recurse() {
+        try {
+          recurse();
+        } catch {}
+        if (result === undefined) {
+          try {
+            result = Bun.inspect(Bun);
+          } catch {}
+        }
+      }
+      recurse();
+      console.log(result.includes("Archive: [class Archive]"));
+    `);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+});

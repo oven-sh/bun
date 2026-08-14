@@ -165,6 +165,38 @@ describe("basic", () => {
       });
     });
   }
+
+  test("switching a dependency to a different catalog is detected", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true, linker: "hoisted" } });
+    const pkg1Path = join(packageDir, "packages", "pkg1", "package.json");
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-switch",
+          workspaces: {
+            packages: ["packages/*"],
+            catalogs: { a: { "no-deps": "1.0.0" }, b: { "no-deps": "2.0.0" } },
+          },
+        }),
+      ),
+      write(pkg1Path, JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:a" } })),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+    expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.0");
+
+    await write(pkg1Path, JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:b" } }));
+    await runBunInstall(bunEnv, packageDir);
+
+    expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
+    const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as any;
+    expect(lock.workspaces["packages/pkg1"].dependencies).toEqual({ "no-deps": "catalog:b" });
+    expect(Object.keys(lock.packages)).toEqual(["no-deps", "pkg1"]);
+    expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  });
 });
 
 describe("update", () => {

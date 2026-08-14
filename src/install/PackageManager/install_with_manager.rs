@@ -109,6 +109,10 @@ pub fn install_with_manager(
                         && manager.options.save_text_lockfile.unwrap_or(false)))),
     );
 
+    if manager.subcommand == Subcommand::Dedupe {
+        crate::dedupe::dedupe_before_install(manager, &load_result)?;
+    }
+
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
@@ -594,6 +598,10 @@ pub fn install_with_manager(
         _ => {}
     }
 
+    if !manager.audit_fix_pins.is_empty() && !needs_new_lockfile {
+        crate::audit_fix::enqueue_planned_fixes(manager)?;
+    }
+
     if needs_new_lockfile {
         root = create_new_lockfile_and_enqueue(
             manager,
@@ -893,6 +901,9 @@ pub fn install_with_manager(
             log_level,
         )?;
     }
+
+    // Before root lifecycle scripts, which exit the process on failure.
+    super::add_remove_with_filter::flush_pending_write(manager)?;
 
     if needs_new_lockfile {
         manager.summary.add = manager.lockfile.packages.len() as u32;
@@ -1760,6 +1771,13 @@ fn save_lockfile_only(
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
+    let migrating_to_text =
+        load_result.loaded_from_binary_lockfile() && save_format == lockfile::Format::Text;
+    if manager.options.enable.frozen_lockfile() && !migrating_to_text {
+        Output::flush();
+        return Ok(());
+    }
+
     // save the lockfile and exit. make sure metahash is generated for binary lockfile
     manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
         PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),

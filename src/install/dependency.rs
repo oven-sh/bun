@@ -463,24 +463,6 @@ pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
 }
 
-pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
-    if let Some(at_index) = strings::index_of_char(str, b'@') {
-        let at_index = at_index as usize;
-        if at_index != 0 {
-            return (&str[at_index + 1..], Some(&str[0..at_index]));
-        }
-
-        let Some(second) = strings::index_of_char(&str[1..], b'@') else {
-            return (str, None);
-        };
-        let second_at_index = second as usize + 1;
-
-        return (&str[second_at_index + 1..], Some(&str[0..second_at_index]));
-    }
-
-    (str, None)
-}
-
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
 fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
@@ -734,6 +716,7 @@ impl VersionExt for Version {
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
         }
     }

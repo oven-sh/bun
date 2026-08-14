@@ -198,7 +198,15 @@
           {
             "group": "Core Commands",
             "icon": "terminal",
-            "pages": ["/pm/cli/install", "/pm/cli/add", "/pm/cli/remove", "/pm/cli/update", "/pm/bunx"]
+            "pages": [
+              "/pm/cli/install",
+              "/pm/cli/add",
+              "/pm/cli/remove",
+              "/pm/cli/update",
+              "/pm/cli/dedupe",
+              "/pm/cli/prune",
+              "/pm/bunx"
+            ]
           },
           {
             "group": "Publishing & Analysis",

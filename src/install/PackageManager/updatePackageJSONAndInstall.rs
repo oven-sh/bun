@@ -15,6 +15,7 @@ use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
+use super::add_catalog;
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
@@ -23,7 +24,7 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
-fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
+pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
     let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
     let mut buffer_writer = js_printer::BufferWriter::init();
     buffer_writer
@@ -51,6 +52,81 @@ fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr
         Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
     );
     entry.stale_contents.push(old);
+}
+
+pub(super) fn remove_dependencies_from_package_json(
+    package_json: &mut bun_ast::Expr,
+    updates: &[UpdateRequest],
+) -> bool {
+    let mut any_changes = false;
+    // if we're removing, they don't have to specify where it is installed in the dependencies list
+    // they can even put it multiple times and we will just remove all of them
+    for request in updates.iter() {
+        const LISTS: [&[u8]; 4] = [
+            b"dependencies",
+            b"devDependencies",
+            b"optionalDependencies",
+            b"peerDependencies",
+        ];
+        for list in LISTS {
+            if let Some(query) = package_json.as_property(list) {
+                if query.expr.data.is_e_object() {
+                    // reshaped for borrowck —
+                    // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
+                    // pointer, so taking it once works across writes to both the
+                    // inner list and the parent object.
+                    let mut e_object = query.expr.data.as_e_object();
+                    let dependencies = e_object.properties.slice_mut();
+                    let mut i: usize = 0;
+                    let mut new_len = dependencies.len();
+                    // `G::Property` is not `Copy`,
+                    // so we `swap` instead of copy-from-tail — but the swapped-out
+                    // matched element
+                    // lands in the truncated tail and MUST NOT be revisited (it would
+                    // match again and over-truncate). Bounding by `new_len` yields the
+                    // correct result for the unique-key case package.json guarantees.
+                    while i < new_len {
+                        let key = dependencies[i].key.unwrap();
+                        if key.data.is_e_string() {
+                            if key.data.as_e_string().unwrap().eql_bytes(request.name) {
+                                if new_len > 1 {
+                                    dependencies.swap(i, new_len - 1);
+                                    new_len -= 1;
+                                } else {
+                                    new_len = 0;
+                                }
+
+                                any_changes = true;
+                            }
+                        }
+                        i += 1;
+                    }
+
+                    let changed = new_len != dependencies.len();
+                    if changed {
+                        e_object.properties.truncate(new_len);
+
+                        // If the dependencies list is now empty, remove it from the package.json
+                        // since we're swapRemove, we have to re-sort it
+                        if e_object.properties.len_u32() == 0 {
+                            // TODO: Theoretically we could change these two lines to
+                            // `.orderedRemove(query.i)`, but would that change user-facing
+                            // behavior?
+                            let _ = package_json
+                                .data
+                                .as_e_object_mut()
+                                .properties
+                                .swap_remove(query.i as usize);
+                            package_json.data.as_e_object_mut().package_json_sort();
+                        } else {
+                            e_object.alphabetize_properties();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    any_changes
 }
 
 pub fn update_package_json_and_install_with_manager(
@@ -150,6 +226,17 @@ fn update_package_json_and_install_with_manager_with_updates(
                 .print(std::ptr::from_mut(Output::error_writer()));
         }
         Global::crash();
+    }
+
+    if matches!(subcommand, Subcommand::Add | Subcommand::Remove)
+        && !manager.options.filter_patterns.is_empty()
+    {
+        return super::add_remove_with_filter::update_filtered_workspaces_and_install(
+            manager,
+            ctx,
+            original_cwd,
+            updates,
+        );
     }
 
     if subcommand == Subcommand::Update
@@ -304,76 +391,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     let mut not_in_workspace_root: Option<PatchCommitResult> = None;
     match subcommand {
         Subcommand::Remove => {
-            // if we're removing, they don't have to specify where it is installed in the dependencies list
-            // they can even put it multiple times and we will just remove all of them
-            for request in updates.iter() {
-                const LISTS: [&[u8]; 4] = [
-                    b"dependencies",
-                    b"devDependencies",
-                    b"optionalDependencies",
-                    b"peerDependencies",
-                ];
-                for list in LISTS {
-                    if let Some(query) = current_package_json_root.as_property(list) {
-                        if query.expr.data.is_e_object() {
-                            // reshaped for borrowck —
-                            // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
-                            // pointer, so taking it once works across writes to both the
-                            // inner list and the parent object.
-                            let mut e_object = query.expr.data.as_e_object();
-                            let dependencies = e_object.properties.slice_mut();
-                            let mut i: usize = 0;
-                            let mut new_len = dependencies.len();
-                            // `G::Property` is not `Copy`,
-                            // so we `swap` instead of copy-from-tail — but the swapped-out
-                            // matched element
-                            // lands in the truncated tail and MUST NOT be revisited (it would
-                            // match again and over-truncate). Bounding by `new_len` yields the
-                            // correct result for the unique-key case package.json guarantees.
-                            while i < new_len {
-                                let key = dependencies[i].key.unwrap();
-                                if key.data.is_e_string() {
-                                    if key.data.as_e_string().unwrap().eql_bytes(request.name) {
-                                        if new_len > 1 {
-                                            dependencies.swap(i, new_len - 1);
-                                            new_len -= 1;
-                                        } else {
-                                            new_len = 0;
-                                        }
-
-                                        any_changes = true;
-                                    }
-                                }
-                                i += 1;
-                            }
-
-                            let changed = new_len != dependencies.len();
-                            if changed {
-                                e_object.properties.truncate(new_len);
-
-                                // If the dependencies list is now empty, remove it from the package.json
-                                // since we're swapRemove, we have to re-sort it
-                                if e_object.properties.len_u32() == 0 {
-                                    // TODO: Theoretically we could change these two lines to
-                                    // `.orderedRemove(query.i)`, but would that change user-facing
-                                    // behavior?
-                                    let _ = current_package_json_root
-                                        .data
-                                        .as_e_object_mut()
-                                        .properties
-                                        .swap_remove(query.i as usize);
-                                    current_package_json_root
-                                        .data
-                                        .as_e_object_mut()
-                                        .package_json_sort();
-                                } else {
-                                    e_object.alphabetize_properties();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            any_changes =
+                remove_dependencies_from_package_json(&mut current_package_json_root, &updates);
         }
 
         Subcommand::Link | Subcommand::Add | Subcommand::Update => {
@@ -396,6 +415,16 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
+                if manager.options.add_catalog.is_some() {
+                    add_catalog::rewrite_references(manager, &updates);
+                    if manager.workspace_name_hash.is_none() {
+                        add_catalog::edit_root_before_install(
+                            manager,
+                            &current_package_json_root,
+                            &updates,
+                        )?;
+                    }
+                }
             } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none()
             {
                 PackageJSONEditor::edit_update_no_args(
@@ -618,6 +647,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
 
+        if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
+            add_catalog::edit_root_entry_before_install(manager, root_package_json)?;
+        }
+
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
         break 'root_package_json_path ZStr::from_buf(
             &root_package_json_path_buf[..],
@@ -677,14 +710,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 && manager.update_target_workspaces.is_none()
             {
                 // running from root: catalogs live in this file.
-                let _ = PackageJSONEditor::edit_catalogs_after_update(
-                    manager,
-                    &new_package_json,
-                    EditOptions {
-                        exact_versions: manager.options.enable.exact_versions(),
-                        ..Default::default()
-                    },
-                )?;
+                let _ = PackageJSONEditor::edit_catalogs_after_update(manager, &new_package_json)?;
             }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
@@ -702,6 +728,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                     ..Default::default()
                 },
             )?;
+        }
+        if manager.options.add_catalog.is_some() {
+            add_catalog::rewrite_references(manager, &updates[..]);
+            if manager.workspace_name_hash.is_none() {
+                let _ =
+                    add_catalog::edit_root_after_install(manager, &new_package_json, &updates[..])?;
+            }
         }
         let mut buffer_writer_two = js_printer::BufferWriter::init();
         buffer_writer_two.buffer.list.reserve(
@@ -772,14 +805,8 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
         let root_package_json_root: bun_ast::Expr = root_package_json.root;
 
-        let root_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
-            manager,
-            &root_package_json_root,
-            EditOptions {
-                exact_versions: manager.options.enable.exact_versions(),
-                ..Default::default()
-            },
-        )?;
+        let root_catalogs_changed =
+            PackageJSONEditor::edit_catalogs_after_update(manager, &root_package_json_root)?;
 
         if root_catalogs_changed {
             print_package_json_into_cache_entry(root_package_json, root_package_json_root);
@@ -799,6 +826,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                 let _ = root_package_json_file.close(); // close error is non-actionable
             }
         }
+    }
+
+    if manager.options.add_catalog.is_some()
+        && manager.workspace_name_hash.is_some()
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+    {
+        add_catalog::write_root_after_install(manager, root_package_json_path, &updates[..])?;
     }
 
     let _ = written;
@@ -861,78 +895,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             if !any_changes {
                 Global::exit(0);
             }
-
-            let cwd = bun_sys::Dir::cwd();
-            // This is not exactly correct
-            let mut node_modules_buf = PathBuffer::uninit();
-            node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-            node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
-            let name_hashes = manager.lockfile.packages.items_name_hash();
-            for request in updates.iter() {
-                // If the package no longer exists in the updated lockfile, delete the directory
-                // This is not thorough.
-                // It does not handle nested dependencies
-                // This is a quick & dirty cleanup intended for when deleting top-level dependencies
-                if !name_hashes
-                    .iter()
-                    .any(|h| *h == bun_semver::semver_string::Builder::string_hash(request.name))
-                {
-                    let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
-                    offset_buf[..request.name.len()].copy_from_slice(request.name);
-                    let _ = cwd.delete_tree(
-                        &node_modules_buf[..b"node_modules/".len() + request.name.len()],
-                    );
-                }
-            }
-
-            // This is where we clean dangling symlinks
-            // This could be slow if there are a lot of symlinks
-            match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
-                Ok(node_modules_bin) => {
-                    // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
-                    let mut iter = bun_sys::iterate_dir(node_modules_bin);
-                    'iterator: loop {
-                        let Ok(Some(entry)) = iter.next() else { break };
-                        match entry.kind {
-                            bun_sys::EntryKind::SymLink => {
-                                // any symlinks which we are unable to open are assumed to be dangling
-                                // note that using access won't work here, because access doesn't resolve symlinks
-                                let name = entry.name.slice_u8();
-                                node_modules_buf[..name.len()].copy_from_slice(name);
-                                node_modules_buf[name.len()] = 0;
-                                let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
-
-                                match bun_sys::File::openat(
-                                    node_modules_bin,
-                                    buf,
-                                    bun_sys::O::RDONLY,
-                                    0,
-                                ) {
-                                    Ok(file) => {
-                                        let _ = file.close();
-                                    }
-                                    Err(_) => {
-                                        let _ = bun_sys::unlinkat(node_modules_bin, buf);
-                                        continue 'iterator;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let _ = bun_sys::close(node_modules_bin);
-                }
-                Err(err) => {
-                    if err.get_errno() != bun_sys::E::ENOENT {
-                        Output::err(
-                            crate::Error::from(err),
-                            "while reading node_modules/.bin",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                }
-            }
+            remove_leftover_node_modules(manager, &updates);
         }
     }
 
@@ -1039,6 +1002,77 @@ fn write_resolved_versions_to_targets(
     Ok(())
 }
 
+pub(super) fn remove_leftover_node_modules(
+    manager: &mut PackageManager,
+    updates: &[UpdateRequest],
+) {
+    let cwd = bun_sys::Dir::cwd();
+    // This is not exactly correct
+    let mut node_modules_buf = PathBuffer::uninit();
+    node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+    node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+    let name_hashes = manager.lockfile.packages.items_name_hash();
+    for request in updates.iter() {
+        // If the package no longer exists in the updated lockfile, delete the directory
+        // This is not thorough.
+        // It does not handle nested dependencies
+        // This is a quick & dirty cleanup intended for when deleting top-level dependencies
+        if !name_hashes
+            .iter()
+            .any(|h| *h == bun_semver::semver_string::Builder::string_hash(request.name))
+        {
+            let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
+            offset_buf[..request.name.len()].copy_from_slice(request.name);
+            let _ =
+                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+        }
+    }
+
+    // This is where we clean dangling symlinks
+    // This could be slow if there are a lot of symlinks
+    match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
+        Ok(node_modules_bin) => {
+            // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
+            let mut iter = bun_sys::iterate_dir(node_modules_bin);
+            'iterator: loop {
+                let Ok(Some(entry)) = iter.next() else { break };
+                match entry.kind {
+                    bun_sys::EntryKind::SymLink => {
+                        // any symlinks which we are unable to open are assumed to be dangling
+                        // note that using access won't work here, because access doesn't resolve symlinks
+                        let name = entry.name.slice_u8();
+                        node_modules_buf[..name.len()].copy_from_slice(name);
+                        node_modules_buf[name.len()] = 0;
+                        let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
+
+                        match bun_sys::File::openat(node_modules_bin, buf, bun_sys::O::RDONLY, 0) {
+                            Ok(file) => {
+                                let _ = file.close();
+                            }
+                            Err(_) => {
+                                let _ = bun_sys::unlinkat(node_modules_bin, buf);
+                                continue 'iterator;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let _ = bun_sys::close(node_modules_bin);
+        }
+        Err(err) => {
+            if err.get_errno() != bun_sys::E::ENOENT {
+                Output::err(
+                    crate::Error::from(err),
+                    "while reading node_modules/.bin",
+                    (),
+                );
+                Global::crash();
+            }
+        }
+    }
+}
+
 pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
@@ -1062,10 +1096,11 @@ pub fn update_package_json_and_install_and_cli(
                             bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
                             Global::crash();
                         }
-                        _ => {
+                        _ if cli.filters.is_empty() => {
                             attempt_to_create_package_json()?;
                             break 'brk super::init(ctx, cli, subcommand)?;
                         }
+                        _ => {}
                     }
                 }
 

@@ -5,6 +5,7 @@ use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
+use bun_install::dependency::{Tag as DependencyVersionTag, Version as DependencyVersion};
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
@@ -45,27 +46,114 @@ impl CatalogMap {
         self.default.count() > 0 || self.groups.count() > 0
     }
 
+    /// `catalog:` and `catalog:default` name the same catalog.
+    pub(crate) fn same_name(a: &[u8], b: &[u8]) -> bool {
+        let is_default = |name: &[u8]| name.is_empty() || name == b"default";
+        a == b || (is_default(a) && is_default(b))
+    }
+
+    /// `(None, i)` indexes `default`, `(Some(g), i)` indexes `groups`; the default catalog is looked up under both spellings, the one matching `catalog_name` first.
+    fn locate(
+        &self,
+        string_buf: &[u8],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<(Option<usize>, usize)> {
+        let dep_key = String::init(dep_name, dep_name);
+        let dep_ctx = ArrayHashContext {
+            arg_buf: dep_name,
+            existing_buf: string_buf,
+        };
+        let in_default = || {
+            self.default
+                .get_index_adapted(&dep_key, &dep_ctx)
+                .map(|i| (None, i))
+        };
+        let in_group = |name: &[u8]| {
+            let ctx = ArrayHashContext {
+                arg_buf: name,
+                existing_buf: string_buf,
+            };
+            let g = self
+                .groups
+                .get_index_adapted(&String::init(name, name), &ctx)?;
+            let i = self.groups.values()[g].get_index_adapted(&dep_key, &dep_ctx)?;
+            Some((Some(g), i))
+        };
+        if catalog_name.is_empty() {
+            return in_default().or_else(|| in_group(b"default"));
+        }
+        in_group(catalog_name).or_else(|| (catalog_name == b"default").then(in_default).flatten())
+    }
+
+    pub fn find<'a>(
+        &'a self,
+        string_buf: &[u8],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<&'a Dependency> {
+        let (group, i) = self.locate(string_buf, catalog_name, dep_name)?;
+        let map = match group {
+            Some(g) => &self.groups.values()[g],
+            None => &self.default,
+        };
+        Some(&map.values()[i])
+    }
+
+    pub(crate) fn find_mut<'a>(
+        &'a mut self,
+        string_buf: &[u8],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<&'a mut Dependency> {
+        let (group, i) = self.locate(string_buf, catalog_name, dep_name)?;
+        let map = match group {
+            Some(g) => &mut self.groups.values_mut()[g],
+            None => &mut self.default,
+        };
+        Some(&mut map.values_mut()[i])
+    }
+
+    pub(crate) fn get_ref<'a>(
+        &'a self,
+        string_buf: &[u8],
+        catalog_name: String,
+        dep_name: String,
+    ) -> Option<&'a Dependency> {
+        self.find(
+            string_buf,
+            catalog_name.slice(string_buf),
+            dep_name.slice(string_buf),
+        )
+    }
+
     pub(crate) fn get(
         &self,
         lockfile: &Lockfile,
         catalog_name: String,
         dep_name: String,
     ) -> Option<Dependency> {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        if catalog_name.is_empty() {
-            if self.default.count() == 0 {
-                return None;
-            }
-            return self.default.get_adapted(&dep_name, &ctx(buf)).cloned();
+        self.get_ref(
+            lockfile.buffers.string_bytes.as_slice(),
+            catalog_name,
+            dep_name,
+        )
+        .cloned()
+    }
+
+    // Falls back to the unresolved `catalog:` version when the entry is missing.
+    pub(crate) fn resolve_range<'a>(
+        &'a self,
+        string_buf: &[u8],
+        dep: &'a Dependency,
+    ) -> &'a DependencyVersion {
+        if dep.version.tag != DependencyVersionTag::Catalog {
+            return &dep.version;
         }
-
-        let group = self.groups.get_adapted(&catalog_name, &ctx(buf))?;
-
-        if group.count() == 0 {
-            return None;
+        match self.get_ref(string_buf, *dep.version.catalog(), dep.name) {
+            Some(entry) => &entry.version,
+            None => &dep.version,
         }
-
-        group.get_adapted(&dep_name, &ctx(buf)).cloned()
     }
 
     /// Takes `buf: &[u8]` (the lockfile's string buffer, used for the hash

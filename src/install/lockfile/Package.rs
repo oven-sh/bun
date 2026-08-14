@@ -617,7 +617,8 @@ impl Package<u64> {
             };
 
             // Peer slots must not keep their target alive; bound in `Cloner::flush`.
-            if old_dependencies[i].behavior.is_optional_peer() {
+            if old_dependencies[i].behavior.is_optional_peer() && !cloner.keep_optional_peer_targets
+            {
                 cloner.optional_peers.push(pending);
                 continue;
             }
@@ -918,6 +919,8 @@ pub struct DiffSummary {
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
     pub(crate) patched_dependencies_changed: bool,
+
+    pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
 
 impl DiffSummary {
@@ -1334,6 +1337,27 @@ impl Diff {
             };
 
             if !found {
+                if is_root
+                    && from_dep.behavior.is_workspace()
+                    && pm.options.enable.frozen_lockfile()
+                    && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
+                        &*from_lockfile,
+                        from_dep.name_hash,
+                    )
+                {
+                    if pm.options.log_level.is_verbose() {
+                        bun_core::note!(
+                            "skipping workspace \"{}\": listed in bun.lock but not on disk",
+                            bstr::BStr::new(
+                                from_dep
+                                    .name
+                                    .slice(from_lockfile.buffers.string_bytes.as_slice())
+                            ),
+                        );
+                    }
+                    summary.pruned_workspaces.push(from_dep.name_hash);
+                    continue;
+                }
                 // We found a removed dependency!
                 // We don't need to remove it
                 // It will be cleaned up later
@@ -1526,10 +1550,20 @@ impl Diff {
         // Use saturating arithmetic here because a migrated
         // package-lock.json could be out of sync with the package.json, so the
         // number of from_deps could be greater than to_deps.
-        summary.add = (to_deps!()
-            .len()
-            .saturating_sub(from_deps.len().saturating_sub(summary.remove as usize)))
-            as u32;
+        summary.add = (to_deps!().len().saturating_sub(
+            from_deps
+                .len()
+                .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
+        )) as u32;
+
+        if !summary.pruned_workspaces.is_empty() && !pm.options.log_level.is_silent() {
+            let count = summary.pruned_workspaces.len();
+            bun_core::note!(
+                "skipped {} workspace{} listed in bun.lock but not on disk",
+                count,
+                if count == 1 { "" } else { "s" },
+            );
+        }
 
         if from.resolution.tag != ResolutionTag::Root {
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
@@ -2230,6 +2264,7 @@ impl Package<u64> {
                             source,
                             dependencies_q.loc,
                             Some(&mut string_builder),
+                            pm.options.enable.frozen_lockfile(),
                         )?;
                         break 'brk;
                     }
@@ -2276,6 +2311,7 @@ impl Package<u64> {
                                     source,
                                     packages_loc,
                                     Some(&mut string_builder),
+                                    pm.options.enable.frozen_lockfile(),
                                 )?;
                             }
 

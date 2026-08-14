@@ -49,6 +49,10 @@ pub mod Command {
 // Sub-module declarations — explicit #[path] attrs for PascalCase /
 // camelCase file names.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "PackageManager/add_catalog.rs"]
+pub mod add_catalog;
+#[path = "PackageManager/add_remove_with_filter.rs"]
+pub mod add_remove_with_filter;
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]
@@ -127,6 +131,9 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
+  <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
+  <d>├<r> <cyan>--json<r>                    output as JSON
+  <d>└<r> <cyan>--prod<r>                    omit devDependencies
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
@@ -316,6 +323,7 @@ pub struct PackageManager {
 
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
+    pub audit_fix_pins: Box<[crate::audit_fix::PlannedFix]>,
 
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
@@ -411,6 +419,9 @@ pub struct PackageManager {
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
+    // `bun add/remove --filter`: package.json edits written as soon as the lockfile is saved.
+    pub(crate) pending_filtered_write: Option<Box<add_remove_with_filter::PendingWrite>>,
+
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
@@ -460,6 +471,8 @@ pub enum Subcommand {
     Audit,
     Info,
     Why,
+    Dedupe,
+    Prune,
     // bin,
     // hash,
     // @"hash-print",
@@ -478,9 +491,10 @@ impl Subcommand {
     }
 
     pub(crate) fn supports_workspace_filtering(self) -> bool {
-        matches!(self, Self::Outdated | Self::Install | Self::Update)
-        // .pack => true,
-        // .add => true,
+        matches!(
+            self,
+            Self::Outdated | Self::Install | Self::Update | Self::Add | Self::Remove
+        )
     }
 
     pub(crate) fn supports_json_output(self) -> bool {
@@ -550,6 +564,38 @@ impl WorkspaceFilter {
         })
     }
 
+    pub fn matches_any(filters: &[WorkspaceFilter], name: &[u8], abs_posix_path: &[u8]) -> bool {
+        let has_positive = filters.iter().any(|f| match f {
+            WorkspaceFilter::All => true,
+            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
+        });
+
+        let mut matched = !has_positive;
+        for filter in filters {
+            let (pattern, subject): (&[u8], &[u8]) = match filter {
+                WorkspaceFilter::All => {
+                    matched = true;
+                    continue;
+                }
+                WorkspaceFilter::Path(pattern) => {
+                    if pattern.is_empty() {
+                        continue;
+                    }
+                    (pattern, abs_posix_path)
+                }
+                WorkspaceFilter::Name(pattern) => (pattern, name),
+            };
+            if pattern.first() == Some(&b'!') {
+                if bun_glob::r#match(&pattern[1..], subject).matches() {
+                    return false;
+                }
+            } else if bun_glob::r#match(pattern, subject).matches() {
+                matched = true;
+            }
+        }
+        matched
+    }
+
     /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
     pub fn select_workspaces(
         lockfile: &crate::Lockfile,
@@ -586,52 +632,23 @@ impl WorkspaceFilter {
 
         let top_level_dir = FileSystem::instance().top_level_dir();
 
-        let has_positive = converted_filters.iter().any(|f| match f {
-            WorkspaceFilter::All => true,
-            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
-        });
-
         let mut i = 0;
         while i < ids.len() {
-            let pkg_id = ids[i];
-            let mut matched = !has_positive;
-            for filter in &converted_filters {
-                let (pattern, subject): (&[u8], &[u8]) = match filter {
-                    WorkspaceFilter::All => {
-                        matched = true;
-                        continue;
-                    }
-                    WorkspaceFilter::Path(pattern) => {
-                        if pattern.is_empty() {
-                            continue;
-                        }
-                        let res = &pkg_resolutions[pkg_id as usize];
-                        let res_path: &[u8] = match res.tag {
-                            crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                            crate::resolution::Tag::Root => top_level_dir,
-                            _ => unreachable!(),
-                        };
-                        let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
-                            top_level_dir,
-                            &mut path_buf.0,
-                            &[res_path],
-                        );
-                        (pattern, strings::without_trailing_slash(abs))
-                    }
-                    WorkspaceFilter::Name(pattern) => {
-                        (pattern, pkg_names[pkg_id as usize].slice(string_buf))
-                    }
-                };
-                if pattern.first() == Some(&b'!') {
-                    if bun_glob::r#match(&pattern[1..], subject).matches() {
-                        matched = false;
-                        break;
-                    }
-                } else if bun_glob::r#match(pattern, subject).matches() {
-                    matched = true;
-                }
-            }
-            if matched {
+            let pkg_id = ids[i] as usize;
+            let name = pkg_names[pkg_id].slice(string_buf);
+            let res = &pkg_resolutions[pkg_id];
+            let res_path: &[u8] = match res.tag {
+                crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                crate::resolution::Tag::Root => top_level_dir,
+                _ => unreachable!(),
+            };
+            let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
+                top_level_dir,
+                &mut path_buf.0,
+                &[res_path],
+            );
+            let abs = strings::without_trailing_slash(abs);
+            if WorkspaceFilter::matches_any(&converted_filters, name, abs) {
                 i += 1;
             } else {
                 ids.swap_remove(i);
@@ -658,6 +675,8 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
+    /// Set by `Lockfile::clean_with_logger`; `None` leaves the entry as written.
+    pub new_version_literal: Option<Box<[u8]>>,
 }
 
 pub struct UpdateTargetWorkspace {
@@ -1434,6 +1453,106 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
+/// bunfig beats npmrc per field; a registry npmrc left at bunfig's URL is kept since npmrc attached credentials to it.
+fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall) {
+    let Api::BunInstall {
+        default_registry,
+        scoped,
+        lockfile_path,
+        save_lockfile_path,
+        cache_directory,
+        dry_run,
+        force,
+        save_dev,
+        save_optional,
+        save_peer,
+        save_lockfile,
+        production,
+        save_yarn_lockfile,
+        disable_cache,
+        disable_manifest_cache,
+        global_dir,
+        global_bin_dir,
+        frozen_lockfile,
+        exact,
+        concurrent_scripts,
+        cafile,
+        save_text_lockfile,
+        ca,
+        ignore_scripts,
+        link_workspace_packages,
+        node_linker,
+        global_store,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        public_hoist_pattern,
+        hoist_pattern,
+        hoist,
+    } = bunfig;
+
+    if let Some(registry) = default_registry {
+        if install
+            .default_registry
+            .as_ref()
+            .is_none_or(|current| current.url != registry.url)
+        {
+            install.default_registry = Some(registry);
+        }
+    }
+
+    if let Some(bunfig_scopes) = scoped {
+        let scopes = &mut install.scoped.get_or_insert_with(Default::default).scopes;
+        for (name, registry) in bunfig_scopes.scopes.iter() {
+            if scopes
+                .get(name)
+                .is_none_or(|current| current.url != registry.url)
+            {
+                scopes.insert(name, registry.clone());
+            }
+        }
+    }
+
+    macro_rules! overlay {
+        ($($field:ident),* $(,)?) => {
+            $( if $field.is_some() { install.$field = $field; } )*
+        };
+    }
+    overlay!(
+        lockfile_path,
+        save_lockfile_path,
+        cache_directory,
+        dry_run,
+        force,
+        save_dev,
+        save_optional,
+        save_peer,
+        save_lockfile,
+        production,
+        save_yarn_lockfile,
+        disable_cache,
+        disable_manifest_cache,
+        global_dir,
+        global_bin_dir,
+        frozen_lockfile,
+        exact,
+        concurrent_scripts,
+        cafile,
+        save_text_lockfile,
+        ca,
+        ignore_scripts,
+        link_workspace_packages,
+        node_linker,
+        global_store,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        public_hoist_pattern,
+        hoist_pattern,
+        hoist,
+    );
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1602,7 +1721,7 @@ pub fn init(
             }
 
             if subcommand == Subcommand::Install {
-                if cli.positionals.len() > 1 {
+                if cli.positionals.len() > 1 && cli.filters.is_empty() {
                     // this is `bun add <package>`.
                     //
                     // create the package.json instead of returning an error so that
@@ -1732,6 +1851,7 @@ pub fn init(
                             &json_source,
                             prop.loc,
                             None,
+                            true,
                         ) {
                             Ok(v) => v,
                             Err(_) => break,
@@ -1869,11 +1989,21 @@ pub fn init(
     initialize_store();
 
     {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
+        // npmrc < bunfig < CLI; seeding registries lets npmrc `//host/:_authToken` attach to bunfig registries.
+        let bunfig_install = ctx
+            .install
+            .take()
+            .map_or_else(Api::BunInstall::default, |b| *b);
+        let mut install = Api::BunInstall {
+            default_registry: bunfig_install.default_registry.clone(),
+            scoped: match &bunfig_install.scoped {
+                Some(map) => Some(Api::NpmRegistryMap {
+                    scopes: map.scopes.clone()?,
+                }),
+                None => None,
+            },
+            ..Default::default()
+        };
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
@@ -1900,14 +2030,17 @@ pub fn init(
 
         if global_len > 0 {
             ini::load_npmrc_config(
-                &mut **install_ref,
+                &mut install,
                 env,
                 true,
                 &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
             );
         } else {
-            ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
+            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local]);
         }
+
+        overlay_bunfig_install(&mut install, bunfig_install);
+        ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
@@ -2038,6 +2171,7 @@ pub fn init(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
@@ -2076,6 +2210,7 @@ pub fn init(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(pending_filtered_write, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2470,6 +2605,7 @@ fn init_with_runtime_once(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
@@ -2515,6 +2651,7 @@ fn init_with_runtime_once(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(pending_filtered_write, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

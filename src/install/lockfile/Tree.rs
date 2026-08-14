@@ -628,6 +628,10 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return false;
     }
 
+    if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
+        return true;
+    }
+
     let mut workspace_matched = workspace_filters.is_empty();
 
     for filter in workspace_filters {
@@ -1065,10 +1069,14 @@ impl Tree {
                     }
                 };
 
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
+                let peer_range: &crate::dependency::Version = builder
+                    .lockfile()
+                    .catalogs
+                    .resolve_range(builder.buf(), dependency);
+                if peer_range.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.npm().version;
+                    let version = &peer_range.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {

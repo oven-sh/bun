@@ -153,23 +153,11 @@ pub fn detect_and_load_other_lockfile<'a>(
                         }
                         bun_core::warn!("Failed to parse pnpm-lock.yaml.");
                     }
-                    MigratePnpmLockfileError::PnpmLockfileNotObject
-                    | MigratePnpmLockfileError::PnpmLockfileMissingVersion
-                    | MigratePnpmLockfileError::PnpmLockfileVersionInvalid
-                    | MigratePnpmLockfileError::PnpmLockfileMissingImporters
-                    | MigratePnpmLockfileError::PnpmLockfileMissingRootPackage
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidDependency
-                    | MigratePnpmLockfileError::PnpmLockfileMissingDependencyVersion
-                    | MigratePnpmLockfileError::PnpmLockfileMissingCatalogEntry
-                    | MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency => {
-                        // These errors are continuable - log the error but don't exit
-                        // The install will continue with a fresh install instead of migration
+                    _ => {
                         if log.has_errors() {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
                     }
-                    _ => {}
                 }
                 log.reset();
                 return LoadResult::Err(LoadResultErr {
@@ -182,6 +170,10 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
+            if log.warnings > 0 && !log.has_errors() {
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                log.reset();
+            }
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
             bun_core::pretty_error!(" ");
             bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
@@ -334,6 +326,7 @@ fn migrate_npm_lockfile<'a>(
                 &json_src,
                 wksp_loc,
                 None,
+                false,
             )?;
             debug!("found {} workspace packages", workspace_packages_count);
             num_deps += workspace_packages_count;

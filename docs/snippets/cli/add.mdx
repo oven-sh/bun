@@ -38,6 +38,11 @@ bun add <package> <@version>
   Only add dependencies to <code>package.json</code> if they are not already present
 </ParamField>
 
+<ParamField path="--catalog" type="string">
+  Add the resolved version to the root <code>package.json</code> catalog and depend on it as <code>catalog:</code>;{" "}
+  <code>--catalog=NAME</code> targets <code>catalogs.NAME</code>
+</ParamField>
+
 ### Project Files & Lockfiles
 
 <ParamField path="--yarn" type="boolean">

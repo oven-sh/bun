@@ -170,6 +170,10 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 bun install --frozen-lockfile
 ```
 
+`--frozen-lockfile` also works on a pruned copy of a monorepo (for example the output of `turbo prune`, or a Docker context that copies `bun.lock` with only some workspace folders): workspaces listed in `bun.lock` whose `package.json` is not on disk are skipped rather than treated as a lockfile change, and packages the pruned lockfile still lists are installed as written. This works whether the root `workspaces` field uses globs or lists each folder explicitly, and Bun prints a `note:` with the number of skipped workspaces (`--verbose` names them), so a `bun.lock` that is stale because a workspace was deleted without re-running `bun install` is still visible in CI logs. A workspace is only skipped when its `package.json` is missing — removing it from the `workspaces` globs while the folder is still present, changing any `package.json` that is on disk, or trimming `overrides` or `catalog` entries from `bun.lock` still fails the install. The skipped workspaces' exclusive dependencies are not downloaded or installed, but they remain in `bun.lock`, so `bun pm ls` and `bun audit` still report them. A package that a surviving workspace lists as an optional peer dependency is installed if the pruned `bun.lock` still contains it, even when only a skipped workspace depended on it.
+
+`--frozen-lockfile` never writes `bun.lock`, including with `--lockfile-only`; the one exception is the `bun.lockb` to `bun.lock` migration requested with `--save-text-lockfile`. To check a lockfile without installing anything, use `bun install --frozen-lockfile --dry-run`.
+
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---
@@ -516,6 +520,7 @@ The migration process handles:
 - Preserves package versions and resolution information
 - Maintains dependency relationships and peer dependencies
 - Handles patched dependencies with integrity hashes
+- Migrates git (`git+ssh://`, `git+https://`), GitHub, tarball URL and `file:` dependencies, including transitive ones and npm aliases (`npm:`) recorded in the lockfile
 
 ### Workspace Configuration
 
@@ -582,6 +587,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - Requires pnpm lockfile version 7 or higher
 - Workspace packages must have a `name` field in their `package.json`
 - All catalog entries referenced by dependencies must exist in the catalogs definition
+- Every workspace listed in `pnpm-lock.yaml` must have its `package.json` on disk (when building in Docker, copy each workspace's `package.json` before running `bun install`); otherwise migration reports the missing importer and `bun install` falls back to a fresh resolution
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 

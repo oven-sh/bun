@@ -108,8 +108,10 @@ pub mod package_manager_task;
 #[path = "TarballStream.rs"]
 pub mod tarball_stream;
 pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_dependencies};
+pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
+pub mod dedupe;
 pub mod hoisted_install;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
@@ -120,6 +122,7 @@ pub mod package_install;
 pub mod package_installer;
 pub mod patch_install;
 pub mod pnpm;
+pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
 pub mod yarn;

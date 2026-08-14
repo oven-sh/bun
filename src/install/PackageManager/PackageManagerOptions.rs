@@ -38,6 +38,7 @@ pub struct Options {
     pub(crate) patch_features: PatchFeatures,
 
     pub filter_patterns: &'static [&'static [u8]],
+    pub add_catalog: Option<&'static [u8]>,
     pub pack_destination: &'static [u8],
     pub pack_filename: &'static [u8],
     pub pack_gzip_level: Option<&'static [u8]>,
@@ -89,9 +90,9 @@ pub struct Options {
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     /// Override CPU architecture for optional dependencies filtering
-    pub(crate) cpu: Npm::Architecture,
+    pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
-    pub(crate) os: Npm::OperatingSystem,
+    pub os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
 }
@@ -127,6 +128,7 @@ impl Default for Options {
             },
             patch_features: PatchFeatures::Nothing,
             filter_patterns: &[],
+            add_catalog: None,
             pack_destination: b"",
             pack_filename: b"",
             pack_gzip_level: None,
@@ -731,6 +733,7 @@ impl Options {
             }
 
             self.filter_patterns = cli.filters;
+            self.add_catalog = cli.add_catalog;
             self.pack_destination = cli.pack_destination;
             self.pack_filename = cli.pack_filename;
             self.pack_gzip_level = cli.pack_gzip_level;

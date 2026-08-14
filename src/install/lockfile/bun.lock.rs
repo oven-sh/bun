@@ -19,8 +19,7 @@ use crate::{
     bin::{Bin, Tag as BinTag},
     dependency,
     dependency::{
-        Behavior, Dependency, DependencyExt as _, Value as DependencyVersionValue,
-        Version as DependencyVersion,
+        Behavior, Dependency, Value as DependencyVersionValue, Version as DependencyVersion,
     },
     invalid_package_id,
     resolution::Tag as ResolutionTag,
@@ -42,7 +41,7 @@ use bun_install_types::DependencyVersionTag;
 use super::PackageIDSlice;
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
-    DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
+    CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
     PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
@@ -2809,6 +2808,7 @@ pub(crate) fn parse_into_binary_lockfile(
         // tree path (see `resolve_peer_dep_version_based`).
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
+        let catalogs: &CatalogMap = &lockfile.catalogs;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -2824,17 +2824,14 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
-                let peer_res_id = if is_deferred_peer(dep) {
-                    resolve_peer_dep_version_based(
-                        dep,
-                        package_index,
-                        overrides,
-                        pkg_resolutions,
-                        string_buf,
-                    )
-                } else {
-                    None
-                };
+                let peer_res_id = resolve_peer_dep_version_based(
+                    dep,
+                    catalogs,
+                    package_index,
+                    overrides,
+                    pkg_resolutions,
+                    string_buf,
+                );
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
@@ -2909,17 +2906,14 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let peer_res_id = if is_deferred_peer(dep) {
-                        resolve_peer_dep_version_based(
-                            dep,
-                            package_index,
-                            overrides,
-                            pkg_resolutions,
-                            string_buf,
-                        )
-                    } else {
-                        None
-                    };
+                    let peer_res_id = resolve_peer_dep_version_based(
+                        dep,
+                        catalogs,
+                        package_index,
+                        overrides,
+                        pkg_resolutions,
+                        string_buf,
+                    );
                     let Some(res_id) = peer_res_id.or_else(|| {
                         pkg_map
                             .get(workspace_node_modules)
@@ -2978,17 +2972,14 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
-                let peer_res_id = if is_deferred_peer(dep) {
-                    resolve_peer_dep_version_based(
-                        dep,
-                        package_index,
-                        overrides,
-                        pkg_resolutions,
-                        string_buf,
-                    )
-                } else {
-                    None
-                };
+                let peer_res_id = resolve_peer_dep_version_based(
+                    dep,
+                    catalogs,
+                    package_index,
+                    overrides,
+                    pkg_resolutions,
+                    string_buf,
+                );
                 let res_id = match peer_res_id {
                     Some(id) => id,
                     None => {
@@ -3052,17 +3043,26 @@ pub(crate) fn parse_into_binary_lockfile(
     Ok(())
 }
 
-/// True for peer edges the fresh resolver defers to its second phase
+/// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase
 /// (`install_peer`) and binds by version there. Two exemptions, matching
 /// `enqueue_dependency_with_main_and_success_fn`: optional peers return
 /// before the deferred phase and are bound to the hoisted-tree sibling by
 /// `process_subtree` instead, and `*` peers express no version preference
 /// and bind to whatever sibling pin existed first. Both of those are
 /// exactly what the printed tree's path walk reproduces, so they keep it.
-fn is_deferred_peer(dep: &Dependency) -> bool {
-    dep.behavior.is_peer()
-        && !dep.behavior.is_optional_peer()
-        && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().version.is_star())
+fn deferred_peer_range<'a>(
+    dep: &'a Dependency,
+    catalogs: &'a CatalogMap,
+    string_buf: &[u8],
+) -> Option<&'a DependencyVersion> {
+    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() {
+        return None;
+    }
+    let range = catalogs.resolve_range(string_buf, dep);
+    if range.tag == DependencyVersionTag::Npm && range.npm().version.is_star() {
+        return None;
+    }
+    Some(range)
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's
@@ -3076,7 +3076,7 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// `list[0]` there, and reproducing its choice exactly is the point of
 /// this helper). Returns `None` when no package with the name exists
 /// or the fallback is a different kind; the caller then falls back to
-/// the path walk.
+/// the path walk. Edges `deferred_peer_range` rejects also return `None`.
 ///
 /// Peer edges cannot be resolved from the printed tree the way regular
 /// edges are: a peer never materializes its own `node_modules` path when
@@ -3087,11 +3087,6 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
-/// `catalog:` peer ranges are left on the path walk: the version scan
-/// cannot satisfy them (no catalog branch below), so they resolve exactly
-/// as before this helper existed. Closing that residual would mean
-/// replicating the catalog rewrite chain here.
-///
 /// Peers whose name matches a workspace package need no special casing
 /// even though the fresh resolver binds them to the workspace before any
 /// deferral (`'resolve_from_workspace`): the version scan below picks an
@@ -3101,23 +3096,27 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// edge value is ever consulted.
 fn resolve_peer_dep_version_based(
     dep: &Dependency,
+    catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
     overrides: &OverrideMap,
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
 ) -> Option<PackageID> {
-    // `package_index` is keyed by *real* package names while `dep.name_hash`
-    // may hold an alias, so an `npm:`-aliased peer must be looked up under
-    // the real package name (`dep.realname()`). Mirrors the realname hashing
-    // in `enqueue_dependency_with_main_and_success_fn`.
-    let name_hash = match dep.version.tag {
-        DependencyVersionTag::DistTag
-        | DependencyVersionTag::Git
-        | DependencyVersionTag::Github
-        | DependencyVersionTag::Npm
-        | DependencyVersionTag::Tarball
-        | DependencyVersionTag::Workspace => {
-            StringBuilder::string_hash(dep.realname().slice(string_buf))
+    let range = deferred_peer_range(dep, catalogs, string_buf)?;
+    // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
+    let name_hash = match range.tag {
+        DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),
+        DependencyVersionTag::DistTag => {
+            StringBuilder::string_hash(range.dist_tag().name.slice(string_buf))
+        }
+        DependencyVersionTag::Git => {
+            StringBuilder::string_hash(range.git().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Github => {
+            StringBuilder::string_hash(range.github().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Tarball => {
+            StringBuilder::string_hash(range.tarball().package_name.slice(string_buf))
         }
         _ => dep.name_hash,
     };
@@ -3132,7 +3131,13 @@ fn resolve_peer_dep_version_based(
     // workspace-only edges are never overridden.
     let overridable = !dep.behavior.is_workspace()
         && (dep.version.tag != DependencyVersionTag::Npm || !dep.version.npm().is_alias);
-    if overridable && overrides.get(name_hash).is_some() {
+    // Overrides are applied before catalog resolution, so a catalog peer is overridden by its own name.
+    let override_name_hash = if dep.version.tag == DependencyVersionTag::Catalog {
+        dep.name_hash
+    } else {
+        name_hash
+    };
+    if overridable && overrides.get(override_name_hash).is_some() {
         return None;
     }
 
@@ -3144,11 +3149,8 @@ fn resolve_peer_dep_version_based(
 
     for &id in candidates {
         if (id as usize) < pkg_resolutions.len()
-            && pkg_resolutions[id as usize].satisfies_dependency_version(
-                &dep.version,
-                string_buf,
-                string_buf,
-            )
+            && pkg_resolutions[id as usize]
+                .satisfies_dependency_version(range, string_buf, string_buf)
         {
             return Some(id);
         }
@@ -3157,7 +3159,7 @@ fn resolve_peer_dep_version_based(
     let &first = candidates.first()?;
     if (first as usize) < pkg_resolutions.len() {
         let res_tag = pkg_resolutions[first as usize].tag;
-        let ver_tag = dep.version.tag;
+        let ver_tag = range.tag;
         if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
             || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
             || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)

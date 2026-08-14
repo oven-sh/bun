@@ -7,9 +7,11 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
+use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
+use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
+use bun_semver::ExternalString;
 
 use super::package_manager_options::{Do, Enable};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
@@ -647,6 +649,7 @@ pub(crate) fn edit_catalogs_before_update(
                 dep_name: Box::from(key_str),
                 original_version_literal: Box::from(version_literal),
                 is_alias: alias_at_index.is_some(),
+                new_version_literal: None,
             });
 
             if update_to_latest {
@@ -676,12 +679,10 @@ pub(crate) fn edit_catalogs_before_update(
     Ok(!manager.updating_catalogs.is_empty())
 }
 
-/// Writes resolved versions back into the recorded catalog entries, preserving
-/// the original pin style. Unresolved entries are restored. Returns `changed`.
+/// Writes the literals `resolve_catalog_updates` recorded into the root's catalog entries (unresolved ones are restored); returns `changed`.
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
-    options: EditOptions,
 ) -> Result<bool, bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
@@ -692,11 +693,125 @@ pub(crate) fn edit_catalogs_after_update(
     }
 
     let arena = &manager.ast_arena;
-    let lockfile = &*manager.lockfile;
+    let mut changed = false;
+    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
+        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
+            return Ok(());
+        }
+        for dep in catalog_expr
+            .data
+            .e_object_mut()
+            .expect("infallible: variant checked")
+            .properties
+            .slice_mut()
+        {
+            let Some(key) = &dep.key else { continue };
+            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
+                continue;
+            }
+            let key_str = key
+                .as_utf8_string_literal()
+                .unwrap_or_else(|| bun_core::out_of_memory());
+
+            let Some(info) = infos.iter().find(|info| {
+                strings::eql_long(&info.dep_name, key_str, true)
+                    && strings::eql_long(&info.catalog_name, catalog_name, true)
+            }) else {
+                continue;
+            };
+
+            let new_literal: &[u8] = arena_str(
+                arena,
+                info.new_version_literal
+                    .as_deref()
+                    .unwrap_or(&info.original_version_literal),
+            );
+
+            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
+
+            dep.value = Some(Expr::allocate(
+                arena,
+                E::EString::init(new_literal),
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+        Ok(())
+    })?;
+
+    Ok(changed)
+}
+
+/// Called from `Lockfile::clean_with_logger` on the cleaned lockfile: records each entry's new literal and writes it into `lockfile.catalogs` so bun.lock matches package.json.
+pub(crate) fn resolve_catalog_updates(
+    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    exact_versions: bool,
+) -> crate::Result<()> {
+    let mut infos = core::mem::take(&mut manager.updating_catalogs);
+    let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+    resolve_catalog_literals(lockfile, &mut infos, update_to_latest, exact_versions);
+    let result = rewrite_lockfile_catalogs(lockfile, manager, &infos);
+    manager.updating_catalogs = infos;
+    result
+}
+
+fn rewrite_lockfile_catalogs(
+    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    infos: &[CatalogUpdateInfo],
+) -> crate::Result<()> {
+    let literals = || {
+        infos
+            .iter()
+            .filter_map(|info| info.new_version_literal.as_deref())
+    };
+    if literals().next().is_none() {
+        return Ok(());
+    }
+
+    let (mut builder, lf) = lockfile.string_builder_split();
+    for literal in literals() {
+        builder.count(literal);
+    }
+    builder.allocate()?;
+    for info in infos {
+        let Some(literal) = info.new_version_literal.as_deref() else {
+            continue;
+        };
+        let external = builder.append::<ExternalString>(literal);
+        let string_bytes = builder.string_bytes.as_slice();
+        let sliced = external.value.sliced(string_bytes);
+        let Some(entry) = lf
+            .catalogs
+            .find_mut(string_bytes, &info.catalog_name, &info.dep_name)
+        else {
+            continue;
+        };
+        let (entry_name, entry_name_hash) = (entry.name, entry.name_hash);
+        if let Some(version) = dependency::parse(
+            entry_name,
+            entry_name_hash,
+            sliced.slice,
+            &sliced,
+            None,
+            &mut *manager,
+        ) {
+            entry.version = version;
+        }
+    }
+    builder.clamp();
+    Ok(())
+}
+
+fn resolve_catalog_literals(
+    lockfile: &Lockfile,
+    infos: &mut [CatalogUpdateInfo],
+    update_to_latest: bool,
+    exact_versions: bool,
+) {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
 
-    let mut new_literals: Vec<Option<Vec<u8>>> = vec![None; infos.len()];
     debug_assert_eq!(
         lockfile.buffers.dependencies.len(),
         lockfile.buffers.resolutions.len()
@@ -716,13 +831,16 @@ pub(crate) fn edit_catalogs_after_update(
 
         let dep_name = dep.name.slice(string_buf);
         let catalog_name = dep.version.catalog().slice(string_buf);
-        let Some(index) = infos.iter().position(|info| {
-            strings::eql_long(&info.dep_name, dep_name, true)
-                && strings::eql_long(&info.catalog_name, catalog_name, true)
-        }) else {
+        let find = |same_catalog: fn(&[u8], &[u8]) -> bool| {
+            infos.iter().position(|info| {
+                strings::eql_long(&info.dep_name, dep_name, true)
+                    && same_catalog(&info.catalog_name, catalog_name)
+            })
+        };
+        let Some(index) = find(|a, b| a == b).or_else(|| find(CatalogMap::same_name)) else {
             continue;
         };
-        if new_literals[index].is_some() {
+        if infos[index].new_version_literal.is_some() {
             continue;
         }
 
@@ -731,7 +849,7 @@ pub(crate) fn edit_catalogs_after_update(
             continue;
         }
 
-        if !manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+        if !update_to_latest {
             // plain `bun update` does not move an exact pin (matches direct-dep behavior)
             let resolved_version = lockfile
                 .resolve_catalog_dependency(dep)
@@ -746,7 +864,7 @@ pub(crate) fn edit_catalogs_after_update(
         let info = &infos[index];
         let version_fmt = resolution.npm().version.fmt(string_buf);
         let new_version: Vec<u8> = 'new_version: {
-            if options.exact_versions {
+            if exact_versions {
                 let mut v = Vec::new();
                 write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
                 break 'new_version v;
@@ -780,7 +898,7 @@ pub(crate) fn edit_catalogs_after_update(
             v
         };
 
-        new_literals[index] = Some(if info.is_alias {
+        let new_literal = if info.is_alias {
             let dep_literal = &info.original_version_literal;
             if let Some(at_index) = strings::last_index_of_char(dep_literal, b'@') {
                 let mut v = Vec::new();
@@ -797,55 +915,9 @@ pub(crate) fn edit_catalogs_after_update(
             }
         } else {
             new_version
-        });
+        };
+        infos[index].new_version_literal = Some(new_literal.into_boxed_slice());
     }
-
-    let mut changed = false;
-    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
-        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
-            return Ok(());
-        }
-        for dep in catalog_expr
-            .data
-            .e_object_mut()
-            .expect("infallible: variant checked")
-            .properties
-            .slice_mut()
-        {
-            let Some(key) = &dep.key else { continue };
-            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
-                continue;
-            }
-            let key_str = key
-                .as_utf8_string_literal()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-
-            let Some(index) = infos.iter().position(|info| {
-                strings::eql_long(&info.dep_name, key_str, true)
-                    && strings::eql_long(&info.catalog_name, catalog_name, true)
-            }) else {
-                continue;
-            };
-
-            let info = &infos[index];
-            let new_literal: &[u8] = match &new_literals[index] {
-                Some(v) => arena_str(arena, v),
-                // unresolved: restore the original (may still be the temporary `latest`)
-                None => arena_dup(arena, &info.original_version_literal),
-            };
-
-            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
-
-            dep.value = Some(Expr::allocate(
-                arena,
-                E::EString::init(new_literal),
-                bun_ast::Loc::EMPTY,
-            ));
-        }
-        Ok(())
-    })?;
-
-    Ok(changed)
 }
 
 /// edits dependencies and trusted dependencies

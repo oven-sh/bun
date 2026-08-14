@@ -35,16 +35,16 @@ To update all dependencies to the latest versions (including breaking changes):
 bun audit --audit-level=high
 ```
 
-**`--prod`** - Audit only production dependencies (excludes devDependencies):
+**`--prod`** - Audit only production dependencies. A package is production when it is reachable from the root through `dependencies`, `optionalDependencies` or `peerDependencies` edges; packages that are only reached through `devDependencies` or an optional peer dependency are excluded, even when another version of the same package is a production dependency:
 
 ```bash terminal icon="terminal"
 bun audit --prod
 ```
 
-**`--ignore <CVE>`** - Ignore specific CVEs (repeat the flag to ignore several):
+**`--ignore <id>`** - Ignore specific advisories by GHSA ID or numeric advisory ID (repeat the flag to ignore several). The registry's advisory data does not include CVE IDs, so a CVE ID does not match anything:
 
 ```bash terminal icon="terminal"
-bun audit --ignore CVE-2022-25883 --ignore CVE-2023-26136
+bun audit --ignore GHSA-c2qf-rxjj-qqgw --ignore 1112918
 ```
 
 ### `--json`
@@ -55,6 +55,35 @@ Use the `--json` flag to print the raw JSON response from the registry instead o
 bun audit --json
 ```
 
+### `bun audit fix`
+
+`bun audit fix` runs the audit and then upgrades each vulnerable package in `bun.lock` to the lowest version that is not affected by any advisory and still satisfies every range that depends on it (including `overrides` and catalog entries), then installs. `package.json` is never modified and unrelated packages are not touched.
+
+```bash terminal icon="terminal"
+bun audit fix
+```
+
+```
+fixing:
+  ms@0.7.0 → 0.7.1
+
+requires a semver-major update:
+  minimatch@0.3.0 → 3.0.2
+    express@3.21.2 depends on minimatch@0.3.0
+
+Fixed 1 vulnerability in 1 package
+1 vulnerability remaining
+```
+
+- Packages whose only safe version falls outside a dependent's range are listed under `requires a semver-major update:` and left alone. Update the dependent, or add an `overrides` entry, and run the command again. A dependency bundled inside another package (`express@3.21.2 bundles minimatch@0.3.0`) can only be fixed by updating the package that bundles it.
+- Packages are only ever upgraded, never downgraded, and only stable releases are candidates. `no fix available:` lists packages with no safe newer release, and says so when a safe release exists but is newer than `--minimum-release-age` or the package's manifest could not be fetched.
+- Advisories that match none of the installed versions are listed under `not matched to an installed version:` and count as remaining.
+- Counts are advisories, as in `bun audit`. A package installed as several versions is upgraded per version, and an advisory only counts as fixed once every version it affects has been upgraded; otherwise it counts as remaining.
+- The fix lives in `bun.lock` only. A later dependency that pins the vulnerable version, or regenerating the lockfile, can bring it back; re-run `bun audit`.
+- `--dry-run` prints the plan without changing anything.
+- `--registry` applies to both the advisory request and the install of the fixed versions; there is no way to query one registry for advisories and install from another.
+- `--audit-level`, `--ignore` and `--prod` behave as for `bun audit`, except that `--prod` (like `--frozen-lockfile` and `--no-save`) stops `bun.lock` from being written, so `bun audit fix` rejects it before contacting the registry.
+
 ### Exit code
 
-`bun audit` exits with code `0` if no vulnerabilities are found and `1` if the report lists any, including when `--json` is passed.
+`bun audit` exits with code `0` if no vulnerabilities are found and `1` if the report lists any, including when `--json` is passed. `bun audit fix` exits with `0` when nothing vulnerable remains after the fix (or, with `--dry-run`, would remain) and `1` otherwise.

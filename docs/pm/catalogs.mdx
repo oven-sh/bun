@@ -84,9 +84,14 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
   "devDependencies": {
     "jest": "catalog:testing",
     "testing-library": "catalog:testing"
+  },
+  "peerDependencies": {
+    "react": "catalog:"
   }
 }
 ```
+
+`catalog:` also works in `peerDependencies`. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own.
 
 ### 3. Run Bun Install
 
@@ -233,6 +238,14 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
+To add a new dependency to the catalog (or refresh an existing entry), run `bun add` with `--catalog` (or `--catalog=<name>` for a named catalog) inside the workspace package:
+
+```bash terminal icon="terminal"
+bun add react --catalog
+```
+
+Bun writes the resolved version to the catalog in the root `package.json` and `"catalog:"` to the package's `package.json`. See [`bun add --catalog`](/pm/cli/add#--catalog).
+
 ## Lockfile Integration
 
 Bun's lockfile tracks catalog versions, so installs are consistent across environments. The lockfile includes:
@@ -279,6 +292,7 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 
 - Catalog references must match a dependency defined in either `catalog` or one of the named `catalogs`
 - Empty strings and whitespace in catalog names are ignored (treated as default catalog)
+- `catalog:default` is the same as `catalog:`; both read the `catalog` field, or `catalogs.default` if that is where the entry is defined (as pnpm names it)
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
 - Catalogs are only available within workspaces; they cannot be used outside the monorepo
 

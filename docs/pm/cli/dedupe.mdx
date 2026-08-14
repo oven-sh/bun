@@ -1,0 +1,46 @@
+---
+title: "bun dedupe"
+description: "Remove duplicate versions of packages from bun.lock"
+---
+
+After bumping or adding a dependency, `bun.lock` can end up with several versions of the same package even though one of them satisfies every range that requests it — for example `esbuild@0.15.10` and `esbuild@0.15.11` when the ranges are `^0.15.7` and `^0.15.8`. `bun dedupe` re-points every dependency range onto the locked version that satisfies the most ranges (the highest version on ties), drops the versions nothing needs any more, saves `bun.lock`, and installs.
+
+It only uses versions that are already in the lockfile. It never moves a dependency outside its range and never contacts the registry to resolve anything; use `bun update` for that.
+
+```bash terminal icon="terminal"
+bun dedupe
+```
+
+```
+Removed 2 duplicate versions: esbuild@0.15.10, react@18.2.0
+```
+
+If there is nothing to remove, the command prints:
+
+```
+Already deduplicated.
+```
+
+### `--check`
+
+`bun dedupe --check` prints the versions that would be removed and exits with code `1` without writing anything. It exits with code `0` when the lockfile is already deduplicated, which makes it usable in CI. `--dry-run` is an alias.
+
+```bash terminal icon="terminal"
+bun dedupe --check
+```
+
+```
+1 duplicate version can be removed: esbuild@0.15.10
+```
+
+### Notes
+
+- Overrides and catalogs are honoured: a dependency is re-pointed using its effective range.
+- Because it keeps the fewest versions, a direct dependency can be moved to an older version that still satisfies its range when a transitive dependency pins that older version.
+- Dependencies pointing at a version listed in `patchedDependencies` are never moved, bundled dependencies stay on the copy inside their tarball, and dependencies specified as a dist-tag (such as `latest`), a git URL, or a tarball keep the version they resolved to.
+- Only the ranges of packages that remain installed are counted; a version that the same run removes does not influence where its own dependencies end up, so running the command twice never changes anything the second time.
+- It works from the ranges recorded in `bun.lock`; changes made to `package.json` since the last install are applied by the install that follows.
+- `bun.lock` and `node_modules` change; `package.json` never does. The result only lives in `bun.lock`: deleting the lockfile and reinstalling can bring the duplicates back. Add an [override](/pm/overrides) to pin a version permanently.
+- `--lockfile-only` rewrites `bun.lock` without installing.
+- `--frozen-lockfile`, `--production`, and `--no-save` cannot be combined with removing duplicates; the command exits with code `1` and lists the duplicates instead. Use `--check` in CI.
+- Works with both the hoisted and isolated linker. It only removes distinct versions of a package; the isolated linker may still keep several copies of one version that differ in their peer dependencies, and those are not reported by `--check`.

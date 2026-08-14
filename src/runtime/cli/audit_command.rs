@@ -6,15 +6,18 @@ use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
+use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
+use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{CommandLineArguments, PackageManager, Subcommand};
+use bun_install::{CommandLineArguments, Lockfile, PackageID, PackageManager, Subcommand};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
 
 use crate::cli::Command;
+use crate::cli::install_command::InstallCommand;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
 // Boxed to avoid a struct lifetime param; the
@@ -66,8 +69,13 @@ impl AuditCommand {
         let audit_level = cli.audit_level;
         let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
+        let fix = cli.positionals.len() > 1 && cli.positionals[1] == b"fix";
+        if fix && cli.positionals.len() > 2 {
+            Output::err_generic("bun audit fix does not take arguments", ());
+            Global::exit(1);
+        }
 
-        let (manager, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
         {
             Ok(v) => v,
             Err(err) => {
@@ -89,6 +97,14 @@ impl AuditCommand {
             }
         };
         let json_output = manager.options.json_output;
+
+        if fix {
+            if json_output {
+                Output::err_generic("--json is not supported by bun audit fix", ());
+                Global::exit(1);
+            }
+            return Self::audit_fix(ctx, manager, audit_level, audit_ignore_list, &original_cwd);
+        }
 
         let code = Self::audit(
             ctx,
@@ -183,6 +199,87 @@ impl AuditCommand {
             return Ok(0);
         }
     }
+
+    fn audit_fix(
+        ctx: Command::Context,
+        pm: &mut PackageManager,
+        audit_level: Option<AuditLevel>,
+        ignore_list: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> crate::Result<core::convert::Infallible> {
+        bun_core::pretty_error!(
+            "<r><b>bun audit fix <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
+        );
+        Output::flush();
+
+        {
+            let log_level = pm.options.log_level;
+            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+            PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        }
+
+        audit_fix::exit_unless_lockfile_writable(pm);
+
+        let packages_result = collect_packages_for_audit(pm, false)?;
+        let response_text = send_audit_request(pm, &packages_result.audit_body)?;
+
+        let vulnerabilities = if response_text.is_empty() {
+            Vec::new()
+        } else {
+            match collect_vulnerabilities(&response_text, audit_level, ignore_list)? {
+                Some(vulnerabilities) => vulnerabilities,
+                None => {
+                    let _ = Output::writer().write_all(&response_text);
+                    let _ = Output::writer().write_all(b"\n");
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
+        };
+
+        print_skipped_packages(&packages_result.skipped_packages);
+
+        if vulnerabilities.is_empty() {
+            prettyln!("<green>No vulnerabilities found<r>");
+            Output::flush();
+            Global::exit(0);
+        }
+
+        let advisories: Vec<Advisory> = vulnerabilities
+            .iter()
+            .map(|vulnerability| Advisory {
+                package_name: vulnerability.package_name.clone(),
+                vulnerable_versions: vulnerability.vulnerable_versions.clone(),
+            })
+            .collect();
+        let dry_run = pm.options.dry_run;
+        let plan = audit_fix::plan_fixes(pm, &advisories)?;
+        plan.print_sections();
+
+        if dry_run || plan.fixes.is_empty() {
+            plan.print_summary(dry_run);
+            Output::flush();
+            Global::exit(plan.exit_code());
+        }
+
+        pm.audit_fix_pins = plan.pins();
+
+        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
+        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
+            InstallCommand::handle_error(crate::Error::from(e))?;
+            Global::exit(1);
+        }
+
+        if pm.any_failed_to_install {
+            Global::exit(1);
+        }
+
+        plan.print_summary(false);
+        Output::flush();
+        Global::exit(plan.exit_code());
+    }
 }
 
 fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
@@ -245,55 +342,39 @@ fn build_dependency_tree(
     Ok(dependency_tree)
 }
 
-fn build_production_package_set(
-    pm: &mut PackageManager,
-    prod_set: &mut StringHashMap<()>,
-) -> Result<(), bun_alloc::AllocError> {
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
-
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
+fn build_production_package_set(lockfile: &Lockfile, root_id: PackageID) -> Vec<bool> {
+    let packages = lockfile.packages.slice();
     let pkg_dependencies = packages.items_dependencies();
     let pkg_resolutions = packages.items_resolutions();
-    let buf = pm.lockfile.buffers.string_bytes.as_slice();
-    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
-    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
 
-    let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
-
-    let root_deps = pkg_dependencies[root_id as usize];
-    let root_resolutions = pkg_resolutions[root_id as usize];
-    let dep_slice = root_deps.get(dependencies);
-    let res_slice = root_resolutions.get(resolutions);
-
-    for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-        if !dep.behavior.is_dev() && (resolved_pkg_id as usize) < packages.len() {
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            prod_set.put(pkg_name, ())?;
-            queue.push_back(resolved_pkg_id);
-        }
+    let mut prod_set = vec![false; packages.len()];
+    let mut queue: std::collections::VecDeque<PackageID> = std::collections::VecDeque::new();
+    if (root_id as usize) < packages.len() {
+        prod_set[root_id as usize] = true;
+        queue.push_back(root_id);
     }
 
     while let Some(current_pkg_id) = queue.pop_front() {
-        let current_deps = pkg_dependencies[current_pkg_id as usize];
-        let current_resolutions = pkg_resolutions[current_pkg_id as usize];
-        let current_dep_slice = current_deps.get(dependencies);
-        let current_res_slice = current_resolutions.get(resolutions);
+        let dep_slice = pkg_dependencies[current_pkg_id as usize].get(dependencies);
+        let res_slice = pkg_resolutions[current_pkg_id as usize].get(resolutions);
 
-        for (_, &resolved_pkg_id) in current_dep_slice.iter().zip(current_res_slice.iter()) {
-            if (resolved_pkg_id as usize) >= pkg_names.len() {
+        for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
+            if dep.behavior.is_dev() || dep.behavior.is_optional_peer() {
                 continue;
             }
-
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            if !prod_set.contains_key(pkg_name) {
-                prod_set.put(pkg_name, ())?;
+            let Some(seen) = prod_set.get_mut(resolved_pkg_id as usize) else {
+                continue;
+            };
+            if !*seen {
+                *seen = true;
                 queue.push_back(resolved_pkg_id);
             }
         }
     }
 
-    Ok(())
+    prod_set
 }
 
 struct CollectPackagesResult {
@@ -315,17 +396,9 @@ fn collect_packages_for_audit(
     let mut packages_list: Vec<PackageVersions> = Vec::new();
     let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
 
-    let mut prod_packages: Option<StringHashMap<()>> = None;
-    if prod_only {
-        let mut set = StringHashMap::default();
-        build_production_package_set(pm, &mut set)?;
-        prod_packages = Some(set);
-    }
+    let prod_packages: Option<Vec<bool>> =
+        prod_only.then(|| build_production_package_set(&pm.lockfile, root_id));
 
-    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
-    // immutably for the loop, so resolve `root_id` / `prod_packages` (which
-    // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`).
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
@@ -341,15 +414,11 @@ fn collect_packages_for_audit(
             continue;
         }
 
-        let name_slice = name.slice(buf);
-
-        if prod_only {
-            if let Some(ref prod) = prod_packages {
-                if !prod.contains_key(name_slice) {
-                    continue;
-                }
-            }
+        if prod_packages.as_ref().is_some_and(|prod| !prod[idx]) {
+            continue;
         }
+
+        let name_slice = name.slice(buf);
 
         let package_scope = options.scope_for_package_name(name_slice);
         if package_scope.url_hash != default_url_hash {
@@ -714,6 +783,61 @@ fn find_dependency_paths(
     Ok(paths)
 }
 
+fn keep_vulnerability(
+    vulnerability: &VulnerabilityInfo,
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+) -> bool {
+    if let Some(level) = audit_level {
+        if !level.should_include_severity(&vulnerability.severity) {
+            return false;
+        }
+    }
+
+    !ignore_list.iter().any(|ignored_cve| {
+        strings::eql(&vulnerability.id, ignored_cve)
+            || strings::index_of(&vulnerability.url, ignored_cve).is_some()
+    })
+}
+
+fn collect_vulnerabilities(
+    response_text: &[u8],
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+) -> Result<Option<Vec<VulnerabilityInfo>>, bun_alloc::AllocError> {
+    let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
+    let mut log = bun_ast::Log::init();
+
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+        Ok(e) => e,
+        Err(_) => return Ok(None),
+    };
+
+    let ExprData::EObjectJSON(obj) = &parsed.root.data else {
+        return Ok(None);
+    };
+
+    let mut vulnerabilities: Vec<VulnerabilityInfo> = Vec::new();
+    for prop in obj.get().properties() {
+        let package_name: &[u8] = prop.key.slice();
+
+        let Some(arr) = prop.value.as_array() else {
+            continue;
+        };
+        for vuln in arr.items() {
+            let Some(vuln_obj) = vuln.as_object() else {
+                continue;
+            };
+            let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
+            if keep_vulnerability(&vulnerability, audit_level, ignore_list) {
+                vulnerabilities.push(vulnerability);
+            }
+        }
+    }
+
+    Ok(Some(vulnerabilities))
+}
+
 #[derive(Default)]
 struct VulnCounts {
     low: u32,
@@ -762,25 +886,8 @@ fn print_enhanced_audit_report(
                     if let Some(vuln_obj) = vuln.as_object() {
                         let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
 
-                        if let Some(level) = audit_level {
-                            if !level.should_include_severity(&vulnerability.severity) {
-                                continue;
-                            }
-                        }
-
-                        if !ignore_list.is_empty() {
-                            let mut should_ignore = false;
-                            for ignored_cve in ignore_list {
-                                if strings::eql(&vulnerability.id, ignored_cve)
-                                    || strings::index_of(&vulnerability.url, ignored_cve).is_some()
-                                {
-                                    should_ignore = true;
-                                    break;
-                                }
-                            }
-                            if should_ignore {
-                                continue;
-                            }
+                        if !keep_vulnerability(&vulnerability, audit_level, ignore_list) {
+                            continue;
                         }
 
                         if vulnerability.severity.as_ref() == b"low" {

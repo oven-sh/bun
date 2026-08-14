@@ -5,6 +5,8 @@ description:
 
 Bun loads configuration options from [`.npmrc`](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) files, so you can reuse your existing registry and scope configuration.
 
+Bun reads `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc` if it exists), then the project's `./.npmrc`, then `bunfig.toml`. When the same option is set in more than one place, `./.npmrc` overrides `~/.npmrc`, `bunfig.toml` overrides both `.npmrc` files, and command-line flags override everything. Options that only appear in `.npmrc` (such as `//<registry>/:_authToken`) still apply, including to registries configured in `bunfig.toml`.
+
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.

@@ -175,6 +175,7 @@ impl WorkspaceMap {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
+        skip_missing: bool,
     ) -> crate::Result<u32> {
         let workspace_names = self;
         let item_count = arr.len();
@@ -239,6 +240,9 @@ impl WorkspaceMap {
             let (abs_package_json_path, workspace_entry) = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
+                    if skip_missing && err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        continue;
+                    }
                     if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
                         || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)

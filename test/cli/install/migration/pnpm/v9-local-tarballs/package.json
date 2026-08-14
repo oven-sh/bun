@@ -1,0 +1,8 @@
+{
+  "name": "v9-local-tarballs",
+  "version": "1.0.0",
+  "dependencies": {
+    "tar-gz-pkg": "file:../tar-gz-pkg-1.0.0.tar.gz",
+    "tar-pkg": "file:../tar-pkg-1.0.0.tgz"
+  }
+}

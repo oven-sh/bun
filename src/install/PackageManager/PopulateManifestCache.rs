@@ -101,6 +101,8 @@ fn start_manifest_task(
 pub enum Packages<'a> {
     All,
     Ids(&'a [PackageID]),
+    /// The manifests of these packages themselves (by name), not of their dependencies.
+    Exact(&'a [PackageID]),
 }
 
 /// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
@@ -266,6 +268,39 @@ pub fn populate_manifest_cache(
                         // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
                         let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
                     }
+                }
+            }
+        }
+        Packages::Exact(ids) => {
+            let placeholder = Dependency::default();
+            for &pkg_id in ids {
+                if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
+                    continue;
+                }
+                let package_name = pkg_names[pkg_id as usize].slice(string_buf);
+                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                let scope =
+                    bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
+                // SAFETY: `manifests` is disjoint from `options`/`lockfile`; `manager_ptr` is the SRW root.
+                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                    cache_ctx,
+                    scope.get(),
+                    package_name,
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended_manifest,
+                );
+                if cached.is_none() {
+                    start_manifest_task(
+                        // SAFETY: SRW root; `start_manifest_task` never mutates `lockfile`, so `package_name` stays valid.
+                        unsafe { &mut *manager_ptr },
+                        package_name,
+                        &placeholder,
+                        needs_extended_manifest,
+                    )?;
+                    // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
+                    run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
+                    // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
+                    let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
                 }
             }
         }

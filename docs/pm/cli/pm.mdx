@@ -163,6 +163,51 @@ bun list --trusted
 └── esbuild@0.21.5
 ```
 
+## licenses
+
+To list every installed package grouped by its license (read from the `license` or legacy `licenses` field of each package's installed `package.json`; packages declaring neither are listed under `Unknown`, and workspace and `link:` packages are not listed):
+
+```bash terminal icon="terminal"
+bun pm licenses
+```
+
+```txt
+MIT (2)
+├── path-parse@1.0.6
+└── resolve@1.9.0
+
+Unknown (4)
+├── a-dep@1.0.1
+├── no-deps@1.0.0
+├── no-deps@1.0.1
+└── one-dep@1.0.0
+```
+
+Pass `--prod` to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order) and, when present, the `homepage` and `author` of the newest listed version:
+
+```bash terminal icon="terminal"
+bun pm licenses --json --prod
+```
+
+```json
+{
+  "MIT": [
+    {
+      "name": "path-parse",
+      "versions": ["1.0.6"],
+      "homepage": "https://github.com/jbgutierrez/path-parse#readme",
+      "author": "Javier Blanco <http://jbgutierrez.info>"
+    }
+  ]
+}
+```
+
+`--prod` only drops the `devDependencies` of the root package and of workspace packages; `optionalDependencies` and everything a production dependency pulls in are still listed, and from a workspace root every workspace's production dependencies are included. Run it inside a workspace package to list only that package's dependencies, and use [`bun why`](/pm/cli/why) to see which dependency pulls in an unexpected package.
+
+Packages that are in the lockfile but not in `node_modules` (for example after `bun install --production`) are omitted, and a `warn:` line with the number of omitted packages is printed to stderr. Packages that don't apply to the current platform (`os`/`cpu`) are omitted silently.
+
+This is the equivalent of `pnpm licenses list`.
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

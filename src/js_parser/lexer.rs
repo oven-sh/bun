@@ -3385,8 +3385,7 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
-/// `text` follows `&#`. Like Babel and TypeScript this takes only `[0-9]+` / `x[0-9a-fA-F]+`
-/// (hence not `parse_int`, which allows a sign and `_`); `None` leaves the reference as text.
+/// Only `[0-9]+` / `x[0-9a-fA-F]+` decode, as in Babel and TypeScript; `None` keeps the text.
 fn jsx_numeric_entity_value(text: &[u8]) -> Option<u32> {
     let (digits, radix) = match text.strip_prefix(b"x") {
         Some(hex) => (hex, 16u32),

@@ -210,7 +210,7 @@ pub struct LinkerGraph<'a> {
     /// Index from `.parse_graph.input_files` to index in `.files`
     pub(crate) stable_source_indices: Vec<u32>,
 
-    /// The original file of every `"use client"` boundary. See `load`.
+    /// The original file of every `"use client"` boundary; chunking records their chunks for the SCB keys.
     pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
@@ -683,10 +683,7 @@ impl<'a> LinkerGraph<'a> {
             for &id in dynamic_import_entry_points {
                 debug_assert!(self.code_splitting); // this should never be a thing without code splitting
 
-                // This list was collected from the import records before the rewrite
-                // below, so an `import()` of a "use client" file names the original
-                // file here. The record ends up pointing at the reference proxy, so
-                // that is the file that has to become the entry point.
+                // The rewrite below points `import()`s of a "use client" file at its reference proxy.
                 let id = scb.get_reference_source_index(id).unwrap_or(id);
 
                 if entry_point_kinds[id as usize] != entry_point::Kind::None {
@@ -715,12 +712,7 @@ impl<'a> LinkerGraph<'a> {
             if scb.list.len() > 0 {
                 self.is_scb_bitset = BitSet::init_empty(self.files.len()).expect("unreachable");
 
-                // Index the original file of every SCB into the bitset. Chunking uses
-                // it to record which chunk each boundary's code lands in, which is
-                // what the SCB unique keys resolve to. The reference proxies are left
-                // out: no SCB key refers to them, and a proxy that is `import()`ed is
-                // a dynamic import entry point whose `entry_point_chunk_index` has to
-                // keep pointing at its own chunk.
+                // Not the proxies: an `import()`ed proxy is an entry point that must keep its own chunk index.
                 debug_assert_eq!(
                     scb.list.items_use_directive().len(),
                     scb.list.items_source_index().len()
@@ -987,10 +979,7 @@ pub struct File {
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
     ///
-    /// For the original file of a SCB, `find_all_imported_parts_in_js_order`
-    /// overwrites this with the chunk the file's code was placed in; the SCB
-    /// unique keys (`QueryKind::Scb`) are resolved through it when the output
-    /// is broken into pieces.
+    /// For SCB originals this is the chunk holding the file's code instead, which the `QueryKind::Scb` keys resolve to.
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

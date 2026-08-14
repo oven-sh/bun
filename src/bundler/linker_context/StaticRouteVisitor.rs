@@ -1,12 +1,4 @@
-//! Decides which bake server entry points (routes) transitively import a file
-//! with `"use client"`. A route that imports none is prerendered without any
-//! client-side JavaScript (`BakeRouteKind::FullyStaticRoute`).
-//!
-//! `mark_chunks_with_transitive_use_client` has to run before
-//! `compute_cross_chunk_dependencies`: that pass rewrites every `import()` of
-//! another chunk into an import of the chunk's path and clears the record's
-//! `source_index`, which would hide the client components a route only
-//! reaches through `import()`.
+//! Marks the bake routes (server entry point chunks) that transitively import a `"use client"` file.
 //!
 //! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.rs`?
 
@@ -24,8 +16,7 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
     c: &LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<(), AllocError> {
-    // Only the built-in React framework prerenders routes differently based on
-    // this; `generate_chunks_in_parallel` reads the flag under the same condition.
+    // Same condition under which `generate_chunks_in_parallel` reads the flag.
     if !c
         .framework
         .is_some_and(|framework| framework.is_built_in_react)
@@ -82,8 +73,7 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
 
 struct StaticRouteVisitor<'a, 'ir> {
     all_import_records: &'a [import_record::List<'ir>],
-    /// The generated reference proxies of every server component boundary,
-    /// parallel to `use_directives`.
+    /// The reference proxy of every server component boundary, parallel to `use_directives`.
     referenced_source_indices: &'a [u32],
     use_directives: &'a [UseDirective],
     cache: ArrayHashMap</* Index::Int */ u32, bool>,
@@ -91,10 +81,6 @@ struct StaticRouteVisitor<'a, 'ir> {
 }
 
 impl StaticRouteVisitor<'_, '_> {
-    /// This the quickest, simplest, dumbest way I can think of doing this.
-    /// Investigate performance. It can have false negatives (it doesn't properly
-    /// handle cycles), but that's okay as it's just used an optimization
-    ///
     /// 1. Get AST for `source_index`
     /// 2. Recursively traverse its imports in import records
     /// 3. If any of the imports match any item in

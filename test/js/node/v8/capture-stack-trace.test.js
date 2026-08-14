@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { readFileSync } from "node:fs";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -574,13 +575,17 @@ test("CallSites of a class without a constructor point at the class definition",
     isConstructor: site.isConstructor(),
     fileName: site.getFileName(),
     lineNumber: site.getLineNumber(),
+    columnNumber: site.getColumnNumber(),
     scriptId: site.getScriptId(),
   });
+  const sourceLines = readFileSync(import.meta.path, "utf8").split("\n");
   const expectedAt = (classSite, functionName) => ({
     functionName,
     isConstructor: true,
     fileName: classSite.getFileName(),
     lineNumber: classSite.getLineNumber(),
+    // getColumnNumber() is zero-based; this is the column of the `class` keyword on that line.
+    columnNumber: sourceLines[classSite.getLineNumber() - 1].indexOf(`class ${functionName} `),
     scriptId: classSite.getScriptId(),
   });
 
@@ -588,9 +593,6 @@ test("CallSites of a class without a constructor point at the class definition",
   expect(innerClassSite.getLineNumber()).not.toBe(derivedClassSite.getLineNumber());
   expect(describeSite(derivedSite)).toEqual(expectedAt(derivedClassSite, "Derived"));
   expect(describeSite(innerSite)).toEqual(expectedAt(innerClassSite, "Inner"));
-  // The `class` keyword comes before the `extends` clause on each line.
-  expect(derivedSite.getColumnNumber()).toBeLessThan(derivedClassSite.getColumnNumber());
-  expect(innerSite.getColumnNumber()).toBeLessThan(innerClassSite.getColumnNumber());
 });
 
 test("CallFrame.p.isNative", () => {

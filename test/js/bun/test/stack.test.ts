@@ -261,8 +261,9 @@ console.log(JSON.stringify({ derived: frame(new Derived().err, "Derived"), later
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stdout).toBe("");
     expect(stderr).toContain("1 | class Nullary extends null {}\n    ^\n");
     expect(stderr).toMatch(/^\s+at new Nullary \(.*fixture\.js:1:1\)/m);
     expect(exitCode).toBe(1);

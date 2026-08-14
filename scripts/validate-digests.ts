@@ -182,13 +182,29 @@ async function verifySigner(ascContent: string, fingerprint: string, pubkeyPath?
       throw new Error(`gpg --verify failed:\n${verify.stderr.toString()}`);
     }
     // gpg exits 0 and still emits VALIDSIG for signatures made by
-    // revoked or expired keys (REVKEYSIG / EXPKEYSIG / EXPSIG); only
-    // GOODSIG means the signature checks out AND the key is currently
-    // valid. Fail closed on anything else so revocation of a
-    // compromised release key actually takes effect here.
-    if (!status.includes("[GNUPG:] GOODSIG ")) {
-      const bad = status.match(/\[GNUPG:\] (REVKEYSIG|EXPKEYSIG|EXPSIG|KEYREVOKED)\b/)?.[1];
-      throw new Error(`Signature is not from a currently valid key${bad ? ` (gpg reported ${bad})` : ""}.`);
+    // revoked or expired keys (REVKEYSIG / EXPKEYSIG / EXPSIG), so the
+    // exit code alone cannot gate key validity. Parse the status
+    // LINE-ANCHORED: gpg embeds the signer's UID unescaped in these
+    // lines (only control chars are percent-escaped), so a compromised
+    // key could carry a UID containing the literal "[GNUPG:] GOODSIG "
+    // and defeat a substring match; a UID can never start a fresh
+    // status line because newlines ARE escaped.
+    //
+    // Policy: revocation always rejects (a compromised release key's
+    // revocation must take effect here). Expiry is accepted with a
+    // loud warning: an old immutable release's signature cannot be
+    // re-made, and a key that expired after signing does not undo the
+    // signature's validity at signing time.
+    const statusLines = status.split(/\r?\n/);
+    const hasStatus = (tag: string) =>
+      statusLines.some(l => l === `[GNUPG:] ${tag}` || l.startsWith(`[GNUPG:] ${tag} `));
+    if (hasStatus("REVKEYSIG") || hasStatus("KEYREVOKED")) {
+      throw new Error("Signature key has been revoked (gpg reported REVKEYSIG).");
+    }
+    if (hasStatus("EXPKEYSIG") || hasStatus("EXPSIG")) {
+      console.warn("⚠️ Signing key has expired since this signature was made; the signature itself verifies.");
+    } else if (!hasStatus("GOODSIG")) {
+      throw new Error("gpg did not report GOODSIG for the signature.");
     }
     // VALIDSIG <sig-key-fpr> <date> <ts> ... <primary-key-fpr>
     const validsig = status.split(/\r?\n/).find(l => l.startsWith("[GNUPG:] VALIDSIG "));

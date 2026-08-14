@@ -26,11 +26,20 @@
 // previous signed run must be removed before the unsigned upload so a
 // caller running `ls SHASUMS256.txt.asc` cannot find one left behind.
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+// Nearly every test here spawns gpg (and often the debug bun binary)
+// as a subprocess and runs under describe.concurrent, so they contend.
+// Under debug+ASAN the heavier signing/validator cases sit at 3-4s
+// alone and spike past the 5s default when run together. Raise the
+// ceiling modestly: high enough that contention can't flake a test
+// that is making progress, low enough that a genuine hang still fails
+// fast rather than stalling the file.
+setDefaultTimeout(30_000);
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
@@ -102,6 +111,13 @@ const keyUid = "release-test-28931@example.invalid";
 let validateFixtureDir: ReturnType<typeof tempDir> | undefined;
 let signerFpr = "";
 let signerPubPath = "";
+
+// Second fixture, signed by a key whose UID embeds a GOODSIG status
+// line and whose revocation certificate ships with the public key.
+// Built once in beforeAll; the injection test is one validator spawn.
+let injFixtureDir: ReturnType<typeof tempDir> | undefined;
+let injHome = "";
+let injFpr = "";
 
 describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   beforeAll(async () => {
@@ -193,7 +209,70 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(pubRes.exitCode).toBe(0);
     signerPubPath = join(vDir, "signer-pub.asc");
     writeFileSync(signerPubPath, pubRes.stdout);
-  });
+
+    // Injection fixture: a key whose UID contains the literal
+    // "[GNUPG:] GOODSIG " (gpg embeds UIDs unescaped in REVKEYSIG
+    // status lines), signed artifacts, and a pubkey file that carries
+    // the auto-generated revocation certificate.
+    injFixtureDir = tempDir("bun-28931-inj-fixture-", {
+      "bun-linux-x64.zip": "injection-target",
+    });
+    const iDir = String(injFixtureDir);
+    injHome = join(iDir, "kr");
+    mkdirSync(injHome, { mode: 0o700 });
+    const injUid = "inj-28931@example.invalid";
+    writeFileSync(
+      join(iDir, "keyspec"),
+      [
+        "Key-Type: EDDSA",
+        "Key-Curve: ed25519",
+        "Key-Usage: sign",
+        "Name-Real: Injected [GNUPG:] GOODSIG DEADBEEF Fake",
+        `Name-Email: ${injUid}`,
+        "Expire-Date: 0",
+        `Passphrase: ${passphrase}`,
+        "%commit",
+      ].join("\n"),
+    );
+    const injGen = await sh(
+      ["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", passphrase, "--gen-key", join(iDir, "keyspec")],
+      { GNUPGHOME: injHome },
+    );
+    expect(injGen.exitCode).toBe(0);
+    const injFprRes = await sh(["gpg", "--batch", "--with-colons", "--fingerprint", injUid], { GNUPGHOME: injHome });
+    injFpr = injFprRes.stdout
+      .split("\n")
+      .find(l => l.startsWith("fpr:"))!
+      .split(":")[9];
+    const injKey = await sh(
+      [
+        "gpg",
+        "--batch",
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase",
+        passphrase,
+        "--armor",
+        "--export-secret-keys",
+        injUid,
+      ],
+      { GNUPGHOME: injHome },
+    );
+    expect(injKey.exitCode).toBe(0);
+    const injSign = await sh([script, iDir, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: injKey.stdout,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(injSign.exitCode).toBe(0);
+    const injPub = await sh(["gpg", "--armor", "--export", injUid], { GNUPGHOME: injHome });
+    const injRev = readFileSync(join(injHome, "openpgp-revocs.d", `${injFpr}.rev`), "utf8").replace(
+      ":-----BEGIN",
+      "-----BEGIN",
+    );
+    writeFileSync(join(iDir, "pub.asc"), injPub.stdout + injRev.slice(injRev.indexOf("-----BEGIN")));
+    // This hook generates two ed25519 keys, signs twice, and exports
+    // several times; give it extra headroom beyond the suite ceiling.
+  }, 120_000);
 
   afterAll(async () => {
     // Kill any gpg-agent bound to the throwaway GNUPGHOME before the
@@ -214,6 +293,11 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     keyringDir = undefined;
     validateFixtureDir?.[Symbol.dispose]();
     validateFixtureDir = undefined;
+    if (injHome) {
+      await sh(["gpgconf", "--kill", "all"], { GNUPGHOME: injHome });
+    }
+    injFixtureDir?.[Symbol.dispose]();
+    injFixtureDir = undefined;
   });
 
   test("writes deterministic, sorted SHASUMS256.txt and a matching clearsigned .asc", async () => {
@@ -1180,7 +1264,30 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       "--pubkey",
       revokedPub,
     ]);
-    expect(res.stderr).toContain("not from a currently valid key");
+    expect(res.stderr).toContain("Signature key has been revoked");
+    expect(res.exitCode).toBe(1);
+  });
+
+  test("validate-digests.ts rejects a revoked key whose UID embeds a GOODSIG status line", async () => {
+    // gpg embeds the signer's UID unescaped in REVKEYSIG lines, so a
+    // compromised key carrying a UID that contains the literal
+    // "[GNUPG:] GOODSIG " would defeat a substring match over the
+    // status blob. The gate must parse status lines anchored at the
+    // line start, where a UID can never appear (newlines in UIDs are
+    // percent-escaped). The fixture (key + signed dir + pubkey with
+    // revocation) is built in beforeAll.
+    const iDir = String(injFixtureDir);
+    const res = await sh([
+      bunExe(),
+      validateScript,
+      "--dir",
+      iDir,
+      "--require-signer",
+      injFpr,
+      "--pubkey",
+      join(iDir, "pub.asc"),
+    ]);
+    expect(res.stderr).toContain("Signature key has been revoked");
     expect(res.exitCode).toBe(1);
   });
 

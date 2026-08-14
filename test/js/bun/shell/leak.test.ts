@@ -14,10 +14,12 @@ $.nothrow();
 
 // Every leak these tests guard against costs at least one unit (fd, JS object,
 // protected object) per run, so a leak puts RUNS units on the detector. The
-// bounds below allow for legitimate residue: the last run's interpreter and
-// script can stay conservatively rooted through Bun.gc(true), and an interpreter
-// that has not been finalized yet can still hold an fd or two. 100 runs puts a
-// one-unit-per-run leak at 20x the fd bound and 33x the object bound.
+// bounds below allow for legitimate residue: heapStats() counts each class's
+// prototype (so ShellInterpreter and ParsedShellScript read 1 each once a script
+// has run, and never less), the last run's objects can stay conservatively
+// rooted through Bun.gc(true), and an interpreter that has not been finalized
+// yet can still hold an fd or two. 100 runs puts a one-unit-per-run leak at 20x
+// the fd bound and 33x the object bound.
 const RUNS = 100;
 const WARMUP_RUNS = 1;
 const FD_LEAK_BOUND = 5;
@@ -81,6 +83,11 @@ function snippet(builder: () => TestBuilder): string {
  * on successive event loop turns until `ok` accepts the sample (or 50 turns
  * pass) and returns the last sample: a dead interpreter can stay visible to
  * heapStats for a turn, a real leak never goes away.
+ *
+ * Every child also reports how many ShellInterpreter cells exist when it is
+ * done. The class prototype is created the first time a script executes, so
+ * this is 0 exactly when the snippet never reached the shell, which is how an
+ * earlier version of this file passed while its children ran nothing.
  */
 async function runChild(
   name: string,
@@ -124,7 +131,7 @@ async function runChild(
     await runTimes(${WARMUP_RUNS});
     Bun.gc(true);
     const result = await (${measure})(() => runTimes(${runs}));
-    console.log(JSON.stringify(result));
+    console.log(JSON.stringify({ result, shellInterpreters: shellObjectCounts().ShellInterpreter }));
   `;
   // The child's cwd and tmpdir both point here, so whatever the snippets create
   // (TestBuilder.tmpdir() makes a fresh directory per run) is removed with it.
@@ -140,7 +147,9 @@ async function runChild(
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toMatch(/^\{.*\}\n$/);
-  return { result: JSON.parse(stdout), exitCode };
+  const { result, shellInterpreters } = JSON.parse(stdout);
+  expect(shellInterpreters).toBeGreaterThanOrEqual(1);
+  return { result, exitCode };
 }
 
 describe.concurrent("fd leak", () => {
@@ -208,12 +217,19 @@ describe.concurrent("fd leak", () => {
   memLeakTest("String", () => TestBuilder.command`echo ${Buffer.alloc(4096, "a").toString()}`.stdout(() => {}));
 
   /**
-   * The shell pins a redirect target (`> ${buffer}`) for as long as the command
-   * runs. heapStats() reports the pinned objects in protectedObjectTypeCounts
-   * under their JSC class name (a Buffer is a Uint8Array there; a string is
-   * copied and never appears), so the whole table is compared before and after
-   * instead of looking up one class. Output redirected into `val` leaves stdout
-   * empty, which is what TestBuilder expects unless a snippet says otherwise.
+   * The shell pins a JS redirect target for as long as the command runs: one
+   * reference per redirected stream (`&>` takes two) for both builtins and
+   * subprocesses, and a builtin also pins a `< ${buffer}` stdin (a subprocess
+   * copies it). heapStats() reports the pinned objects in
+   * protectedObjectTypeCounts under their JSC class name (a Buffer is a
+   * Uint8Array there; a string argument is copied and never appears), so the
+   * whole table is compared before and after instead of looking up one class.
+   *
+   * `echo` and `cd` are builtins everywhere; `cat` is the system binary on
+   * POSIX and the builtin on Windows, so the `cat` snippets cover the
+   * subprocess paths on the POSIX lanes and the builtin paths on Windows.
+   * Output redirected into `val` leaves stdout empty, which is what TestBuilder
+   * expects unless a snippet says otherwise.
    */
   function memLeakTestProtect(
     name: string,
@@ -271,6 +287,41 @@ describe.concurrent("fd leak", () => {
     "DataView_builtin",
     "new DataView(new ArrayBuffer(64))",
     "TestBuilder.command`echo ${import.meta.filename} > ${val}`",
+  );
+
+  // Both streams pinned at once (#29531 leaked one of the two references).
+  memLeakTestProtect(
+    "ArrayBuffer_builtin_both_streams",
+    "new ArrayBuffer(64)",
+    "TestBuilder.command`echo hi &> ${val}`",
+  );
+  memLeakTestProtect(
+    "Buffer_subprocess_both_streams",
+    "Buffer.alloc(64)",
+    "TestBuilder.command`${bunExe()} -e 'console.log(1); console.error(2)' &> ${val}`",
+    false,
+    2,
+  );
+
+  // stderr pinned by a command that fails, so the references are released on
+  // the error path.
+  memLeakTestProtect(
+    "Uint8Array_missing_file_stderr",
+    "new Uint8Array(128)",
+    "TestBuilder.command`cat missing.txt 2> ${val}`.exitCode(1)",
+  );
+  memLeakTestProtect(
+    "ArrayBuffer_failed_cd_stderr",
+    "new ArrayBuffer(128)",
+    "TestBuilder.command`cd missing-dir 2> ${val}`.exitCode(1)",
+  );
+
+  // stdin from a JS object.
+  memLeakTestProtect("Buffer_stdin", "Buffer.from('hi\\n')", "TestBuilder.command`cat < ${val}`.stdout('hi\\n')");
+  memLeakTestProtect(
+    "Buffer_builtin_stdin",
+    "Buffer.alloc(64)",
+    "TestBuilder.command`echo hi < ${val}`.stdout('hi\\n')",
   );
 
   memLeakTestProtect(

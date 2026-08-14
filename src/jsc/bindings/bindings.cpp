@@ -1974,17 +1974,12 @@ bool Bun__deepMatch(
     ASSERT(subsetValue.isCell());
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
-    // Like jest, a function on the subset side is a value that only matches
-    // itself, not a pattern to walk: functions rarely have enumerable
-    // properties, so walking them would match any two.
+    // like jest, a function is a value to compare, not a pattern to walk.
     if (subsetValue.isCallable()) return false;
     VM& vm = globalObject->vm();
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    // Private symbols are JSC internals; Array.prototype's private builtin
-    // methods are enumerable. Walking them would compare those functions by
-    // identity, so an array pattern would reject an array from another realm.
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -1999,8 +1994,7 @@ bool Bun__deepMatch(
     bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
 
-    // An array pattern only matches an array. The reverse is allowed: an object
-    // pattern is a key subset, which an array can satisfy.
+    // an array subset needs an array; an object subset may be satisfied by one.
     if (subsetIsArray && !objIsArray) {
         return false;
     }
@@ -2063,9 +2057,6 @@ bool Bun__deepMatch(
             }
         }
 
-        // A subset function is compared by identity below. Decided here rather
-        // than by the recursive call so that a function used under several keys
-        // is compared at each of them instead of being skipped as a cycle.
         if (subsetProp.isObject() && !subsetProp.isCallable() && prop.isObject()) {
             // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
             // in such case, it expects exhaustive matching of any nested object properties, not just a subset,

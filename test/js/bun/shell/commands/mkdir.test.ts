@@ -18,7 +18,7 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     // Past the path buffer on every platform, Windows included.
     const huge = Buffer.alloc(100_000, "h").toString();
     // Longer than the buffers as written, but normalizes down to one component.
-    const dotSlashes = Buffer.alloc(6000, "./").toString() + "normalized";
+    const dotSlashes = Buffer.alloc(6000, "./").toString();
     const run = async (...args: string[]) => {
       const { exitCode, stderr } = await $\`mkdir \${args}\`.quiet();
       return { exitCode, stderr: stderr.toString() };
@@ -30,7 +30,11 @@ test("operands longer than the path buffers are reported, not a crash", async ()
       parents: await run("-p", long),
       huge: await run(huge),
       mixed: { ...(await run(long, "short")), shortCreated: existsSync(dir + "/short") },
-      dotSlashes: { ...(await run(dotSlashes)), created: existsSync(dir + "/normalized") },
+      dotSlashes: { ...(await run(dotSlashes + "normalized")), created: existsSync(dir + "/normalized") },
+      absoluteDotSlashes: {
+        ...(await run(dir + "/" + dotSlashes + "as-written")),
+        created: existsSync(dir + "/as-written"),
+      },
     }));
   `;
   await using proc = Bun.spawn({
@@ -46,7 +50,9 @@ test("operands longer than the path buffers are reported, not a crash", async ()
 
   const long = Buffer.alloc(5000, "a").toString();
   const huge = Buffer.alloc(100_000, "h").toString();
-  // mkdir reports the path it operated on: a relative operand joined onto the cwd.
+  const dotSlashes = Buffer.alloc(6000, "./").toString();
+  // mkdir reports the path it operated on: a relative operand joined onto the
+  // cwd, an absolute one as written.
   const tooLong = (path: string) => `mkdir: ${path}: File name too long\n`;
   // 5000 bytes fits Windows' much larger path buffer, so there the OS picks
   // the error; what matters is that each operand fails on its own.
@@ -59,6 +65,10 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     huge: { exitCode: 1, stderr: tooLong(join(cwd, huge)) },
     mixed: { ...failed(join(cwd, long)), shortCreated: true },
     dotSlashes: { exitCode: 0, stderr: "", created: true },
+    // An absolute operand is not normalized (`..` through a symlink means
+    // something else to the kernel), so like the kernel and coreutils, mkdir
+    // bounds it as written. On Windows it fits the buffer and the OS decides.
+    absoluteDotSlashes: isWindows ? expect.anything() : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
   });
   expect(exitCode).toBe(0);
 });

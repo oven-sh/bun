@@ -672,22 +672,25 @@ impl S3UploadStreamWrapper {
             unsafe { Self::deref_(s) }
         });
         let global = self_.global;
+        // Every promise slot is settled and the completion callback runs whatever an
+        // earlier settle left pending; the first such `Err` is what this returns.
+        let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(&global, JSValue::js_number(0.0))?;
+                        let r = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
+                        settled = settled.and(r);
                     }
                     if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(&global, JSValue::js_number(0.0))?;
+                        let r = sink.end_promise.resolve(&global, JSValue::js_number(0.0));
+                        settled = settled.and(r);
                     }
                 }
                 if self_.end_promise.has_value() {
-                    self_
-                        .end_promise
-                        .resolve(&global, JSValue::js_number(0.0))?;
+                    let r = self_.end_promise.resolve(&global, JSValue::js_number(0.0));
+                    settled = settled.and(r);
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -700,7 +703,6 @@ impl S3UploadStreamWrapper {
                     .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 let mut is_native = false;
-                let mut settled: JsResult<()> = Ok(());
                 if let Some(sink) = self_.sink_mut() {
                     // Sink pump still in-flight: fire source.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The
@@ -721,18 +723,16 @@ impl S3UploadStreamWrapper {
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
                     sink.pending.run();
-                    settled = (|| -> JsResult<()> {
-                        if sink.flush_promise.has_value() {
-                            sink.flush_promise.reject(&global, Ok(js_err))?;
-                        }
-                        if sink.end_promise.has_value() {
-                            sink.end_promise.reject(&global, Ok(js_err))?;
-                        }
-                        Ok(())
-                    })();
+                    if sink.flush_promise.has_value() {
+                        let r = sink.flush_promise.reject(&global, Ok(js_err));
+                        settled = settled.and(r);
+                    }
+                    if sink.end_promise.has_value() {
+                        let r = sink.end_promise.reject(&global, Ok(js_err));
+                        settled = settled.and(r);
+                    }
                     sink.source.close(None);
                 }
-                // The pump ref is released whatever the settles above left.
                 if is_native {
                     self_.detach_sink();
                     // SAFETY: `self_` is the live Box allocation; this balances the
@@ -740,9 +740,9 @@ impl S3UploadStreamWrapper {
                     // releases the remaining ref at scope exit.
                     unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
                 }
-                settled?;
                 if self_.end_promise.has_value() {
-                    self_.end_promise.reject(&global, Ok(js_err))?;
+                    let r = self_.end_promise.reject(&global, Ok(js_err));
+                    settled = settled.and(r);
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -751,7 +751,7 @@ impl S3UploadStreamWrapper {
         if let Some(callback) = self_.callback {
             callback(result, self_.callback_context);
         }
-        Ok(())
+        settled
     }
 }
 

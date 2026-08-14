@@ -113,14 +113,21 @@ extern "C" fn select_alpn_callback(
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
         if !callback.is_empty() && !in_.is_null() && inlen > 0 {
-            let scope = handlers.enter();
+            // Exited (and, at loop entry, checkpointed) when this block ends,
+            // before the protocol selection below.
+            let _scope = ScopeExit {
+                socket: this,
+                scope: Some(handlers.enter()),
+            };
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
             let wire_len = inlen as usize;
+            // BoringSSL's ALPN callback is these sockets' landing frame for this
+            // event: whatever it leaves pending is folded before returning to C.
             let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
                 Ok(b) => b,
-                Err(_) => {
-                    this.exit_scope(scope);
+                Err(err) => {
+                    crate::dispatch::fold(Err(err));
                     return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                 }
             };
@@ -156,21 +163,17 @@ extern "C" fn select_alpn_callback(
                     Err(err) => global.take_exception(err),
                 };
             if let Some(err_value) = result.to_error() {
-                // BoringSSL's ALPN callback is these sockets' trampoline for this
-                // event: fold what the `error` handler left pending here.
                 crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),
                 );
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
                 );
-                this.exit_scope(scope);
                 return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
             }
             tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                 saved_loop_state.as_mut_ptr(),
             );
-            this.exit_scope(scope);
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else
@@ -179,10 +182,12 @@ extern "C" fn select_alpn_callback(
                     Ok(chosen) => chosen,
                     Err(err) => {
                         // The selection's ToString threw (a Symbol or a throwing
-                        // toString): consume the pending exception the same way
-                        // the callback's own throw is handled above, then refuse
-                        // the protocol.
-                        global.take_exception(err);
+                        // toString): hand it to `error` like the callback's own
+                        // throw, then refuse the protocol.
+                        let err_value = global.take_exception(err);
+                        crate::dispatch::fold(
+                            handlers.call_error_handler(this_value, &[this_value, err_value]),
+                        );
                         return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                     }
                 };

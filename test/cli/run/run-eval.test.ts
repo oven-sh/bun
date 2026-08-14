@@ -108,21 +108,18 @@ for (const flag of ["-e", "--print"]) {
   });
 }
 
-// The subcommand lookup skips the leading flags and matches the next argument
-// against the subcommand names. It used to stop only at `-e`; after any other
-// eval flag the code (or, with an attached value, the script's first argument)
-// was matched instead, so `bun -p test` ran the test runner and `bun -pe help`
-// printed bun's help. Every child runs in an empty directory so a misdispatched
-// subcommand has nothing to act on.
+// https://github.com/oven-sh/bun/issues/23631
+// Each child runs in an empty directory so that a token dispatched as a
+// subcommand (`bun test`, `bun x`, ...) has nothing to act on.
 describe("eval flags take precedence over subcommand names", () => {
   describe("the code is a subcommand name", () => {
     const cases: string[][] = [
       ["-p", "test"],
-      ["--print", "test"],
+      ["--print", "x"],
       ["--eval", "test"],
       ["-pe", "help"],
       ["-e", "test"],
-      // The eval flag comes after another flag.
+      // The eval flag is reached after skipping an unrelated flag.
       ["--smol", "-p", "test"],
     ];
 

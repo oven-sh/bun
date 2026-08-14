@@ -890,11 +890,8 @@ pub mod command {
         strings::contains_char(basename, b'.')
     }
 
-    /// `-e` / `--eval` / `-p` / `--print` in any spelling `arguments::parse`
-    /// accepts for [`Tag::AutoCommand`]: the value as the next token, attached
-    /// (`-p1+1`, `-p=1+1`, `--print=1+1`), or node's `-pe` (a
-    /// `NODE_SHORT_ALIASES` entry). `-e` and `-p` take a value, so anything
-    /// trailing them in the same token is that value, never another flag.
+    /// `-e` and `-p` take a value, so every `-e…` / `-p…` token (node's `-pe`
+    /// included) is an eval flag; clusters such as `-bp` are not recognized.
     #[inline]
     fn is_eval_flag(arg: &[u8]) -> bool {
         matches!(arg, [b'-', b'e' | b'p', ..] | b"--eval" | b"--print")
@@ -950,8 +947,8 @@ pub mod command {
             return Tag::AutoCommand;
         };
         while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
-            // What follows an eval flag is the script and its argv, so `bun -p test`
-            // evaluates `test` rather than running `bun test`.
+            // The rest of argv is the script and its arguments: `bun -p test` evaluates
+            // `test` (https://github.com/oven-sh/bun/issues/23631).
             if is_eval_flag(first_arg_name) {
                 return Tag::AutoCommand;
             }

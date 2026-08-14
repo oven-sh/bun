@@ -480,9 +480,12 @@ impl EventLoop {
     }
 
     /// Whether a keep-alive delta (`ref_keep_alive`, here or through a
-    /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
+    /// `Ticket`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
+            || self
+                .finished_macro_loop()
+                .is_some_and(|macro_loop| macro_loop.concurrent_ref.load(Ordering::SeqCst) > 0)
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -517,10 +520,9 @@ impl EventLoop {
         let start_count = self.tasks.readable_length();
         let posted = self.concurrent_tasks.pop_batch();
         self.take_concurrent_batch(posted);
-        if let Some(posted) = self
-            .finished_macro_loop()
-            .map(|macro_loop| macro_loop.concurrent_tasks.pop_batch())
-        {
+        if let Some(macro_loop) = self.finished_macro_loop() {
+            macro_loop.apply_concurrent_ref_delta();
+            let posted = macro_loop.concurrent_tasks.pop_batch();
             self.take_concurrent_batch(posted);
         }
         self.tasks.readable_length() - start_count
@@ -541,10 +543,11 @@ impl EventLoop {
     }
 
     /// The macro loop, when this is the regular loop and no macro is running.
-    /// Work a macro started posts its completion there (`LoopKind::Macro`), but
-    /// that loop only ticks while a macro is being waited on, so whatever
-    /// completes after the macro returned would otherwise sit there forever,
-    /// holding its keep-alive on the platform loop both loops share.
+    /// Work a macro started posts its completion and its keep-alive release
+    /// there (`LoopKind::Macro`), but that loop only ticks while a macro is
+    /// being waited on, so whatever finishes after the macro returned would
+    /// otherwise sit there forever, and the platform loop both loops share
+    /// would stay alive for it.
     fn finished_macro_loop(&self) -> Option<&EventLoop> {
         let vm = self.vm_ref();
         (vm.has_enabled_macro_mode

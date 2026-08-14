@@ -182,13 +182,14 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
-// Async work a macro starts without awaiting it posts its completion to the loop that was current
-// when the work started, the macro loop, which stops ticking as soon as the macro returns. Work that
-// is still pending at that point (always the case for work started inside the macro call itself) has
-// to be run by the regular event loop from there. When it was not, the completion kept the process
-// alive forever: `bun run` printed the value and then never exited, which here shows up as the child
-// never exiting. The top-level case usually finishes while the macro module is still being loaded and
-// covers the continuation running from the macro loop itself.
+// Async work a macro starts without awaiting it posts its completion (and, for WebCrypto, the release
+// of its keep-alive) to the loop that was current when the work started, the macro loop, which stops
+// ticking as soon as the macro returns. Work that is still pending at that point (always the case for
+// work started inside the macro call itself) has to be picked up by the regular event loop from there.
+// When it was not, the work kept the process alive forever: `bun run` printed the value and then never
+// exited, which here shows up as the child never exiting. The top-level case usually finishes while
+// the macro module is still being loaded and covers the continuation running from the macro loop
+// itself.
 describe("work a macro starts without awaiting it", () => {
   const cases: [name: string, macroSource: string][] = [
     [
@@ -216,6 +217,17 @@ describe("work a macro starts without awaiting it", () => {
       [
         `export function m() {`,
         `  fetch(process.env.MACRO_TEST_URL!).then(res => res.text()).then(body => console.log(body));`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+    [
+      // Inputs of 64 bytes or more are hashed on the WebCrypto work queue, which releases its keep-alive
+      // through the macro loop rather than completing through a thread-pool job like the cases above.
+      "a crypto.subtle.digest() inside the macro",
+      [
+        `export function m() {`,
+        `  crypto.subtle.digest("SHA-256", new Uint8Array(4096)).then(() => console.log("settled"));`,
         `  return 1;`,
         `}`,
       ].join("\n"),

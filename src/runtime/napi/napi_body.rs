@@ -2989,9 +2989,9 @@ impl ThreadSafeFunction {
                 hint: self.ctx,
             });
         if let Some(mut finalizer) = finalizer {
-            // `Err` is left pending for the runner (`abortThreadSafeFunctions`),
-            // which reports it before tearing down the next function.
-            let _ = finalizer.run();
+            // The env's cleanup hook is this finalizer's landing frame: what it
+            // leaves is folded here so the next function's teardown starts clean.
+            crate::dispatch::fold(finalizer.run());
         }
 
         // Phase 3: release what only the JS thread may release, then hand the

@@ -5910,9 +5910,8 @@ impl H2FrameParser {
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
     /// A frame callback left an exception pending (a value it could not build): no later frame
-    /// in this batch is dispatched over it and the rest of the batch is dropped; `read()` throws
-    /// it and `on_native_read` returns it to the socket dispatch. (A termination between frames
-    /// is what `run_callback`'s gate covers.)
+    /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
+    /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
     #[inline]
     fn should_stop(&self) -> bool {
         self.left_exception.get()
@@ -9675,9 +9674,6 @@ impl H2FrameParser {
             let copied = array_buffer.byte_slice().to_vec();
             this.rewrite_read(&copied);
             if this.left_exception.replace(false) {
-                // The engine stopped mid-batch: the bytes it did not consume are
-                // dropped with the frame that failed (nothing would re-drive them).
-                this.rewrite_tail.with_mut(|t| t.clear());
                 return Err(bun_jsc::JsError::Thrown);
             }
             Ok(JSValue::UNDEFINED)
@@ -9692,11 +9688,8 @@ impl H2FrameParser {
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
         // What a frame callback left pending stopped the engine (`should_stop`);
-        // it belongs to the socket dispatch that delivered these bytes. The
-        // unconsumed rest of the batch is dropped with it (nothing would
-        // re-drive it).
+        // it belongs to the socket dispatch that delivered these bytes.
         if self.left_exception.replace(false) {
-            self.rewrite_tail.with_mut(|t| t.clear());
             return Err(bun_jsc::JsError::Thrown);
         }
         Ok(())

@@ -769,11 +769,6 @@ impl EventLoop {
     unsafe fn release_task_unrun(&mut self, task: Task) {
         // SAFETY: fn contract.
         unsafe { __bun_release_task_unrun(task) };
-        // Once the VM is shutting down nothing is reported (`uncaught_exception`
-        // is a no-op) and the heap may be mid-destruction: leave it alone.
-        if self.vm_ref().is_shutting_down() {
-            return;
-        }
         if let Some(global) = self.global {
             // SAFETY: set at VM init; live for the loop's lifetime.
             let global = unsafe { global.as_ref() };

@@ -291,10 +291,6 @@ public:
         }
         for (void* tsfn : tsfns) {
             napi_internal_threadsafe_function_env_teardown(tsfn);
-            // Its finalizer ran as a top-level call: what it left is reported
-            // here (a no-op once the VM is shutting down) and cleared, so the
-            // next one starts clean (as drain() does for hooks).
-            reportThenClearExceptionBetweenFinalizers();
         }
     }
 
@@ -607,7 +603,6 @@ private:
     // (which has JS_EXPORT_PRIVATE ctor/dtor under
     // ENABLE_EXCEPTION_SCOPE_VERIFICATION) are confined to one TU.
     void clearExceptionsBetweenFinalizers();
-    void reportThenClearExceptionBetweenFinalizers();
 
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const

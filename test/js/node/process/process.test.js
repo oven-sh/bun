@@ -1516,6 +1516,101 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Every case arms a 0ms timer and then blocks past its deadline inside the
+  // callback under test, so by the time the callback returns the timer is due:
+  // it fires in the very next poll of the event loop, if there is one. Its
+  // output therefore shows whether the loop went on to poll after the callback
+  // instead of acting on the error first. (A due timer is the wakeup here; in
+  // real programs the poll waits for whatever the program is waiting on, which
+  // used to delay these errors by up to the idle GC timer, or forever.)
+  describe("errors nothing handled are acted on before the event loop polls again", () => {
+    const runPastTheTimer = `Bun.sleepSync(5);`;
+
+    async function run(script) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+    }
+
+    it("a rejection left by a setImmediate callback is emitted before the due timer fires", async () => {
+      const result = await run(`
+        process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+        setTimeout(() => console.log("timer"), 0);
+        setImmediate(() => { Promise.reject(new Error("x")); ${runPastTheTimer} });
+      `);
+      expect(result).toEqual({ stdout: ["unhandledRejection x", "timer"], stderr: "", exitCode: 0 });
+    });
+
+    it("a fatal rejection left by a setImmediate callback ends the run; the due timer never fires", async () => {
+      const { stdout, stderr, exitCode } = await run(`
+        setTimeout(() => console.log("timer"), 0);
+        setImmediate(() => { Promise.reject(new Error("boom")); ${runPastTheTimer} });
+      `);
+      expect(stdout).toEqual([]);
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("a fatal throw from a setImmediate callback ends the run; the due timer never fires", async () => {
+      const { stdout, stderr, exitCode } = await run(`
+        setTimeout(() => console.log("timer"), 0);
+        setImmediate(() => { ${runPastTheTimer} throw new Error("boom"); });
+      `);
+      expect(stdout).toEqual([]);
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("a fatal rejection left by a task callback ends the run; the timer it made due never fires", async () => {
+      // An fs callback runs from the task queue, so here the rejection is
+      // reported by the tick that ran the callback (that part always worked),
+      // and what is under test is that the loop then exits instead of polling
+      // once more. Started from a timer so that the callback runs from the run
+      // loop proper, not from the tick that follows the entry point.
+      const { stdout, stderr, exitCode } = await run(`
+        setTimeout(() => require("fs").stat(".", () => {
+          setTimeout(() => console.log("timer"), 0);
+          Promise.reject(new Error("boom"));
+          ${runPastTheTimer}
+        }), 0);
+      `);
+      expect(stdout).toEqual([]);
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it.each([
+      ["returns", ""],
+      // A callback that throws gets its microtask checkpoint at the end of the
+      // immediate batch instead of at its own exit; a sibling that was cleared
+      // in the meantime must not make the batch forget that.
+      ["throws, after clearing the immediate queued behind it", `clearImmediate(sibling); throw new Error("boom");`],
+    ])("a rejection handled by a microtask of the setImmediate callback that %s is not reported", async (_, tail) => {
+      const result = await run(`
+        process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+        process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+        setTimeout(() => console.log("timer"), 0);
+        setImmediate(() => {
+          const p = Promise.reject(new Error("x"));
+          queueMicrotask(() => p.catch(() => {}));
+          ${runPastTheTimer}
+          ${tail}
+        });
+        const sibling = setImmediate(() => {});
+      `);
+      expect(result).toEqual({
+        stdout: tail ? ["uncaughtException boom", "timer"] : ["timer"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

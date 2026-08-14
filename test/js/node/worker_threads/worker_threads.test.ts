@@ -717,6 +717,63 @@ describe("error event", () => {
   });
 });
 
+// The worker arms a 0ms timer and blocks past its deadline inside the immediate,
+// so the timer is due when the immediate returns and fires in the worker's very
+// next poll, if the loop gets there before acting on the rejection. Node
+// reports the rejection when the immediate returns; so must the worker's loop,
+// rather than after the poll, which with a keep-alive and nothing due would
+// have parked it until the idle GC timer, or forever.
+//
+// Run in a separate process: under `bun test` itself, a worker's rejections are
+// routed to the test runner instead of the worker's own listeners.
+describe("a rejection left by a setImmediate callback is reported before the worker's loop polls", () => {
+  // Resolves to what the parent thread saw from the worker, in order, once it exited.
+  async function observeWorker(workerSource: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { Worker } = require("worker_threads");
+        const seen = [];
+        const worker = new Worker(${JSON.stringify(workerSource)}, { eval: true });
+        worker.on("message", message => seen.push({ message }));
+        worker.on("error", error => seen.push({ error: error.message }));
+        worker.on("exit", () => console.log(JSON.stringify(seen)));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("an unhandledRejection listener runs before the due timer", async () => {
+    const seen = await observeWorker(/* js */ `
+      const { parentPort } = require("worker_threads");
+      process.on("unhandledRejection", e => parentPort.postMessage("unhandledRejection " + e.message));
+      setTimeout(() => parentPort.postMessage("timer"), 0);
+      setImmediate(() => { Promise.reject(new Error("x")); Bun.sleepSync(5); });
+    `);
+    expect(seen).toEqual([{ message: "unhandledRejection x" }, { message: "timer" }]);
+  });
+
+  test("with no listener, the parent gets 'error' and the worker's exit handlers run before the due timer", async () => {
+    const seen = await observeWorker(/* js */ `
+      const { parentPort } = require("worker_threads");
+      let timerFired = false;
+      setTimeout(() => { timerFired = true; }, 0);
+      process.on("exit", () => parentPort.postMessage({ timerFired }));
+      setImmediate(() => { Promise.reject(new Error("boom")); Bun.sleepSync(5); });
+    `);
+    expect(seen).toEqual([{ error: "boom" }, { message: { timerFired: false } }]);
+  });
+});
+
 describe("getHeapSnapshot", () => {
   test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });

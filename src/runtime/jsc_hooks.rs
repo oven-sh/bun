@@ -1132,7 +1132,19 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    // SAFETY: as above.
+    // An error nothing handled (raised by those immediates, or reported by the
+    // caller's `tick()` just before this) ends the run: the run loops calling
+    // this (`Run::start`, `on_before_exit`, `WebWorker::spin`, the REPL) loop on
+    // `is_event_loop_alive()`, which the counter fails unless more immediates
+    // are queued, and they run nothing further. Parking in the poll below would
+    // only delay that exit until some unrelated wakeup, or forever, and run
+    // whatever the wakeup brings first. (With immediates queued the loop comes
+    // back for them, and the poll does not block anyway.)
+    // SAFETY: per fn contract.
+    if unsafe { &*vm }.unhandled_error_counter > 0 && !unsafe { &*vm }.is_event_loop_alive() {
+        return;
+    }
+    // SAFETY: `el` is the live per-thread event loop.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {

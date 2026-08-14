@@ -326,12 +326,8 @@ impl TargetExt for Target {
 
 const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
 
-/// `bun build` / `Bun.build()` without an explicit `target` default to
-/// `Target::Bun` when an entry point starts with `#!/usr/bin/env bun`
-/// (docs/bundler/index.mdx, "target"). Entry points are looked up in
-/// `file_map` first, then read from disk relative to the working directory;
-/// anything that is not a readable file (a bare specifier, a path only a
-/// plugin resolves) does not count.
+/// Decides the documented `target` default (docs/bundler/index.mdx): a build
+/// without an explicit target is built for Bun when an entry point has this hashbang.
 pub fn any_entry_point_has_bun_hashbang(
     entry_points: &[Box<[u8]>],
     file_map: Option<&crate::bundle_v2::FileMap>,
@@ -347,8 +343,6 @@ pub fn any_entry_point_has_bun_hashbang(
     })
 }
 
-/// `contents` need only hold one byte past the hashbang: that byte tells
-/// `bun` (line ends at LF / CRLF / EOF, or arguments follow) apart from `bunx`.
 fn has_bun_hashbang(contents: &[u8]) -> bool {
     contents.starts_with(BUN_HASHBANG)
         && matches!(

@@ -943,11 +943,8 @@ pub mod bv2_impl {
                     })
                 }
 
-                /// Finds the file `specifier` denotes when imported from
-                /// `source_file` (`b""` for an entry point): a direct key match, or a
-                /// relative specifier joined against `dirname(source_file)` (with
-                /// Windows drive-letter / separator normalization). Returns the
-                /// map-owned key and the file's contents.
+                /// Returns the map-owned key and contents of `specifier` as imported
+                /// from `source_file` (`b""` for an entry point).
                 pub(crate) fn lookup(
                     &self,
                     source_file: &[u8],
@@ -957,7 +954,6 @@ pub mod bv2_impl {
                         return None;
                     }
 
-                    // Direct key match.
                     #[cfg(not(windows))]
                     if let Some(found) = self.entry(specifier) {
                         return Some(found);
@@ -1035,8 +1031,6 @@ pub mod bv2_impl {
                     None
                 }
 
-                /// `get_key_value` rather than `get`: callers need the map-owned
-                /// key (it outlives the specifier they looked up).
                 fn entry(&self, key: &[u8]) -> Option<(&[u8], &[u8])> {
                     self.map
                         .get_key_value(key)

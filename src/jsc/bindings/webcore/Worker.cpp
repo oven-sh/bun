@@ -65,11 +65,14 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 
 ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
 {
+    if (!Bun::isForbiddenFileURLHost(urlObject)) [[likely]]
+        return {};
+    // The scope exists only on the throw path: an ExceptionOr caller cannot run
+    // the exception check a destructed ThrowScope demands of it.
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (Bun::throwIfInvalidFileURLHost(scope, globalObject, urlObject)) [[unlikely]]
-        return Exception { ExceptionCode::ExistingExceptionError };
-    return {};
+    Bun::throwIfInvalidFileURLHost(scope, globalObject, urlObject);
+    return Exception { ExceptionCode::ExistingExceptionError };
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)

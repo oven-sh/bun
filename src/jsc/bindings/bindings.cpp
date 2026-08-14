@@ -3892,9 +3892,18 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
-JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
+JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    auto value = JSC::JSValue::decode(JSValue1);
+    if (!value) [[unlikely]] {
+        // Building the rejection value threw — a stopped worker's pending TerminationException cuts
+        // error creation short. That exception is what the caller's frame reports; hand back an
+        // inert promise rather than reject with nothing.
+        auto& vm = JSC::getVM(globalObject);
+        ASSERT(vm.exceptionForInspection());
+        return JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    }
+    return JSC::JSPromise::rejectedPromise(globalObject, value);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -5165,26 +5174,37 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
+// The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
+// host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
+// TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
+// pending. The exception object is materialized here (a main-thread VM stopped by SIGINT/forbidExecution
+// never had one), and the request bit set (a gate closed by teardown rather than terminate()).
+// A nested wait cannot run under a DeferTermination scope: JSC re-throws a deferred termination only at
+// that scope's end, so nothing could be pending here for the caller to unwind with.
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.hasPendingTerminationException())
+        return;
+    ASSERT_WITH_MESSAGE(!vm.traps().isDeferringTermination(), "a nested wait learned of a stop inside a DeferTermination scope; nothing can be thrown here");
+    vm.ensureTerminationException();
+    if (!vm.hasTerminationRequest())
+        vm.setHasTerminationRequest();
+    scope.release();
+    vm.throwTerminationException();
+}
+
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).hasPendingTerminationException();
+}
+
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();
-}
-
-// JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
-// pending (unless termination is currently deferred), whether or not the NeedTermination trap the
-// requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
-[[ZIG_EXPORT(nothrow)]]
-void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
-{
-    JSC::VM& vm = *arg0;
-    if (vm.hasPendingTerminationException())
-        return;
-    if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
-        vm.notifyNeedTermination();
-    if (vm.hasTerminationRequest())
-        vm.throwTerminationException();
-    else
-        vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
 // These may be called concurrently from another thread.
@@ -6315,7 +6335,7 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::J
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }
 
-CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map)
 {
     return map->size();
 }
@@ -6619,6 +6639,20 @@ CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
+}
+
+// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
+// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
+// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
+// outermost VMEntryScope exits and expects the two to agree while the exception is pending
+// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
+// that point without also ceasing to touch the VM. Called where an entry has just come back with an
+// exception: keep the flag for as long as we keep the exception.
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
+        vm.setHasTerminationRequest();
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

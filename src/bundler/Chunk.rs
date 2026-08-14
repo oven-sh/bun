@@ -921,13 +921,16 @@ impl IntermediateOutput {
                                         &mut cursor,
                                     )
                                     .expect("unreachable");
-                                    let pos = before_len - cursor.len();
-                                    remain = &mut remain[pos..];
+                                    let written = before_len - cursor.len();
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
+                                        // The placeholder was an HtmlImport unique key, which has
+                                        // the same UNIQUE_KEY_LEN as this chunk's own key.
                                         shift.before.advance(chunk.unique_key);
+                                        shift.after.advance(&remain[..written]);
                                         shifts.push(shift);
                                     }
+                                    remain = &mut remain[written..];
                                     continue;
                                 }
                                 _ => unreachable!(),

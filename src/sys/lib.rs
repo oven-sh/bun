@@ -5535,8 +5535,8 @@ pub mod linux {
     // ThreadPool worker panics inside its idle wait.
     #[inline]
     pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        // SAFETY: caller contract — `uaddr` points to a live, suitably-aligned
-        // `u32` for the syscall's duration.
+        // SAFETY: caller contract — `uaddr` is `u32`-aligned; a WAKE only uses it as
+        // a key, so it need not point to live memory.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
         if rc == -1 {
             -(errno() as isize)
@@ -8706,10 +8706,9 @@ pub mod elf {
         pub name: Box<[u8]>,
     }
 
-    /// Walk loaded ELF objects
-    /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
-    /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
-    /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
+    /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
+    /// `PT_LOAD` segment contains `address` (matched by address, so it does not
+    /// depend on how a libc names or orders the main program).
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
         use core::ffi::{c_int, c_void};

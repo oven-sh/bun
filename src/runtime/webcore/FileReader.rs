@@ -1290,7 +1290,7 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)

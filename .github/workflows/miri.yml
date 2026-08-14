@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      # The FFI-free crate set covered by MIRI_CRATES in scripts/rust-miri.ts
+      # The crate set covered by MIRI_CRATES in scripts/rust-miri.ts
       - "src/ast/**"
       - "src/base64/**"
       - "src/clap/**"
@@ -22,6 +22,7 @@ on:
       - "src/ptr/**"
       - "src/resolve_builtins/**"
       - "src/shell_parser/**"
+      - "src/threading/**"
       - "src/wyhash/**"
       - "scripts/rust-miri.ts"
       - "Cargo.toml"

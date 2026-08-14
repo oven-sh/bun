@@ -647,6 +647,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_microtask_order", []);
       expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
     });
+    it("reports what call_js throws as each item's uncaught exception and keeps draining", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
+      expect(result).toContain("uncaughtException 3 call_js error 3");
+      expect(result).toContain("done 3");
+    });
 
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last

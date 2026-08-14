@@ -87,8 +87,6 @@ fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
-type JsTerminated<T> = jsc::JsResult<T>;
-
 // R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
 // `Response` (and aliased via `HiveRef` in `Request`). Every BodyMixin host
 // fn takes `&self` and projects `&mut Value` through this `JsCell`; the
@@ -1087,7 +1085,7 @@ impl Value {
         // Opaque C++ handle, mutated via FFI. Taking
         // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
         headers: Option<NonNull<FetchHeaders>>,
-    ) -> JsTerminated<()> {
+    ) -> jsc::JsResult<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
             if let Some(readable) = locked.readable.get(global) {
@@ -1101,13 +1099,11 @@ impl Value {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let res = bytes.on_data(streams::Result::TemporaryAndDone(
-                            bun_ptr::RawSlice::new(blob.slice()),
-                        ));
+                        bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
+                            blob.slice(),
+                        )));
                         blob.detach();
-                        res
-                    })
-                    .transpose()?;
+                    });
 
                 if fed.is_some() {
                     *new = Value::Used;
@@ -1349,7 +1345,7 @@ impl Value {
         &mut self,
         err: ValueError,
         global: &JSGlobalObject,
-    ) -> JsTerminated<()> {
+    ) -> jsc::JsResult<()> {
         if let Value::Locked(_) = self {
             // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
             // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
@@ -1391,7 +1387,7 @@ impl Value {
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
-                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)))?;
+                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
                     readable.abort(global);
                 }
@@ -1808,7 +1804,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1949,7 +1945,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_array_buffer(
@@ -2005,7 +2001,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             blob.to_array_buffer(g, Lifetime::Transfer)
         });
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_bytes(
@@ -2056,7 +2052,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             blob.to_uint8_array(g, Lifetime::Transfer)
         });
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_form_data(

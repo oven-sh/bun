@@ -958,21 +958,23 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
-    // SAFETY: per fn contract.
-    unsafe { auto_tick_bounded(vm, None, true) }
+    // SAFETY: per fn contract; `event_loop` is the VM's embedded loop.
+    unsafe {
+        (*(*vm).event_loop).tick_immediate_tasks(vm);
+        auto_tick_after_immediates(vm, None)
+    }
 }
 
-/// [`auto_tick`], but the poll sleeps no later than `poll_deadline`, and the
-/// leading immediates pass can be skipped by a caller that has just done it
-/// (`domain_run::DomainRun::turn`, which checks its exit condition in between so
-/// a condition satisfied by an immediate does not sit through a poll).
+/// [`auto_tick`] after its leading immediates pass — for a caller that runs
+/// that pass itself so it can check a condition in between
+/// (`domain_run::DomainRun::turn`) — with the poll sleeping no later than
+/// `poll_deadline`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-pub(crate) unsafe fn auto_tick_bounded(
+pub(crate) unsafe fn auto_tick_after_immediates(
     vm: *mut VirtualMachine,
     poll_deadline: Option<&bun_core::Timespec>,
-    run_leading_immediates: bool,
 ) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
@@ -982,13 +984,8 @@ pub(crate) unsafe fn auto_tick_bounded(
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
-    if run_leading_immediates {
-        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-        unsafe { (*el).tick_immediate_tasks(vm) };
-    }
+    // The caller has ticked immediates, so `immediate_tasks` reflects
+    // next-tick immediates and the `has_pending_immediate` read below is correct.
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
@@ -1059,11 +1056,12 @@ pub(crate) unsafe fn auto_tick_bounded(
         let has_pending_immediate = has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // Fold the QUIC deadline into the poll timeout.
+        // Fold the QUIC deadline into the poll timeout (a strict domain run does
+        // not process the engines, so their stale deadline is no reason to wake).
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
+            if ild.quic_head.is_null() || bun_io::run_epoch::active_run_is_strict() {
                 None
             } else {
                 Some(ild.quic_next_tick_us)

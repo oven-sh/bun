@@ -347,35 +347,22 @@ export function initializeNextTickQueue(
     queue = new FixedQueue();
     tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
-    // A frame that carries a domain is `[sentinel, startEpoch, ...alsPairs]` (see
-    // EventLoopDomain.h); anything else predates every run (0).
-    function domainOfFrame(frame, sentinel) {
-      return frame !== undefined && frame.length >= 2 && frame[0] === sentinel ? frame[1] : 0;
-    }
-
-    // `activeDomain` is non-zero inside a domain run (its start epoch): then only
-    // ticks queued since the run started run. Older ticks are parked in arrival
-    // order and put back once the run's ticks and microtasks are exhausted, so the
-    // code that queued them observes them later, in the same order, as if the run
-    // had not happened.
-    function processTicksAndRejections(activeDomain) {
-      // During a run that executes code of its own, field 1 is its bare frame
-      // [sentinel, activeDomain]; a run that executes none has stamped no frames,
-      // so every queued tick predates it.
-      var sentinel;
-      if (activeDomain) {
-        const slot = $getInternalField($asyncContext, 1);
-        sentinel = $isJSArray(slot) ? slot[0] : null;
-      }
+    // `activeRun` is non-zero inside a domain run that executes code of its own
+    // (its start epoch; see EventLoopDomain.h): then only ticks queued since it
+    // started run. Older ticks are set aside in arrival order and put back once the
+    // run's ticks and microtasks are exhausted, so the code that queued them
+    // observes them later, in the same order, as if the run had not happened.
+    // Epochs compare as 31-bit serial numbers (`<< 1` makes bit 30 the sign).
+    function processTicksAndRejections(activeRun) {
       var parked: any[] | undefined;
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
-          var frame = tock.frame;
-          if (activeDomain && domainOfFrame(frame, sentinel) < activeDomain) {
+          if (activeRun && (tock.birth <= 1 || (tock.birth - activeRun) << 1 < 0)) {
             (parked ??= []).push(tock);
             continue;
           }
+          var frame = tock.frame;
           var callback = tock.callback;
           var args = tock.args;
           var restore = $getInternalField($asyncContext, 0);
@@ -436,6 +423,8 @@ export function initializeNextTickQueue(
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
+      // The domain run this tick is born in, if any (see processTicksAndRejections).
+      birth: $getInternalField($asyncContext, 1) | 0,
     };
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at

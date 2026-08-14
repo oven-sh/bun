@@ -95,16 +95,16 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     if (!isEmpty()) {
         RETURN_IF_EXCEPTION(throwScope, );
         if (mustResetContext) {
-            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, Bun::baseContext(globalObject));
+            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
             RETURN_IF_EXCEPTION(throwScope, );
         }
         auto* drainFn = internalField(2).get().getObject();
         if (!drainFn)
             return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
-        // processTicksAndRejections(activeRunDomain): inside a domain run only ticks
-        // queued since it started run; the rest are parked and requeued in order.
-        drainArgs.append(jsNumber(Bun::activeRunDomain(vm)));
+        // processTicksAndRejections(activeRun): inside a domain run only ticks queued
+        // since it started run; older ones are set aside until it exits.
+        drainArgs.append(jsNumber(Bun::activeRun(vm)));
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );
     }

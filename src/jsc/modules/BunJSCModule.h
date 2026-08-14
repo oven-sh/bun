@@ -551,8 +551,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
 // Domain runs (src/runtime/domain_run.rs), testing hooks.
 //
 // runUntilInDomainForTesting(thunk[, timeoutMs = 30000]) -> promise
-//   Enter a permissive domain run, call thunk under it (it returns a promise the
-//   run created) and turn the whole loop for the run until the promise settles.
+//   Enter a permissive domain run, call thunk (it returns a promise the run
+//   created) and turn the whole loop for the run until the promise settles.
 extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk, uint32_t timeoutMs);
 JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);
 JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -568,17 +568,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, Bun__Domain__runUntilInDomainForTesting(globalObject, JSValue::encode(thunk), timeoutMs));
 }
 
-// currentDomainForTesting() -> [contextDomain, activeRunDomain]
-JSC_DECLARE_HOST_FUNCTION(functionCurrentDomainForTesting);
-JSC_DEFINE_HOST_FUNCTION(functionCurrentDomainForTesting, (JSGlobalObject * globalObject, CallFrame*))
+// activeRunForTesting() -> start epoch of the innermost domain run (0 = none)
+JSC_DECLARE_HOST_FUNCTION(functionActiveRunForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionActiveRunForTesting, (JSGlobalObject * globalObject, CallFrame*))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* tuple = constructEmptyArray(globalObject, nullptr, 2);
-    RETURN_IF_EXCEPTION(scope, {});
-    tuple->putDirectIndex(globalObject, 0, jsNumber(Bun::currentDomain(globalObject)));
-    tuple->putDirectIndex(globalObject, 1, jsNumber(Bun::activeRunDomain(vm)));
-    return JSValue::encode(tuple);
+    return JSValue::encode(jsNumber(Bun::activeRun(globalObject->vm())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
@@ -1087,7 +1081,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
     putNativeFn(Identifier::fromString(vm, "runUntilInDomainForTesting"_s), functionRunUntilInDomainForTesting);
-    putNativeFn(Identifier::fromString(vm, "currentDomainForTesting"_s), functionCurrentDomainForTesting);
+    putNativeFn(Identifier::fromString(vm, "activeRunForTesting"_s), functionActiveRunForTesting);
 
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);

@@ -22,13 +22,6 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-// One pair is not an AsyncLocalStorage: the runtime may put `[sentinel, domain]` (a private Symbol
-// and an integer) at the *front* of the array to record which domain run the context belongs to
-// (see EventLoopDomain.h). Every operation in here copies before mutating and either appends or
-// edits pairs in place, so that pair stays at the front without this module having to know about it.
-// The second tuple field is the "domain slot": while a domain run that executes code of its own is
-// active, that run's bare context array `[sentinel, domain]`; otherwise not an array.
-//
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -56,29 +49,13 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage ||
-        (i === 0 && typeof array[0] === "symbol" && typeof array[1] === "number"),
-      `Even indexes in AsyncContextData should be AsyncLocalStorage (or the domain sentinel at 0)\nIndex %s was %s`,
+      array[i] instanceof AsyncLocalStorage,
+      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
       i,
       array[i],
     );
   }
   return true;
-}
-
-// While a domain run is active, a context installed wholesale (snapshot(), bind(),
-// AsyncResource, enterWith) is being installed by code the run is executing, so work
-// scheduled under it is a consequence of the run whatever domain the context was
-// captured under: give it the active run's pair, or the run would park that work and
-// could never finish. `slot` is the run's bare context `[sentinel, domain]`.
-function withActiveRunDomain(slot: ReadonlyArray<any>, contextValue: ReadonlyArray<any> | undefined) {
-  const sentinel = slot[0];
-  if (contextValue === undefined) return slot;
-  if (contextValue[0] !== sentinel) return [sentinel, slot[1]].concat(contextValue);
-  if (contextValue[1] === slot[1]) return contextValue;
-  const copy = contextValue.slice();
-  copy[1] = slot[1];
-  return copy;
 }
 
 // Only run during debug
@@ -98,8 +75,6 @@ function get(): ReadonlyArray<any> | undefined {
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
-  const slot = $getInternalField($asyncContext, 1);
-  if ($isJSArray(slot)) contextValue = withActiveRunDomain(slot, contextValue);
   $assert(assertValidAsyncContextArray(contextValue));
   $debug("set", debugFormatContextValue(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);

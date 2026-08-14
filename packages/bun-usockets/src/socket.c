@@ -308,6 +308,9 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
         #ifdef LIBUS_USE_KQUEUE
             // kqueue automatically removes the fd from the set on close
             // we can skip the system call for that case
+            if (s->p.held) {
+                us_internal_held_poll_forget(loop, &s->p);
+            }
             us_internal_loop_update_pending_ready_polls(loop, (struct us_poll_t *)s, 0, us_poll_events((struct us_poll_t*)s), 0);
         #else
             /* Disable any instance of us in the pending ready poll list */

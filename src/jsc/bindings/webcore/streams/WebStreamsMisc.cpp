@@ -7,7 +7,6 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
-#include "EventLoopDomain.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
@@ -162,11 +161,10 @@ bool isNonNegativeNumber(JSValue value)
     return number >= 0;
 }
 
-// Queues handler(value, contextCell) — the reaction-convention argument order —
-// to run under the async context current now (which also names its scheduling domain).
+// Queues handler(value, contextCell) — the reaction-convention argument order.
 void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context, globalObject->m_asyncContextData.get()->getInternalField(0) };
+    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
@@ -377,7 +375,7 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
     m_previous = current;
     if (snapshot == current)
         return;
-    asyncContextData->putInternalField(m_vm, 0, Bun::contextForInvocation(globalObject, snapshot));
+    asyncContextData->putInternalField(m_vm, 0, snapshot);
 }
 
 StreamAsyncContextScope::~StreamAsyncContextScope()

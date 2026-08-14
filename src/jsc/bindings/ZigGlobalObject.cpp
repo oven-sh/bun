@@ -409,7 +409,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, Bun::baseContext(globalObject));
+    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
@@ -3298,6 +3298,7 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
+    const uint32_t runExits = Bun::eventLoopDomains(vm).exits();
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
@@ -3316,6 +3317,22 @@ uint8_t GlobalObject::drainMicrotasks()
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
+    }
+
+    // A domain run entered from one of those microtasks sets aside older ticks and
+    // puts them back when it exits, possibly after this checkpoint passed them.
+    if (Bun::eventLoopDomains(vm).exits() != runExits) [[unlikely]] {
+        auto nextTickQueue = this->m_nextTickQueue.get();
+        if (!nextTickQueue)
+            return 0;
+        nextTickQueue->drain(vm, this);
+        if (auto* exception = scope.exception()) {
+            if (vm.isTerminationException(exception)) {
+                return 1;
+            }
+            (void)scope.tryClearException();
+            this->reportUncaughtExceptionAtEventLoop(this, exception);
+        }
     }
 
     return 0;
@@ -3610,9 +3627,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 #endif
 
     // Do not use JSCell* here because the GC will try to visit it.
-    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function;
-    // the trailing async context is installed for the call and names the job's scheduling domain.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), globalObject->m_asyncContextData.get()->getInternalField(0) };
+    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 

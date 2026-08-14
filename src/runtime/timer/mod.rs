@@ -715,7 +715,7 @@ impl All {
         while let Some(timer) = self.parked.delete_min() {
             // SAFETY: parked nodes are live (owners cancel through `remove`).
             unsafe {
-                if outer_start != 0 && (*timer).birth < outer_start {
+                if bun_io::run_epoch::is_foreign_to((*timer).birth, outer_start) {
                     still_parked.push(timer);
                 } else {
                     self.timers.insert(timer);
@@ -953,6 +953,12 @@ impl All {
         maybe_now: &mut Option<Timespec>,
         vm: *mut (),
     ) -> Option<Timespec> {
+        // JSC's run-loop timers (deferred work that settles promises and runs
+        // FinalizationRegistry callbacks, GC activity callbacks) predate any
+        // domain run: they neither fire inside one nor keep its poll awake.
+        if bun_io::run_epoch::active_run_start() != 0 {
+            return None;
+        }
         loop {
             let min = {
                 // SAFETY: `this` is live; the guard drops before `fire`.
@@ -1111,8 +1117,12 @@ impl All {
             let deleted = self.timers.delete_min().expect("peek succeeded");
             debug_assert!(core::ptr::eq(deleted, timer));
             // SAFETY: `timer` was just popped and is live.
-            let foreign = unsafe { (*timer).birth < run_start && (*timer).tag.is_run_gated() };
-            if run_start != 0 && foreign {
+            let foreign = run_start != 0
+                && unsafe {
+                    (*timer).tag.is_run_gated()
+                        && bun_io::run_epoch::is_foreign_to((*timer).birth, run_start)
+                };
+            if foreign {
                 // SAFETY: just popped; links are null.
                 unsafe {
                     self.parked.insert(timer);

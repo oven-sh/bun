@@ -455,7 +455,7 @@ pub(crate) fn run_task(
             // SAFETY: JS thread, from the task queue (this dispatch).
             #[cfg(not(windows))]
             unsafe {
-                bun_io::run_epoch::replay_ready()
+                bun_io::held_polls::replay_ready()
             };
         }
         task_tag::PosixSignalTask => {

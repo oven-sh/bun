@@ -31,7 +31,6 @@ pub mod any_event_loop;
 // task producers here and above stamp births without naming `bun_io`.
 pub use bun_io::run_epoch::{
     PRIMORDIAL as PRIMORDIAL_EPOCH, active_run_is_strict, active_run_start, birth as birth_epoch,
-    is_foreign as is_foreign_birth,
 };
 
 // ─── public surface ─────────────────────────────────────────────────────────

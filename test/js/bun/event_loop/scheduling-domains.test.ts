@@ -22,9 +22,9 @@ import { join } from "node:path";
 
 const jsc = require("bun:jsc");
 const hasDomains = typeof jsc.runUntilInDomainForTesting === "function";
-const { runUntilInDomainForTesting, currentDomainForTesting } = jsc as {
+const { runUntilInDomainForTesting, activeRunForTesting } = jsc as {
   runUntilInDomainForTesting: <T>(thunk: () => Promise<T>, timeoutMs?: number) => Promise<T>;
-  currentDomainForTesting: () => [number, number];
+  activeRunForTesting: () => number;
 };
 
 /** Turn the loop inside a fresh (permissive) run until `thunk`'s promise settles; returns it settled. */
@@ -155,33 +155,42 @@ describe.skipIf(!hasDomains)("domain runs: microtasks", () => {
     ]);
   });
 
-  test("nested runs: the inner run completes; the outer run's queued reactions wait for it", () => {
+  test("nested runs: the outer run's pending microtasks wait for the inner run; what the inner run makes ready runs inside it", () => {
     const log: string[] = [];
     queueMicrotask(() => log.push("root"));
     const outer = runUntil(async () => {
       await null;
       const gate = Promise.withResolvers<void>();
-      gate.promise.then(() => log.push("outer-reaction"));
+      gate.promise.then(() => log.push("outer-reaction-made-ready-by-inner"));
+      queueMicrotask(() => log.push("outer-pending"));
       const inner = runUntil(async () => {
         await null;
-        gate.resolve(); // outer's reaction is queued now, and is not the inner run's
+        gate.resolve();
         queueMicrotask(() => log.push("inner-1"));
         await immediate();
         log.push("inner-2");
-        return currentDomainForTesting()[1];
+        return activeRunForTesting();
       });
       log.push("inner-returned");
       await gate.promise;
       log.push("outer-after-gate");
-      return [currentDomainForTesting()[1], await inner];
+      return [activeRunForTesting(), await inner];
     });
     const [outerId, innerId] = Bun.peek(outer) as [number, number];
-    expect(innerId).toBeGreaterThan(outerId);
-    expect(log).toEqual(["inner-1", "inner-2", "inner-returned", "outer-reaction", "outer-after-gate"]);
-    expect(currentDomainForTesting()).toEqual([0, 0]);
+    expect(outerId).toBeGreaterThan(0);
+    expect(innerId).not.toBe(outerId);
+    expect(log).toEqual([
+      "outer-reaction-made-ready-by-inner",
+      "inner-1",
+      "inner-2",
+      "inner-returned",
+      "outer-pending",
+      "outer-after-gate",
+    ]);
+    expect(activeRunForTesting()).toBe(0);
   });
 
-  test("AsyncLocalStorage: the run's own code inherits the caller's store; the pair never leaks", async () => {
+  test("AsyncLocalStorage: the run's own code inherits the caller's store, and the caller's context is restored", async () => {
     const als = new AsyncLocalStorage<string>();
     const seen: Array<string | undefined> = [];
     await als.run("outer", async () => {
@@ -194,16 +203,13 @@ describe.skipIf(!hasDomains)("domain runs: microtasks", () => {
           seen.push(als.getStore());
         });
         seen.push(als.getStore());
-        // enterWith inside a run does not leak the domain pair out of it.
         new AsyncLocalStorage<number>().enterWith(1);
       });
       seen.push(als.getStore());
     });
     expect(seen).toEqual(["outer", "inner", "outer", "inner", "outer", "outer"]);
     expect(als.getStore()).toBeUndefined();
-    expect(currentDomainForTesting()).toEqual([0, 0]);
-    await immediate();
-    expect(currentDomainForTesting()).toEqual([0, 0]);
+    expect(activeRunForTesting()).toBe(0);
   });
 
   test("an exception thrown by a microtask inside a run is reported, not swallowed, and the run continues", async () => {
@@ -373,18 +379,17 @@ describe.skipIf(!hasDomains)("domain runs: timers and immediates", () => {
     expect(log.slice(4)).toEqual(["outer-1", "outer-2", "outer-2.1"]);
   });
 
-  test("the active run domain is visible inside and cleared after", () => {
-    let inside!: [number, number];
-    let insideTimer!: [number, number];
+  test("the active run is visible inside and cleared after", () => {
+    let inside!: number;
+    let insideTimer!: number;
     runUntil(async () => {
-      inside = currentDomainForTesting();
+      inside = activeRunForTesting();
       await sleep(1);
-      insideTimer = currentDomainForTesting();
+      insideTimer = activeRunForTesting();
     });
-    expect(inside[0]).toBeGreaterThan(0);
-    expect(inside).toEqual([inside[0], inside[0]]);
-    expect(insideTimer).toEqual(inside);
-    expect(currentDomainForTesting()).toEqual([0, 0]);
+    expect(inside).toBeGreaterThan(0);
+    expect(insideTimer).toBe(inside);
+    expect(activeRunForTesting()).toBe(0);
   });
 
   test("a run whose condition is met by an immediate does not sit through a poll", async () => {
@@ -629,6 +634,6 @@ describe.skipIf(!hasDomains || process.platform === "win32")("domain runs: modul
       return stdout.toString().trim();
     });
     expect(Bun.peek(result)).toBe("nested");
-    expect(currentDomainForTesting()).toEqual([0, 0]);
+    expect(activeRunForTesting()).toBe(0);
   });
 });

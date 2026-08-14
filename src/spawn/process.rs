@@ -132,11 +132,6 @@ pub struct Process {
     /// (`None` when owned by a mini event loop, which it posts to directly).
     #[cfg(unix)]
     pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
-    /// Birth epoch (`bun_io::run_epoch::birth` at creation): the waiter thread's
-    /// exit task is born then, so an outer child's exit is not delivered inside a
-    /// domain run that did not spawn it.
-    #[cfg(unix)]
-    pub(crate) birth: u32,
 }
 
 impl Drop for Process {
@@ -233,7 +228,6 @@ impl Process {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
             js_poster: event_loop.js_poster(),
-            birth: bun_event_loop::birth_epoch(),
             event_loop,
             poller: Poller::Detached,
             status,
@@ -1079,8 +1073,6 @@ pub mod waiter_thread_posix {
         fn event_loop(&self) -> EventLoopHandle;
         /// The poster for a JS-owned process (see `Process::js_poster`).
         fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
-        /// Birth epoch of the exit task (see `Process::birth`).
-        fn birth(&self) -> u32;
         /// Waiter thread, VM gone: release the strong ref the result would have
         /// consumed on the JS thread.
         ///
@@ -1109,10 +1101,6 @@ pub mod waiter_thread_posix {
         #[inline]
         fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
             self.js_poster.as_ref()
-        }
-        #[inline]
-        fn birth(&self) -> u32 {
-            self.birth
         }
         #[inline]
         unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
@@ -1196,9 +1184,7 @@ pub mod waiter_thread_posix {
                                     subprocess: process,
                                     rusage,
                                 });
-                                let mut task = Task::init(rt);
-                                task.birth = T::birth(process_ref);
-                                let ct = ConcurrentTask::create(task);
+                                let ct = ConcurrentTask::create(Task::init(rt));
                                 let poster = T::js_poster(process_ref)
                                     .expect("JS-owned process has a poster");
                                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {

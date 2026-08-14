@@ -347,7 +347,7 @@ pub struct VirtualMachine {
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
-    pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
+    pub suppress_microtask_drain: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
@@ -2370,9 +2370,6 @@ impl VirtualMachine {
     /// JSC-tier fields are populated and finishes the rest.
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<*mut VirtualMachine> {
         jsc::mark_binding();
-        // Work this thread creates outside a domain run is the root
-        // domain's from now on (see `bun_event_loop::current_task_domain`).
-        bun_io::run_epoch::mark_js_thread();
 
         let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
@@ -3957,7 +3954,6 @@ impl VirtualMachine {
         worker: &crate::web_worker::WebWorker,
         opts: Options,
     ) -> crate::CrateResult<*mut VirtualMachine> {
-        bun_io::run_epoch::mark_js_thread();
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,

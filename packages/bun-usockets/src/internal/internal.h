@@ -353,9 +353,17 @@ extern unsigned int Bun__runEpochCounter;
 #define Bun__runEpoch() (__atomic_load_n(&Bun__runEpochCounter, __ATOMIC_RELAXED) & 0x7fffffffu)
 
 /* Is `epoch` older than the domain run active on this loop's thread (if any)? */
+/* (Serial-number comparison in 31 bits: the counter may wrap; epochs 0 and 1 are
+ * reserved as "older than everything".) */
+static inline int us_internal_epoch_before(unsigned int a, unsigned int b) {
+    return (int) ((a - b) << 1) < 0;
+}
+static inline int us_internal_epoch_is_foreign_to(unsigned int epoch, unsigned int run_start) {
+    return run_start != 0 && (epoch <= 1 || us_internal_epoch_before(epoch, run_start));
+}
 static inline int us_internal_epoch_is_foreign(struct us_loop_t *loop, unsigned int epoch) {
     unsigned int run_start = loop->data.run_start_epoch;
-    return __builtin_expect(run_start != 0, 0) && epoch < run_start;
+    return __builtin_expect(run_start != 0, 0) && us_internal_epoch_is_foreign_to(epoch, run_start);
 }
 
 #ifndef LIBUS_USE_LIBUV
@@ -365,6 +373,7 @@ int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t
 /* Owner-side poll operations on a held poll (kernel state is "removed"). */
 void us_internal_held_poll_forget(struct us_loop_t *loop, struct us_poll_t *p);
 void us_internal_held_poll_moved(struct us_loop_t *loop, struct us_poll_t *from, struct us_poll_t *to);
+void us_internal_poll_put_back(struct us_poll_t *p, struct us_loop_t *loop);
 #endif
 /* A run on this loop's thread exited; `outer_start_epoch` is the enclosing
  * run's start (0 if none). Put every held poll that is not still foreign to the
@@ -377,11 +386,11 @@ void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_s
  * one is active are outer housekeeping (cork/auto-flush) and change nothing. */
 static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
 #ifndef LIBUS_USE_LIBUV
-    if (__builtin_expect(loop->data.run_permissive, 0) && us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && !us_socket_is_closed(s)) {
+    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && loop->data.run_permissive && !us_socket_is_closed(s)) {
         s->p.bun_epoch = Bun__runEpoch();
         if (s->p.held) {
             us_internal_held_poll_forget(loop, &s->p);
-            us_poll_start_rc(&s->p, loop, us_poll_events(&s->p));
+            us_internal_poll_put_back(&s->p, loop);
         }
     }
 #else

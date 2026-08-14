@@ -56,8 +56,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
-    us_free(loop->data.held_polls);
     us_internal_loop_data_free(loop);
+    us_free(loop->data.held_polls);
     close(loop->fd);
     us_free(loop);
 }
@@ -280,10 +280,7 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int fr
                 if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
                     continue;
                 }
-                if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
-                continue;
-            }
-            us_internal_dispatch_ready_poll(poll, error, eof, events);
+                us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
     }
@@ -406,6 +403,9 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int fr
 
         events &= us_poll_events(poll);
         if (events || error || eof) {
+            if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
+                continue;
+            }
             us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
@@ -511,7 +511,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
      * here so QUIC retransmit/idle timers fire without other I/O waking us. */
     struct timespec quic_ts;
-    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0) {
+    /* (A strict domain run does not process QUIC engines, so their stale
+     * deadline is not a reason to wake.) */
+    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0
+        && (LIKELY(!loop->data.run_start_epoch) || loop->data.run_permissive)) {
         long long us = loop->data.quic_next_tick_us;
         if (!timeout ||
             (long long) timeout->tv_sec * 1000000 + timeout->tv_nsec / 1000 > us) {
@@ -649,8 +652,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 void us_internal_kqueue_socket_arm_read_sentinel(struct us_socket_t *s) {
     struct us_loop_t *loop = s->group->loop;
     if (UNLIKELY(s->p.held)) {
-        /* Put back level-triggered for read when released; the pending FIN reports then. */
-        s->p.state.poll_type |= POLL_TYPE_POLLING_IN;
+        /* Re-armed with the rest when the run releases it (us_internal_poll_put_back). */
         return;
     }
     struct kevent64_s event;
@@ -770,6 +772,9 @@ static void us_internal_held_polls_push(struct us_loop_t *loop, struct us_poll_t
     if (d->held_polls_len == d->held_polls_cap) {
         d->held_polls_cap = d->held_polls_cap ? d->held_polls_cap * 2 : 16;
         d->held_polls = us_realloc(d->held_polls, d->held_polls_cap * sizeof(*d->held_polls));
+        if (!d->held_polls) {
+            Bun__outOfMemory();
+        }
     }
     d->held_polls[d->held_polls_len++] = p;
 }
@@ -829,18 +834,33 @@ int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t
     return 1;
 }
 
+/* Undo us_internal_poll_remove_from_kernel for a poll that is no longer held. */
+void us_internal_poll_put_back(struct us_poll_t *p, struct us_loop_t *loop) {
+    int events = us_poll_events(p);
+    us_poll_start_rc(p, loop, events);
+#ifdef LIBUS_USE_KQUEUE
+    /* A socket not polling for read keeps an EV_CLEAR read sentinel so the peer's
+     * FIN/RST is still seen (us_internal_kqueue_socket_arm_read_sentinel); it was
+     * deleted with the rest, and us_poll_start_rc knows nothing of it. */
+    int type = us_internal_poll_type(p);
+    if (!(events & LIBUS_SOCKET_READABLE) && (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SOCKET_SHUT_DOWN)) {
+        us_internal_kqueue_socket_arm_read_sentinel((struct us_socket_t *) p);
+    }
+#endif
+}
+
 void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch) {
     struct us_internal_loop_data_t *d = &loop->data;
     unsigned int kept = 0;
     for (unsigned int i = 0; i < d->held_polls_len; i++) {
         struct us_poll_t *p = d->held_polls[i];
-        if (outer_start_epoch && p->bun_epoch < outer_start_epoch) {
+        if (us_internal_epoch_is_foreign_to(p->bun_epoch, outer_start_epoch)) {
             /* Still foreign to the enclosing run: stays held. */
             d->held_polls[kept++] = p;
             continue;
         }
         p->held = 0;
-        us_poll_start_rc(p, loop, us_poll_events(p));
+        us_internal_poll_put_back(p, loop);
     }
     d->held_polls_len = kept;
     if (!kept && d->held_polls_cap > 64) {

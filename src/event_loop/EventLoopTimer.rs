@@ -226,11 +226,10 @@ impl Tag {
     /// to script or acts on behalf of a particular owner. The exceptions are the
     /// loop's own housekeeping, which serve whoever is turning it.
     pub fn is_run_gated(self) -> bool {
-        // WTFTimer is deliberately gated: it drives JSC's DeferredWorkTimer, whose
-        // work items settle promises and run FinalizationRegistry callbacks.
+        // (WTFTimer lives in its own heap, which is skipped wholesale during a run.)
         !matches!(
             self,
-            Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
+            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
         )
     }
 

@@ -27,8 +27,9 @@ bun_core::declare_scope!(DomainRun, hidden);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     /// The run executes no code of its own while it waits (spawnSync): nothing
-    /// that predates it is admitted, no async context is set up, and the
-    /// embedder's loop hooks are skipped.
+    /// that predates it is admitted, microtasks and nextTicks are not drained
+    /// at all (`vm.suppress_microtask_drain`), and the embedder's loop hooks
+    /// are skipped. Needs nothing from JSC.
     Strict,
     /// The run executes arbitrary code of its own (a frame awaiting a promise it
     /// created): older listen sockets keep accepting (a fetch to a server created
@@ -42,6 +43,8 @@ struct RunState {
     /// The run's name: I/O, tasks and timers born before it are foreign.
     start: u32,
     policy: Policy,
+    /// Strict runs: `vm.suppress_microtask_drain` at entry, restored on exit.
+    suppressed_before: bool,
     /// Foreign `setImmediate`s that reached the front, in order.
     parked_immediates: Vec<*mut ImmediateObject>,
     /// Foreign event-loop tasks, in dequeue order.
@@ -53,15 +56,9 @@ thread_local! {
 }
 
 unsafe extern "C" {
-    fn Bun__Domain__enterRun(global: *mut JSGlobalObject, start: u32, permissive: bool);
+    fn Bun__Domain__enterRun(global: *mut JSGlobalObject, start: u32);
+    fn Bun__Domain__beginLoopPhase(global: *mut JSGlobalObject);
     fn Bun__Domain__exitRun(global: *mut JSGlobalObject);
-    fn Bun__Domain__callInEntryContext(global: *mut JSGlobalObject, function: JSValue) -> JSValue;
-}
-
-/// Start epoch of the innermost run; 0 when no run is active.
-#[inline]
-pub fn active_run() -> u32 {
-    run_epoch::active_run_start()
 }
 
 fn with_current<R>(f: impl FnOnce(&mut RunState) -> R) -> R {
@@ -123,11 +120,21 @@ impl DomainRun {
         let start = run_epoch::bump();
         let permissive = policy == Policy::Permissive;
         // SAFETY: per fn contract.
-        unsafe { Bun__Domain__enterRun((*vm).global, start, permissive) };
+        let suppressed_before = unsafe {
+            if permissive {
+                // Its own code's microtasks must run: JSC drains only what was
+                // queued since `start` (see EventLoopDomain.h).
+                Bun__Domain__enterRun((*vm).global, start);
+                false
+            } else {
+                (*vm).suppress_microtask_drain.replace(true)
+            }
+        };
         RUNS.with_borrow_mut(|runs| {
             runs.push(RunState {
                 start,
                 policy,
+                suppressed_before,
                 parked_immediates: Vec::new(),
                 parked_tasks: Vec::new(),
             })
@@ -154,7 +161,7 @@ impl DomainRun {
     /// # Safety
     /// As [`DomainRun::enter`]; must be the innermost run.
     pub unsafe fn turn(&self, deadline: Option<&Timespec>, done: impl FnOnce() -> bool) -> bool {
-        debug_assert_eq!(active_run(), self.start);
+        debug_assert_eq!(run_epoch::active_run_start(), self.start);
         let vm = self.vm;
         let deadline_passed = || match deadline {
             Some(deadline) => {
@@ -174,7 +181,7 @@ impl DomainRun {
             return deadline_passed();
         }
         // SAFETY: per fn contract.
-        unsafe { crate::jsc_hooks::auto_tick_bounded(vm, deadline, false) };
+        unsafe { crate::jsc_hooks::auto_tick_after_immediates(vm, deadline) };
         deadline_passed()
     }
 }
@@ -191,20 +198,17 @@ impl Drop for DomainRun {
 unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
     // Hand everything back while the run is still formally active, so nothing
     // is ever parked-but-owned-by-no-run; then pop.
-    let (parked_tasks, parked_immediates, outer_start, outer_policy) =
+    let (parked_tasks, parked_immediates, policy, suppressed_before, outer) =
         RUNS.with_borrow_mut(|runs| {
+            let outer = runs.iter().rev().nth(1).map(|r| (r.start, r.policy));
             let run = runs.last_mut().expect("domain run active");
             debug_assert_eq!(run.start, start);
             let tasks = core::mem::take(&mut run.parked_tasks);
             let immediates = core::mem::take(&mut run.parked_immediates);
-            let outer = runs.iter().rev().nth(1);
-            (
-                tasks,
-                immediates,
-                outer.map_or(0, |r| r.start),
-                outer.map_or(Policy::Permissive, |r| r.policy),
-            )
+            (tasks, immediates, run.policy, run.suppressed_before, outer)
         });
+    // No outer run: start 0, and nothing is permissive.
+    let (outer_start, outer_policy) = outer.unwrap_or((0, Policy::Strict));
     bun_core::scoped_log!(
         DomainRun,
         "exit run {} (handing back {} immediates, {} tasks)",
@@ -238,13 +242,15 @@ unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
         if (*vm).event_loop_handle.is_some() {
             let uws_loop = (*vm).uws_loop();
             #[cfg(not(windows))]
-            if run_epoch::rearm_after_run(bun_io::uws_to_native(uws_loop), outer_start) {
+            if bun_io::held_polls::release_after_run(bun_io::uws_to_native(uws_loop), outer_start) {
                 // Held one-shot readiness (a foreign child's exit on kqueue) is its
                 // owner's callback: deliver it from the loop, not from this frame.
-                el.enqueue_task(Task::new(
+                let mut replay = Task::new(
                     bun_event_loop::task_tag::RunEpochReplay,
                     core::ptr::null_mut(),
-                ));
+                );
+                replay.birth = start;
+                el.enqueue_task(replay);
             }
             (*uws_loop).domain_run_ended(outer_start, outer_policy == Policy::Permissive);
         }
@@ -255,12 +261,17 @@ unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
     });
     run_epoch::set_active_run(outer_start, outer_policy == Policy::Strict);
     // SAFETY: per fn contract.
-    unsafe { Bun__Domain__exitRun((*vm).global) };
+    unsafe {
+        match policy {
+            Policy::Permissive => Bun__Domain__exitRun((*vm).global),
+            Policy::Strict => (*vm).suppress_microtask_drain.set(suppressed_before),
+        }
+    }
 }
 
 /// bun:jsc `runUntilInDomainForTesting(thunk)`: enter a permissive run, call
-/// `thunk` under it (it returns a promise the run created), and turn the loop
-/// until the promise settles or `timeout_ms` elapses. Returns the promise.
+/// `thunk` (it returns a promise the run created), and turn the loop until the
+/// promise settles or `timeout_ms` elapses. Returns the promise.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Domain__runUntilInDomainForTesting(
     global: &JSGlobalObject,
@@ -270,12 +281,11 @@ pub extern "C" fn Bun__Domain__runUntilInDomainForTesting(
     let vm = global.bun_vm_ptr();
     // SAFETY: `vm` is the live per-thread VM owning `global`.
     let run = unsafe { DomainRun::enter(vm, Policy::Permissive) };
-    // SAFETY: `global` is live; a run was entered above.
-    let Ok(result) = bun_jsc::host_fn::from_js_host_call(global, || unsafe {
-        Bun__Domain__callInEntryContext(global.as_ptr(), thunk)
-    }) else {
+    let Ok(result) = thunk.call(global, JSValue::UNDEFINED, &[]) else {
         return JSValue::ZERO;
     };
+    // SAFETY: `global` is live; a run was entered above.
+    unsafe { Bun__Domain__beginLoopPhase(global.as_ptr()) };
     let _keep = bun_jsc::Strong::create(result, global);
     let promise = result.as_any_promise();
     let pending = || matches!(&promise, Some(p) if p.status() == PromiseStatus::Pending);

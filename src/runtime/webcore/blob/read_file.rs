@@ -294,6 +294,9 @@ pub struct ReadFile {
     pub(crate) io_parking: super::IoParking,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// FIFO vnode (not a `pipe(2)` pipe); see `bun_sys::block_until_readable`.
+    #[cfg(target_os = "macos")]
+    pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
     pub(crate) state: AtomicU8, // ClosingState
 }
@@ -390,6 +393,8 @@ impl ReadFile {
             },
             io_parking: super::IoParking::new(),
             could_block: false,
+            #[cfg(target_os = "macos")]
+            is_named_pipe: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
         };
@@ -500,6 +505,37 @@ impl ReadFile {
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
         io::IoRequestLoop::schedule(&mut self.io_request);
+    }
+
+    /// `wait_for_readable` for named pipes, on this thread; `false` if the wait itself failed.
+    #[cfg(target_os = "macos")]
+    fn block_until_readable(&mut self) -> bool {
+        bloblog!("ReadFile.blockUntilReadable");
+        match bun_sys::block_until_readable(self.opened_fd) {
+            Ok(()) => true,
+            Err(err) => {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                false
+            }
+        }
+    }
+
+    /// A named pipe's whole read, as its own pool task: `JobContext::run` holds a
+    /// VM borrow and VM teardown waits for borrows, so waiting for a writer must
+    /// not happen inside it. Waiting before the first read also keeps a FIFO
+    /// with no writer yet from reading as empty.
+    #[cfg(target_os = "macos")]
+    fn read_named_pipe_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) scheduled by `run_async_with_fd`;
+        // recover parent.
+        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        if this.block_until_readable() {
+            this.do_read_loop();
+        } else {
+            this.on_finish();
+        }
     }
 
     /// Pick the read target: `buffer`'s spare capacity if it is at least as
@@ -715,6 +751,11 @@ impl ReadFile {
         }
 
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
+        #[cfg(target_os = "macos")]
+        {
+            // pipe(2) pipes are S_IFIFO with st_dev == 0 (XNU pipe_stat).
+            self.is_named_pipe = bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0;
+        }
         self.total_size =
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
@@ -787,6 +828,16 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
+            #[cfg(target_os = "macos")]
+            if self.is_named_pipe {
+                self.task = WorkPoolTask {
+                    node: Default::default(),
+                    callback: Self::read_named_pipe_task,
+                };
+                WorkPool::schedule(&raw mut self.task);
+                return;
+            }
+
             if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
                 self.wait_for_readable();
                 return;
@@ -888,6 +939,13 @@ impl ReadFile {
                         // call. We already know it's done.
                         && !self.read_eof)
                     {
+                        #[cfg(target_os = "macos")]
+                        if self.is_named_pipe {
+                            if self.block_until_readable() {
+                                continue;
+                            }
+                            break;
+                        }
                         if self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.

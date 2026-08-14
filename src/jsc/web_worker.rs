@@ -1135,11 +1135,10 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // A termination request landed while building the error: as above.
-            Err(JsError::Terminated) => return,
             Err(JsError::Thrown) => {
-                // Building an error from log messages threw: report that instead.
-                global.report_active_exception_as_unhandled(JsError::Thrown);
+                // The worker's start sequence is its outermost frame: building the error from the
+                // log threw, and that is reported here instead (a termination just stands down).
+                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
                 return;
             }
         };
@@ -1148,19 +1147,7 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
         });
         if let Err(e) = dispatch {
-            // `take_exception` on a `JsError` always returns an Exception
-            // cell; None is unreachable. Do not silently drop the error.
-            let exc = global
-                .take_exception(e)
-                .as_exception(global.vm().as_mut_ptr())
-                .expect("takeException returned non-Exception");
-            // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null-ZST deref proof (`exc` is non-null per the
-            // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(
-                global,
-                jsc::Exception::opaque_ref(exc),
-            );
+            let _ = crate::task::report_error_or_terminate(global, e);
         }
     }
 }
@@ -1217,13 +1204,11 @@ fn on_unhandled_rejection(
         },
     );
     if let Err(err) = format_result {
-        match err {
-            JsError::Thrown | JsError::Terminated => {}
-            JsError::OutOfMemory => {
-                let _ = global_object.throw_out_of_memory();
-            }
-        }
-        error_instance = global_object.try_take_exception().unwrap();
+        error_instance = global_object.take_exception(err);
+    }
+    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    if error_instance.is_termination_exception() {
+        return;
     }
     jsc::mark_binding();
     // We RETURN through
@@ -1413,7 +1398,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

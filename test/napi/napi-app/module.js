@@ -1494,4 +1494,24 @@ nativeTests.test_ungated_calls_through_vm_timeout = () => {
   }
 };
 
+nativeTests.test_threadsafe_function_call_js_throws = async () => {
+  // main.js exits on the first uncaught exception; this test wants all three.
+  process.removeAllListeners("uncaughtException");
+  let seen = 0;
+  const { promise, resolve } = Promise.withResolvers();
+  process.on("uncaughtException", function handler(err) {
+    seen++;
+    console.log("uncaughtException", seen, err.message);
+    Promise.resolve().then(() => console.log("microtask", seen));
+    if (seen === 3) {
+      process.removeListener("uncaughtException", handler);
+      resolve();
+    }
+  });
+  nativeTests.test_napi_threadsafe_function_call_js_throws();
+  await promise;
+  await new Promise(r => setImmediate(r));
+  console.log("done", seen);
+};
+
 module.exports = nativeTests;

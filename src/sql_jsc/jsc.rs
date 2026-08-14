@@ -52,7 +52,6 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 #[inline]
@@ -61,7 +60,6 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 

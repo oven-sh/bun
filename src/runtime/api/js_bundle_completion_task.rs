@@ -235,7 +235,7 @@ impl JSBundleCompletionTask {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> jsc::JsResult<()> {
         let throw_on_error = self.config.throw_on_error;
 
         let build_result = JSValue::create_empty_object(global_this, 3);
@@ -694,7 +694,7 @@ impl JSBundleCompletionTask {
             unreachable!();
         }
         if matches!(this.result, BundleV2Result::Err(_)) {
-            return Ok(this.to_js_error(promise, global_this)?);
+            return this.to_js_error(promise, global_this);
         }
         match &mut this.result {
             BundleV2Result::Value(build) => {
@@ -702,7 +702,7 @@ impl JSBundleCompletionTask {
                 let output_files_js =
                     match JSValue::create_empty_array(global_this, output_files.len()) {
                         Ok(v) => v,
-                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                        Err(e) => return promise.reject(global_this, Err(e)),
                     };
                 if output_files_js == JSValue::ZERO {
                     panic!(
@@ -754,7 +754,7 @@ impl JSBundleCompletionTask {
                     }
 
                     if let Err(e) = output_files_js.put_index(global_this, i as u32, result) {
-                        return Ok(promise.reject(global_this, Err(e))?);
+                        return promise.reject(global_this, Err(e));
                     }
                 }
 
@@ -763,7 +763,7 @@ impl JSBundleCompletionTask {
                 build_output.put(global_this, b"success", JSValue::TRUE);
                 match bun_ast_jsc::log_to_js_array(&this.log, global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
-                    Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                    Err(e) => return promise.reject(global_this, Err(e)),
                 };
 
                 // metafile: { json: <lazy parsed>, markdown?: string }
@@ -771,13 +771,13 @@ impl JSBundleCompletionTask {
                     let metafile_js_str =
                         match jsc::bun_string_jsc::create_utf8_for_js(global_this, metafile) {
                             Ok(v) => v,
-                            Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                            Err(e) => return promise.reject(global_this, Err(e)),
                         };
                     let metafile_md_str = match &build.metafile_markdown {
                         Some(md) => {
                             match jsc::bun_string_jsc::create_utf8_for_js(global_this, md) {
                                 Ok(v) => v,
-                                Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                                Err(e) => return promise.reject(global_this, Err(e)),
                             }
                         }
                         None => JSValue::UNDEFINED,
@@ -799,14 +799,14 @@ impl JSBundleCompletionTask {
                         Ok(JSValue::UNDEFINED),
                     ) {
                         Ok(b) => b,
-                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                        Err(e) => return promise.reject(global_this, Err(e)),
                     }
                 } else {
                     false
                 };
 
                 if !did_handle_callbacks {
-                    return Ok(promise.resolve(global_this, build_output)?);
+                    return promise.resolve(global_this, build_output);
                 }
             }
             // SAFETY: Pending/Err already returned above.

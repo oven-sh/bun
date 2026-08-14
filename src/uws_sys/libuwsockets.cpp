@@ -143,21 +143,6 @@ extern "C"
     }
   }
 
-  extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
-    uWS::LoopData *loopData = uWS::Loop::data(loop);
-    /* Drain any leftover corks. Two slots max. */
-    for (int i = 0; i < 2; i++) {
-        bool ssl;
-        void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
-        if (!corkedSocket) break;
-        if (ssl) {
-            ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
-        } else {
-            ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
-        }
-    }
-}
-
   void uws_app_delete(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
@@ -1040,28 +1025,6 @@ extern "C"
         (TCPWebSocket *)ws;
     return uws->isSubscribed(stringViewFromC(topic, length));
   }
-  void uws_ws_iterate_topics(int ssl, uws_websocket_t *ws,
-                             void (*callback)(const char *topic, size_t length,
-                                              void *user_data),
-                             void *user_data)
-  {
-    if (ssl)
-    {
-      TLSWebSocket *uws =
-          (TLSWebSocket *)ws;
-      uws->iterateTopics([callback, user_data](auto topic)
-                         { callback(topic.data(), topic.length(), user_data); });
-    }
-    else
-    {
-      TCPWebSocket *uws =
-          (TCPWebSocket *)ws;
-
-      uws->iterateTopics([callback, user_data](auto topic)
-                         { callback(topic.data(), topic.length(), user_data); });
-    }
-  }
-
   uws_sendstatus_t uws_ws_publish(int ssl, uws_websocket_t *ws, const char *topic,
                                   size_t topic_length, const char *message,
                                   size_t message_length)
@@ -1811,13 +1774,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::Loop *uwsLoop = (uWS::Loop *)loop;
     uwsLoop->removePreHandler(ctx_);
   }
-  void uws_loop_defer(us_loop_t *loop, void *ctx, void (*cb)(void *ctx))
-  {
-    uWS::Loop *uwsLoop = (uWS::Loop *)loop;
-    uwsLoop->defer([ctx, cb]()
-                   { cb(ctx); });
-  }
-
   void uws_res_uncork(int ssl, uws_res_r res)
   {
     if (ssl)

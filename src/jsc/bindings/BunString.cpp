@@ -147,22 +147,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transfer
     return JSValue::encode(bunString->transferToJS(globalObject));
 }
 
-// int64_t max to say "not a number"
-extern "C" [[ZIG_EXPORT(nothrow)]] int64_t BunString__toInt32(const BunString* bunString)
-{
-    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
-        return std::numeric_limits<int64_t>::max();
-    }
-
-    String str = bunString->toWTFString();
-    auto val = WTF::parseIntegerAllowingTrailingJunk<int32_t>(str);
-    if (val) {
-        return val.value();
-    }
-
-    return std::numeric_limits<int64_t>::max();
-}
-
 namespace Bun {
 
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
@@ -347,25 +331,6 @@ static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
         copy->setNeverAtomize();
     }
     return copy;
-}
-
-Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
-{
-    if (impl->isAtom() || impl->isSymbol())
-        return isolatedCopyForSharing(impl);
-
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return isolatedCopyForSharing(impl);
-
-    if (impl->length() < kMinCrossThreadShareableLength)
-        return isolatedCopyForSharing(impl);
-
-    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
-    // Force hash computation on this thread before sharing
-    impl->hash();
-    impl->setNeverAtomize();
-
-    return impl;
 }
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
@@ -593,23 +558,6 @@ extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexica
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
-extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    auto str = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
-    if (str.isEmpty()) {
-        return nullptr;
-    }
-
-    auto url = WTF::URL(str);
-    if (!url.isValid() || url.isNull())
-        return nullptr;
-
-    return new WTF::URL(WTF::move(url));
-}
-
 extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -739,20 +687,6 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
-}
-
-size_t BunString::utf8ByteLength(const WTF::String& str)
-{
-    if (str.isEmpty())
-        return 0;
-
-    if (str.is8Bit()) {
-        const auto s = str.span8();
-        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(s.data()), static_cast<size_t>(s.size()));
-    } else {
-        const auto s = str.span16();
-        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(s.data()), static_cast<size_t>(s.size()));
-    }
 }
 
 WTF::String BunString::toWTFString() const

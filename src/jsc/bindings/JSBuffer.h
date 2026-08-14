@@ -56,7 +56,6 @@ JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalO
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* data, size_t length);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
 
@@ -66,7 +65,6 @@ JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSVal
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
 JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);
 JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding);
-JSC::EncodedJSValue constructFromEncoding(JSC::JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> span, WebCore::BufferEncodingType encoding);
 JSC::EncodedJSValue constructFromEncoding(JSC::JSGlobalObject* lexicalGlobalObject, WTF::StringView string, WebCore::BufferEncodingType encoding);
 
 } // namespace WebCore

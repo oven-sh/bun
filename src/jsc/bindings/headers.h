@@ -308,7 +308,6 @@ CPP_DECL size_t JSC__VM__heapSize(JSC::VM* arg0);
 CPP_DECL void JSC__VM__holdAPILock(JSC::VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL bool JSC__VM__isEntered(JSC::VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
-CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0);

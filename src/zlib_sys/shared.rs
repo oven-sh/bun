@@ -98,26 +98,6 @@ pub type uLong = c_ulong;
 pub type uLongf = uLong;
 pub type voidpf = *mut c_void;
 
-// ---------------------------------------------------------------------------
-// gzFile — opaque handle.
-//
-// zlib.h exposes `struct gzFile_s { unsigned have; unsigned char *next;
-// z_off64_t pos; }` purely so the `gzgetc()` macro can inline a fast path;
-// every other API treats `gzFile` as an opaque pointer. Bun never derefs it,
-// so one definition suffices for all targets. `pos` is `z_off64_t` — `__int64`
-// on Windows, `off64_t` on LP64 Unix — i.e. `i64` everywhere Bun ships, hence
-// the divergence between the old win32.rs (`c_longlong`) and bun_zlib
-// (`c_long`) copies was immaterial.
-// ---------------------------------------------------------------------------
-#[repr(C)]
-pub struct struct_gzFile_s {
-    pub have: c_uint,
-    pub next: *mut u8,
-    pub pos: i64,
-}
-pub type gzFile_s = struct_gzFile_s;
-pub type gzFile = *mut struct_gzFile_s;
-
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
 /// never look inside, only carry the pointer.
 #[repr(C)]

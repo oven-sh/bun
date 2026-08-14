@@ -5172,18 +5172,6 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
-{
-    return vm->isTerminationException(exception);
-}
-
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
-{
-    return vm->hasTerminationRequest();
-}
-
 // The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
 // host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
 // TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
@@ -5227,10 +5215,6 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
     vm.notifyNeedTermination();
     if (didEnter)
         vm.apiLock().lock();
-}
-void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedDebuggerBreak();
 }
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
 {

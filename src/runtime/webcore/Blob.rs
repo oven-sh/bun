@@ -184,12 +184,6 @@ pub trait BlobExt {
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     );
-    fn on_structured_clone_transfer(
-        &self,
-        _global_this: &JSGlobalObject,
-        _ctx: *mut c_void,
-        _write: crate::generated_classes::WriteBytesFn,
-    );
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -252,7 +246,6 @@ pub trait BlobExt {
         content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
-    fn get_mime_type(&self) -> Option<MimeType>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
     fn get_name_string(&self) -> Option<BunString>;
@@ -812,14 +805,6 @@ impl BlobExt for Blob {
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
-    fn on_structured_clone_transfer(
-        &self,
-        _global_this: &JSGlobalObject,
-        _ctx: *mut c_void,
-        _write: crate::generated_classes::WriteBytesFn,
-    ) {
-        // no-op
-    }
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
     // trait signature is fixed, so the deref is documented with the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -2031,10 +2016,6 @@ impl BlobExt for Blob {
         }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
-    }
-
-    fn get_mime_type(&self) -> Option<MimeType> {
-        self.store().map(|s| s.mime_type.clone())
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
@@ -7027,7 +7008,6 @@ pub trait FileCloser: Sized {
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
@@ -7125,9 +7105,6 @@ macro_rules! impl_file_closer {
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
-            }
-            fn update(&mut self) {
-                $T::update(self)
             }
             #[cfg(windows)]
             fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {

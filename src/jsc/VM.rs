@@ -118,12 +118,6 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// Has termination been requested on this VM (worker.terminate(), or
-    /// teardown's forbidExecution)? JS thread.
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
-    }
-
     #[track_caller]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
         crate::validation_scope!(scope, global_object);

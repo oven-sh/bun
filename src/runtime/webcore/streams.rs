@@ -2141,9 +2141,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.is_done()
-    }
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
@@ -2554,9 +2551,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }
 

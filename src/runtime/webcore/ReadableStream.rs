@@ -187,10 +187,6 @@ impl ReadableStream {
         Ok(Some((out_stream1, out_stream2)))
     }
 
-    pub fn to_js(&self) -> JSValue {
-        self.value
-    }
-
     pub fn reload_tag(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         if let Some(stream) = ReadableStream::from_js(self.value, global_this)? {
             *self = stream;

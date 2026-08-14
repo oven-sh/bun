@@ -1078,7 +1078,7 @@ impl JSValkeyClient {
         ) {
             return Ok(JSValue::UNDEFINED);
         }
-        self.client_mut().disconnect();
+        self.client_mut().disconnect()?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1228,17 +1228,21 @@ impl JSValkeyClient {
                     let client = self.client_mut();
                     client.flags.connection_promise_returns_client = false;
                     client.flags.is_manually_closed = true;
-                    let _close = scopeguard::guard(BackRef::new(self), |p| p.client_mut().close());
-                    if let Some(promise) = Js::connection_promise_get_cached(this_value) {
-                        Js::connection_promise_set_cached(
-                            this_value,
-                            &global_object,
-                            JSValue::ZERO,
-                        );
-                        JSPromise::opaque_mut(promise.as_promise().unwrap())
-                            .reject(&global_object, Ok(error))?;
-                    }
-                    return self.client_mut().fail_with_js_value(&global_object, error);
+                    let rejected = match Js::connection_promise_get_cached(this_value) {
+                        Some(promise) => {
+                            Js::connection_promise_set_cached(
+                                this_value,
+                                &global_object,
+                                JSValue::ZERO,
+                            );
+                            JSPromise::opaque_mut(promise.as_promise().unwrap())
+                                .reject(&global_object, Ok(error))
+                        }
+                        None => Ok(()),
+                    };
+                    let failed =
+                        rejected.and_then(|()| client.fail_with_js_value(&global_object, error));
+                    return failed.and(self.client_mut().close());
                 }
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
@@ -1849,10 +1853,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) -> JsResult<()> {
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
-        let this_br = BackRef::new(this);
-        let _close = scopeguard::guard(this_br, |p| p.client_mut().close());
-        this.client_mut()
-            .fail_with_js_value(&this.global_object, err_value)
+        let failed = this
+            .client_mut()
+            .fail_with_js_value(&this.global_object, err_value);
+        failed.and(this.client_mut().close())
     }
 
     pub(crate) const ON_HANDSHAKE: Option<
@@ -2023,7 +2027,7 @@ impl ValkeyDeferredClose {
         let ctx = self.ctx;
         // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
         unsafe {
-            (*ctx).client_mut().close();
+            crate::dispatch::fold((*ctx).client_mut().close());
             JSValkeyClient::deref(ctx.cast_mut());
         }
     }

@@ -614,18 +614,22 @@ impl ValkeyClient {
 
         if !self.connection_ready() {
             self.flags.is_manually_closed = true;
-            self.close();
+            return val.and(self.close());
         }
         val
     }
 
-    pub fn close(&mut self) {
+    /// For a half-open socket this runs `on_close` itself (see below) and returns what its
+    /// `onclose` listener left pending; the caller propagates that like any other callback
+    /// result (or folds it if it is the trampoline), it is never folded here beneath a
+    /// frame that is still going to return its own `Err`.
+    pub fn close(&mut self) -> JsResult<()> {
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
         if socket.is_closed() {
-            return;
+            return Ok(());
         }
         // usockets does not dispatch `on_close`/`on_connect_error` when an
         // application explicitly closes a `us_socket_t` whose TCP connect
@@ -642,10 +646,11 @@ impl ValkeyClient {
         socket.close(uws::CloseCode::Normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
-            // A half-open socket never gets uSockets' close dispatch, so this is
-            // its trampoline for the event: fold what `onclose` left pending here.
-            crate::dispatch::fold(self.on_close());
+            // A half-open socket never gets uSockets' close dispatch, so run the
+            // close event here.
+            return self.on_close();
         }
+        Ok(())
     }
 
     /// Handle connection closed event
@@ -1492,12 +1497,13 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
-    pub(crate) fn disconnect(&mut self) {
+    pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
-            self.close();
+            return self.close();
         }
+        Ok(())
     }
 
     /// Get a writer for the connected socket

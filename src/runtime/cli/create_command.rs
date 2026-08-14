@@ -1952,7 +1952,7 @@ impl Example {
             header_entries,
             headers_buf,
             b"",
-            http_proxy,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             HTTP::FetchRedirect::Follow,
         ));
@@ -2038,13 +2038,13 @@ impl Example {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`, which outlives this
-        // fn. Erased to `'static` because `async_http` is `cli_arena()`-backed
-        // (so its type parameter is `'static`), but the proxy URL is only read
-        // during the `send_sync()` calls below while `env_loader` is live.
-        let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
-            .map(|u| unsafe { u.erase_lifetime() });
+        // `async_http` below lives in `cli_arena()` and is `'static`, so its proxy must be too.
+        fn arena_http_proxy(env_loader: &DotEnv::Loader, url: &URL<'_>) -> Option<URL<'static>> {
+            let proxy = env_loader.get_http_proxy_for(url)?;
+            Some(URL::parse(crate::cli::cli_dupe(proxy.href())))
+        }
+        // SAFETY: single-threaded CLI access to static URL_ (set just above)
+        let http_proxy = arena_http_proxy(env_loader, unsafe { (*URL_.get()).as_ref().unwrap() });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP =
@@ -2137,10 +2137,7 @@ impl Example {
         // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        // SAFETY: see note on `http_proxy` above.
-        http_proxy = env_loader
-            .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| unsafe { u.erase_lifetime() });
+        let http_proxy = arena_http_proxy(env_loader, &parsed_tarball_url);
 
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -2193,7 +2190,7 @@ impl Example {
             Default::default(),
             b"",
             b"",
-            http_proxy,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             HTTP::FetchRedirect::Follow,
         ));

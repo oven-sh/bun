@@ -550,7 +550,7 @@ impl ReadableStream {
                     .transpiler
                     .env_mut()
                     .get_http_proxy(true, None, None);
-                let proxy_url = proxy.as_ref().map(|p| p.href);
+                let proxy_url = proxy.as_ref().map(|p| p.href());
 
                 crate::webcore::s3::client::readable_stream(
                     credentials,

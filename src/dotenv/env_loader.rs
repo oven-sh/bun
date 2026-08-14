@@ -9,7 +9,7 @@ use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
-use bun_url::URL;
+use bun_url::{OwnedURL, URL};
 use bun_which::which;
 use enumset::EnumSet;
 
@@ -322,7 +322,7 @@ impl Loader {
         result
     }
 
-    pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
+    pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<OwnedURL> {
         self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
     }
 
@@ -336,32 +336,31 @@ impl Loader {
     /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
+    /// Normalized like `fetch()`'s `proxy` option (#16182); a value WTF::URL rejects is used as is.
     pub fn get_http_proxy(
         &self,
         is_http: bool,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
-    ) -> Option<URL<'_>> {
-        // TODO: When Web Worker support is added, make sure to intern these strings
-        let mut http_proxy: Option<URL<'_>> = None;
-
+    ) -> Option<OwnedURL> {
         let proxy = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
-        };
-        if let Some(p) = proxy {
-            if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(p));
-            }
+        }?;
+        if Self::is_emptyish(proxy) || self.is_no_proxy(hostname, host) {
+            return None;
         }
+        Some(
+            URL::from_string(&bun_core::String::borrow_utf8(proxy))
+                .unwrap_or_else(|_| OwnedURL::from_href(Box::from(proxy))),
+        )
+    }
 
-        if http_proxy.is_some() && hostname.is_some() {
-            if self.is_no_proxy(hostname, host) {
-                return None;
-            }
-        }
-        http_proxy
+    /// The `no_proxy` / `NO_PROXY` list, or `None` when unset or empty-ish.
+    pub fn get_no_proxy(&self) -> Option<&[u8]> {
+        self.get_lower_then_upper(b"no_proxy", b"NO_PROXY")
+            .filter(|v| !Self::is_emptyish(v))
     }
 
     /// Returns true if the given hostname/host should bypass the proxy
@@ -371,12 +370,9 @@ impl Loader {
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         let Some(hn) = hostname else { return false };
 
-        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
+        let Some(no_proxy_text) = self.get_no_proxy() else {
             return false;
         };
-        if Self::is_emptyish(no_proxy_text) {
-            return false;
-        }
 
         for no_proxy_item in strings::split(no_proxy_text, b",") {
             let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);

@@ -2565,20 +2565,19 @@ where
                     let path = s3.path();
                     // `Transpiler::env_mut` is the safe accessor for the
                     // process-singleton dotenv loader (set during init).
-                    let proxy_url = global_this
+                    let proxy = global_this
                         .bun_vm()
                         .as_mut()
                         .transpiler
                         .env_mut()
-                        .get_http_proxy(true, None, None)
-                        .map(|proxy| proxy.href);
+                        .get_http_proxy(true, None, None);
 
                     let _ = S3::client::stat(
                         credentials,
                         path,
                         Self::on_s3_size_resolved_thunk,
                         this.as_ctx_ptr().cast::<c_void>(),
-                        proxy_url,
+                        proxy.as_ref().map(|proxy| proxy.href()),
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards
                     return;

@@ -1,0 +1,79 @@
+name: Mordant
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**/*.rs"
+      - "src/**/*.classes.ts"
+      - "src/codegen/**"
+      - "scripts/build/**"
+      - "scripts/build.ts"
+      - "scripts/rust-mordant.ts"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "dylint.toml"
+      - "mordant-baseline.toml"
+      - ".github/workflows/mordant.yml"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
+
+env:
+  BUN_VERSION: "1.3.14"
+  LLVM_VERSION_MAJOR: "21"
+  DYLINT_VERSION: "6.0.3"
+  # Mordant (pinned in Cargo.toml's [workspace.metadata.dylint]) is built with,
+  # and lints us using, the nightly named in its own rust-toolchain file, which
+  # dylint selects itself; rustup fetches it on demand, so the pin is the only
+  # thing to bump. The outer cargo just needs to exist: point it at the
+  # runner's stable so rust-toolchain.toml's cross-target list is not installed.
+  RUSTUP_TOOLCHAIN: stable
+  RUSTUP_AUTO_INSTALL: "1"
+
+jobs:
+  mordant:
+    name: mordant
+    runs-on: ubuntu-latest
+    # Advisory while the pack is new: shows up on the PR, does not block it.
+    continue-on-error: true
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup system deps
+        # Same as clippy.yml: configure needs cmake/ninja and resolves a clang.
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
+
+      - name: Setup dylint
+        run: |
+          cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
+          echo "::add-matcher::.github/rust-matcher.json"
+
+      - name: Generate codegen
+        # See clippy.yml: bun_runtime/bun_jsc/bun_core include!() generated files.
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/build.ts --configure-only
+          ninja -C build/debug codegen clone-lolhtml
+
+      - name: mordant
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:mordant

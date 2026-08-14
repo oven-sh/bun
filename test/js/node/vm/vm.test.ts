@@ -1629,7 +1629,9 @@ test("nested vm runs each keep their own deadline", async () => {
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("inner:ERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT true\n");
+  expect(stdout).toBe(
+    "inner:ERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT true\n",
+  );
   expect(exitCode).toBe(0);
 }, 30_000);
 

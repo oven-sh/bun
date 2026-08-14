@@ -292,8 +292,7 @@ if (cluster.isPrimary) {
     worker.disconnect();
   });
   worker.on("exit", code => {
-    console.log("worker exit:", code);
-    process.exit(0);
+    process.exit(code ?? 1);
   });
 } else {
   const server = net.createServer(() => {});
@@ -302,9 +301,11 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain(`worker: {"code":"EINVAL","syscall":"bind"}`);
   expect(stdout).toContain("truncated exists: false");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {

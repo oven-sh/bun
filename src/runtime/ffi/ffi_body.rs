@@ -18,6 +18,7 @@ use bun_jsc::{
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
+#[cfg(unix)]
 use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
 use bun_sys;
@@ -2355,8 +2356,8 @@ impl CompilerRT {
         // Prefer the reusable per-user directory; if it cannot be safely
         // populated, fall back to a freshly created, randomly named one.
         #[cfg(unix)]
-        if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-            && Self::populate_compiler_rt_dir(&bun_cc)
+        if let Some((bun_cc, name)) = Self::open_owned_compiler_rt_dir(&tmpdir)
+            && Self::populate_compiler_rt_dir(&bun_cc, &name)
         {
             return;
         }
@@ -2373,7 +2374,7 @@ impl CompilerRT {
             let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
                 return;
             };
-            let _ = Self::populate_compiler_rt_dir(&dir);
+            let _ = Self::populate_compiler_rt_dir(&dir, name.as_bytes());
             return;
         }
     }
@@ -2403,10 +2404,11 @@ impl CompilerRT {
         }
     }
 
-    /// Stage every header into `bun_cc` and publish its path; returns false
-    /// (leaving nothing published) if any entry could not be written -- e.g.
-    /// a pre-planted symlinked entry refused by the no-follow write.
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
+    /// Stage every header into `bun_cc` (the directory named `dir_name` under
+    /// the tmpdir) and publish its path; returns false (leaving nothing
+    /// published) if any entry could not be written -- e.g. a pre-planted
+    /// symlinked entry refused by the no-follow write.
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir, dir_name: &[u8]) -> bool {
         for (name, source) in CompilerRtSources::SOURCES {
             if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
                 return false;
@@ -2422,16 +2424,19 @@ impl CompilerRT {
             }
         }
 
-        let mut path_buf = PathBuffer::uninit();
-        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
-            return false;
-        };
-        // `ZBox::from_bytes` panics on OOM.
-        let path = ZBox::from_bytes(&*path);
-        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
-            return false;
-        };
-        let node_path = ZBox::from_bytes(&*node_path);
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            Fs::FileSystem::instance().top_level_dir,
+            &mut path_buf[..],
+            &[Fs::RealFS::tmpdir_path(), dir_name],
+        );
+        let path = ZBox::from_bytes(path);
+        let node_path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            path.as_bytes(),
+            &mut path_buf[..],
+            &[b"node"],
+        );
+        let node_path = ZBox::from_bytes(node_path);
         let _ = COMPILER_RT_DIR.set(path);
         let _ = COMPILER_RT_NODE_DIR.set(node_path);
         true
@@ -2467,7 +2472,7 @@ impl CompilerRT {
     /// group or others, so a pre-planted or shared entry is never used to
     /// stage compiler headers.
     #[cfg(unix)]
-    fn open_owned_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> Option<bun_sys::Dir> {
+    fn open_owned_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> Option<(bun_sys::Dir, Vec<u8>)> {
         let uid = bun_sys::c::getuid();
         let mut dir_name = Vec::new();
         write!(&mut dir_name, "bun-cc-{uid}").ok()?;
@@ -2489,7 +2494,7 @@ impl CompilerRT {
         if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
             return None;
         }
-        Some(dir)
+        Some((dir, dir_name))
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {

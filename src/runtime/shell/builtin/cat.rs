@@ -186,8 +186,9 @@ impl Cat {
                     *i += 1;
                 }
 
-                let dir = Builtin::cwd(interp, cmd);
-                let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
+                let shell = Builtin::shell(interp, cmd);
+                let fd = match shell_openat(shell.cwd_fd, shell.cwd(), path, bun_sys::O::RDONLY, 0)
+                {
                     Ok(fd) => fd,
                     Err(e) => {
                         let buf =

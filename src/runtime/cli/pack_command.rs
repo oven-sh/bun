@@ -699,7 +699,7 @@ fn add_entire_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, &dir_subpath, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -1270,7 +1270,7 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, &dir_subpath, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -3676,17 +3676,14 @@ enum IgnoreFileFailReason {
 }
 
 impl IgnorePatterns {
+    /// `dir_subpath` is the directory's path relative to the package root.
     fn ignore_file_fail(
-        dir: &Dir,
+        dir_subpath: &[u8],
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
         err: crate::Error,
     ) -> ! {
-        let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
-            Ok(p) => &*p,
-            Err(_) => b"",
-        };
+        let dir_subpath = strings::without_trailing_slash(dir_subpath);
         Output::err(
             err,
             "failed to {} {} at: \"{}{}{}\"",
@@ -3694,8 +3691,8 @@ impl IgnorePatterns {
                 "{} {} {}{}{}",
                 <&str>::from(reason),
                 <&str>::from(ignore_kind),
-                bstr::BStr::new(strings::without_trailing_slash(dir_path)),
-                SEP_STR,
+                bstr::BStr::new(dir_subpath),
+                if dir_subpath.is_empty() { "" } else { "/" },
                 <&str>::from(ignore_kind),
             ),
         );
@@ -3709,7 +3706,11 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Result<Option<IgnorePatterns>, AllocError> {
+    fn read_from_disk(
+        dir: &Dir,
+        dir_subpath: &[u8],
+        dir_depth: usize,
+    ) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
@@ -3721,7 +3722,7 @@ impl IgnorePatterns {
                     // Crash if the file exists and fails to open. Don't want to create a tarball
                     // with files you want to ignore.
                     Self::ignore_file_fail(
-                        dir,
+                        dir_subpath,
                         ignore_kind,
                         IgnoreFileFailReason::Open,
                         err.into(),
@@ -3733,7 +3734,7 @@ impl IgnorePatterns {
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {
                             Self::ignore_file_fail(
-                                dir,
+                                dir_subpath,
                                 ignore_kind,
                                 IgnoreFileFailReason::Open,
                                 err2.into(),
@@ -3748,7 +3749,12 @@ impl IgnorePatterns {
         let contents = match ignore_file.read_to_end() {
             Ok(c) => c,
             Err(err) => {
-                Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Read, err.into());
+                Self::ignore_file_fail(
+                    dir_subpath,
+                    ignore_kind,
+                    IgnoreFileFailReason::Read,
+                    err.into(),
+                );
             }
         };
         let _ = ignore_file.close();

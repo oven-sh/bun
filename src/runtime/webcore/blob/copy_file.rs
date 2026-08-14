@@ -1531,25 +1531,9 @@ impl<'a> CopyFileWindows<'a> {
                                 ));
                                 return;
                             }
-                            bun_sys::FileKind::CharacterDevice => {
+                            _ => {
                                 self.prepare_read_write_loop();
                                 return;
-                            }
-                            _ => {
-                                let out = match bun_sys::get_fd_path(fd, &mut pathbuf1) {
-                                    Ok(out) => out,
-                                    Err(_) => {
-                                        // This case can happen when either:
-                                        // - NUL device
-                                        // - Pipe. `cat foo.txt | bun bar.ts`
-                                        self.prepare_read_write_loop();
-                                        return;
-                                    }
-                                };
-                                let len = out.len();
-                                pathbuf1[len] = 0;
-                                // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf1[..], len);
                             }
                         },
                     }
@@ -1576,25 +1560,9 @@ impl<'a> CopyFileWindows<'a> {
                                 ));
                                 return;
                             }
-                            bun_sys::FileKind::CharacterDevice => {
+                            _ => {
                                 self.prepare_read_write_loop();
                                 return;
-                            }
-                            _ => {
-                                let out = match bun_sys::get_fd_path(fd, &mut pathbuf2) {
-                                    Ok(out) => out,
-                                    Err(_) => {
-                                        // This case can happen when either:
-                                        // - NUL device
-                                        // - Pipe. `cat foo.txt | bun bar.ts`
-                                        self.prepare_read_write_loop();
-                                        return;
-                                    }
-                                };
-                                let len = out.len();
-                                pathbuf2[len] = 0;
-                                // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
                             }
                         },
                     }

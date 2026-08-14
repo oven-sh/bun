@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -2710,14 +2710,12 @@ impl RunCommand {
             return false;
         }
 
-        // We OPEN the file (rather than
-        // just stat()ing the path), fstat() the fd, then derive the canonical
-        // absolute path via `get_fd_path` before booting. The
-        // get_fd_path step matters: it resolves symlinks so module-relative
-        // resolution sees the real location.
+        // The booted entry path must be the realpath: `is_main` for a loaded
+        // module is decided by comparing its resolved (symlink-followed) path
+        // against this string byte-for-byte.
         let mut script_name_buf = PathBuffer::uninit();
 
-        // Build a NUL-terminated path to open (branching for
+        // Build a NUL-terminated path to probe (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
@@ -2767,49 +2765,22 @@ impl RunCommand {
         // `script_name_buf[..open_len]` is init.
         let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
-        // Open read-only.
-        let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
-
-        // fstat: directories cannot be run. if only there was a faster way to
-        // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            Err(_) => {
-                let _ = bun_sys::close(fd);
-                return false;
-            }
-        };
-        if is_dir {
-            let _ = bun_sys::close(fd);
-            return false;
+        // Directories cannot be run.
+        match bun_sys::stat(open_z) {
+            Ok(st) if !bun_sys::S::ISDIR(st.st_mode as _) => {}
+            _ => return false,
         }
+
+        let mut resolved_buf = paths::path_buffer_pool::get();
+        let Ok(resolved) = bun_sys::realpath(open_z, &mut resolved_buf) else {
+            return false;
+        };
+        let absolute_script_path: Box<[u8]> = Box::from(resolved);
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
             long_running: true,
             ..Default::default()
         });
-
-        // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = bun_sys::close(fd);
-                    return false;
-                }
-            };
-            resolved.to_vec().into_boxed_slice()
-        };
-        let _ = bun_sys::close(fd);
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }

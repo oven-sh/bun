@@ -105,13 +105,15 @@ impl Mv {
                     };
                     return Self::write_failing_error(interp, cmd, &buf, 1);
                 }
-                let cwd = Builtin::cwd(interp, cmd);
+                let shell = Builtin::shell(interp, cmd);
+                let (cwd, cwd_path) = (shell.cwd_fd, Box::from(shell.cwd()));
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let mut task = Box::new(ShellMvCheckTargetTask {
                     cmd,
                     cwd,
+                    cwd_path,
                     target,
                     result: None,
                     done: false,
@@ -209,7 +211,8 @@ impl Mv {
 
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
-                let cwd = Builtin::cwd(interp, cmd);
+                let shell = Builtin::shell(interp, cmd);
+                let (cwd, cwd_path): (_, Box<[u8]>) = (shell.cwd_fd, Box::from(shell.cwd()));
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let (sources_start, target_idx) = {
                     let me = Self::state_mut(interp, cmd);
@@ -232,6 +235,7 @@ impl Mv {
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
                         cwd,
+                        cwd_path: cwd_path.clone(),
                         error_signal: None,
                         err: None,
                         task: ShellTask::new(evtloop),
@@ -404,6 +408,7 @@ enum MvFlag {
 pub struct ShellMvCheckTargetTask {
     pub(crate) cmd: NodeId,
     pub(crate) cwd: bun_sys::Fd,
+    pub(crate) cwd_path: Box<[u8]>,
     pub(crate) target: ZBox,
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
@@ -415,11 +420,13 @@ pub struct ShellMvCheckTargetTask {
 impl ShellMvCheckTargetTask {
     fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
-            Ok(fd) => Ok(Some(fd)),
-            Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
-            Err(e) => Err(e),
-        });
+        this.result = Some(
+            match shell_openat(this.cwd, &this.cwd_path, &this.target, flags, 0) {
+                Ok(fd) => Ok(Some(fd)),
+                Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
+                Err(e) => Err(e),
+            },
+        );
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 }
@@ -434,6 +441,7 @@ pub struct ShellMvBatchedTask {
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) cwd: bun_sys::Fd,
+    pub(crate) cwd_path: Box<[u8]>,
     /// Back-reference into `MvState::Executing::error_signal`. The owning
     /// `MvState` outlives every batched task (tasks are joined / counted in
     /// `batched_move_task_done` before the state transitions), so the
@@ -457,6 +465,7 @@ impl ShellMvBatchedTask {
             let mut buf = PathBuffer::uninit();
             if let Err(e) = Self::move_in_dir(
                 this.cwd,
+                &this.cwd_path,
                 dir,
                 this.target.as_bytes(),
                 &this.sources[0],
@@ -467,7 +476,13 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if let Err(e) = Self::do_rename(this.cwd, &this.sources[0], this.cwd, &this.target) {
+        if let Err(e) = Self::do_rename(
+            &this.cwd_path,
+            this.cwd,
+            &this.sources[0],
+            this.cwd,
+            &this.target,
+        ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
@@ -479,6 +494,7 @@ impl ShellMvBatchedTask {
 
     /// `renameat()`, falling through to [`Self::move_across_devices`] on EXDEV.
     fn do_rename(
+        cwd_path: &[u8],
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
@@ -486,7 +502,7 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
+                Self::move_across_devices(cwd_path, src_dir, src, dst_dir, dst).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
                     } else {
@@ -500,6 +516,7 @@ impl ShellMvBatchedTask {
 
     /// EXDEV fallback: copy `src` to `dst`, then (only on success) remove `src`.
     fn move_across_devices(
+        cwd_path: &[u8],
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
@@ -536,6 +553,7 @@ impl ShellMvBatchedTask {
         if S::ISDIR(mode) {
             let sd = Dir::from_fd(shell_openat(
                 src_dir,
+                cwd_path,
                 src,
                 O::RDONLY | O::DIRECTORY | src_nofollow,
                 0,
@@ -557,6 +575,7 @@ impl ShellMvBatchedTask {
             }
             let dd = Dir::from_fd(shell_openat(
                 dst_dir,
+                cwd_path,
                 dst,
                 O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
                 0,
@@ -572,7 +591,7 @@ impl ShellMvBatchedTask {
                 nbuf[..name.len()].copy_from_slice(name);
                 nbuf[name.len()] = 0;
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
+                Self::move_across_devices(cwd_path, sd.fd(), name_z, dd.fd(), name_z)?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -627,6 +646,7 @@ impl ShellMvBatchedTask {
     /// is written by the caller.
     fn move_in_dir(
         cwd: bun_sys::Fd,
+        cwd_path: &[u8],
         target_fd: bun_sys::Fd,
         target: &[u8],
         src: &ZStr,
@@ -643,7 +663,7 @@ impl ShellMvBatchedTask {
         }
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
+        Self::do_rename(cwd_path, cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())
@@ -667,6 +687,7 @@ impl ShellMvBatchedTask {
             }
             if let Err(e) = Self::move_in_dir(
                 self.cwd,
+                &self.cwd_path,
                 dir,
                 self.target.as_bytes(),
                 &self.sources[i],

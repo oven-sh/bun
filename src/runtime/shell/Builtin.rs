@@ -579,7 +579,8 @@ impl Builtin {
                 // SAFETY: `path_buf` ends in NUL by construction.
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
-                let cwd_fd = Self::cwd(interp, cmd);
+                let shell = Self::shell(interp, cmd);
+                let (cwd_fd, cwd) = (shell.cwd_fd, shell.cwd());
                 let evtloop = interp.event_loop;
 
                 let mut pollable = false;
@@ -587,7 +588,7 @@ impl Builtin {
                 let mut is_nonblocking = false;
 
                 let redirfd: bun_sys::Fd = if redirect.stdin() {
-                    match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
+                    match shell_openat(cwd_fd, cwd, path, redirect.to_flags(), perm) {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
                             return Some(Self::cmd_write_failing_error(
@@ -615,7 +616,7 @@ impl Builtin {
                         (),
                         |_| {},
                         is_pollable_from_mode,
-                        shell_openat,
+                        |dir, path, flags, mode| shell_openat(dir, cwd, path, flags, mode),
                     );
                     match result {
                         Err(e) => {
@@ -947,12 +948,6 @@ impl Builtin {
         _cmd: NodeId,
     ) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
-    }
-
-    /// Cwd fd of the owning Cmd's shell env.
-    #[inline]
-    pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
-        Self::shell(interp, cmd).cwd_fd
     }
 
     /// Format `"{kind}: {fmt}"` into a fresh heap buffer.

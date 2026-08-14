@@ -758,23 +758,14 @@ impl UpgradeCommand {
             };
             let save_dir: sys::Dir = save_dir_it;
 
-            // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
             let mut tmpdir_path_buf = PathBuffer::uninit();
-            let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
-                Ok(p) => p,
-                Err(err) => {
-                    Output::err_generic(
-                        "Failed to read temporary directory: {}",
-                        (bstr::BStr::new(err.name()),),
-                    );
-                    Global::exit(1);
-                }
-            };
-
-            let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
+            let tmpdir_z =
+                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                    filesystem.top_level_dir,
+                    &mut tmpdir_path_buf[..],
+                    &[fs::RealFS::tmpdir_path(), &version_name],
+                );
+            let tmpdir_path_len = tmpdir_z.len();
             let _ = sys::chdir(tmpdir_z);
 
             // SAFETY: literal ends with NUL.

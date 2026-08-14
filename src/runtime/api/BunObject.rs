@@ -86,10 +86,8 @@ use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys as sys;
 use bun_zlib as zlib;
 
 use crate::api::csrf_jsc;
@@ -847,46 +845,25 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             }
 
-            let Ok(fd) = sys::openat_a(
-                if cfg!(windows) {
-                    Fd::INVALID
-                } else {
-                    Fd::cwd()
-                },
-                vm.main(),
-                // Open with the minimum permissions necessary for resolving the file path.
-                if cfg!(any(target_os = "linux", target_os = "android")) {
-                    sys::O::PATH
-                } else {
-                    sys::O::RDONLY
-                },
-                0,
-            ) else {
+            let main = vm.main();
+            let mut main_buf = bun_paths::path_buffer_pool::get();
+            if main.len() >= main_buf.len() {
+                break 'use_resolved_path;
+            }
+            main_buf[..main.len()].copy_from_slice(main);
+            main_buf[main.len()] = 0;
+            let main_z = bun_core::ZStr::from_buf(&main_buf[..], main.len());
+
+            let mut resolved_buf = bun_paths::path_buffer_pool::get();
+            let Ok(resolved) = sys::realpath(main_z, &mut resolved_buf) else {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
-            #[cfg(windows)]
-            {
-                let mut wpath = WPathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
-                    break 'use_resolved_path;
-                };
-                vm.main_resolved_path = BunString::clone_utf16(fdpath);
-            }
-            #[cfg(not(windows))]
-            {
-                let mut path = PathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
-                    break 'use_resolved_path;
-                };
-
-                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-                if let Some(atom) = BunString::try_create_atom(fdpath) {
-                    vm.main_resolved_path = atom;
-                } else {
-                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
-                }
+            // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+            if let Some(atom) = BunString::try_create_atom(resolved) {
+                vm.main_resolved_path = atom;
+            } else {
+                vm.main_resolved_path = BunString::clone_utf8(resolved);
             }
         }
 

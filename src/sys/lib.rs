@@ -3015,6 +3015,37 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
+
+        // Linux: one `open(O_PATH)` has the kernel resolve the whole path, and
+        // procfs reads the result back — three syscalls regardless of depth,
+        // where libc's `realpath` issues a `readlink` per component. `O_PATH`
+        // needs no permission on the file itself, matching `realpath(3)`.
+        // Without a usable procfs (not mounted, `hidepid`, non-dumpable
+        // process) fall through to libc for the rest of the process.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use core::sync::atomic::{AtomicBool, Ordering};
+            static PROCFS_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+            if !PROCFS_UNAVAILABLE.load(Ordering::Relaxed) {
+                let fd = open(path, O::PATH | O::CLOEXEC, 0).map_err(|e| {
+                    Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes())
+                })?;
+                let mut proc = [0u8; 32];
+                let n = {
+                    use std::io::Write as _;
+                    let mut c = std::io::Cursor::new(&mut proc[..]);
+                    let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+                    c.position() as usize - 1
+                };
+                let r = readlink(ZStr::from_buf(&proc[..], n), &mut buf.0);
+                let _ = close(fd);
+                match r {
+                    Ok(len) => return Ok(&buf.0[..len]),
+                    Err(_) => PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed),
+                }
+            }
+        }
+
         // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
         // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
         let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };

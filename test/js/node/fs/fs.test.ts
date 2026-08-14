@@ -2804,9 +2804,8 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
-// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
-// a /dev/fd fallback for environments where /proc is broken (FreeBSD
-// Linuxulator) or absent (minimal containers).
+// Regression guard for realpathSync on POSIX hosts, including environments
+// where /proc is broken (FreeBSD Linuxulator) or absent (minimal containers).
 it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
   expect(realpathSync("/")).toBe("/");
 
@@ -2820,12 +2819,24 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
-// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
-// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
-// non-Windows target Bun ships, fd→path resolution is implemented — there is
-// no platform that falls through to ENOSYS. realpathSync on POSIX is
-// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
+// realpath(3) only needs search permission on the directories, not read
+// permission on the leaf (Node's `fs.realpathSync.native` behaves the same).
+it.if(isPosix && process.getuid?.() !== 0)("realpathSync succeeds on a file with mode 000", () => {
+  using dir = tempDir("fs-realpath-mode-000", { "locked.txt": "x" });
+  const locked = join(realpathSync(String(dir)), "locked.txt");
+  fs.chmodSync(locked, 0o000);
+  try {
+    for (const impl of [realpathSync, realpathSync.native]) {
+      expect(impl(locked)).toBe(locked);
+      expect(impl(relative(process.cwd(), locked))).toBe(locked);
+    }
+  } finally {
+    fs.chmodSync(locked, 0o644);
+  }
+});
+
+// realpathSync must be implemented on every POSIX target Bun ships — there is
+// no platform that falls through to ENOSYS.
 it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
   using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
   const probe = join(String(dir), "probe.txt");
@@ -2834,9 +2845,6 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   try {
     resolved = realpathSync(probe);
   } catch (e: any) {
-    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
-    // value has a real implementation. If this fires, a target (FreeBSD's
-    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
     expect(e?.code).not.toBe("ENOSYS");
     expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
     throw e;

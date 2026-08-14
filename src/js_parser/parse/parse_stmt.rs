@@ -705,8 +705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             }
 
-            // Only require "const" and "using" statement initializers when we know we're a
-            // normal for loop
+            // Only require "const"/"using" initializers once we know this is a normal for loop
             if let Some(init_stmt) = &init_ {
                 match &init_stmt.data {
                     js_ast::StmtData::SLocal(local) => {

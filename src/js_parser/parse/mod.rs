@@ -1583,8 +1583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
     }
 
-    /// With the lexer on the token after `using` in a for-loop head: `for (using of y)`
-    /// loops over a variable named `using`, while `for (using of = x;;)` declares `of`.
+    /// `for (using of y)` loops over the variable `using`; `for (using of = x;;)` declares `of`.
     fn is_using_for_of_variable(&mut self) -> bool {
         self.lexer.is_contextual_keyword(b"of")
             && !self.next_token_matches(|p| p.lexer.token == T::TEquals)

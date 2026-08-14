@@ -1457,6 +1457,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   // were all still registered when env teardown finished.
   describe("finalizers still registered when the VM is destroyed", () => {
     const fixture = join(__dirname, "napi-app/vm-teardown-finalizers.js");
+    // The registration kinds env teardown (NapiEnv::cleanup) leaves registered,
+    // unlike napi_wrap and non-empty external buffers. If one of them starts
+    // being run at env teardown too, the "still pending" count below drops and
+    // the kind belongs in that path's tests instead of this list.
     const kinds = ["add_finalizer", "add_finalizer_ref", "external", "empty_external_buffer"];
 
     // The ASAN lanes export BUN_DESTRUCT_VM_ON_EXIT and LSan settings that the

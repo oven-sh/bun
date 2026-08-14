@@ -612,15 +612,11 @@ mod draft {
     /// things that affect crash reporting. See suppressReporting() for intended usage.
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
-    /// Implemented by long-lived subsystems whose state is worth writing to disk
-    /// when the process crashes (bake's `DevServer` dumps its incremental graph
-    /// when `BUN_DUMP_STATE_ON_CRASH` is set). Registered with
-    /// [`append_pre_crash_handler`].
+    /// Dumps state to disk when the process crashes (bake's `DevServer` with
+    /// `BUN_DUMP_STATE_ON_CRASH`). See [`append_pre_crash_handler`].
     pub trait PreCrashHandler {
-        /// Runs on the crashing thread, after the crash report has been printed
-        /// (so crashing again in here cannot hide the original report) and before
-        /// the process is torn down. The crash may have interrupted a mutation of
-        /// `self` on any thread: only read, and expect inconsistent state.
+        /// Runs on the crashing thread after the crash report has been printed.
+        /// `self` may be mid-mutation on another thread: only read, trust nothing.
         fn on_crash(&self);
     }
 
@@ -630,29 +626,25 @@ mod draft {
         run: unsafe fn(*const c_void),
     }
 
-    // SAFETY: `handler` is only dereferenced by `run`, on the crashing thread, and
-    // the registrant keeps it live until `remove_pre_crash_handler` (the
-    // `append_pre_crash_handler` contract); every other access just compares the address.
+    // SAFETY: `handler` is only dereferenced by `run`, and stays live until
+    // `remove_pre_crash_handler` (the `append_pre_crash_handler` contract).
     unsafe impl Send for PreCrashHandlerEntry {}
 
     static PRE_CRASH_HANDLERS: bun_threading::Guarded<Vec<PreCrashHandlerEntry>> =
         bun_threading::Guarded::new(Vec::new());
 
     /// # Safety
-    /// `handler` must be a pointer registered through `append_pre_crash_handler::<T>`
-    /// whose pointee is still live.
+    /// `handler` must be the live `*const T` passed to `append_pre_crash_handler::<T>`.
     unsafe fn run_pre_crash_handler<T: PreCrashHandler>(handler: *const c_void) {
         // SAFETY: per fn contract.
         unsafe { (*handler.cast::<T>()).on_crash() }
     }
 
-    /// Registers `handler` to run if the process crashes. This is best effort:
-    /// handlers are skipped when the crash happens while another one is being
-    /// registered or removed, and whatever they do, the process still dies.
+    /// Registers `handler` to run if the process crashes. Best effort: it is
+    /// skipped if the crash happens while the list itself is being modified.
     ///
     /// # Safety
-    /// `*handler` must stay live at this address until it is passed to
-    /// [`remove_pre_crash_handler`].
+    /// `*handler` must stay live at this address until [`remove_pre_crash_handler`].
     pub unsafe fn append_pre_crash_handler<T: PreCrashHandler>(handler: *const T) {
         PRE_CRASH_HANDLERS.lock().push(PreCrashHandlerEntry {
             handler: handler.cast(),
@@ -660,8 +652,7 @@ mod draft {
         });
     }
 
-    /// Unregisters a handler passed to [`append_pre_crash_handler`]. Does nothing
-    /// if it is not registered.
+    /// No-op if `handler` is not registered.
     pub fn remove_pre_crash_handler<T: PreCrashHandler>(handler: *const T) {
         let handler: *const c_void = handler.cast();
         let mut handlers = PRE_CRASH_HANDLERS.lock();
@@ -670,14 +661,13 @@ mod draft {
         }
     }
 
-    /// Called by both crash entry points (`crash_handler` and `rust_panic_hook`)
-    /// once the report is printed; runs the handlers at most once per process.
+    /// Called once the report is printed, by `crash_handler` and `rust_panic_hook`.
     fn run_pre_crash_handlers() {
         static RAN: AtomicBool = AtomicBool::new(false);
         if RAN.swap(true, Ordering::AcqRel) {
             return;
         }
-        // The crash may have happened while this thread held the lock, so never block on it.
+        // The crashing thread may be the one holding the lock.
         let Some(handlers) = PRE_CRASH_HANDLERS.try_lock() else {
             return;
         };
@@ -685,13 +675,11 @@ mod draft {
             return;
         }
         for entry in handlers.iter() {
-            // SAFETY: `entry.run` was instantiated for the type `entry.handler` points
-            // to, and the registrant keeps the pointee live until it removes the entry
-            // (see `append_pre_crash_handler`).
+            // SAFETY: `run` was instantiated for the type `handler` points to, and
+            // `handler` is live until removed (`append_pre_crash_handler` contract).
             unsafe { (entry.run)(entry.handler) };
         }
-        // Handlers say where they wrote to through the buffered `Output` writers,
-        // and nothing flushes those between here and the abort.
+        // The handlers' `note!`/`warn!` output is buffered; the callers abort without flushing.
         Output::flush();
     }
 

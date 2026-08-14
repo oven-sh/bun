@@ -133,9 +133,8 @@ pub(crate) mod js_bindings {
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
-    /// Unlike `panic` above, which enters `crash_handler()` directly, this takes
-    /// the route a failed `assert!`/`unwrap()` takes: `std::panic` → the panic
-    /// hook the crash handler installs.
+    /// Reaches the crash handler through the std panic hook, like a failed
+    /// `assert!` does; `panic` above calls into it directly.
     #[bun_jsc::host_fn]
     fn js_rust_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();

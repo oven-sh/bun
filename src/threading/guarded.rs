@@ -55,12 +55,8 @@ impl<Value> GuardedBy<Value, Mutex> {
         }
     }
 
-    /// Attempts to acquire the mutex without blocking. Returns the guard on
-    /// success, `None` if another thread holds the lock.
-    ///
-    /// Parity with `parking_lot::Mutex::try_lock`. Only provided for the real
-    /// [`Mutex`] backend (not generic `M`) because [`RawMutex`] intentionally
-    /// stays `lock`/`unlock`-only.
+    /// `None` if the lock is held. Only for the [`Mutex`] backend: [`RawMutex`]
+    /// is deliberately `lock`/`unlock`-only.
     #[inline]
     pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
         if self.mutex.try_lock() {

@@ -387,9 +387,15 @@ public:
         delete handle;
     }
 
+    // True when a finalizer running right now would be running from the garbage collector.
+    // ~VM (a Worker exiting, or BUN_DESTRUCT_VM_ON_EXIT) is the second such context besides a
+    // collection: Heap::lastChanceToFinalize fires every finalizer still registered, but runs
+    // the weak-handle ones, and the destructors of precise allocations (the first few cells of
+    // every IsoSubspace), without the Sweeping mutator state isCollectorBusyOnCurrentThread()
+    // keys on. It sets isShuttingDown() first.
     bool inGC() const
     {
-        return this->vm().isCollectorBusyOnCurrentThread();
+        return this->vm().isCollectorBusyOnCurrentThread() || this->vm().heap.isShuttingDown();
     }
 
     void checkGC() const
@@ -490,11 +496,12 @@ public:
         // The deferred path (NapiFinalizerTask::schedule) is responsible for the
         // shutdown case: once is_shutting_down() it either pushes a cleanup hook
         // (if those haven't run yet) or drops the task (if they have). Running a
-        // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
-        // never safe — by then on_exit() has already run cleanup hooks (including
-        // the napi_set_instance_data finalizer that frees per-addon state the
-        // object finalizer reads), the heap is sweeping (no allocation, no handle
-        // scope), and napi_call_function returns the termination exception.
+        // non-EXPERIMENTAL finalizer immediately during the final collectNow(), or
+        // during the ~VM that follows it (inGC() reports both), is never safe: by
+        // then on_exit() has already run cleanup hooks (including the
+        // napi_set_instance_data finalizer that frees per-addon state the object
+        // finalizer reads), the heap is sweeping (no allocation, no handle scope),
+        // and napi_call_function returns the termination exception.
         return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;
     }
 

@@ -103,7 +103,10 @@ NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool
     // 2. Do an allocation in a hot code path
     // 3. the napi_ref finalizer is called while the constructor is running
     // 4. The finalizer creates a new handle scope (yes, it should not do that. No, we can't change that.)
-    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) {
+    //
+    // Same for a finalizer fired by ~VM (Heap::lastChanceToFinalize): the allocators are
+    // already stopped, but mutatorState() does not say Sweeping there (see NapiEnv::inGC()).
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping || vm.heap.isShuttingDown()) {
         return nullptr;
     }
 

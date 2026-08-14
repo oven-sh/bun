@@ -1126,12 +1126,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("bigint_to_i64", testsString);
       await checkSameOutput("bigint_to_u64", testsString);
     });
+    // Three serial node + bun runs: over 5s on a debug ASAN build.
     it("returns the right error code", async () => {
       const badTypes = '[null, undefined, 5, "123", "abc"]';
       await checkSameOutput("bigint_to_i64", badTypes);
       await checkSameOutput("bigint_to_u64", badTypes);
       await checkSameOutput("bigint_to_64_null", []);
-    });
+    }, 10_000);
   });
 
   describe("create_bigint_words", () => {
@@ -1445,6 +1446,83 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+
+  // Destroying a JSC VM (a Worker exiting; the main thread under
+  // BUN_DESTRUCT_VM_ON_EXIT) fires every finalizer still registered. That
+  // happens after env teardown and without the "sweeping" mutator state a
+  // collection has, which Bun used to mistake for an ordinary non-GC context:
+  // it ran the addon's callbacks inline, inside the heap being destroyed. The
+  // fixture pins its objects with strong refs, so VM destruction is the only
+  // thing that can reach these finalizers; the "still pending" count shows they
+  // were all still registered when env teardown finished.
+  describe("finalizers still registered when the VM is destroyed", () => {
+    const fixture = join(__dirname, "napi-app/vm-teardown-finalizers.js");
+    const kinds = ["add_finalizer", "add_finalizer_ref", "external", "empty_external_buffer"];
+
+    const vms = [
+      { vm: "a worker_threads Worker", flags: [] as string[], extraEnv: {} as Record<string, string> },
+      { vm: "the main thread", flags: ["--main-thread"], extraEnv: { BUN_DESTRUCT_VM_ON_EXIT: "1" } },
+    ];
+    it.each(vms)(
+      "a regular module's finalizers are not invoked from the dying heap of $vm",
+      async ({ flags, extraEnv }) => {
+        await using proc = spawn({
+          cmd: [bunExe(), fixture, "test_vm_teardown_finalizers", kinds.join(","), ...flags],
+          env: { ...bunEnv, ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // Before the fix: one "FAIL: <kind> finalizer ran after env teardown" line
+        // per kind, then (debug builds) an assertion failure in JSCell::JSCell
+        // when the finalizer's handle scope allocates in the heap being destroyed.
+        expect(stderr).toBe("");
+        expect(stdout).toContain(`env teardown: ${kinds.length} finalizer(s) still pending`);
+        if (flags.length === 0) expect(stdout).toContain("worker exited: 0");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // Experimental modules have their finalizers run synchronously by whatever
+    // frees the object, VM destruction included; what has to hold is that a
+    // GC-affecting call made from there is refused the same way it is during a
+    // collection. One kind per path JSC fires them from: the fixture's
+    // NapiExternal is destroyed as an individually allocated cell
+    // (PreciseAllocation::sweep), a napi_add_finalizer callback is a weak-handle
+    // finalizer (WeakBlock::lastChanceToFinalize). The first finalizer to run
+    // aborts the process, so each kind gets its own run.
+    it.each(["external", "add_finalizer"])(
+      "an experimental module's %s finalizer is told it is running from GC",
+      async kind => {
+        const { BUN_INSPECT_CONNECT_TO: _, ...env } = bunEnv;
+        await using proc = spawn({
+          // The trailing flag makes a debug build's crash handler skip its slow
+          // symbolized backtrace; the fixture ignores it.
+          cmd: [
+            bunExe(),
+            fixture,
+            "test_vm_teardown_finalizers_experimental",
+            kind,
+            "--debug-crash-handler-use-trace-string",
+          ],
+          env: {
+            ...env,
+            BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+            ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("env teardown: 1 finalizer(s) still pending");
+        // Before the fix: "FAIL: <kind> finalizer called napi_get_undefined
+        // during VM destruction and got status 0" and a clean exit.
+        expect(stderr).not.toContain("FAIL:");
+        expect(stderr).toContain("FATAL ERROR: Finalizer is calling a function that may affect GC state.");
+        expect(exitCode).not.toBe(0);
+      },
+    );
+  });
 });
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by

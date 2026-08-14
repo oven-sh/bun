@@ -2235,9 +2235,9 @@ pub mod closer {
         pub(crate) fd: Fd,
         task: WorkPoolTask,
         #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
-        scheduled_from: std::backtrace::Backtrace,
+        scheduled_from: bun_core::StoredTrace,
         #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
-        scheduled_on: String,
+        scheduled_on_tid: i64,
     }
 
     #[cfg(not(windows))]
@@ -2253,12 +2253,19 @@ pub mod closer {
                 if let Some(err) = self.fd.close_allowing_bad_file_descriptor(None) {
                     if err.errno == bun_sys::E::EBADF as _ {
                         std::eprintln!(
-                            "\n==================== Closer: close({}) = EBADF ====================\n\
-                             this Closer was scheduled on thread {} from:\n{}\n\
-                             ======================================================================\n",
-                            self.fd.native(),
-                            self.scheduled_on,
-                            self.scheduled_from,
+                            "\n==================== Closer: close({}) = EBADF ====================",
+                            self.fd.native()
+                        );
+                        std::eprintln!(
+                            "this Closer was scheduled on tid {} at:",
+                            self.scheduled_on_tid
+                        );
+                        bun_core::dump_stack_trace(
+                            &self.scheduled_from.trace(),
+                            bun_core::DumpStackTraceOptions::default(),
+                        );
+                        std::eprintln!(
+                            "======================================================================\n"
                         );
                         panic!(
                             "Closer: fd {} was already closed when the async close ran (see report above)",
@@ -2285,15 +2292,9 @@ pub mod closer {
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
                 },
                 #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
-                scheduled_from: std::backtrace::Backtrace::force_capture(),
+                scheduled_from: bun_core::StoredTrace::capture(None),
                 #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
-                scheduled_on: {
-                    let t = std::thread::current();
-                    match t.name() {
-                        Some(name) => std::format!("{name} ({:?})", t.id()),
-                        None => std::format!("{:?}", t.id()),
-                    }
-                },
+                scheduled_on_tid: bun_sys::close_ledger::current_tid(),
             }));
         }
     }

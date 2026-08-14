@@ -395,7 +395,11 @@ describe("Bun.serve HTML manifest", () => {
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [buildStderr, buildExitCode] = await Promise.all([buildProc.stderr.text(), buildProc.exited]);
+    const [, buildStderr, buildExitCode] = await Promise.all([
+      buildProc.stdout.text(),
+      buildProc.stderr.text(),
+      buildProc.exited,
+    ]);
     expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 

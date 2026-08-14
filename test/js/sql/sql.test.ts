@@ -15,7 +15,16 @@ function rel(filename: string) {
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
-import { neverAnsweringServer } from "./wire-frames";
+import {
+  listeningServer,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgRaw,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
@@ -12869,3 +12878,107 @@ test("data row that omits columns declared in the row description yields nulls f
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Serverless twins of the in-flight timer tests (#30646). The container suites
+// above cover the same scenarios against a real server (which a mock must not
+// replace for producible behavior like a slow SELECT), but they are skipped
+// entirely where docker and the test services are unavailable, so these keep
+// the regression executable everywhere: the mock delays the query response
+// past the client-side timer, which on main kills the in-flight query.
+describe.concurrent("timers do not kill in-flight queries (no server, #30646)", () => {
+  // Startup-phase handshake (no SSL): AuthenticationOk + ReadyForQuery(idle).
+  const HANDSHAKE = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]);
+
+  // Response to the extended-query batch for `SELECT 42 as x` (no params):
+  // ParseComplete + ParameterDescription + RowDescription + BindComplete +
+  // DataRow + CommandComplete + ReadyForQuery. Type oid 23 = int4.
+  const QUERY_RESPONSE = Buffer.concat([
+    pgRaw("1", Buffer.alloc(0)), // ParseComplete
+    pgRaw("t", Buffer.from([0, 0])), // ParameterDescription, 0 params
+    pgRowDescription([{ name: "x", typeOid: 23, typeSize: 4 }]),
+    pgRaw("2", Buffer.alloc(0)), // BindComplete
+    pgDataRow([Buffer.from("42")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery("I"),
+  ]);
+
+  // Replies to the startup packet immediately, then answers each query batch
+  // (one response per Sync / Simple Query) after `queryDelayMs`.
+  async function delayedServer(queryDelayMs: number): Promise<{ port: number; stop: () => void }> {
+    const timers = new Set<Timer>();
+    const { port, server } = await listeningServer(socket => {
+      let state: "startup" | "query" = "startup";
+      let buf: Buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (state === "startup") {
+          state = "query";
+          socket.write(HANDSHAKE);
+          return;
+        }
+        buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
+        // Message format: type(1) + length(4 BE, length field included).
+        while (buf.length >= 5) {
+          const total = 1 + buf.readInt32BE(1);
+          if (buf.length < total) break;
+          const type = buf[0];
+          buf = buf.subarray(total);
+          if (type === 0x53 /* Sync */ || type === 0x51 /* Simple Query */) {
+            const t = setTimeout(() => {
+              timers.delete(t);
+              if (!socket.destroyed) socket.write(QUERY_RESPONSE);
+            }, queryDelayMs);
+            timers.add(t);
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      port,
+      stop: () => {
+        for (const t of timers) clearTimeout(t);
+        server.close();
+      },
+    };
+  }
+
+  test("idleTimeout waits for the in-flight query", async () => {
+    // Server answers after 3s; idleTimeout is 1s. On main the idle timer kills
+    // the connection mid-query with ERR_POSTGRES_IDLE_TIMEOUT.
+    const { port, stop } = await delayedServer(3000);
+    try {
+      await using sql = new SQL({
+        url: `postgres://u@127.0.0.1:${port}/db?sslmode=disable`,
+        max: 1,
+        idleTimeout: 1,
+      });
+      const result = await sql`SELECT 42 as x`;
+      expect(result[0].x).toBe(42);
+    } finally {
+      stop();
+    }
+  }, 30_000);
+
+  test("maxLifetime waits for the in-flight query, then retires the connection", async () => {
+    // Server answers after 3s; maxLifetime is 1s. On main the lifetime timer
+    // kills the connection mid-query with ERR_POSTGRES_LIFETIME_TIMEOUT.
+    const onClosePromise = Promise.withResolvers();
+    const { port, stop } = await delayedServer(3000);
+    try {
+      await using sql = new SQL({
+        url: `postgres://u@127.0.0.1:${port}/db?sslmode=disable`,
+        max: 1,
+        maxLifetime: 1,
+        onclose: err => onClosePromise.resolve(err),
+      });
+      const result = await sql`SELECT 42 as x`;
+      expect(result[0].x).toBe(42);
+      // The deferred retirement still enforces maxLifetime once the query is done.
+      const err = (await onClosePromise.promise) as SQL.PostgresError;
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    } finally {
+      stop();
+    }
+  }, 30_000);
+});

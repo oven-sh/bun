@@ -450,7 +450,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled"
         ),
         parse_param!(
-            "--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\""
+            "--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\". Defaults to \"browser\", \"node\" with --format=cjs, or \"bun\" with --compile or --bytecode"
         ),
         parse_param!("--outdir <STR>                   Default to \"dist\" if multiple files"),
         parse_param!("--outfile <STR>                  Write to a file"),
@@ -2061,9 +2061,9 @@ fn parse_build_command_options(
             FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
+    // `--bytecode` (like `--compile`) forces the target to bun in `BuildCommand::exec`.
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
-        ctx.args.target = Some(api::Target::Bun);
     }
 
     if let Some(public_path) = args.option(b"--public-path") {
@@ -2516,8 +2516,8 @@ fn parse_build_command_options(
                 Output::flush();
             }
             options::Format::Cjs => {
-                if ctx.args.target.is_none() {
-                    ctx.args.target = Some(api::Target::Node);
+                if opts.target.is_none() {
+                    opts.target = Some(api::Target::Node);
                 }
             }
             _ => {}

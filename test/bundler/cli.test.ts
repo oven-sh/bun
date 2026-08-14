@@ -579,3 +579,67 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// Without --target, `bun build` bundles for the browser, except that --format=cjs
+// defaults to node (docs/bundler/index.mdx, "format: cjs"). The entry point imports
+// a node builtin because the two targets bundle it differently: the browser target
+// replaces it with an empty stub, the node target keeps it as a require().
+describe.concurrent("bun build --format=cjs defaults --target to node", () => {
+  const files = {
+    "entry.js": `import { readFileSync } from "node:fs";\nconsole.log(typeof readFileSync);\n`,
+  };
+  const browserStub = "(() => ({}))";
+
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expect.any(String), stderr: "", exitCode: 0 });
+    return stdout;
+  }
+
+  test("--format=cjs alone bundles for node", async () => {
+    using dir = tempDir("build-cjs-default-target", files);
+    const out = await build(String(dir), "--format=cjs", "entry.js");
+    expect(out).toMatchInlineSnapshot(`
+      "// entry.js
+      var import_node_fs = require("node:fs");
+      console.log(typeof import_node_fs.readFileSync);
+      "
+    `);
+  });
+
+  test("an explicit --target=browser is kept", async () => {
+    using dir = tempDir("build-cjs-target-browser", files);
+    const out = await build(String(dir), "--format=cjs", "--target=browser", "entry.js");
+    expect(out).toContain(browserStub);
+    expect(out).not.toContain('require("node:fs")');
+  });
+
+  test("an explicit --target=bun is kept, whichever flag comes first", async () => {
+    using dir = tempDir("build-cjs-target-bun", files);
+    const out = await build(String(dir), "--target=bun", "--format=cjs", "entry.js");
+    expect(out).toStartWith("// @bun @bun-cjs\n");
+    expect(out).toContain('require("fs")');
+  });
+
+  test("--bytecode still forces --target=bun", async () => {
+    using dir = tempDir("build-cjs-bytecode", files);
+    await build(String(dir), "--format=cjs", "--bytecode", "--outdir=out", "entry.js");
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toStartWith("// @bun @bytecode @bun-cjs\n");
+    expect(out).toContain('require("fs")');
+  });
+
+  test.each(["esm", "iife"])("--format=%s still defaults to the browser target", async format => {
+    using dir = tempDir(`build-${format}-default-target`, files);
+    const out = await build(String(dir), `--format=${format}`, "entry.js");
+    expect(out).toContain(browserStub);
+    expect(out).not.toContain('"node:fs"');
+  });
+});

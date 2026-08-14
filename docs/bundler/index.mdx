@@ -408,7 +408,7 @@ To use ES Module syntax in browsers, set `format` to `"esm"` and load the bundle
 
 #### format: "cjs" - CommonJS
 
-To build a CommonJS module, set `format` to `"cjs"`. When choosing `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming the APIs in use are supported by both).
+To build a CommonJS module, set `format` to `"cjs"`. On the command line, `--format=cjs` changes the default `--target` from `"browser"` to `"node"`. `Bun.build()` keeps its default of `target: "browser"`, so pass `target` explicitly there. CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming the APIs in use are supported by both).
 
 <Tabs>
   <Tab title="JavaScript">

@@ -255,17 +255,20 @@ impl Entry {
         // now) are deliberately swallowed: the placeholder kind stays.
         // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
         // only does syscalls, so the short `&mut` cannot alias.
+        let mut c = self.cache.get();
+        // A re-stat (the entry went stale) must not keep a previous target.
+        c.symlink = Interned::EMPTY;
         if let Ok(r) = unsafe { &mut *fs }.resolve_kind(self.dir, self.base()) {
-            let mut c = self.cache.get();
             c.kind = r.kind;
             c.is_symlink = r.is_symlink;
-            self.cache.set(c);
             if !r.is_symlink {
                 self.need_realpath.store(false, Ordering::Release);
             }
         } else {
+            c.is_symlink = false;
             self.need_realpath.store(false, Ordering::Release);
         }
+        self.cache.set(c);
         // Clear the flag only after the `cache` write: lock-free readers
         // that observe `false` skip the mutex, so this Release store is
         // what publishes `cache` to them.

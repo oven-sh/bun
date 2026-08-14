@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isCaseSensitiveFS } from "harness";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1768,6 +1769,11 @@ describe("bundler", () => {
     run: true,
   });
 
+  // Imports whose case differs from the file on disk resolve exactly when the
+  // filesystem itself would open them: on a case-insensitive volume (default
+  // macOS/Windows) they work, on a case-sensitive one (Linux) they fail, the
+  // same as they would at runtime under Node.
+  const caseSensitiveFS = isCaseSensitiveFS();
   itBundled("extra/CaseSensitiveImport", {
     files: {
       "in.js": `
@@ -1778,29 +1784,40 @@ describe("bundler", () => {
       "file1.js": `export default 123`,
       "File2.js": `export default 234`,
     },
-    run: true,
+    ...(caseSensitiveFS
+      ? {
+          bundleErrors: {
+            "/in.js": [`Could not resolve: "./File1.js"`, `Could not resolve: "./file2.js"`],
+          },
+        }
+      : { run: true }),
   });
-  itBundled("extra/CaseSensitiveImport2", {
-    todo: true,
+  // Names differing only in case can only coexist on a case-sensitive
+  // filesystem; each import must pick the file spelled exactly like it. Three
+  // spellings of file1 make sure a listing that only remembers one file per
+  // case-folded name cannot pass by luck of directory order.
+  (caseSensitiveFS ? itBundled : itBundled.skip)("extra/CaseSensitiveImport2", {
     files: {
       "in.js": `
-        import x from "./File1.js"
-        import y from "./file2.js"
-        import z from "./File3.js"
-        console.log(x, y, z)
+        import a from "./file1.js"
+        import b from "./File1.js"
+        import c from "./FILE1.js"
+        import d from "./file2.js"
+        import e from "./File3.js"
+        console.log(a, b, c, d, e)
       `,
       "file1.js": `export default 123`,
       "File1.js": `export default 234`,
-      "file2.js": `export default 345`,
-      "File2.js": `export default 456`,
-      "File3.js": `export default 567`,
+      "FILE1.js": `export default 345`,
+      "file2.js": `export default 456`,
+      "File2.js": `export default 567`,
+      "File3.js": `export default 678`,
     },
     run: {
-      stdout: "234 345 567",
+      stdout: "123 234 345 456 678",
     },
   });
   itBundled("extra/CaseSensitiveImport3", {
-    todo: true,
     files: {
       "in.js": `
         import x from "./Dir1/file.js"
@@ -1810,12 +1827,14 @@ describe("bundler", () => {
       "dir1/file.js": `export default 123`,
       "Dir2/file.js": `export default 234`,
     },
-    bundleErrors: {
-      "/in.js": [`Could not resolve: "./Dir1/file.js"`, `Could not resolve: "./dir2/file.js"`],
-    },
-    run: true,
+    ...(caseSensitiveFS
+      ? {
+          bundleErrors: {
+            "/in.js": [`Could not resolve: "./Dir1/file.js"`, `Could not resolve: "./dir2/file.js"`],
+          },
+        }
+      : { run: true }),
   });
-  // Warn when importing something inside node_modules
   itBundled("extra/CaseSensitiveImport4", {
     files: {
       "in.js": `
@@ -1826,6 +1845,12 @@ describe("bundler", () => {
       "node_modules/pkg/file1.js": `export default 123`,
       "node_modules/pkg/File2.js": `export default 234`,
     },
-    run: true,
+    ...(caseSensitiveFS
+      ? {
+          bundleErrors: {
+            "/in.js": [`Could not resolve: "pkg/File1.js"`, `Could not resolve: "pkg/file2.js"`],
+          },
+        }
+      : { run: true }),
   });
 });

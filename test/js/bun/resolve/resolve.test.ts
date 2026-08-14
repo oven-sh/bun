@@ -1,7 +1,18 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isCaseSensitiveFS,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1687,5 +1698,137 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stderr).toBe("");
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The resolver's directory listing cache is keyed by lowercased file name. A
+// lookup must still behave like the filesystem underneath it: the file spelled
+// exactly like the specifier wins, and a file spelled differently only counts
+// on a filesystem that folds case itself (default macOS/Windows volumes).
+describe.concurrent("file name case", () => {
+  const caseSensitiveFS = isCaseSensitiveFS();
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+  }
+
+  // Only a case-sensitive filesystem can hold all three of these at once.
+  describe.skipIf(!caseSensitiveFS)("files differing only in case in one directory", () => {
+    const variants = {
+      "case.js": `console.log("lower");`,
+      "Case.js": `console.log("mixed");`,
+      "CASE.js": `console.log("upper");`,
+    };
+
+    it("runs the entry point spelled like the argument", async () => {
+      using dir = tempDir("resolve-case-entry", variants);
+      const results = await Promise.all(
+        Object.keys(variants).map(async name => [name, (await runBun(String(dir), name)).stdout]),
+      );
+      expect(Object.fromEntries(results)).toEqual({
+        "case.js": "lower",
+        "Case.js": "mixed",
+        "CASE.js": "upper",
+      });
+    });
+
+    it("import and require load the file spelled like the specifier", async () => {
+      using dir = tempDir("resolve-case-import", {
+        ...variants,
+        "imports.mjs": `
+          import "./case.js";
+          import "./Case.js";
+          import "./CASE.js";
+        `,
+        "requires.cjs": `
+          require("./case.js");
+          require("./Case.js");
+          require("./CASE.js");
+        `,
+      });
+      const [esm, cjs] = await Promise.all([runBun(String(dir), "imports.mjs"), runBun(String(dir), "requires.cjs")]);
+      expect(esm).toEqual({ stdout: "lower\nmixed\nupper", stderr: "", exitCode: 0 });
+      expect(cjs).toEqual({ stdout: "lower\nmixed\nupper", stderr: "", exitCode: 0 });
+    });
+
+    it("does not resolve a spelling that matches none of them", async () => {
+      using dir = tempDir("resolve-case-none", {
+        ...variants,
+        "imports.mjs": `import "./cAsE.js";`,
+      });
+      const result = await runBun(String(dir), "imports.mjs");
+      expect(result.stderr).toContain("Cannot find module './cAsE.js'");
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  describe("only a differently cased file exists", () => {
+    const files = {
+      "ZED.ts": `console.log("ZED.ts");`,
+      "bar.js": `console.log("bar.js");`,
+    };
+
+    it("as the entry point", async () => {
+      using dir = tempDir("resolve-case-lone-entry", files);
+      const result = await runBun(String(dir), "zed.ts");
+      if (caseSensitiveFS) {
+        expect(result.stderr).toContain('Module not found "zed.ts"');
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      }
+    });
+
+    it("as an import, with and without extension", async () => {
+      using dir = tempDir("resolve-case-lone-import", {
+        ...files,
+        "with-ext.mjs": `import "./zed.ts";`,
+        "without-ext.mjs": `import "./zed";`,
+      });
+      const [withExt, withoutExt] = await Promise.all([
+        runBun(String(dir), "with-ext.mjs"),
+        runBun(String(dir), "without-ext.mjs"),
+      ]);
+      if (caseSensitiveFS) {
+        expect(withExt.stderr).toContain("Cannot find module './zed.ts'");
+        expect(withExt.exitCode).toBe(1);
+        expect(withoutExt.stderr).toContain("Cannot find module './zed'");
+        expect(withoutExt.exitCode).toBe(1);
+      } else {
+        expect(withExt).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+        expect(withoutExt).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      }
+    });
+
+    // `bun run BAR` used to find bar.js in the listing, then try to read the
+    // non-existent BAR.js it built from the argument and fail with ENOENT.
+    it("as the target of `bun run`", async () => {
+      using dir = tempDir("resolve-case-lone-run", files);
+      const result = await runBun(String(dir), "run", "BAR");
+      if (caseSensitiveFS) {
+        expect(result.stderr).toContain('Script not found "BAR"');
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual({ stdout: "bar.js", stderr: "", exitCode: 0 });
+      }
+    });
+
+    it("the exact spelling still resolves", async () => {
+      using dir = tempDir("resolve-case-exact", {
+        ...files,
+        "imports.mjs": `import "./ZED.ts"; import "./bar";`,
+      });
+      const [entry, imports] = await Promise.all([runBun(String(dir), "ZED.ts"), runBun(String(dir), "imports.mjs")]);
+      expect(entry).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      expect(imports).toEqual({ stdout: "ZED.ts\nbar.js", stderr: "", exitCode: 0 });
+    });
   });
 });

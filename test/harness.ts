@@ -1459,6 +1459,27 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
   return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
+let caseSensitiveFS: boolean | undefined;
+
+/**
+ * Whether the filesystem that `tempDir`/`tmpdirSync` fixtures land on treats
+ * `a` and `A` as different files. True for ext4 and friends, false for the
+ * default APFS and NTFS volumes. Probed once, by creating both names.
+ */
+export function isCaseSensitiveFS(): boolean {
+  if (caseSensitiveFS === undefined) {
+    const dir = tmpdirSync("bun.case-probe.");
+    try {
+      fs.writeFileSync(join(dir, "a"), "");
+      fs.writeFileSync(join(dir, "A"), "");
+      caseSensitiveFS = fs.readdirSync(dir).length === 2;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  return caseSensitiveFS;
+}
+
 export async function runBunInstall(
   env: NodeJS.Dict<string>,
   cwd: string,

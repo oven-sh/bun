@@ -6,8 +6,7 @@ use bstr::BStr;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
-use bun_core::MutableString;
-use bun_core::{FeatureFlags, Generation};
+use bun_core::{FeatureFlags, Generation, MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::Interned;
@@ -298,6 +297,14 @@ pub struct EntryLookup<'a> {
 }
 
 impl<'a> EntryLookup<'a> {
+    #[inline(always)]
+    fn new(entry: *mut Entry) -> Self {
+        Self {
+            entry,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
     /// Shared borrow of the looked-up `Entry`.
     ///
     /// # Safety (encapsulated)
@@ -326,7 +333,14 @@ impl<'a> EntryLookup<'a> {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
+    /// Basename → entry-pointer map backing `DirEntry::data`.
+    ///
+    /// Keys are the ASCII-lowercased basenames, so one probe serves both
+    /// exact-case and case-folded (macOS/Windows) lookups. When a directory on
+    /// a case-sensitive filesystem holds several names that differ only in
+    /// case, the all-lowercase spelling (if any) owns the lowercased key and
+    /// every other spelling is keyed by its exact name; `DirEntry::get`
+    /// checks `Entry::base` against the query to tell the variants apart.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -474,10 +488,23 @@ impl DirEntry {
 
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // `data` keys are the lowercased basenames, so an exact match on
-                // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                // Recycle the previous generation's slot for this exact name
+                // only. The lowercased key (probed first, reusing `name_hash`)
+                // may instead hold a sibling differing in case, or the name as
+                // it was spelled before a case-only rename; both get a fresh
+                // `Entry` below. A name that lost the lowercased key to a
+                // sibling sits under its exact spelling (see the insert below).
+                let recycled: Option<*mut Entry> = match map.get_hashed(name_hash, name_lc) {
+                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                    Some(&p) if unsafe { (*p).base() } == name_slice => Some(p),
+                    Some(_) => map
+                        .get(name_slice)
+                        .copied()
+                        // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                        .filter(|&p| unsafe { (*p).base() } == name_slice),
+                    None => None,
+                };
+                if let Some(existing_ptr) = recycled {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -563,9 +590,6 @@ impl DirEntry {
             }
         };
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
-
         // PERF: the
         // generic `put` here would heap-box a second key copy. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
@@ -578,9 +602,32 @@ impl DirEntry {
         let key: &'static [u8] =
             unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
-        // entry interned `name_lc`; a recycled one matched it exactly above), so
-        // `name_hash` is its hash too — insert without re-hashing.
-        self.data.put_static_key_hashed(name_hash, key, stored)?;
+        // entry interned `name_lc`; a recycled one matched `name_slice` above),
+        // so `name_hash` is its hash too — insert without re-hashing.
+        let lowercase_slot = self
+            .data
+            .get_or_put_static_key_hashed(name_hash, key, stored);
+        if lowercase_slot.found_existing {
+            // This directory holds another name differing from this one only
+            // in ASCII case (so it is on a case-sensitive filesystem and both
+            // are distinct files). Keep the lowercased key for the spelling
+            // that *is* all-lowercase, if either is, and key the other one by
+            // its exact name (see `dir_entry::EntryMap`).
+            let other: *mut Entry = *lowercase_slot.value_ptr;
+            let spilled: *mut Entry = if name_slice == name_lc {
+                *lowercase_slot.value_ptr = stored;
+                other
+            } else {
+                stored
+            };
+            // SAFETY: as for `key` above; `base_` is never mutated either.
+            let exact_key: &'static [u8] =
+                unsafe { &*core::ptr::from_ref::<[u8]>((*spilled).base()) };
+            self.data.put_static_key(exact_key, spilled)?;
+        }
+
+        // SAFETY: just produced from EntryStore append or prev_map lookup
+        let stored_ref = unsafe { &mut *stored };
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);
@@ -617,10 +664,14 @@ impl DirEntry {
         );
     }
 
-    // `query_` borrow is detached from the returned `Entry` lifetime so callers
-    // can pass a slice into the same threadlocal buffer they then mutate. The
-    // lookup key is the lowercased basename; a case-mismatched query still
-    // returns the stored entry.
+    /// Looks up `query_` the way the filesystem would: an entry spelled
+    /// exactly `query_` always wins, and one spelled differently is returned
+    /// only if the filesystem itself resolves `query_` to it (see
+    /// [`Self::pick_case`]).
+    ///
+    /// `query_` borrow is detached from the returned `Entry` lifetime so
+    /// callers can pass a slice into the same threadlocal buffer they then
+    /// mutate.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
@@ -630,30 +681,63 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        self.pick_case(result_ptr, query_)
     }
 
-    /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
-    /// already lowercase, so no per-call lowercasing buffer is needed.
+    /// [`Self::get`] for a `&'static [u8]` that is already lowercase, so no
+    /// per-call lowercasing buffer is needed.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        self.pick_case(result_ptr, query_lower)
     }
 
-    /// True if a cached entry exists for the given already-lowercase name.
+    /// True if [`Self::get`] would find the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        Self::debug_assert_entries_mutex_held();
-        self.data.contains_key(query_lower)
+        self.get_comptime_query(query_lower).is_some()
+    }
+
+    /// `candidate` is the entry stored under `query`'s lowercased key. It is
+    /// the answer when it is spelled exactly `query`. Otherwise a sibling
+    /// spelled exactly `query` may be keyed by its exact name (see
+    /// `dir_entry::EntryMap`), and failing that only a differently-cased name
+    /// exists in this directory: whether `query` still opens depends on the
+    /// filesystem (it does on a default macOS or Windows volume, not on ext4),
+    /// so ask it instead of guessing from the platform.
+    fn pick_case<'a>(&'a self, candidate: *mut Entry, query: &[u8]) -> Option<EntryLookup<'a>> {
+        // SAFETY: ARENA — `data` holds EntryStore slots, which are never freed,
+        // and `base_` is never mutated after construction.
+        if unsafe { (*candidate).base() } == query {
+            return Some(EntryLookup::new(candidate));
+        }
+        if let Some(&exact) = self.data.get(query) {
+            // SAFETY: as above.
+            if unsafe { (*exact).base() } == query {
+                return Some(EntryLookup::new(exact));
+            }
+        }
+        self.exists_as_spelled(query)
+            .then(|| EntryLookup::new(candidate))
+    }
+
+    fn exists_as_spelled(&self, name: &[u8]) -> bool {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // Leave room for the NUL; a path that does not fit cannot be opened
+        // under this name either.
+        let Some(len) = join_abs_string_buf_checked::<platform::Auto>(
+            crate::fs::FileSystem::get().fs.cwd,
+            &mut buf[..MAX_PATH_BYTES - 1],
+            &[self.dir, name],
+        )
+        .map(<[u8]>::len) else {
+            return false;
+        };
+        buf[len] = 0;
+        bun_sys::lstat(ZStr::from_buf(&buf[..], len)).is_ok()
     }
 }
 

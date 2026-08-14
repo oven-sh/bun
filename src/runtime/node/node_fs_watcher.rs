@@ -56,6 +56,7 @@ pub struct FSWatcher {
     loop_kind: bun_jsc::LoopKind,
     /// Domain that created the watcher: its events are that domain's callbacks,
     /// not whichever domain run is turning the loop when they arrive.
+    #[cfg_attr(windows, allow(dead_code))]
     task_domain: u32,
     verbose: bool,
 

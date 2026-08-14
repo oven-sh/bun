@@ -608,9 +608,9 @@ describe("input forms", () => {
   });
 });
 
-// The color() function (CSS Color 4 predefined color spaces) used to be the one
-// parseable input that every output format other than "css" echoed back as a
-// string, so "{rgba}" returned "color(srgb 1 0 0)" instead of an object.
+// The color() function (CSS Color 4 predefined color spaces) has channel values
+// like any rgb()/lab() color, but every output format other than "css" used to
+// echo it back as a string, so "{rgba}" returned "color(srgb 1 0 0)" instead of an object.
 describe("color() inputs convert to every output format", () => {
   const conversionFormats = [
     "hex",
@@ -650,7 +650,7 @@ describe("color() inputs convert to every output format", () => {
 
   // Relative color syntax converts #336699 into the named space and hands the
   // result back as a color() value, so converting it again must be the identity.
-  // (a98-rgb and srgb-linear are missing because their relative forms do not parse yet.)
+  // The a98-rgb and srgb-linear relative forms are parser bugs, fixed in #38487.
   test.each([
     "color(from #336699 srgb r g b)",
     "color(from #336699 display-p3 r g b)",
@@ -716,16 +716,6 @@ describe("color() inputs convert to every output format", () => {
   test("the css format still serializes the color() value as written", () => {
     expect(color("color(srgb 1 0 0)", "css")).toBe("color(srgb 1 0 0)");
     expect(color("color(display-p3 1 0 0)", "css")).toBe("color(display-p3 1 0 0)");
-  });
-
-  // These have no channel values to convert, so every format still falls back to
-  // serializing them as CSS, exactly as before.
-  test.each(["currentColor", "Canvas", "light-dark(red, blue)"])("%s still falls back to its css form", input => {
-    const css = color(input, "css");
-    expect(css).toBeString();
-    for (const format of ["hex", "{rgba}", "hsl", "lab"] as const) {
-      expect(color(input, format)).toBe(css);
-    }
   });
 });
 

@@ -388,8 +388,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         | OutputColorFormat::RgbObject
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
-                            // None is currentColor, a system color or light-dark():
-                            // there are no channels to convert, so print the CSS.
+                            // None: currentColor, a system color or light-dark(), which
+                            // have no channel values.
                             let Some(srgba) = SRGB::try_from_css_color(&result) else {
                                 break 'formatted;
                             };

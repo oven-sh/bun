@@ -254,12 +254,19 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
         Locker lock { m_pendingTasksLock };
         pending = std::exchange(m_pendingCrossVMRequests, {});
     }
-    if (pending.isEmpty() || !m_scriptExecutionContext)
+    // A parent whose own VM is being stopped settles nothing more (and could not build the error:
+    // its termination is pending); the Strong handles just drop.
+    if (pending.isEmpty() || !m_scriptExecutionContext || m_scriptExecutionContext->isJSExecutionForbidden())
         return;
     auto* globalObject = defaultGlobalObject(m_scriptExecutionContext->globalObject());
     auto& vm = JSC::getVM(globalObject);
-    for (auto& entry : pending)
-        entry.value->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+    for (auto& entry : pending) {
+        // Empty only if a (recoverable, e.g. test-timeout) termination is pending on this VM.
+        auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s);
+        if (!error)
+            return;
+        entry.value->reject(vm, error);
+    }
 }
 
 // ---- Inbox drain (both directions) ---------------------------------------------------------------

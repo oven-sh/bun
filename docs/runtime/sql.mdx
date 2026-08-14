@@ -141,6 +141,25 @@ MySQL databases support:
 
 </Accordion>
 
+<Accordion title="MySQL 8 authentication over plain TCP (allowPublicKeyRetrieval)">
+
+MySQL 8 accounts default to the `caching_sha2_password` plugin. The first connection for a user requires full authentication: over an unencrypted connection the client has to download the server's RSA public key to encrypt the password. Bun refuses that by default (the same default as mysql2 and Connector/J), because an attacker on the network path could substitute their own key and recover the password. The connection fails with `ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED`.
+
+Connect with TLS, or opt in explicitly if you trust the network (for example a local development database):
+
+```ts
+const mysql = new SQL({
+  adapter: "mysql",
+  hostname: "localhost",
+  username: "root",
+  password: "secret",
+  database: "myapp",
+  allowPublicKeyRetrieval: true, // permit RSA public key retrieval without TLS
+});
+```
+
+</Accordion>
+
 ### SQLite
 
 SQLite support is built into `Bun.SQL`, with the same tagged template literal interface:

@@ -920,6 +920,11 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
+    !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2217,6 +2222,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_used: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2615,7 +2621,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload as u8;
+            vm.hot_reload = ctx.debug.hot_reload;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2623,13 +2629,13 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
+                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                jsc::virtual_machine::HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2639,7 +2645,7 @@ impl TestCommand {
                         );
                     }
                 }
-                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                jsc::virtual_machine::HotReload::Watch => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -3009,7 +3015,7 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -3030,10 +3036,8 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

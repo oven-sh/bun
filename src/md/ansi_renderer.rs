@@ -2718,7 +2718,7 @@ pub fn render_to_ansi<'a>(
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => return Ok(None),
+        Err(ParserError::JSError) => return Ok(None),
         Err(e) => return Err(e),
     }
     if renderer.out.oom {

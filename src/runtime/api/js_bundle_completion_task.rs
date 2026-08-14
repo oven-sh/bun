@@ -54,8 +54,10 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub(crate) ref_count: RefCount<Self>,
     pub(crate) config: JSBundlerConfig,
-    /// How the bundle thread (and plugin hops) reach the VM that called Bun.build.
-    pub(crate) loop_handle: jsc::LoopHandle,
+    /// Held from creation until the bundle thread posts the completion (or the
+    /// JS thread releases it unstarted): how the bundle thread and its plugin
+    /// hops reach the VM that called Bun.build, and what makes it wait.
+    pub(crate) bundle_ticket: Option<jsc::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -145,7 +147,7 @@ pub(crate) fn create_and_schedule_completion_task(
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        loop_handle: global_this.bun_vm().loop_handle(),
+        bundle_ticket: Some(global_this.bun_vm().ticket()),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
@@ -174,9 +176,7 @@ pub(crate) fn create_and_schedule_completion_task(
 
     // Out on the bundle thread from here until it posts the completion: it
     // reads this VM's env loader and the plugin cell, so the VM cancels it at
-    // teardown (registry) and waits for it (embedded work).
-    // SAFETY: `completion` is live (refcount==1), JS thread.
-    unsafe { (*completion).loop_handle.embedded_work_scheduled() };
+    // teardown (registry) and waits for it (`bundle_ticket`).
     crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
         .register();
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
@@ -235,7 +235,7 @@ impl JSBundleCompletionTask {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> jsc::JsResult<()> {
         let throw_on_error = self.config.throw_on_error;
 
         let build_result = JSValue::create_empty_object(global_this, 3);
@@ -605,12 +605,11 @@ impl JSBundleCompletionTask {
                     Plugin::destroy(plugin.as_ptr());
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
-                let handle = (*this).loop_handle.clone();
+                (*this).bundle_ticket = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
                     .stage
                     .store(Stage::ReleasedUnstarted as u8, Ordering::Release);
-                handle.embedded_work_finished();
                 return;
             }
             if let Some(plugins) = (*this).plugins {
@@ -695,7 +694,7 @@ impl JSBundleCompletionTask {
             unreachable!();
         }
         if matches!(this.result, BundleV2Result::Err(_)) {
-            return Ok(this.to_js_error(promise, global_this)?);
+            return this.to_js_error(promise, global_this);
         }
         match &mut this.result {
             BundleV2Result::Value(build) => {
@@ -703,7 +702,7 @@ impl JSBundleCompletionTask {
                 let output_files_js =
                     match JSValue::create_empty_array(global_this, output_files.len()) {
                         Ok(v) => v,
-                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                        Err(e) => return promise.reject(global_this, Err(e)),
                     };
                 if output_files_js == JSValue::ZERO {
                     panic!(
@@ -755,7 +754,7 @@ impl JSBundleCompletionTask {
                     }
 
                     if let Err(e) = output_files_js.put_index(global_this, i as u32, result) {
-                        return Ok(promise.reject(global_this, Err(e))?);
+                        return promise.reject(global_this, Err(e));
                     }
                 }
 
@@ -764,7 +763,7 @@ impl JSBundleCompletionTask {
                 build_output.put(global_this, b"success", JSValue::TRUE);
                 match bun_ast_jsc::log_to_js_array(&this.log, global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
-                    Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                    Err(e) => return promise.reject(global_this, Err(e)),
                 };
 
                 // metafile: { json: <lazy parsed>, markdown?: string }
@@ -772,13 +771,13 @@ impl JSBundleCompletionTask {
                     let metafile_js_str =
                         match jsc::bun_string_jsc::create_utf8_for_js(global_this, metafile) {
                             Ok(v) => v,
-                            Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                            Err(e) => return promise.reject(global_this, Err(e)),
                         };
                     let metafile_md_str = match &build.metafile_markdown {
                         Some(md) => {
                             match jsc::bun_string_jsc::create_utf8_for_js(global_this, md) {
                                 Ok(v) => v,
-                                Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                                Err(e) => return promise.reject(global_this, Err(e)),
                             }
                         }
                         None => JSValue::UNDEFINED,
@@ -800,14 +799,14 @@ impl JSBundleCompletionTask {
                         Ok(JSValue::UNDEFINED),
                     ) {
                         Ok(b) => b,
-                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                        Err(e) => return promise.reject(global_this, Err(e)),
                     }
                 } else {
                     false
                 };
 
                 if !did_handle_callbacks {
-                    return Ok(promise.resolve(global_this, build_output)?);
+                    return promise.resolve(global_this, build_output);
                 }
             }
             // SAFETY: Pending/Err already returned above.
@@ -863,14 +862,14 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
     },
     enqueue_task_concurrent: |c, task| {
         // SAFETY: `task` is a fresh non-null `ConcurrentTask` passed through
-        // from the bundler vtable; the queue takes ownership. The VM waits for
-        // this build (embedded work) before closing its handle: always queued.
+        // from the bundler vtable; the queue takes ownership.
         unsafe {
             let task = core::ptr::NonNull::new_unchecked(task);
-            let c = from_completion_handle(c);
-            let jsc::vm_handle::Posted::Queued = c.loop_handle.post_task(task) else {
-                unreachable!("VM handle closed with a Bun.build outstanding");
-            };
+            from_completion_handle(c)
+                .bundle_ticket
+                .as_ref()
+                .expect("a running Bun.build holds a ticket")
+                .post(task);
         }
     },
 };
@@ -1120,16 +1119,16 @@ impl CompletionStruct for JSBundleCompletionTask {
 
     fn complete_on_bundle_thread(&mut self) {
         // The bundle thread's last touch of this task and of the VM's memory:
-        // hand it back (always queued — the VM waits for it) and stop counting.
+        // move the ticket out (the JS thread may free `self` once queued),
+        // hand it back, drop the ticket.
         self.bundle_loop
             .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
-        let handle = self.loop_handle.clone();
+        let ticket = self
+            .bundle_ticket
+            .take()
+            .expect("a running Bun.build holds a ticket");
         let this = std::ptr::from_mut::<Self>(self);
-        let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
-        let jsc::vm_handle::Posted::Queued = handle.post_task(ct) else {
-            unreachable!("VM handle closed with a Bun.build outstanding");
-        };
-        handle.embedded_work_finished();
+        ticket.post(jsc::ConcurrentTask::create(jsc::Task::init(this)));
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

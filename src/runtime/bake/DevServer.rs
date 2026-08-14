@@ -1539,7 +1539,11 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
             on_unref_source_map_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
         }
         DevHandlerId::NotFound => on_not_found(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
-        DevHandlerId::Request => on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::Request => {
+            // The catch-all route can reach a framework request handler; this
+            // trampoline folds what bundling for it left pending.
+            crate::dispatch::fold(on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp));
+        }
     }
 }
 
@@ -1614,7 +1618,6 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
     unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
-
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
@@ -1637,11 +1640,13 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {
             // SAFETY: `res` is live for this callback (see Note above).
-            return host_forbidden(unsafe { &mut *res }.as_any_response());
+            host_forbidden(unsafe { &mut *res }.as_any_response());
+            return;
         }
         if !is_allowed_dev_origin(req) {
             // SAFETY: `res` is live for this callback (see Note above).
-            return origin_forbidden(unsafe { &mut *res }.as_any_response());
+            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            return;
         }
         // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
         let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
@@ -5104,7 +5109,7 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
     }
 }
 
-fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
+fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
     let mut params: framework_router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let route_bundle_index = dev
@@ -5118,14 +5123,10 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
-        match ensure_route_is_bundled(dev, rbi, &mut ctx) {
-            Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                dev.vm().global().report_active_exception_as_unhandled(e)
-            }
+        return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-        }
-        return;
+            bundled => bundled,
+        };
     }
 
     if !dev
@@ -5140,10 +5141,11 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             .as_mut()
             .expect("infallible: server bound")
             .on_request(req, resp);
-        return;
+        return Ok(());
     }
 
     send_built_in_not_found(&mut resp);
+    Ok(())
 }
 
 impl DevServer {
@@ -5170,9 +5172,10 @@ impl DevServer {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                self.vm().global().report_active_exception_as_unhandled(e)
-            }
+            // This is the dev server's entry from Bun.serve's static-route
+            // trampoline (`StaticRouteLike`, which otherwise never enters
+            // JS): what bundling left pending is folded at this boundary.
+            Err(jsc::JsError::Thrown) => crate::dispatch::fold(Err(jsc::JsError::Thrown)),
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())

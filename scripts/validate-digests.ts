@@ -23,7 +23,7 @@
 // Originally contributed in https://github.com/oven-sh/bun/issues/28931.
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -46,14 +46,20 @@ function parseArgs(argv: string[]): Options {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     switch (arg) {
+      // Every value-taking flag fails closed on a missing/empty value.
+      // This matters most for --require-signer: silently dropping it
+      // would skip an explicitly requested security check.
       case "--dir":
         opts.dir = argv[++i];
+        if (!opts.dir) usage();
         break;
       case "--require-signer":
         opts.requireSigner = argv[++i];
+        if (!opts.requireSigner) usage();
         break;
       case "--pubkey":
         opts.pubkey = argv[++i];
+        if (!opts.pubkey) usage();
         break;
       default:
         if (arg.startsWith("--") || opts.tag) usage();
@@ -129,7 +135,6 @@ async function verifySigner(ascContent: string, fingerprint: string, pubkeyPath?
     await Bun.write(ascPath, ascContent);
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
     if (gnupghome) {
-      const { mkdirSync } = await import("node:fs");
       mkdirSync(gnupghome, { mode: 0o700 });
       env.GNUPGHOME = gnupghome;
       const imp = Bun.spawnSync({
@@ -200,22 +205,41 @@ async function loadFromGitHub(tag: string): Promise<Source> {
     throw new Error(`GitHub API Error: ${response.status} ${response.statusText}`);
   }
   const { assets } = (await response.json()) as { assets: any[] };
-  const digests = new Map<string, string>(assets.map(a => [a.name, a.digest]));
+  const digests = new Map<string, string | null | undefined>(assets.map(a => [a.name, a.digest]));
   const txtAsset = assets.find(a => a.name === "SHASUMS256.txt");
   const ascAsset = assets.find(a => a.name === "SHASUMS256.txt.asc");
   if (!txtAsset || !ascAsset) throw new Error("Missing required checksum assets.");
-  const txt = (await (await fetch(txtAsset.browser_download_url)).text()).trim();
-  const asc = (await (await fetch(ascAsset.browser_download_url)).text()).trim();
+  const txt = await fetchAsset(txtAsset.browser_download_url);
+  const asc = await fetchAsset(ascAsset.browser_download_url);
   return {
     txt,
     asc,
     async digestOf(name: string) {
+      // Distinguish "asset not on the release" from "asset present but
+      // GitHub reported no digest" (older uploads have digest: null).
+      if (!digests.has(name)) {
+        throw new Error(`Asset "${name}" in manifest is not present on the GitHub release.`);
+      }
       const raw = digests.get(name);
-      if (!raw) throw new Error(`Asset "${name}" in manifest is missing from GitHub metadata.`);
+      if (!raw) {
+        throw new Error(
+          `Asset "${name}" is on the release but GitHub reported no digest for it; ` +
+            `download the release and re-run with --dir to verify it by hashing.`,
+        );
+      }
       // GitHub's asset.digest is typically prefixed with 'sha256:'.
       return raw.replace("sha256:", "").toLowerCase();
     },
   };
+}
+
+/** Download a release asset, failing with the HTTP status on error. */
+async function fetchAsset(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`GitHub returned ${res.status} ${res.statusText} for ${url}`);
+  }
+  return (await res.text()).trim();
 }
 
 async function loadFromDir(dir: string): Promise<Source> {

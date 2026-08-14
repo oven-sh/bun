@@ -181,30 +181,23 @@ pub(crate) fn uses_streaming_extraction() -> bool {
         .unwrap_or(false)
 }
 
-/// What `move_to_cache_directory` does when the cache already has a folder
-/// under the name being published. Decided by `cache_publish()` before
-/// extraction starts; by the time the extracted tree is renamed into place,
-/// a folder that was there all along and one a concurrent install published
-/// in the meantime look the same.
+/// How `move_to_cache_directory` treats a cache folder that already has the
+/// name being published. Decided before extracting: afterwards a pre-existing
+/// folder and one a concurrent install published meanwhile look the same.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CachePublish {
-    /// Swap the fresh copy in and leave the one swapped out in the temp
-    /// directory: it may have been published by a concurrent install that is
-    /// still installing from it. npm and GitHub folders are published this way.
+    /// npm and GitHub: swap the fresh copy in. The swapped-out folder is left
+    /// in the temp dir, as a concurrent install may still be reading it.
     Replace,
-    /// The folder was already there when this tarball's task started, so this
-    /// is a re-extraction of the same tarball path or URL (no lockfile, or the
-    /// tarball behind it changed): swap the fresh copy in and delete the one
-    /// swapped out.
+    /// Tarball re-extracted over its own folder: swap the fresh copy in and
+    /// delete the swapped-out folder.
     Supersede,
-    /// The folder was missing when this tarball's task started. If it exists
-    /// now, a concurrent install extracted the same tarball first: keep its
-    /// copy and delete ours, which nothing else can have opened.
+    /// Tarball whose folder did not exist yet: if one exists by now, a
+    /// concurrent install extracted the same tarball, so keep it and drop ours.
     KeepExisting,
 }
 
 impl ExtractTarball {
-    /// See [`CachePublish`]. Must run before anything is extracted.
     pub(crate) fn cache_publish(&self) -> CachePublish {
         if !self.resolution.tag.is_tarball() {
             return CachePublish::Replace;
@@ -708,8 +701,6 @@ impl ExtractTarball {
                     }
                 }
 
-                // An existing folder is normally swapped out atomically (see
-                // `renameat_concurrently`); `KeepExisting` leaves it alone.
                 match sys::renameat_concurrently_a(
                     tmpdir.fd(),
                     tmpname.as_bytes(),
@@ -738,10 +729,8 @@ impl ExtractTarball {
                 }
             };
 
-            // Whatever is left under the temp name is either our own copy (the
-            // move failed, or a concurrent install published first) or the
-            // folder we superseded. `Replace` leaves a swapped-out folder
-            // alone, see `CachePublish`.
+            // The temp name now holds our own copy (failed or lost), the
+            // superseded folder, or a `Replace` swap-out (see `CachePublish`).
             if moved.is_err() || publish != CachePublish::Replace {
                 let _ = tmpdir.delete_tree(tmpname.as_bytes());
             }

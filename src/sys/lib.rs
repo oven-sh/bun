@@ -9284,10 +9284,8 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
-    /// When `to` already exists, leave it in place and delete `from` instead
-    /// of replacing it. For a shared cache this is the "another process
-    /// published the same thing first" outcome: the existing tree may already
-    /// have readers, while nothing else can have found `from` yet.
+    /// If `to` already exists (another process published it first and may be
+    /// reading it), keep it and delete `from` instead of replacing it.
     pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
@@ -9307,12 +9305,9 @@ pub(crate) fn move_file_z_slow_maybe(
 
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy. With
-/// `keep_existing_destination` set, an existing `to` wins and `from` is
-/// deleted instead.
-///
-/// After a successful EXCHANGE, `from` names the tree that used to be at
-/// `to`; callers that do not want to keep it have to delete it themselves.
+/// an EXDEV result falls through to a slow open/copy; see
+/// [`RenameatConcurrentlyOptions`] for `keep_existing_destination`.
+/// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9366,8 +9361,8 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 Ok(()) => break 'attempt,
             };
 
-            // The errno alone does not say whether `to` exists (Windows and
-            // filesystems without RENAME_NOREPLACE fail differently), so look.
+            // Not keyed on the errno: Windows and filesystems without
+            // RENAME_NOREPLACE report an existing `to` differently.
             if opts.keep_existing_destination
                 && exists_at_type(
                     if to_dir_fd.is_valid() {

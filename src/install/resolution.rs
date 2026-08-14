@@ -965,9 +965,8 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
-    /// A tarball addressed by path or URL. Its cache folder is named after
-    /// that address, not the contents, so the same folder can hold different
-    /// versions of the tarball over time.
+    /// Cached under a hash of the path or URL, so the folder's contents can
+    /// change from one extraction to the next.
     pub(crate) fn is_tarball(self) -> bool {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }

@@ -3,19 +3,28 @@
 // policy exits the process, so before the fix a single bad request took the
 // entire server down.
 //
-// argv[2]: variant name (see `sources` below)
-// argv[3]: "development" to run the server with development: true
+// argv[2]: variant name (see `sources` and `nativeSources` below)
+// argv[3..]: "development" to run the server with development: true,
+//            "no-error-handler" to run it without an error() callback
 //
-// Prints a single JSON object on stdout and exits 0.
+// Prints a single JSON object on stdout. Exits 0, except that a run without
+// error() reports the failures as unhandled, which makes Bun exit 1.
 import net from "node:net";
 
 const variant = process.argv[2];
-const development = process.argv[3] === "development";
+const flags = process.argv.slice(3);
+const development = flags.includes("development");
+const withErrorHandler = !flags.includes("no-error-handler");
 
 // Set by the mid-stream variant so it only errors once its chunk has provably
 // reached the client socket, i.e. after the 200 response is committed on the
 // wire. Called from the raw request's data handler below.
 let midStreamResolve: (() => void) | undefined;
+
+// Set by the native after-attach variant: called once the response's status
+// line has reached the client, i.e. after Bun.serve attached to the body and
+// committed the status.
+let statusOnWire: (() => void) | undefined;
 
 // Set by the cancel variants: resolved once the source's cancel() has run, so
 // the test observes any resulting rejection before declaring success.
@@ -112,8 +121,95 @@ const sources: Record<string, () => ReadableStream> = {
     }),
 };
 
+// Native counterparts: bodies backed by Bun's own ByteStream (a fetch()
+// response body, directly or through an HTMLRewriter) whose upstream
+// connection fails. The upstream is a raw socket so the failure is
+// deterministic: it announces a 100-byte body and closes when the variant
+// says so.
+//
+// Returns the fetch() Response; `fail()` closes the upstream connection.
+async function fetchFromFailingUpstream(firstWrite: string) {
+  const sockets: net.Socket[] = [];
+  const upstream = net.createServer(socket => {
+    sockets.push(socket);
+    socket.resume();
+    socket.on("error", () => {});
+    socket.write(firstWrite);
+  });
+  await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  // Scratch server for one request: it must never be what keeps this process
+  // alive if something below goes wrong.
+  upstream.unref();
+  const { port } = upstream.address() as net.AddressInfo;
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/`);
+  } catch (error) {
+    for (const socket of sockets) socket.destroy();
+    upstream.close();
+    throw error;
+  }
+  return {
+    res,
+    fail() {
+      for (const socket of sockets) socket.end();
+      upstream.close();
+    },
+  };
+}
+
+// The failure reaches the fetch() Response on a later event-loop turn.
+// Bun.inspect(res) lists the body stream while the body is still pending and
+// stops listing it once the body holds the error; reading the stream to find
+// out would consume the very state under test. By then the error has also
+// been pushed into the already-materialized native stream.
+async function untilBodyFailed(res: Response) {
+  const deadline = Date.now() + 10_000;
+  while (Bun.inspect(res).includes("ReadableStream")) {
+    if (Date.now() > deadline) throw new Error("the upstream failure never reached the idle body");
+    await Bun.sleep(1);
+  }
+}
+
+const PARTIAL_BODY = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial";
+const HEADERS_ONLY = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
+
+const nativeSources: Record<string, () => Promise<ReadableStream>> = {
+  // The stream exists (res.body was taken) but nothing reads it when the
+  // failure arrives, so the error is held inside the native stream with no
+  // JS-visible rejection anywhere by the time Bun.serve renders the Response
+  // wrapping it.
+  "native-errored-before-render": async () => {
+    const { res, fail } = await fetchFromFailingUpstream(PARTIAL_BODY);
+    const body = res.body!;
+    fail();
+    await untilBodyFailed(res);
+    return body;
+  },
+  // Same, one producer further away: the failing fetch() body feeds an
+  // HTMLRewriter and it is the rewriter's output stream that holds the error.
+  // (The rewriter is given a wrapper so `res` itself still tracks the failure.)
+  "native-rewriter-errored-before-render": async () => {
+    const { res, fail } = await fetchFromFailingUpstream(PARTIAL_BODY);
+    const input = new Response(res.body, { headers: { "content-type": "text/html" } });
+    const body = new HTMLRewriter().on("p", {}).transform(input).body!;
+    fail();
+    await untilBodyFailed(res);
+    return body;
+  },
+  // Control: the same upstream fails only after Bun.serve has attached to the
+  // healthy stream and committed the status line, so the error can only
+  // terminate the body.
+  "native-errored-after-attach": async () => {
+    const { res, fail } = await fetchFromFailingUpstream(HEADERS_ONLY);
+    statusOnWire = fail;
+    return res.body!;
+  },
+};
+
 const source = sources[variant];
-if (!source) {
+const nativeSource = nativeSources[variant];
+if (!source && !nativeSource) {
   console.error(`unknown variant: ${variant}`);
   process.exit(3);
 }
@@ -131,12 +227,17 @@ let errorCb = 0;
 await using server = Bun.serve({
   port: 0,
   development,
-  error() {
-    errorCb++;
-    return new Response("err-body", { status: 500 });
-  },
+  // The body names the error that reached error(), so the wire pins both the
+  // channel and the error's identity.
+  error: withErrorHandler
+    ? (error: Error & { code?: string }) => {
+        errorCb++;
+        return new Response(`err-body:${error.code ?? error.message}`, { status: 500 });
+      }
+    : undefined,
   fetch() {
-    return new Response(source());
+    if (nativeSource) return nativeSource().then(body => new Response(body));
+    return new Response(source!());
   },
 });
 
@@ -152,6 +253,9 @@ function rawRequest(abort: boolean): Promise<string> {
     });
     sock.on("data", d => {
       chunks.push(d);
+      // Anything at all on the wire means the status line went out.
+      statusOnWire?.();
+      statusOnWire = undefined;
       if (Buffer.concat(chunks).includes("chunk-a")) {
         midStreamResolve?.();
         // The cancel variants tear down the socket once a body chunk has

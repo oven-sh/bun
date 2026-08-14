@@ -1666,6 +1666,8 @@ impl BlobExt for Blob {
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
+                        // Forwarded below; otherwise it is also reported as unhandled.
+                        promise.set_handled(global_this.vm());
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);

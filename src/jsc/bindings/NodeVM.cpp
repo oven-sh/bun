@@ -721,7 +721,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
 
         auto allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s));
         RETURN_IF_EXCEPTION(scope, );
-        if (allowStringsValue) {
+        if (allowStringsValue && !allowStringsValue.isUndefined()) {
             if (!allowStringsValue.isBoolean()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".strings"_s), "boolean"_s, allowStringsValue);
                 return;
@@ -733,7 +733,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
 
         auto allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s));
         RETURN_IF_EXCEPTION(scope, );
-        if (allowWasmValue) {
+        if (allowWasmValue && !allowWasmValue.isUndefined()) {
             if (!allowWasmValue.isBoolean()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".wasm"_s), "boolean"_s, allowWasmValue);
                 return;

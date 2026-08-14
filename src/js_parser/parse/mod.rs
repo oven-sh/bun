@@ -392,6 +392,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next_inside_jsx_element()?;
             Ok(expr)
+        } else if p.lexer.token == T::TLessThan {
+            // <a b=<c/> /> and <a b=<>..</> />: JSXAttributeValue also allows a bare
+            // JSXElement or JSXFragment (https://facebook.github.io/jsx/)
+            let loc = p.lexer.loc();
+            p.lexer.next_inside_jsx_element()?;
+            let value = p.parse_jsx_element(loc)?;
+
+            // parse_jsx_element() leaves the element's final ">" as the current token.
+            // What follows is the rest of the enclosing tag's attribute list.
+            p.lexer.next_inside_jsx_element()?;
+            Ok(value)
         } else {
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
             p.lexer.expect(T::TOpenBrace)?;

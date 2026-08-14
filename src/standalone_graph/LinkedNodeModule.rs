@@ -48,7 +48,6 @@ bun_core::declare_scope!(LinkedNodeModule, visible);
 pub struct Resolved {
     pub napi_register_module_v1: *mut c_void,
     pub node_api_module_get_api_version_v1: *mut c_void,
-    pub bun_plugin_name: *mut c_void,
     /// `DLHandleMap` key: the addon's RVA 0 address (a merged addon has no HMODULE).
     pub handle_token: *mut c_void,
     /// True when this call ran `bind()` (and so `DllMain`). `Bun__initLinkedNodeModule`
@@ -65,7 +64,6 @@ impl Resolved {
         Resolved {
             napi_register_module_v1: core::ptr::null_mut(),
             node_api_module_get_api_version_v1: core::ptr::null_mut(),
-            bun_plugin_name: core::ptr::null_mut(),
             handle_token: core::ptr::null_mut(),
             did_bind: false,
         }
@@ -187,7 +185,6 @@ struct Entry {
     pdata_count: u32,
     export_register: u32,
     export_api_version: u32,
-    export_plugin_name: u32,
     /// Blob offset of the section list: u32 count, then `SECTION_INFO_SIZE` bytes each.
     sections_pos: usize,
     relocs: &'static [u8],
@@ -278,7 +275,6 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
         let pdata_count = r.u32_()?;
         let export_register = r.u32_()?;
         let export_api_version = r.u32_()?;
-        let export_plugin_name = r.u32_()?;
         let sections_pos = r.pos;
         let nsect = r.u32_()?;
         let sect_bytes = SECTION_INFO_SIZE
@@ -309,7 +305,6 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
             pdata_count,
             export_register,
             export_api_version,
-            export_plugin_name,
             sections_pos,
             relocs,
             imports_pos,
@@ -458,7 +453,6 @@ fn bind(entry: &Entry) -> Result<Resolved, BindError> {
     Ok(Resolved {
         napi_register_module_v1: abs(entry.export_register)?,
         node_api_module_get_api_version_v1: abs(entry.export_api_version)?,
-        bun_plugin_name: abs(entry.export_plugin_name)?,
         // rva_base is lo itself; no span check needed.
         // SAFETY: rva_base is where the loader mapped the addon's RVA 0.
         handle_token: unsafe { base.add(entry.rva_base as usize).cast() },

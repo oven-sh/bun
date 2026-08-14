@@ -333,7 +333,6 @@ extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 struct Bun__LinkedNodeModuleResolved {
     void* napi_register_module_v1;
     void* node_api_module_get_api_version_v1;
-    void* bun_plugin_name;
     // Identity key for DLHandleMap (exe_base + rva_base), not an HMODULE; never pass it to Win32.
     void* handle_token;
     // When true the binder lock is still held: release it exactly once via Bun__linkedNodeModuleUnlock()

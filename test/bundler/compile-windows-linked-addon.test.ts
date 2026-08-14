@@ -293,7 +293,7 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       p += 8;
       p += 8; // pdata_rva + pdata_count (none in the fixture)
       const exportRegister = bunL.readUInt32LE(p);
-      p += 12; // skip the other two export slots
+      p += 8; // export_register + export_api_version
       const nSections = bunL.readUInt32LE(p);
       p += 4;
       // One SectionInfo: rva / size / final_protect

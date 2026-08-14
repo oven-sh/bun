@@ -717,7 +717,6 @@ pub struct LinkedAddon {
     /// Export RVAs, zero when the addon does not export the symbol.
     pub export_register: u32, // napi_register_module_v1
     pub export_api_version: u32, // node_api_module_get_api_version_v1
-    pub export_plugin_name: u32, // BUN_PLUGIN_NAME
 }
 
 #[derive(Copy, Clone)]
@@ -1047,7 +1046,6 @@ impl PEFile {
             pdata_count,
             export_register: exports.register,
             export_api_version: exports.api_version,
-            export_plugin_name: exports.plugin_name,
         }))
     }
 
@@ -1383,7 +1381,6 @@ fn collect_imports(
 struct LinkedExports {
     register: u32,
     api_version: u32,
-    plugin_name: u32,
 }
 
 /// Looks up the exports `process.dlopen` needs, as bun.exe RVAs (zero when absent or bogus).
@@ -1421,7 +1418,6 @@ fn find_exports(addon: &AddonView, rva_base: u32, image_size: u32) -> LinkedExpo
         let slot = match name {
             b"napi_register_module_v1" => &mut exports.register,
             b"node_api_module_get_api_version_v1" => &mut exports.api_version,
-            b"BUN_PLUGIN_NAME" => &mut exports.plugin_name,
             _ => continue,
         };
         *slot = rva_base + fn_rva;
@@ -1467,7 +1463,6 @@ pub fn serialize_linked_addons(addons: &[LinkedAddon]) -> Vec<u8> {
         w_u32(&mut buf, a.pdata_count);
         w_u32(&mut buf, a.export_register);
         w_u32(&mut buf, a.export_api_version);
-        w_u32(&mut buf, a.export_plugin_name);
         w_u32(&mut buf, u32::try_from(a.sections.len()).expect("int cast"));
         for s in &a.sections {
             w_u32(&mut buf, s.rva);

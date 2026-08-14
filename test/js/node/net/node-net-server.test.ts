@@ -4,7 +4,7 @@ import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
-import { dirname, join } from "path";
+import { join } from "path";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -178,15 +178,15 @@ describe("net.createServer listen", () => {
   });
 
   it.skipIf(isWindows)("should emit EINVAL for a unix socket path with null bytes", async () => {
-    const withNul = join(dirname(socket_domain), "nul\0byte.sock");
+    using dir = tempDir("net-listen-nul", {});
     const server: Server = createServer();
     const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
     server.on("error", resolve);
-    server.listen(withNul, () => resolve(null));
+    server.listen(join(String(dir), "nul\0byte.sock"), () => resolve(null));
     const err = await promise;
     server.close();
     expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EINVAL", syscall: "listen" });
-    expect(existsSync(join(dirname(socket_domain), "nul"))).toBe(false);
+    expect(existsSync(join(String(dir), "nul"))).toBe(false);
   });
 
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {

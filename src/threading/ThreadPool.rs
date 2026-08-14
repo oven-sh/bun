@@ -736,7 +736,8 @@ impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
-        let target = count.min((self.max_threads & 0x3FFF) as u16);
+        // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
+        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;

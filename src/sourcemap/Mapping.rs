@@ -8,7 +8,7 @@ use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
-use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourceMap};
+use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
 
 declare_scope!(SourceMap, visible);
 
@@ -460,7 +460,7 @@ pub fn parse(
 
     if let Some(count) = estimated_mapping_count {
         if mapping.ensure_total_capacity(count).is_err() {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
             });
@@ -508,7 +508,7 @@ pub fn parse(
                 );
             }
             SimdResult::OutOfMemory => {
-                return ParseResult::Fail(ParseResultFail {
+                return Err(ParseFail {
                     err: crate::Error::Alloc(bun_alloc::AllocError),
                     loc: Loc::default(),
                 });
@@ -539,7 +539,7 @@ pub fn parse(
         let generated_column_delta = decode_vlq(remain, 0);
 
         if generated_column_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::MissingGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -554,7 +554,7 @@ pub fn parse(
             .zero_based()
             .wrapping_add(generated_column_delta.value);
         if generated_column < 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::InvalidGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -587,7 +587,7 @@ pub fn parse(
         // Read the original source
         let source_index_delta = decode_vlq(remain, 0);
         if source_index_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexDelta,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -597,7 +597,7 @@ pub fn parse(
         source_index = source_index.wrapping_add(source_index_delta.value);
 
         if source_index < 0 || source_index >= sources_count {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -609,7 +609,7 @@ pub fn parse(
         // Read the original line
         let original_line_delta = decode_vlq(remain, 0);
         if original_line_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::MissingOriginalLine,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -622,7 +622,7 @@ pub fn parse(
             .zero_based()
             .wrapping_add(original_line_delta.value);
         if original_line < 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::InvalidOriginalLineValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -635,7 +635,7 @@ pub fn parse(
         // Read the original column
         let original_column_delta = decode_vlq(remain, 0);
         if original_column_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::MissingOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -648,7 +648,7 @@ pub fn parse(
             .zero_based()
             .wrapping_add(original_column_delta.value);
         if original_column < 0 {
-            return ParseResult::Fail(ParseResultFail {
+            return Err(ParseFail {
                 err: crate::Error::InvalidOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -672,7 +672,7 @@ pub fn parse(
                     // Read the name index
                     let name_index_delta = decode_vlq(remain, 0);
                     if name_index_delta.start == 0 {
-                        return ParseResult::Fail(ParseResultFail {
+                        return Err(ParseFail {
                             err: crate::Error::InvalidNameIndexDelta,
                             loc: Loc {
                                 start: i32::try_from(bytes.len() - remain.len())
@@ -686,7 +686,7 @@ pub fn parse(
                         name_index = name_index.wrapping_add(name_index_delta.value);
                         if !has_names {
                             if mapping.ensure_with_names().is_err() {
-                                return ParseResult::Fail(ParseResultFail {
+                                return Err(ParseFail {
                                     err: crate::Error::Alloc(bun_alloc::AllocError),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
@@ -737,7 +737,7 @@ pub fn parse(
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
     psm.input_line_count = input_line_count;
-    ParseResult::Success(psm)
+    Ok(psm)
 }
 
 enum SimdResult {

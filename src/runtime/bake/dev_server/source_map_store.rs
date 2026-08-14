@@ -682,11 +682,11 @@ impl SourceMapStore {
             0, // unused
             Default::default(),
         ) {
-            source_map::ParseResult::Fail(fail) => {
+            Err(fail) => {
                 bun_core::debug_warn!("Failed to re-parse source map: {}", fail.err.message());
                 None
             }
-            source_map::ParseResult::Success(mut psm) => Some(GetResult {
+            Ok(mut psm) => Some(GetResult {
                 mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

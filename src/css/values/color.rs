@@ -2726,10 +2726,8 @@ fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
     (l, a, b)
 }
 
-// The same f32 expression as lightningcss (`D50` in its values/color.rs), so the constants are
-// bit-identical to upstream's. Evaluating it in f64 and casting (#14832) gives x and z one ulp
-// higher, which stops lab()/lch() output from matching upstream: most greys then come out with
-// a, b around 1e-5 instead of 0 0.
+// lightningcss's expression, evaluated in f32 like upstream. Rounding it through f64 (#14832) puts
+// x and z one ulp higher, and lab()/lch() of most greys then print a, b around 1e-5 instead of 0 0.
 const D50: [f32; 3] = [0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585];
 
 // ──────────────────────────────────────────────────────────────────────────

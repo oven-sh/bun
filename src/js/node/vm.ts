@@ -88,8 +88,7 @@ function runInNewContext(code, context, options) {
   return createScript(code, options).runInNewContext(context, options);
 }
 
-// Node's getContextOptions(): runInNewContext() spells these with a context- prefix,
-// createContext() without. Validated here so errors name the option the caller passed.
+// Node's getContextOptions(); validated here so errors name the option the caller passed.
 function getContextOptions(options) {
   if (!$isObject(options)) {
     return undefined;
@@ -145,8 +144,7 @@ function measureMemory(options = kEmptyObject) {
   const result: any = { total: measurement() };
   if (mode === "detailed") {
     result.current = measurement();
-    // One entry per live context, like Node; every context, whichever API made
-    // it, is in the registry isContext() reads.
+    // One entry per live context, like Node.
     const other: object[] = [];
     for (let remaining = contextCount(); remaining > 0; remaining--) {
       other.push(measurement());

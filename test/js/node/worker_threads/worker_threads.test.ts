@@ -2567,6 +2567,103 @@ describe("VM teardown ordering", () => {
     expect(stdout).toBe("exit 1\n");
     expect(exitCode).toBe(0);
   });
+
+  // Teardown aborts each in-flight S3 request through the request id its task
+  // captured when it was scheduled (while a request is in flight, the task's
+  // AsyncHTTP belongs to the HTTP thread). This server answers every request
+  // with headers and one body chunk and then stalls, so a request against it
+  // sits in flight on an idle socket; the only way the HTTP thread hands it back,
+  // and so the only way terminate() ever resolves, is that abort reaching it.
+  //
+  // Two requests per test: request ids come from a process-wide counter that
+  // starts at 0, so a task that never captured its id would still happen to
+  // abort the process's first request. The second one is what a missing id
+  // shows up on.
+  function stalledS3Server(onResponded: () => void) {
+    return Bun.listen<{ responded: boolean }>({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        open(socket) {
+          socket.data = { responded: false };
+        },
+        data(socket) {
+          if (socket.data.responded) return;
+          socket.data.responded = true;
+          socket.write(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/octet-stream\r\n\r\n" +
+              "400\r\n" +
+              Buffer.alloc(0x400, "x").toString() +
+              "\r\n",
+          );
+          onResponded();
+        },
+        error() {},
+      },
+    });
+  }
+  const S3_WORKER_PRELUDE =
+    'const { workerData, parentPort } = require("worker_threads");' +
+    'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.endpoint });';
+  // S3 requests go through an inherited HTTP_PROXY without consulting NO_PROXY,
+  // which would route them past the stub server.
+  const envWithoutProxy = { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined };
+
+  test("terminating a worker with S3 streaming downloads in flight aborts them", async () => {
+    using server = stalledS3Server(() => {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           ${JSON.stringify(S3_WORKER_PRELUDE)} +
+           // Each download has delivered its first chunk once this resolves: both are in flight.
+           'Promise.all([1, 2].map(() => s3.file("key").stream().getReader().read())).then(() => parentPort.postMessage("streaming"));',
+           { eval: true, workerData: { endpoint: "http://127.0.0.1:${server.port}" } });
+         w.once("message", async () => console.log("exit", await w.terminate()));`,
+      ],
+      env: envWithoutProxy,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("terminating a worker with buffered S3 downloads in flight aborts them", async () => {
+    // A buffered download (.text()) gives JS nothing to observe until it completes,
+    // so the server reports when both requests are in flight and the parent then
+    // tells the child, over stdin, to terminate the worker.
+    const bothInFlight = Promise.withResolvers<void>();
+    let responded = 0;
+    using server = stalledS3Server(() => {
+      if (++responded === 2) bothInFlight.resolve();
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           ${JSON.stringify(S3_WORKER_PRELUDE)} +
+           'for (const key of ["a", "b"]) s3.file(key).text().catch(() => {});',
+           { eval: true, workerData: { endpoint: "http://127.0.0.1:${server.port}" } });
+         process.stdin.once("data", async () => console.log("exit", await w.terminate()));`,
+      ],
+      env: envWithoutProxy,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await bothInFlight.promise;
+    proc.stdin.write("terminate\n");
+    await proc.stdin.end();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A native completion on the worker's own loop (here: a dns lookup finishing)

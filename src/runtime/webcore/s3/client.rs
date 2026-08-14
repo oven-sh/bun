@@ -295,8 +295,9 @@ pub(crate) fn list_objects(
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
+        // Both written by `S3HttpSimpleTask::schedule` below.
         http: core::mem::MaybeUninit::uninit(),
+        async_http_id: 0,
         sign_result: result,
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
@@ -343,7 +344,7 @@ pub(crate) fn list_objects(
     // JS thread (request setup): read options from the current VM.
     let vm = VirtualMachine::get();
 
-    task.http.write(bun_http::AsyncHTTP::init(
+    let http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -364,19 +365,10 @@ pub(crate) fn list_objects(
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
-    ));
-
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (embedded work).
-    task.loop_handle.embedded_work_scheduled();
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
-    bun_http::HTTPThread::schedule(batch);
+    );
+    // SAFETY: `task_ptr` was allocated above and has not been handed to anything yet
+    // (`task` is not used past this point); `http`'s callback context is `task_ptr`.
+    unsafe { S3HttpSimpleTask::schedule(task_ptr, http) };
     Ok(())
 }
 
@@ -1227,8 +1219,9 @@ fn download_stream(
     };
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {
-            // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
+            // Both written by `S3HttpDownloadStreamingTask::schedule` below.
             http: core::mem::MaybeUninit::uninit(),
+            async_http_id: 0,
             sign_result: result,
             proxy_url: owned_proxy,
             callback_context: NonNull::new(callback_context.cast::<()>())
@@ -1252,7 +1245,6 @@ fn download_stream(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
             concurrent_task: Default::default(),
-            async_http_id: 0,
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1283,7 +1275,7 @@ fn download_stream(
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
-    task.http.write(bun_http::AsyncHTTP::init(
+    let http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -1304,22 +1296,10 @@ fn download_stream(
             reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
-    ));
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    let http = unsafe { task.http.assume_init_mut() };
-    task.async_http_id = http.async_http_id;
-    // enable streaming
-    http.enable_response_body_streaming();
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    http.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (embedded work).
-    task.loop_handle.embedded_work_scheduled();
-    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
-    bun_http::HTTPThread::schedule(batch);
+    );
+    // SAFETY: `task_ptr` was allocated above and has not been handed to anything yet
+    // (`task` is not used past this point); `http`'s callback context is `task_ptr`.
+    unsafe { S3HttpDownloadStreamingTask::schedule(task_ptr, http) };
     task_ptr
 }
 

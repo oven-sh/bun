@@ -12,7 +12,7 @@ import net from "node:net";
 const gc = () => (globalThis.Bun ? Bun.gc(true) : globalThis.gc?.());
 
 async function round() {
-  const server = http.createServer((req, res) => {
+  let server = http.createServer((req, res) => {
     req.resume().on("end", () => {
       res.writeHead(200, { "Content-Length": 2 });
       res.end("ok");
@@ -48,6 +48,7 @@ async function round() {
     client.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\n");
     await requested;
     server.close();
+    server = null;
 
     // Finish request 1: the connection is now idle, kept alive, and the only
     // thing still attached to the closed server.
@@ -64,7 +65,7 @@ async function round() {
     return { statuses: received.match(/HTTP\/1\.1 \d{3} [^\r\n]*/g), clientErrors };
   } finally {
     client.destroy();
-    if (server.listening) server.close();
+    if (server?.listening) server.close();
   }
 }
 

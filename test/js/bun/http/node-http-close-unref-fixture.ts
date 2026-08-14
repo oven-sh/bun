@@ -4,7 +4,7 @@ import net from "node:net";
 
 const release = Promise.withResolvers<void>();
 const inflight = Promise.withResolvers<void>();
-const server = http.createServer((req, res) => {
+let server: http.Server | null = http.createServer((req, res) => {
   inflight.resolve();
   release.promise.then(() => res.end("ok"));
 });
@@ -19,6 +19,7 @@ try {
   // Busy during close(), so the connection survives it and is keep-alive again
   // once the response is out.
   server.close();
+  server = null;
   release.resolve();
   while (!received.endsWith("ok")) await once(client, "data");
   // The client end no longer holds the loop; the process exits now iff the
@@ -30,5 +31,5 @@ try {
     );
   });
 } finally {
-  if (server.listening) server.close();
+  if (server?.listening) server.close();
 }

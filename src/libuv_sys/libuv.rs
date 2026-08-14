@@ -2845,7 +2845,9 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
+    pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
     pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
     pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
     pub fn uv_interface_addresses(

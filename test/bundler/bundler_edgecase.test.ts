@@ -2348,6 +2348,177 @@ describe("bundler", () => {
     },
   });
 
+  // Lowering a top-level `using` wraps the module body in try/catch/finally.
+  // Class declarations have to stay in source order inside that block, but as
+  // module-scoped `var`s, like esbuild: exported classes used to be hoisted
+  // above the block (evaluating before the `using` value was initialized) and
+  // non-exported ones stayed block-scoped to it, so the hoisted function
+  // declarations could not see them.
+  itBundled("edgecase/UsingTopLevelClassDeclarations", {
+    files: {
+      "/entry.ts": `
+        import { Exported, Clause, viaFunction, Sub } from "./module.ts";
+        console.log(Exported.name, Exported.v);
+        console.log(Clause.name, Clause.v, Clause.self() === Clause);
+        console.log(viaFunction().name, viaFunction().v);
+        console.log(Sub.name, Sub.v, Object.getPrototypeOf(Sub) === Exported);
+      `,
+      "/module.ts": `
+        using resource = { v: 42, [Symbol.dispose]() { console.log("Disposing"); } };
+        export class Exported { static v = resource.v; }
+        class Clause { static v = resource.v; static self() { return Clause; } }
+        export { Clause };
+        class Hidden { static v = resource.v; }
+        export function viaFunction() { return Hidden; }
+        export class Sub extends Exported {}
+      `,
+    },
+    run: {
+      stdout: `
+        Disposing
+        Exported 42
+        Clause 42 true
+        Hidden 42
+        Sub 42 true
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).not.toMatch(/^\s*class /m);
+      // Only the assignment is pinned down: when bundling, the `var` itself is
+      // relocated into a top-level declaration, and the class expression may or
+      // may not carry a name.
+      expect(output).toMatch(/\bExported = class\b/);
+      expect(output).toMatch(/\bHidden = class\b/);
+    },
+  });
+
+  // A module that is also reached through import() is evaluated inside an
+  // `__esm(...)` wrapper. The linker only hoists top-level declarations out of
+  // it, so the classes rely on the try block's `var`s being relocated into a
+  // top-level declaration (see LoweredTopLevelUsingInEsmWrapper below).
+  itBundled("edgecase/UsingTopLevelClassDeclarationsInEsmWrapper", {
+    files: {
+      "/entry.ts": `
+        import { Exported, viaFunction } from "./module.ts";
+        console.log("static", Exported.v, viaFunction().v);
+        const mod = await import("./module.ts");
+        console.log("dynamic", mod.Exported === Exported, mod.viaFunction().v);
+      `,
+      "/module.ts": `
+        using resource = { v: 42, [Symbol.dispose]() { console.log("Disposing"); } };
+        export class Exported { static v = resource.v; }
+        class Hidden { static v = resource.v; }
+        export function viaFunction() { return Hidden; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("__esm(");
+      expect(output).toMatch(/^var __stack, resource, Exported, Hidden;$/m);
+    },
+    run: {
+      stdout: `
+        Disposing
+        static 42 42
+        dynamic true 42
+      `,
+    },
+  });
+
+  itBundled("edgecase/AwaitUsingTopLevelClassDeclarations", {
+    files: {
+      "/entry.ts": `
+        import { Exported, viaFunction } from "./module.ts";
+        console.log(Exported.v, viaFunction().v);
+      `,
+      "/module.ts": `
+        await using resource = { v: 42, async [Symbol.asyncDispose]() { console.log("Disposing"); } };
+        export class Exported { static v = resource.v; }
+        class Hidden { static v = resource.v; }
+        export function viaFunction() { return Hidden; }
+      `,
+    },
+    run: {
+      stdout: "Disposing\n42 42",
+    },
+  });
+
+  // `lower_class` emits extra statements around a decorated class; the class
+  // statement among them is the one that gets rewritten to a `var`.
+  itBundled("edgecase/UsingTopLevelClassStandardDecorators", {
+    files: {
+      "/entry.ts": `
+        import { Exported, viaFunction } from "./module.ts";
+        console.log(Exported.decorated, Exported.v, viaFunction().decorated, viaFunction().v);
+      `,
+      "/module.ts": `
+        using resource = { v: 42, [Symbol.dispose]() { console.log("Disposing"); } };
+        function decorate(value: any, context: ClassDecoratorContext) {
+          return class extends value { static decorated = context.name; };
+        }
+        @decorate
+        export class Exported { static v = resource.v; }
+        @decorate
+        class Hidden { static v = resource.v; }
+        export function viaFunction() { return Hidden; }
+      `,
+    },
+    run: {
+      stdout: "Disposing\nExported 42 Hidden 42",
+    },
+  });
+
+  itBundled("edgecase/UsingTopLevelClassExperimentalDecorators", {
+    files: {
+      "/entry.ts": `
+        import { Exported, viaFunction } from "./module.ts";
+        console.log(Exported.decorated, Exported.v, Exported.fields, viaFunction().decorated, viaFunction().v);
+      `,
+      "/module.ts": `
+        using resource = { v: 42, [Symbol.dispose]() { console.log("Disposing"); } };
+        function decorate(target: any) {
+          return class extends target { static decorated = target.name; };
+        }
+        function field(target: any, key: string) {
+          target.fields = key;
+        }
+        @decorate
+        export class Exported { static v = resource.v; @field static f = 1; }
+        @decorate
+        class Hidden { static v = resource.v; }
+        export function viaFunction() { return Hidden; }
+      `,
+      "/tsconfig.json": /* json */ `{ "compilerOptions": { "experimentalDecorators": true } }`,
+    },
+    run: {
+      stdout: "Disposing\nExported 42 f Hidden 42",
+    },
+  });
+
+  itBundled("edgecase/UsingTopLevelClassBakeDev", {
+    // The dev server's module format builds its export list from the same
+    // lowered statements.
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": `
+        using resource = { [Symbol.dispose]() {} };
+        export class Exported {}
+        class Hidden {}
+        export function viaFunction() { return Hidden; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).not.toMatch(/^\s*class (Exported|Hidden) /m);
+      expect(output).toMatch(/\bExported = class\b/);
+      expect(output).toMatch(/\bHidden = class\b/);
+      const [, exportList] = output.match(/hmr\.exports = \{([^}]*)\}/)!;
+      const exportNames = exportList.split(/[\s,]+/).filter(Boolean);
+      expect(exportNames.sort()).toEqual(["Exported", "viaFunction"]);
+    },
+  });
+
   itBundled("edgecase/UsingExportFails", {
     files: {
       "/entry.ts": `

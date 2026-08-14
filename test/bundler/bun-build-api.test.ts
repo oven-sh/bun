@@ -1603,7 +1603,7 @@ test.skipIf(isWindows)(
       await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
       let readDone = false, readErr;
       // a pool thread blocks opening/reading the FIFO
-      fs.readFile(fifo, (err) => { readErr = err; readDone = true; });
+      const readFinished = new Promise((resolve) => fs.readFile(fifo, (err) => { readErr = err; readDone = true; resolve(); }));
       // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
       // waits for the pool thread to be in there and, by staying open without writing, keeps it
       // parked in read() until we close it below.
@@ -1627,7 +1627,7 @@ test.skipIf(isWindows)(
       console.error("second build took " + Math.round(elapsed) + " ms");
       console.log(result.success, result.outputs.length > 0, readDone);
       closeWriter(); // EOF for the reader: let the pool thread go before exiting
-      for (const deadline = Date.now() + 10_000; !readDone && Date.now() < deadline; ) await Bun.sleep(5);
+      await readFinished;
       console.log(readDone, readErr ? readErr.code : "ok");
       process.exit(0);
     `,

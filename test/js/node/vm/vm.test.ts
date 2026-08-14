@@ -1218,7 +1218,12 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
   test.concurrent("measureMemory() lists one entry per context, however the context was made", async () => {
     const code = `
       const vm = require("node:vm");
-      const count = async () => (await vm.measureMemory({ mode: "detailed" })).other.length;
+      // A context is live as long as the object the caller holds for it is, so a
+      // full GC before each measurement must not change the numbers.
+      const count = async () => {
+        Bun.gc(true);
+        return (await vm.measureMemory({ mode: "detailed" })).other.length;
+      };
       const counts = [await count()];
       const held = [vm.createContext({}), {}, {}, vm.createContext(vm.constants.DONT_CONTEXTIFY)];
       counts.push(await count());
@@ -1226,10 +1231,11 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
       counts.push(await count());
       new vm.Script("1").runInNewContext(held[2]);
       counts.push(await count());
-      // Reuse adds nothing.
+      // Running again in any of them (the DONT_CONTEXTIFY one included) adds nothing.
       vm.runInNewContext("1", held[1]);
       new vm.Script("1").runInNewContext(held[2]);
       vm.runInNewContext("1", held[3]);
+      vm.runInContext("1", held[3]);
       counts.push(await count());
       console.log(counts.join(" "), held.every(vm.isContext));
     `;

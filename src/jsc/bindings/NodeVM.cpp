@@ -853,14 +853,18 @@ NodeVMGlobalObject* makeContext(JSGlobalObject* globalObject, JSObject* sandbox,
 
     context->setContextifiedObject(sandbox);
 
+    // Keyed on what the caller holds: for DONT_CONTEXTIFY that is the handle, since
+    // the first run replaces the placeholder `sandbox` and GC would drop the entry.
+    JSObject* key = sandbox;
     if (contextOptions.notContextified) {
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, context);
         RETURN_IF_EXCEPTION(scope, nullptr);
         context->setSpecialSandbox(specialSandbox);
+        key = specialSandbox;
     }
 
     // Registered last, so a lookup never yields a half-built context.
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, context);
+    zigGlobalObject->vmModuleContextMap()->set(vm, key, context);
     return context;
 }
 

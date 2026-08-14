@@ -1391,17 +1391,28 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
 
   // Memorize the context for custom inspection on proxies.
   const context = value;
+  let proxies = 0;
   // Always check for proxies to prevent side effects and to prevent triggering
   // any proxy handlers.
-  const proxy = getProxyDetails(value, !!ctx.showProxy);
+  let proxy = getProxyDetails(value, !!ctx.showProxy);
   if (proxy !== undefined) {
-    if (proxy === null || proxy[0] === null) {
-      return ctx.stylize("<Revoked Proxy>", "special");
-    }
     if (ctx.showProxy) {
+      if (proxy[0] === null) {
+        return ctx.stylize("<Revoked Proxy>", "special");
+      }
       return formatProxy(ctx, proxy, recurseTimes);
     }
-    value = proxy;
+    // A target can itself be a proxy (possibly revoked after it was wrapped), so
+    // unwrap every layer here; each one becomes a `Proxy(...)` around the result.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1121-L1144
+    do {
+      if (proxy === null) {
+        return wrapInProxy(ctx, ctx.stylize("<Revoked Proxy>", "special"), proxies);
+      }
+      value = proxy;
+      proxy = getProxyDetails(value, false);
+      proxies += 1;
+    } while (proxy !== undefined);
   }
 
   // Provide a hook for user-specified inspect functions.
@@ -1418,7 +1429,7 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
       // This makes sure the recurseTimes are reported as before while using
       // a counter internally.
       const depth = ctx.depth === null ? null : ctx.depth - recurseTimes;
-      const isCrossContext = proxy !== undefined || !(context instanceof Object);
+      const isCrossContext = proxies !== 0 || !(context instanceof Object);
       const ret = maybeCustom.$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
       // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
@@ -1447,7 +1458,14 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
     return ctx.stylize(`[Circular *${index}]`, "special");
   }
 
-  return formatRaw(ctx, value, recurseTimes, typedArray);
+  return wrapInProxy(ctx, formatRaw(ctx, value, recurseTimes, typedArray), proxies);
+}
+
+function wrapInProxy(ctx, formatted, proxies) {
+  for (let i = 0; i < proxies; i++) {
+    formatted = `${ctx.stylize("Proxy(", "special")}${formatted}${ctx.stylize(")", "special")}`;
+  }
+  return formatted;
 }
 
 function formatRaw(ctx, value, recurseTimes, typedArray) {
@@ -3008,4 +3026,5 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
+  getProxyDetails,
 };

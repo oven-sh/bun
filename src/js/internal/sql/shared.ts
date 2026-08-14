@@ -6,6 +6,8 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
+// not Date.now(): bun:test's setSystemTime() / useFakeTimers() override that inside the engine
+const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
 
 declare global {
   interface NumberConstructor {
@@ -609,9 +611,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
-  /// when the current connect cycle started; 0 when not connecting. Connect
-  /// failures (server not yet accepting connections) are retried until
-  /// connectionTimeout elapses from this point.
+  /// monotonicNowMs() at the start of the current connect cycle; 0 when not connecting.
   connectStartedAt: number = 0;
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -641,7 +641,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
-      this.connectStartedAt = Date.now();
+      this.connectStartedAt = monotonicNowMs();
       this.connectAttempts = 0;
     }
     await this.startConnection();
@@ -742,7 +742,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (connectionTimeout <= 0) {
       return false;
     }
-    return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
+    return this.connectStartedAt !== 0 && monotonicNowMs() - this.connectStartedAt < connectionTimeout;
   }
 
   /// Returns true if a scheduled connect retry was cancelled; in that case

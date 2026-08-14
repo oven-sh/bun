@@ -1,4 +1,5 @@
 import { RedisClient, SQL } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
@@ -399,6 +400,35 @@ describe("runtime timeouts are not fake timers", () => {
     }
   });
 });
+
+// Deadlines the runtime measures in JS (Bun.SQL's connect-retry budget) read
+// monotonicNowMs(), which stays on the real clock while Date.now(),
+// performance.now() and the mockable timer clock follow the fake one.
+describe("monotonicNowMs() is not a mocked clock", () => {
+  const ONE_HOUR = 60 * 60 * 1000;
+
+  test("useFakeTimers() neither restarts it nor advances it", () => {
+    const beforeFakeTimers = timerInternals.monotonicNowMs();
+    vi.useFakeTimers();
+    const atActivation = timerInternals.monotonicNowMs();
+    vi.advanceTimersByTime(ONE_HOUR);
+    const afterAdvance = timerInternals.monotonicNowMs();
+    expect({
+      mockedTimerClock: timerInternals.timerClockMs(),
+      performanceNow: performance.now(),
+      // the mocked clocks restart from 0 on activation; a mocked reading here
+      // would be below the reading taken before useFakeTimers()
+      restarted: atActivation < beforeFakeTimers,
+      advancedByTheHour: afterAdvance - atActivation >= ONE_HOUR,
+    }).toEqual({
+      mockedTimerClock: ONE_HOUR,
+      performanceNow: ONE_HOUR,
+      restarted: false,
+      advancedByTheHour: false,
+    });
+  });
+});
+
 // Bun.cron() is mockable, so a job created under fake timers lives in the fake
 // heap, and useRealTimers() / clearAllTimers() drop it with the rest. Like a
 // dropped setInterval it has to end up stopped, rather than holding the process

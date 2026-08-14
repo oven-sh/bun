@@ -1,9 +1,3 @@
-//! Neither linker deletes anything from `node_modules`; each only creates or
-//! repoints the links the current lockfile asks for. The links of a workspace
-//! whose name left the lockfile (renamed, or removed from the project) are
-//! unlinked here instead, before the linker runs, so a name the new lockfile
-//! still places is simply linked again.
-
 use bstr::BStr;
 use bun_paths::AutoAbsPathChecked;
 
@@ -13,6 +7,7 @@ use crate::package_installer::alias_is_safe_install_target;
 use crate::package_manager_real::PackageManager;
 use crate::resolution::Tag as ResolutionTag;
 
+/// Linkers only visit names in the new lockfile; a workspace name that left it is unlinked here.
 pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfile) {
     let previous_string_buf = previous.buffers.string_bytes.as_slice();
     let previous_packages = previous.packages.slice();
@@ -51,8 +46,7 @@ fn remove_links_named(current: &Lockfile, name: &[u8]) {
     }
 }
 
-/// Unlinks `<package_dir>/node_modules/<name>`. `readlink` doubles as the
-/// symlink/junction check: a real directory or file there is not ours to remove.
+/// `readlink` is the symlink (or junction) check; a real directory or file there is left alone.
 fn remove_link(path: &mut AutoAbsPathChecked, package_dir: &[u8], name: &[u8]) {
     if path.append(package_dir).is_err()
         || path.append(b"node_modules").is_err()

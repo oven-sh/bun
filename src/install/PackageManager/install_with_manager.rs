@@ -800,8 +800,7 @@ pub fn install_with_manager(
             break 'install_summary PackageInstallSummary::default();
         }
 
-        // Every workspace is a dependency of the root package, so without a diff
-        // the workspace set is unchanged.
+        // Every workspace is a root dependency, so without a diff the workspace set is unchanged.
         if had_any_diffs {
             remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }

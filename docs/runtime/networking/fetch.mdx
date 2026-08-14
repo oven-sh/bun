@@ -247,6 +247,8 @@ await fetch("https://example.com", {
 
 This avoids SSL errors with self-signed certificates, but it disables TLS validation, so use it with caution.
 
+Like Node.js, Bun rejects a server's certificate chain when any certificate in it, including the `ca` it chains up to, has an RSA key shorter than 2048 bits or an EC key shorter than 224 bits. `fetch` reports this as a `CA_KEY_TOO_SMALL` or `EE_KEY_TOO_SMALL` error.
+
 ### Request options
 
 In addition to the standard fetch options, Bun provides several extensions:

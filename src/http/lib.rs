@@ -1512,8 +1512,9 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
 // constants are the BoringSSL `X509_V_ERR_*` values from
-// `<openssl/x509.h>`. Inlined as literals so
-// this file doesn't grow a dep on a header-generated const set.
+// `<openssl/x509.h>`, plus uSockets' own `US_X509_V_ERR_*` (libusockets.h).
+// Inlined as literals so this file doesn't grow a dep on a header-generated
+// const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
     use crate::error::CertError;
     crate::Error::Cert(match error_no {
@@ -1583,6 +1584,8 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         65 => CertError::INVALID_CALL,
         66 => CertError::STORE_LOOKUP,
         67 => CertError::NAME_CONSTRAINTS_WITHOUT_SANS,
+        1001 => CertError::EE_KEY_TOO_SMALL,
+        1002 => CertError::CA_KEY_TOO_SMALL,
         _ => CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     })
 }

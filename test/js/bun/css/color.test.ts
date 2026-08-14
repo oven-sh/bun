@@ -550,6 +550,95 @@ describe("css string output parses back to the same color", () => {
   });
 });
 
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// Inside calc() a channel keyword is a <number>, so multiplying it by a
+// <percentage> gives a <percentage>, while adding one to it is a type error.
+describe("relative color calc() with percentages", () => {
+  const origin = "color(srgb .8 .4 .2)";
+
+  test.each([
+    ["calc(r * 50%)", ".4"],
+    ["calc(50% * r)", ".4"],
+    ["calc(r * -50%)", "-.4"],
+    ["calc(r * 50% + 10%)", ".5"],
+    ["calc(50% - r * 25%)", ".3"],
+    ["calc(r / 2 * 100%)", ".4"],
+    ["calc(r * g * 50%)", ".16"],
+    ["calc((r + g) * 50%)", ".6"],
+    ["min(r * 50%, 30%)", ".3"],
+    ["max(r * 50%, 30%)", ".4"],
+  ])("%s is a percentage of the channel", (expr, expected) => {
+    expect(color(`color(from ${origin} srgb ${expr} g b)`, "css")).toBe(`color(srgb ${expected} .4 .2)`);
+  });
+
+  const spaces: [space: string, channels: string, printed?: string][] = [
+    ["srgb", "g b"],
+    ["srgb-linear", "g b"],
+    ["display-p3", "g b"],
+    ["prophoto-rgb", "g b"],
+    ["rec2020", "g b"],
+    ["xyz-d50", "y z"],
+    ["xyz-d65", "y z", "xyz"],
+    ["xyz", "y z"],
+  ];
+  test.each(spaces)("color(from ... %s calc(<channel> * <percentage>))", (space, channels, printed = space) => {
+    const [b, c] = channels.split(" ");
+    expect(color(`color(from color(${space} .8 .4 .2) ${space} ${b} calc(${b} * 50%) calc(50% * ${c}))`, "css")).toBe(
+      `color(${printed} .4 .2 .1)`,
+    );
+  });
+
+  test.each([
+    ["color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha * 50%))", "color(srgb .8 .4 .2 / .25)"],
+    ["rgb(from rgb(200 100 50 / .5) r g b / calc(alpha * 50%))", "#c8643240"],
+    ["hsl(from hsl(30 50% 50% / .5) h s l / calc(50% * alpha))", "#bf804040"],
+    ["hwb(from hwb(30 20% 40% / .5) h w b / calc(alpha * 50%))", "#99663340"],
+    ["lab(from lab(50% 20 30 / .5) l a b / calc(alpha * 50%))", "lab(50% 20 30 / .25)"],
+    ["lch(from lch(50% 20 30 / .5) l c h / calc(alpha * 50%))", "lch(50% 20 30 / .25)"],
+    ["oklab(from oklab(50% .1 .1 / .5) l a b / calc(alpha * 50%))", "oklab(50% .1 .1 / .25)"],
+    ["oklch(from oklch(50% .1 30 / .5) l c h / calc(alpha * 50%))", "oklch(50% .1 30 / .25)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // min()/max() fold channel keywords whether or not a literal number is mixed in.
+  test.each([
+    ["min(r, g)", ".4"],
+    ["max(r, g)", ".8"],
+    ["min(r, g, b)", ".2"],
+    ["min(r, .5)", ".5"],
+    ["min(.5, r)", ".5"],
+    ["max(r, .5)", ".8"],
+    ["min(r, g, .3)", ".3"],
+    ["max(g, .3, b)", ".4"],
+    ["calc(r * .5)", ".4"],
+    ["round(r, .5)", "1"],
+  ])("%s folds to a number", (expr, expected) => {
+    expect(color(`color(from ${origin} srgb ${expr} g b)`, "css")).toBe(`color(srgb ${expected} .4 .2)`);
+  });
+
+  test("min()/max() fold in the number and hue channels too", () => {
+    expect(color("lab(from lab(50% 20 30) l max(a, b) b)", "css")).toBe("lab(50% 30 30)");
+    expect(color("lab(from lab(50% 20 30) l min(a, 10) b)", "css")).toBe("lab(50% 10 30)");
+    expect(color("lch(from lch(50% 20 30) l c min(h, 10))", "css")).toBe("lch(50% 20 10)");
+  });
+
+  test.each([
+    "color(from color(srgb .8 .4 .2) srgb calc(r + 50%) g b)",
+    "color(from color(srgb .8 .4 .2) srgb calc(50% + r) g b)",
+    "color(from color(srgb .8 .4 .2) srgb calc(r * 50% + .1) g b)",
+    "color(from color(srgb .8 .4 .2) srgb calc(r * 50% - g) g b)",
+    "color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha + 10%))",
+    "rgb(from rgb(200 100 50 / .5) r g b / calc(alpha + 10%))",
+    // The same type error outside relative color syntax (not a `none` channel).
+    "color(srgb calc(1 + 50%) 0 0)",
+    "color(srgb calc(50% + 1) 0 0)",
+    "hsl(120 calc(50% + 1) 40%)",
+  ])("%s mixes a number and a percentage and does not parse", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});
+
 describe("input forms", () => {
   test.each([
     ["a named color", "red"],

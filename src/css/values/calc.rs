@@ -1094,20 +1094,19 @@ impl<V: CalcValue> Calc<V> {
 
         for arg in args.iter_mut() {
             let mut found: Option<Option<usize>> = None;
-            if let Calc::Value(val) = &*arg {
-                for (idx, b) in reduced.iter().enumerate() {
-                    if let Calc::Value(v) = b {
-                        let result = protocol::PartialCmp::partial_cmp(&**val, &**v);
-                        if result.is_some() {
-                            if result == Some(order) {
-                                found = Some(Some(idx));
-                                break;
-                            } else {
-                                found = Some(None);
-                                break;
-                            }
-                        }
+            for (idx, b) in reduced.iter().enumerate() {
+                let result = match (&*arg, b) {
+                    (Calc::Value(val), Calc::Value(v)) => {
+                        protocol::PartialCmp::partial_cmp(&**val, &**v)
                     }
+                    (Calc::Number(val), Calc::Number(v)) => {
+                        protocol::PartialCmp::partial_cmp(val, v)
+                    }
+                    _ => None,
+                };
+                if let Some(result) = result {
+                    found = Some((result == order).then_some(idx));
+                    break;
                 }
             }
 
@@ -1771,10 +1770,10 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Ok(Percentage { v: f32::NAN }),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
     #[inline]

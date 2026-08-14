@@ -180,6 +180,81 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // min()/max() of plain numbers fold like min()/max() of dimensions do.
+    minify_test(`a { line-height: min(1.5, 1.2) }`, `a{line-height:1.2}`);
+    minify_test(`a { line-height: max(1.2, 2, 1.5) }`, `a{line-height:2}`);
+    minify_test(`a { line-height: calc(min(1.5, 1.2) * 2) }`, `a{line-height:2.4}`);
+    minify_test(`a { width: calc(min(1.5, 1.2) * 10px) }`, `a{width:12px}`);
+    minify_test(`a { opacity: min(.5, .7) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: max(50%, 70%) }`, `a{opacity:.7}`);
+    minify_test(`a { opacity: min(NaN, .5) }`, `a{opacity:min(NaN,.5)}`);
+    minify_test(`a { width: min(10px, 1.5) }`, `a{width:min(10px,1.5)}`);
+
+    // A <number> and a <percentage> cannot be added: the declaration is invalid and
+    // is left as written, not evaluated to NaN and serialized as 0.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+  });
+
+  describe("relative color calc() with percentages", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors: a channel keyword is
+    // a <number>, so `calc(r * 50%)` is a <percentage> and `calc(r + 50%)` is invalid.
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb calc(r * 50%) calc(50% * g) b) }",
+      ".foo{color:color(srgb .4 .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(display-p3 .8 .4 .2) display-p3 r calc(g * 50% + 10%) calc(50% - b * 50%)) }",
+      ".foo{color:color(display-p3 .8 .3 .4)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb min(r * 50%, 30%) max(g * 50%, 30%) b) }",
+      ".foo{color:color(srgb .3 .3 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha * 50%)) }",
+      ".foo{color:color(srgb .8 .4 .2/.25)}",
+    );
+    minify_test(".foo { color: rgb(from rgb(200 100 50 / .5) r g b / calc(alpha * 50%)) }", ".foo{color:#c8643240}");
+    // Not `rgb(255 0 0/calc(alpha*50%))`, which no browser accepts.
+    minify_test(".foo { color: rgb(from red r g b / calc(alpha * 50%)) }", ".foo{color:#ff000080}");
+    minify_test(".foo { color: hsl(from hsl(30 50% 50% / .5) h s l / calc(50% * alpha)) }", ".foo{color:#bf804040}");
+    minify_test(
+      ".foo { color: oklch(from oklch(50% .1 30 / .5) l c h / calc(alpha * 50%)) }",
+      ".foo{color:oklch(50% .1 30/.25)}",
+    );
+
+    // min()/max() fold over channel keywords, with or without a literal number
+    // among the arguments.
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb min(r, g) max(g, b) b) }",
+      ".foo{color:color(srgb .4 .4 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb min(r, .5) max(g, .5) b) }",
+      ".foo{color:color(srgb .5 .5 .2)}",
+    );
+    minify_test(".foo { color: lab(from lab(50% 20 30) l max(a, b) min(b, 10)) }", ".foo{color:lab(50% 30 10)}");
+
+    minify_test(
+      ".foo { color: color(from red srgb calc(r + 50%) g b) }",
+      ".foo{color:color(from red srgb calc(r + 50%)g b)}",
+    );
+    minify_test(
+      ".foo { color: color(from red srgb r g b / calc(alpha + 10%)) }",
+      ".foo{color:color(from red srgb r g b/calc(alpha + 10%))}",
+    );
+    // rgb()/hsl() with an alpha that does not parse resolve the channels and keep
+    // the alpha as written (the `/ var(--alpha)` path); same output as lightningcss.
+    // The point is that the invalid alpha is not folded into `red`.
+    minify_test(
+      ".foo { color: rgb(from red r g b / calc(alpha + 10%)) }",
+      ".foo{color:rgb(255 0 0/calc(alpha + 10%))}",
+    );
+    minify_test(".foo { color: color(srgb calc(1 + 50%) 0 0) }", ".foo{color:color(srgb calc(1 + 50%)0 0)}");
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

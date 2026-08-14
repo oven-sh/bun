@@ -1921,7 +1921,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        this.client_mut().on_close()
+        let closed = this.client_mut().on_close();
+        if this.client.get().flags.in_close {
+            // A connecting socket closed by `ValkeyClient::close()` lands here instead of `on_close`.
+            this.client_mut().flags.close_event_threw = closed.is_err();
+            return Ok(());
+        }
+        closed
     }
 
     pub(crate) fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {

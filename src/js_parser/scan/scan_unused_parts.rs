@@ -5,22 +5,14 @@ use bun_collections::HashMap;
 use bun_crash_handler::handle_oom::handle_oom;
 use smallvec::SmallVec;
 
-/// Which parts declare each top-level symbol, keyed by the symbol its `link`
-/// chain ends at: redeclaring a `var` or function creates a second symbol
-/// linked to the first, and every declaration of a live symbol has to stay
-/// (`export var x = 1; var x = 2;`).
+/// The parts declaring each top-level symbol, keyed by the end of the symbol's
+/// `link` chain (a redeclared `var` or function is two linked symbols).
 type DeclaringParts = HashMap<Ref, SmallVec<[u32; 1]>>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Single-file tree shaking (`features.remove_unused_declarations`).
-    ///
-    /// `Options.tree_shaking` gave every top-level statement its own part.
-    /// Parts that do anything other than declare something side-effect free
-    /// are roots; a declaration part survives only if a live part uses, or
-    /// also declares, one of its symbols. Removing a part also un-counts its
-    /// symbol uses, so the import scanner that runs next trims the imports only
-    /// it needed, and marks the `import()`/`require()` records inside it
-    /// unused, like the ones in dead control flow that are never created.
+    /// Single-file tree shaking (`features.remove_unused_declarations`): mark from
+    /// the parts that import, export or have side effects, sweep the declarations
+    /// nothing live reaches. Runs before the import scanner so their imports go too.
     pub(crate) fn remove_unused_parts(&mut self, parts: &mut ArenaVec<'a, js_ast::Part>) {
         // The bundler tree shakes in the linker, where cross-file uses are known.
         debug_assert!(!self.options.bundle);
@@ -56,6 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for &used in part.symbol_uses.keys() {
                 self.mark_declaring_parts_live(used, &declaring_parts, &mut live, &mut worklist);
             }
+            // Every declaration of a live symbol stays: `export var x = 1; var x = 2;`
             DeclaredSymbol::for_each_top_level_symbol(
                 &part.declared_symbols,
                 &mut (&mut live, &mut worklist),
@@ -76,6 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parts.push(part);
                 continue;
             }
+            // `scan()` and the linker skip unused records.
             for &record_index in part.import_record_indices.iter() {
                 self.import_records.items_mut()[record_index as usize]
                     .flags
@@ -103,9 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Imports are kept here and trimmed by use count in the import scanner;
-    /// exports and everything `can_be_removed_if_unused` rejects keep the rest
-    /// of the file alive.
+    /// Imports stay here and get trimmed by use count in the import scanner.
     fn part_only_declares_removable_symbols(&self, part: &js_ast::Part) -> bool {
         part.can_be_removed_if_unused
             && part.stmts.iter().all(|stmt| match &stmt.data {
@@ -114,8 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     !func.func.flags.contains(flags::Function::IsExport)
                 }
                 js_ast::StmtData::SClass(class) => !class.is_export,
-                // Generated companions of a declaration, e.g. the closure that
-                // fills in a TypeScript enum.
+                // Generated next to a declaration, e.g. a TypeScript enum's closure.
                 js_ast::StmtData::SExpr(expr) => expr.does_not_affect_tree_shaking,
                 js_ast::StmtData::SEmpty(_) => true,
                 _ => false,

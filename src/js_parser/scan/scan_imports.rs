@@ -266,10 +266,8 @@ impl<'a> ImportScanner<'a> {
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
                         //
-                        // With single-file tree shaking, TypeScript's use counts still
-                        // include the references made by code that was removed
-                        // (eliminated exports, shaken declarations), which would leave
-                        // `import "x"` behind; apply the JavaScript rule there as well.
+                        // `ts_use_counts` still counts references from code that single-file
+                        // tree shaking removed, which would leave `import "x"` behind.
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript

@@ -209,11 +209,8 @@ pub mod Runtime {
 
         pub trim_unused_imports: bool,
 
-        /// `Bun.Transpiler({ treeShaking: true })`. A standalone transform has no
-        /// linker, so the parser itself drops the top-level declarations that
-        /// nothing reachable from an export or a side effect uses, and then the
-        /// imports whose bindings all went away (see `P::remove_unused_parts`).
-        /// The runtime leaves this off: it enables `Options.tree_shaking` only to
+        /// `Bun.Transpiler({ treeShaking })`: run `P::remove_unused_parts`. Not
+        /// implied by `Options.tree_shaking`, which the runtime enables only to
         /// get one part per statement.
         pub remove_unused_declarations: bool,
 

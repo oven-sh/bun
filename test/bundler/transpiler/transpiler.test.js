@@ -2043,6 +2043,71 @@ export default class {
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
     });
+
+    // The value being replaced never reaches the output, so whatever only it referenced
+    // is unused. `foo` is replaced with a plain value, `getStaticProps` is replaced by an
+    // injected export and `loader` is eliminated; the three kinds must trim alike.
+    const deadImport = `import deadFS from 'fs';\n`;
+    const deadCall = `deadFS.readFileSync("/etc/passwd")`;
+
+    it.each([
+      ["export const, replaced", `export const foo = () => ${deadCall};`, 'export const foo = "bar";\n'],
+      ["export var, replaced", `export var foo = () => ${deadCall};`, 'export var foo = "bar";\n'],
+      ["export let, replaced", `export let foo = () => ${deadCall};`, 'export let foo = "bar";\n'],
+      ["export function, replaced", `export function foo() { return ${deadCall}; }`, 'export var foo = "bar";\n'],
+      ["export const, injected", `export const getStaticProps = () => ${deadCall};`, "export const __N_SSG = true;\n"],
+      ["export const, eliminated", `export const loader = () => ${deadCall};`, ""],
+    ])("%s: trims an import used only by the discarded value", (_, source, expected) => {
+      expect(transpiler.transformSync(deadImport + source)).toBe(expected);
+      expect(transpiler.scan(deadImport + source).imports).toEqual([]);
+    });
+
+    it("does not record an import() made inside the discarded value", () => {
+      const source = `export const foo = () => import("./only-used-here");`;
+      expect(transpiler.transformSync(source)).toBe('export const foo = "bar";\n');
+      expect(transpiler.scan(source).imports).toEqual([]);
+    });
+
+    it("keeps an import that is also used outside the discarded value", () => {
+      expect(
+        transpiler.transformSync(
+          `import deadFS from 'fs';
+          import liveFS from 'fs';
+          export const foo = () => ${deadCall};
+          export function baz() { return liveFS.readFileSync("/etc/passwd"); }`,
+        ),
+      ).toBe(
+        'import liveFS from "fs";\nexport const foo = "bar";\nexport function baz() {\n  return liveFS.readFileSync("/etc/passwd");\n}\n',
+      );
+
+      // Only the replaced declaration of the statement is dead, not its siblings.
+      expect(
+        transpiler.transformSync(`import { dead, live } from 'fs';\nexport const foo = () => dead(), other = live;`),
+      ).toBe('import { live } from "fs";\nexport const foo = "bar";\nexport const other = live;\n');
+    });
+
+    describe("export default", () => {
+      const replaceDefault = new Bun.Transpiler({
+        exports: { replace: { default: "bar" } },
+        treeShaking: true,
+        trimUnusedImports: true,
+      });
+
+      it.each([
+        ["expression", `export default ${deadCall};`],
+        ["arrow function", `export default () => ${deadCall};`],
+        ["function declaration", `export default function Page() { return ${deadCall}; }`],
+      ])("%s: trims an import used only by the discarded value", (_, source) => {
+        expect(replaceDefault.transformSync(deadImport + source)).toBe('export default "bar";\n');
+        expect(replaceDefault.scan(deadImport + source)).toEqual({ exports: ["default"], imports: [] });
+      });
+
+      it("class declaration: trims an import used only by the discarded value", () => {
+        const source = deadImport + `export default class Page { method() { return ${deadCall}; } }`;
+        expect(replaceDefault.scan(source)).toEqual({ exports: ["default"], imports: [] });
+        expect(replaceDefault.transformSync(source)).not.toContain("deadFS");
+      });
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

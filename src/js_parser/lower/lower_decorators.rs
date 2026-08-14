@@ -356,7 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    /// Method brands (`init == None`) go to `method_brands`, which run before every field.
+    /// Method brands (`init == None`) go to `hoisted`, which runs before every field.
     fn emit_private_add(
         &mut self,
         is_static: bool,
@@ -365,8 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         used: &mut HashMap<&'a [u8], ()>,
         counter: &mut usize,
-        static_blocks: &mut BumpVec<'a, Property>,
-        method_brands: &mut BumpVec<'a, Property>,
+        hoisted: &mut BumpVec<'a, Property>,
         fields: &mut BumpVec<'a, Property>,
     ) {
         let target = self.new_expr(E::This {}, loc);
@@ -376,12 +375,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(v) => self.call_rt(loc, b"__privateAdd", &[target, storage, v]),
             None => self.call_rt(loc, b"__privateAdd", &[target, storage]),
         };
-        if is_static {
-            static_blocks.push(self.make_static_block(call, loc));
+        let element = if is_static {
+            self.make_static_block(call, loc)
         } else {
-            let field = self.inline_brand_field(used, counter, call, loc);
-            if is_field { fields } else { method_brands }.push(field);
-        }
+            self.inline_brand_field(used, counter, call, loc)
+        };
+        if is_field { fields } else { hoisted }.push(element);
     }
 
     /// Synthetic `#__N = void <expr>` class-body field.
@@ -1661,8 +1660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
-        let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
-        let mut instance_method_brands = BumpVec::<Property>::new_in(bump);
+        let mut hoisted_brands = BumpVec::<Property>::new_in(bump);
         let mut brand_field_counter: usize = 0;
 
         let props_slice2: &mut [Property] = class.properties.slice_mut();
@@ -1743,8 +1741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                                 &mut class_private_names,
                                 &mut brand_field_counter,
-                                &mut static_private_add_blocks,
-                                &mut instance_method_brands,
+                                &mut hoisted_brands,
                                 &mut new_properties,
                             );
                         }
@@ -1767,8 +1764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                             &mut class_private_names,
                             &mut brand_field_counter,
-                            &mut static_private_add_blocks,
-                            &mut instance_method_brands,
+                            &mut hoisted_brands,
                             &mut new_properties,
                         );
                         continue;
@@ -2077,8 +2073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         &mut class_private_names,
                         &mut brand_field_counter,
-                        &mut static_private_add_blocks,
-                        &mut instance_method_brands,
+                        &mut hoisted_brands,
                         &mut new_properties,
                     );
                 }
@@ -2100,17 +2095,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !instance_method_brands.is_empty() {
-            instance_method_brands.extend(new_properties.drain(..));
-            new_properties = instance_method_brands;
+        if !hoisted_brands.is_empty() {
+            hoisted_brands.extend(new_properties.drain(..));
+            new_properties = hoisted_brands;
         }
 
         // ── Phase 5: Rewrite private accesses ────────────
         if !private_lowered_map.is_empty() {
-            for nprop in new_properties
-                .iter_mut()
-                .chain(static_private_add_blocks.iter_mut())
-            {
+            for nprop in new_properties.iter_mut() {
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
@@ -2544,21 +2536,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
             }
-        }
-
-        // Static private __privateAdd blocks at beginning
-        if !static_private_add_blocks.is_empty() {
-            let mut merged = BumpVec::<Property>::with_capacity_in(
-                static_private_add_blocks.len() + new_properties.len(),
-                bump,
-            );
-            for sp in static_private_add_blocks.drain(..) {
-                merged.push(sp);
-            }
-            for np in new_properties.drain(..) {
-                merged.push(np);
-            }
-            new_properties = merged;
         }
 
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());

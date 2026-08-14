@@ -1493,6 +1493,28 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("the same holds for static members: lowered static accessor storage and #-fields keep source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        const mk = (n, v) => (log.push(n), v);
+        class C {
+          @dec m() {}
+          #p;
+          static a = mk("a", 1);
+          static accessor b = mk("b", C.a);
+          static #c = mk("c", C.b + 1);
+          static d = mk("d", C.#c);
+          static #sm() { return 1; }
+          static e = mk("e", C.#sm());
+        }
+        console.log(log.join(","), C.b, C.d, C.e);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c,d,e 1 2 1\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("undecorated field, accessor and #-field initializers may read a WeakMap-lowered #-private directly", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(v) { return v; }

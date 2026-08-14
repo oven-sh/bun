@@ -114,8 +114,7 @@ impl JSSourceMap {
 
         // Parse the payload to create a proper sourcemap
 
-        // Extract mappings string from payload. Not `get_stringish`: it drops ""
-        // and `"mappings": ""` is a valid map with no segments.
+        // Extract mappings string from payload
         let mappings_value = match payload_arg.get(global, b"mappings")? {
             Some(value) if !value.is_undefined_or_null() => value.to_bun_string(global)?,
             _ => {

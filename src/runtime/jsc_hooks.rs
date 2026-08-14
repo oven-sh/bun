@@ -3506,8 +3506,7 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::Sqlite | L::SqliteEmbedded => {
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let hot =
-                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot;
+            let hot = unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {

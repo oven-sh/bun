@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -322,8 +322,17 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
 // failed, `bun create` still ran the postinstall tasks, printed "dependencies
 // were installed automatically" / "Created ... successfully" and exited 0.
 // Creates a local template whose only dependency cannot be resolved (the
-// registry answers 404) and returns bun create's stderr.
-async function createWithFailingInstall(args: string[], extraEnv: Record<string, string> = {}) {
+// registry answers 404) and returns bun create's stderr. `onStderr` is called
+// with everything written to stderr so far each time more of it arrives.
+async function createWithFailingInstall({
+  args = [],
+  extraEnv = {},
+  onStderr,
+}: {
+  args?: string[];
+  extraEnv?: Record<string, string>;
+  onStderr?: (stderrSoFar: string) => void;
+}) {
   using registry = Bun.serve({
     port: 0,
     fetch: () => new Response("not found", { status: 404 }),
@@ -353,7 +362,16 @@ async function createWithFailingInstall(args: string[], extraEnv: Record<string,
       BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
     },
   });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const readStderr = async () => {
+    const decoder = new TextDecoder();
+    let text = "";
+    for await (const chunk of proc.stderr) {
+      text += decoder.decode(chunk, { stream: true });
+      onStderr?.(text);
+    }
+    return text + decoder.decode();
+  };
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), readStderr(), proc.exited]);
 
   // The template files were copied before the install ran and stay on disk.
   expect(await exists(join(dest, "index.js"))).toBe(true);
@@ -369,19 +387,47 @@ async function createWithFailingInstall(args: string[], extraEnv: Record<string,
 }
 
 it("exits 1 without running postinstall tasks or printing the success banner when the nested `bun install` fails", async () => {
-  await createWithFailingInstall(["--no-git"]);
+  await createWithFailingInstall({ args: ["--no-git"] });
 });
 
 // Without --no-git the git commands run on a second thread while the install
-// runs. The failed install must still wait for that thread (which prints the
-// "[..ms] git" line when it is done) rather than exit while git is writing the
-// repository; the stub git is slow enough to still be running when the install
-// has already failed. POSIX-only: the stub is a shell script.
+// runs, and the thread prints its "[..ms] git" line once they are all done. A
+// failed install must still wait for that thread rather than exit while git is
+// writing the repository. The stub git blocks until the test releases it, and
+// the test only does that after bun create has printed the "[..ms] bun install"
+// line, i.e. after the install's failure is known: "] git" can then only show up
+// in stderr if bun create waited. POSIX-only: the stub is a shell script.
 it.skipIf(!isPosix)("still waits for the git thread when the nested `bun install` fails", async () => {
-  using bin = tempDir("create-install-fails-git", { git: "#!/bin/sh\nsleep 0.3\nexit 0\n" });
-  chmodSync(join(String(bin), "git"), 0o755);
+  using bin = tempDir("create-install-fails-git", {});
+  const release = join(String(bin), "release");
+  writeFileSync(
+    join(String(bin), "git"),
+    `#!/bin/sh
+# Blocks until the test creates the release file; gives up after ~5s so a
+# broken run cannot leave it spinning forever.
+i=0
+while [ ! -e "${release}" ] && [ $i -lt 500 ]; do
+  sleep 0.01
+  i=$((i + 1))
+done
+exit 0
+`,
+    { mode: 0o755 },
+  );
 
-  const err = await createWithFailingInstall([], { PATH: `${bin}:${env.PATH}` });
+  let stderrAtRelease: string | undefined;
+  const err = await createWithFailingInstall({
+    extraEnv: { PATH: `${bin}:${env.PATH}` },
+    onStderr(stderrSoFar) {
+      if (stderrAtRelease === undefined && stderrSoFar.includes("] bun install")) {
+        stderrAtRelease = stderrSoFar;
+        writeFileSync(release, "");
+      }
+    },
+  });
+
+  expect(stderrAtRelease).toBeDefined();
+  expect(stderrAtRelease).not.toContain("] git");
   expect(err).toContain("] git");
 });
 

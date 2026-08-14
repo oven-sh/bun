@@ -848,12 +848,19 @@ describe("detached ArrayBuffer", () => {
 // actual has three or more members): whatever a hash lookup can settle is settled by one
 // lookup, and only the expected objects left over are matched structurally, each claiming an
 // actual entry of its own, while actual is walked once. Every expectation below was
-// cross-checked against node v26.
+// cross-checked against node v26, except the two Map cases that say otherwise: node pairs off
+// object keys that both Maps hold structurally like any other, which makes the outcome depend on
+// insertion order; Bun settles them by identity, as node itself does for Set members and as Bun
+// always has.
 describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
   const set = (...members: unknown[]) => new Set(members);
   const map = (...entries: [unknown, unknown][]) => new Map(entries);
   const twin = { a: 1, b: 2 };
   const fn = () => {};
+  // Keys both Maps hold: token1/token2 are structurally interchangeable, shared is contained in {k:1,m:1}.
+  const token1 = {};
+  const token2 = {};
+  const shared = { k: 1 };
   // [description, actual, expected, whether expected is partially contained in actual]
   const cases: [string, unknown, unknown, boolean][] = [
     ["Set: a member both sides hold is paired with itself", set(twin, { a: 1, c: 3 }, 1), set({ a: 1 }, twin), true],
@@ -920,6 +927,29 @@ describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
       true,
     ],
     ["Map: a key both sides hold with a different value", map([twin, 1], [{ a: 1 }, 2]), map([twin, 2]), false],
+    [
+      // Node rejects this: walking actual in order, token1's entry claims token2's structurally
+      // identical expected entry, and {a:1} then does not contain {a:1,b:1}.
+      "Map: entries both sides hold, in another order (node: rejected)",
+      map([token1, { a: 1, b: 1 }], [token2, { a: 1 }]),
+      map([token2, { a: 1 }], [token1, { a: 1, b: 1 }]),
+      true,
+    ],
+    [
+      // Node accepts this by handing shared's expected entry to the {k:1,m:1} key (whose value
+      // contains {x:1}) and then matching {k:1} against shared's actual entry. Here shared's
+      // entries are settled with each other first, so {k:1} -> {y:2} has to fit {k:1,m:1} -> {x:1}.
+      "Map: a key both sides hold is settled with itself even when another pairing would work (node: accepted)",
+      map([{ k: 1, m: 1 }, { x: 1 }], [shared, { x: 1, y: 2 }]),
+      map([shared, { x: 1 }], [{ k: 1 }, { y: 2 }]),
+      false,
+    ],
+    [
+      "Map: a key both sides hold cannot also stand in for another entry",
+      map([shared, 3], [{ q: 1 }, 3]),
+      map([shared, 3], [{ k: 1 }, 3]),
+      false,
+    ],
     [
       "Map: object and primitive keys in another order",
       map(["p", 0], [{ k: 1 }, 1], [{ k: 2 }, 2]),
@@ -1043,6 +1073,52 @@ describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
     );
   });
 
+  // The expected objects still waiting for a counterpart are held as plain copies while user code
+  // runs. Here a getter on the first actual member probed deletes every entry from the expected
+  // collection (entry by entry: clear() leaves the old table, and the objects in it, reachable
+  // from iterators), collects garbage and allocates look-alikes into the freed cells; the rest of
+  // the pairing then reads every pending object, so they have to have been kept alive by the
+  // comparison itself. There are enough of them that the copies live on the heap, out of reach of
+  // the conservative stack scan. (Bun has always compared the entries as they were when the
+  // comparison started; node re-reads Map values while pairing and so rejects the Map case.)
+  describe("keeps the pending expected entries alive across a GC", () => {
+    const n = 64;
+    function firstActual(expected: Set<unknown> | Map<unknown, unknown>) {
+      let probed = false;
+      return {
+        get id() {
+          if (!probed) {
+            probed = true;
+            for (const entry of expected.keys()) expected.delete(entry);
+            Bun.gc(true);
+            const lookAlikes: object[] = [];
+            for (let i = 0; i < 4 * n; i++) lookAlikes.push({ id: -1 });
+          }
+          return 0;
+        },
+      };
+    }
+    const others = () => Array.from({ length: n - 1 }, (_, i) => ({ id: i + 1 }));
+    const fresh = () => Array.from({ length: n }, (_, i) => ({ id: i }));
+
+    test("Set", () => {
+      const expected = new Set(fresh());
+      const actual = new Set([firstActual(expected), ...others()]);
+      assert.partialDeepStrictEqual(actual, expected);
+      expect(expected.size).toBe(0);
+    });
+
+    test("Map", () => {
+      const expected = new Map(fresh().map(key => [key, { v: key.id }]));
+      const actual = new Map<object, object>([
+        [firstActual(expected), { v: 0, extra: true }],
+        ...others().map(key => [key, { v: key.id, extra: true }] as [object, object]),
+      ]);
+      assert.partialDeepStrictEqual(actual, expected);
+      expect(expected.size).toBe(0);
+    });
+  });
+
   // Each actual member is compared against one or two expected members: the front guess keeps
   // hitting while the sides were built in the same order, the back guess while they were built
   // in opposite orders, so the getters are read 2n times (2n + 2 reversed). Rescanning every
@@ -1081,6 +1157,20 @@ describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
       const expected = new Map(reversed ? other.reverse() : other);
       assert.partialDeepStrictEqual(actual, expected);
       expect(reads).toBeLessThanOrEqual(4 * n);
+    });
+
+    // Members and keys both sides hold are settled by lookup, so their contents are never read,
+    // in whatever order the sides were built.
+    test.each(["Set", "Map"])("%s contents both sides hold, shuffled", kind => {
+      let reads = 0;
+      const keys = members(() => reads++);
+      // A fixed stride permutation, so neither the same-order nor the reversed-order guess fits.
+      const shuffled = keys.map((_, i) => keys[(i * 37) % n]);
+      const position = new Map(keys.map((key, i) => [key, i]));
+      const actual = kind === "Set" ? new Set(keys) : new Map(keys.map(key => [key, position.get(key)]));
+      const expected = kind === "Set" ? new Set(shuffled) : new Map(shuffled.map(key => [key, position.get(key)]));
+      assert.partialDeepStrictEqual(actual, expected);
+      expect(reads).toBe(0);
     });
   });
 

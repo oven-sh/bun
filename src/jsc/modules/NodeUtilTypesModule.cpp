@@ -34,6 +34,8 @@
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
+#include "PendingEntries.h"
+#include <wtf/HashSet.h>
 
 using namespace JSC;
 
@@ -399,120 +401,68 @@ static bool isSpecialValue(JSValue value)
     return !value.isObject() || value.isCallable();
 }
 
-enum class Pairing { Open,
-    Complete };
-
-// Expected entries no lookup could settle; copies, kept alive by the caller's gcBuffer appends.
-template<typename Entry>
-struct PendingExpected {
-    using Queue = WTF::Vector<Entry, 8>;
-
-    Queue entries;
-    size_t first { 0 };
-    size_t last;
-    // Node's guess: keep probing the end that hit last, so same-order and reversed inputs stay linear.
-    bool probeFront { true };
-
-    explicit PendingExpected(Queue&& queued)
-        : entries(std::move(queued))
-        , last(entries.size() - 1)
-    {
-        ASSERT(!entries.isEmpty());
-    }
-
-    size_t openCount() const { return last - first + 1; }
-
-    // Node's partialObject{Set,Map}Equiv probe order: front guess, back guess, then the rest back to front.
-    template<typename Matches>
-    Pairing claimWith(JSC::ThrowScope& scope, const Matches& matches)
-    {
-        size_t scanFrom = first;
-        if (probeFront) {
-            bool hit = matches(entries[first]);
-            RETURN_IF_EXCEPTION(scope, Pairing::Open);
-            if (hit) {
-                if (first == last)
-                    return Pairing::Complete;
-                first++;
-                return Pairing::Open;
-            }
-            if (first == last)
-                return Pairing::Open;
-            probeFront = false;
-            scanFrom++;
-        }
-        bool hit = matches(entries[last]);
-        RETURN_IF_EXCEPTION(scope, Pairing::Open);
-        if (!hit) {
-            probeFront = true;
-            size_t i = last;
-            while (!hit && i > scanFrom) {
-                i--;
-                hit = matches(entries[i]);
-                RETURN_IF_EXCEPTION(scope, Pairing::Open);
-            }
-            if (!hit)
-                return Pairing::Open;
-            entries[i] = entries[last];
-        }
-        if (first == last)
-            return Pairing::Complete;
-        last--;
-        return Pairing::Open;
-    }
-};
-
 struct PendingMapEntry {
     JSValue key;
     JSValue value;
 };
 
-// Node's mapEquiv: special keys are settled by lookup; object keys, identical ones included, are paired off.
+// Every key actual holds is settled by lookup plus value comparison; the object keys it does not hold are paired off.
 static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSMap* actualMap = uncheckedDowncast<JSC::JSMap>(actual.asCell());
     JSC::JSMap* expectedMap = uncheckedDowncast<JSC::JSMap>(expected.asCell());
 
-    PendingExpected<PendingMapEntry>::Queue queued;
+    Bun::PendingEntries<PendingMapEntry>::Queue queued;
+    WTF::Vector<JSC::JSCell*, 8> settledKeys;
     {
         auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
         RETURN_IF_EXCEPTION(scope, false);
         JSValue expectedKey, expectedValue;
         while (iter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
-            if (!isSpecialValue(expectedKey)) {
-                gcBuffer.append(expectedKey);
-                gcBuffer.append(expectedValue);
-                queued.append({ expectedKey, expectedValue });
-                continue;
-            }
             JSValue actualValue = actualMap->get(globalObject, expectedKey);
             RETURN_IF_EXCEPTION(scope, false);
-            if (actualValue.isUndefined()) {
+            bool settled = !actualValue.isUndefined();
+            if (!settled) {
                 // get() answers undefined both for a missing key and for a key holding undefined.
-                bool held = actualMap->has(globalObject, expectedKey);
+                settled = actualMap->has(globalObject, expectedKey);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (!held)
-                    return false;
             }
-            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!equal)
-                return false;
+            if (settled) {
+                settled = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (isSpecialValue(expectedKey)) {
+                if (!settled)
+                    return false;
+                continue;
+            }
+            gcBuffer.append(expectedKey);
+            if (settled) {
+                // Node queues identical keys too (comparisons.js v26.3.0 L882-L891): order-dependent, and quadratic once reordered.
+                settledKeys.append(expectedKey.asCell());
+                continue;
+            }
+            gcBuffer.append(expectedValue);
+            queued.append({ expectedKey, expectedValue });
         }
     }
     if (queued.isEmpty())
         return true;
 
-    PendingExpected<PendingMapEntry> pending(std::move(queued));
+    // As node's setEquiv does for members: a settled key's actual entry is spoken for.
+    WTF::HashSet<JSC::JSCell*> reserved;
+    for (JSC::JSCell* key : settledKeys)
+        reserved.add(key);
+    Bun::PendingEntries<PendingMapEntry> pending(std::move(queued));
     auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
     RETURN_IF_EXCEPTION(scope, false);
     size_t visited = 0;
     JSValue actualKey, actualValue;
     while (iter->nextKeyValue(globalObject, actualKey, actualValue)) {
         visited++;
-        if (!isSpecialValue(actualKey)) {
-            Pairing pairing = pending.claimWith(scope, [&](const PendingMapEntry& entry) -> bool {
+        if (!isSpecialValue(actualKey) && !reserved.contains(actualKey.asCell())) {
+            Bun::Claim claim = pending.claimWith(scope, [&](const PendingMapEntry& entry) -> bool {
                 bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, actualKey, entry.key);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!keyEqual)
@@ -520,7 +470,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, entry.value);
             });
             RETURN_IF_EXCEPTION(scope, false);
-            if (pairing == Pairing::Complete)
+            if (claim == Bun::Claim::Exhausted)
                 return true;
         }
         const size_t size = actualMap->size();
@@ -531,14 +481,14 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return false;
 }
 
-// Node's setEquiv: members actual holds are settled by lookup; the other objects are paired off partially.
+// Node's setEquiv (comparisons.js v26.3.0 L628-L775): members actual holds are settled by lookup, the rest paired off.
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
     JSC::JSSet* expectedSet = uncheckedDowncast<JSC::JSSet>(expected.asCell());
 
-    PendingExpected<JSValue>::Queue queued;
+    Bun::PendingEntries<JSValue>::Queue queued;
     {
         auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, false);
@@ -557,7 +507,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     if (queued.isEmpty())
         return true;
 
-    PendingExpected<JSValue> pending(std::move(queued));
+    Bun::PendingEntries<JSValue> pending(std::move(queued));
     auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
     RETURN_IF_EXCEPTION(scope, false);
     size_t visited = 0;
@@ -568,14 +518,14 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         RETURN_IF_EXCEPTION(scope, false);
         if (!reserved) {
             if (isSpecialValue(actualMember)) {
-                // Node probes a stray member too (unlike a stray Map key); all its misses leave behind is this.
-                pending.probeFront = true;
+                // Node probes a stray member too (unlike a stray Map key, which it passes over).
+                pending.recordMiss();
             } else {
-                Pairing pairing = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {
+                Bun::Claim claim = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {
                     return compareBranch(globalObject, gcBuffer, cycles, scope, actualMember, expectedMember);
                 });
                 RETURN_IF_EXCEPTION(scope, false);
-                if (pairing == Pairing::Complete)
+                if (claim == Bun::Claim::Exhausted)
                     return true;
             }
         }

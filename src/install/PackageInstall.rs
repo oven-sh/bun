@@ -2121,11 +2121,11 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         };
-        // `dest_path` is `name` or `@scope/name` (`alias_is_safe_install_target`), so the
-        // entry name is its NUL-terminated tail.
+        // The entry name is the NUL-terminated tail of `dest_path`.
         let dest: &ZStr = ZStr::from_slice_with_nul(
             &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
         );
+        debug_assert_eq!(dest.as_bytes(), bun_paths::basename(dest_path.as_bytes()));
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
@@ -2242,15 +2242,13 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
             };
 
-            let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr`; build a NUL-terminated copy of the target in a
-            // stack buffer.
             let mut target_buf = PathBuffer::uninit();
-            target_buf[..target.len()].copy_from_slice(target);
-            target_buf[target.len()] = 0;
-            // SAFETY: NUL written above.
-            let target_z = ZStr::from_buf(&target_buf, target.len());
-            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest) {
+            let target = path::resolve_path::relative_buf_z(
+                target_buf.as_mut_slice(),
+                dest_dir_path,
+                to_path,
+            );
+            if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }
         }

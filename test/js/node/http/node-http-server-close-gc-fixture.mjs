@@ -53,9 +53,7 @@ async function round() {
   // thing still attached to the closed server.
   client.write("x");
   while (!closed && !received.endsWith("\r\n\r\nok")) await next();
-  await new Promise(resolve => setImmediate(resolve));
   gc();
-  await new Promise(resolve => setImmediate(resolve));
 
   // Request 2 on the surviving connection is still served...
   if (!closed) client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");

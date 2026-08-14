@@ -672,25 +672,25 @@ impl S3UploadStreamWrapper {
             unsafe { Self::deref_(s) }
         });
         let global = self_.global;
-        // Every promise slot is settled and the completion callback runs whatever an
-        // earlier settle left pending; the first such `Err` is what this returns.
+        // The native teardown (source close, pump-ref release, completion callback)
+        // runs on every path; the promise slots are settled until one settle leaves an
+        // exception pending, which is what this returns (nothing settles over it).
         let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
-                    if sink.flush_promise.has_value() {
-                        let r = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
-                        settled = settled.and(r);
+                    if settled.is_ok() && sink.flush_promise.has_value() {
+                        settled = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
                     }
-                    if sink.end_promise.has_value() {
-                        let r = sink.end_promise.resolve(&global, JSValue::js_number(0.0));
-                        settled = settled.and(r);
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.resolve(&global, JSValue::js_number(0.0));
                     }
                 }
                 if self_.end_promise.has_value() {
-                    let r = self_.end_promise.resolve(&global, JSValue::js_number(0.0));
-                    settled = settled.and(r);
+                    if settled.is_ok() {
+                        settled = self_.end_promise.resolve(&global, JSValue::js_number(0.0));
+                    }
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -723,13 +723,11 @@ impl S3UploadStreamWrapper {
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
                     sink.pending.run();
-                    if sink.flush_promise.has_value() {
-                        let r = sink.flush_promise.reject(&global, Ok(js_err));
-                        settled = settled.and(r);
+                    if settled.is_ok() && sink.flush_promise.has_value() {
+                        settled = sink.flush_promise.reject(&global, Ok(js_err));
                     }
-                    if sink.end_promise.has_value() {
-                        let r = sink.end_promise.reject(&global, Ok(js_err));
-                        settled = settled.and(r);
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.reject(&global, Ok(js_err));
                     }
                     sink.source.close(None);
                 }
@@ -741,8 +739,9 @@ impl S3UploadStreamWrapper {
                     unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
                 }
                 if self_.end_promise.has_value() {
-                    let r = self_.end_promise.reject(&global, Ok(js_err));
-                    settled = settled.and(r);
+                    if settled.is_ok() {
+                        settled = self_.end_promise.reject(&global, Ok(js_err));
+                    }
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }

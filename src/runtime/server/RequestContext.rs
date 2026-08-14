@@ -4089,7 +4089,6 @@ where
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
-                    // TODO: properly propagate exception upwards
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
@@ -4124,7 +4123,6 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                // TODO: properly propagate exception upwards
                 bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
@@ -4157,7 +4155,6 @@ where
                 );
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                // TODO: properly propagate exception upwards
                 bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
 

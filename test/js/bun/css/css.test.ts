@@ -225,6 +225,46 @@ describe("css tests", () => {
     minify_test(`a { width: hypot(1in, 1em) }`, `a{width:hypot(1in,1em)}`);
     minify_test(`a { transform: rotate(atan2(1in, 1em)) }`, `a{transform:rotate(atan2(1in,1em))}`);
   });
+  describe("hypot() with three or more arguments", () => {
+    // hypot(a, b, c) is folded as hypot(hypot(a, b), c), so a unit conversion can
+    // happen at any step and the result is in px (or deg) once one has happened.
+    // 1pc = 16px, 1in = 96px, 100grad = 0.25turn = 90deg. The inputs are scaled
+    // Pythagorean triples/quadruples so the exact results are easy to check by hand:
+    // hypot(2, 3, 6) = 7, hypot(1, 2, 2) = 3, hypot(3, 4, 12) = 13, hypot(1, 2, 2, 4) = 5.
+    minify_test(`a { width: hypot(2pc, 3pc, 1in) }`, `a{width:112px}`);
+    minify_test(`a { width: hypot(1in, 2pc, 3pc) }`, `a{width:112px}`);
+    minify_test(`a { width: hypot(32px, 48px, 1in) }`, `a{width:112px}`);
+    minify_test(`a { width: hypot(3pc, 4pc, 0px) }`, `a{width:80px}`);
+    minify_test(`a { width: hypot(1pc, 2pc, 2pc, 64px) }`, `a{width:80px}`);
+    minify_test(`a { width: hypot(3in, 4in, 10px) }`, `a{width:480.104px}`); // sqrt(288² + 384² + 10²)
+    minify_test(`a { border-spacing: hypot(2pc, 3pc, 1in) }`, `a{border-spacing:112px}`);
+    // No conversion needed: the unit is kept.
+    minify_test(`a { width: hypot(2in, 3in, 6in) }`, `a{width:7in}`);
+    minify_test(`a { width: hypot(3em, 4em, 12em) }`, `a{width:13em}`);
+    // An argument that cannot be converted to px leaves the function unevaluated.
+    minify_test(`a { width: hypot(3in, 4in, 1em) }`, `a{width:hypot(3in,4in,1em)}`);
+    minify_test(`a { width: hypot(1em, 3in, 4in) }`, `a{width:hypot(1em,3in,4in)}`);
+    minify_test(`a { width: hypot(30%, 40%, 1px) }`, `a{width:hypot(30%,40%,1px)}`);
+    // Two or more percentages fold through the same binary step that round()/mod() of
+    // percentages use, whatever the argument count. This holds for a bare <percentage>
+    // context (opacity) as well as for <length-percentage>.
+    minify_test(`a { width: hypot(30%, 40%) }`, `a{width:50%}`);
+    minify_test(`a { width: hypot(20%, 30%, 60%) }`, `a{width:70%}`);
+    minify_test(`a { opacity: hypot(20%, 30%, 60%) }`, `a{opacity:.7}`);
+    minify_test(`a { opacity: calc(10% + hypot(20%, 30%, 60%)) }`, `a{opacity:.8}`);
+    // Angles convert to deg.
+    minify_test(`a { rotate: hypot(0.25turn, 135deg, 270deg) }`, `a{rotate:315deg}`);
+    minify_test(`a { rotate: hypot(50grad, 100grad, 90deg) }`, `a{rotate:135deg}`);
+    minify_test(`a { rotate: hypot(20grad, 30grad, 60grad) }`, `a{rotate:70grad}`);
+    minify_test(
+      `a { background: conic-gradient(red hypot(50grad, 100grad, 90deg), blue) }`,
+      `a{background:conic-gradient(red 135deg,#00f)}`,
+    );
+    // Times convert the later arguments into the first one's unit, numbers have no unit.
+    minify_test(`a { transition-duration: hypot(2s, 3s, 6000ms) }`, `a{transition-duration:7s}`);
+    minify_test(`a { transition-duration: hypot(2000ms, 3s, 6s) }`, `a{transition-duration:7s}`);
+    minify_test(`a { line-height: hypot(2, 3, 6) }`, `a{line-height:7}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

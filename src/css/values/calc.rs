@@ -511,11 +511,8 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
                 let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
-                let val = Self::parse_hypot(&mut args)?;
-                if let Some(v) = val {
-                    return Ok(v);
-                }
-                Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
+                Ok(Self::parse_hypot(&mut args)
+                    .unwrap_or_else(|| Calc::Function(Box::new(MathFunction::Hypot(args)))))
             }),
             CalcUnit::Abs => input.parse_nested_block(|i| {
                 let v = Self::parse_sum(i, ctx, parse_ident)?;
@@ -918,38 +915,18 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
+    pub(crate) fn parse_hypot(args: &mut [Self]) -> Option<Self> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
-            return Ok(Some(v));
+            return Some(v);
         }
 
-        if args.len() == 2 {
-            return Ok(Self::apply_op(&args[0], &args[1], (), |_, a, b| {
-                hypot((), a, b)
-            }));
+        // Not a sum of squares: `try_op` converts units linearly, wrong for squared values.
+        let mut acc = Self::apply_op(&args[0], &args[1], (), hypot)?;
+        for arg in &args[2..] {
+            acc = Self::apply_op(&acc, arg, (), hypot)?;
         }
-
-        let mut i: usize = 0;
-        let Some(first) = Self::apply_map(&args[0], powi2) else {
-            return Ok(None);
-        };
-        i += 1;
-        let mut errored = false;
-        let mut sum = first;
-        for arg in &args[i..] {
-            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0)) else {
-                errored = true;
-                break;
-            };
-            sum = next;
-        }
-
-        if errored {
-            return Ok(None);
-        }
-
-        Ok(Self::apply_map(&sum, sqrtf32))
+        Some(acc)
     }
 
     pub(crate) fn apply_op<OC: Copy>(
@@ -1533,14 +1510,6 @@ fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
 
 fn hypot(_: (), a: f32, b: f32) -> f32 {
     a.hypot(b)
-}
-
-fn powi2(v: f32) -> f32 {
-    v.powf(2.0)
-}
-
-fn sqrtf32(v: f32) -> f32 {
-    v.sqrt()
 }
 
 /// Returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which

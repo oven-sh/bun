@@ -1,7 +1,6 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
-use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -2730,6 +2729,40 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         route_list_value
     }
 
+    /// uWS keeps a separate `HttpRouter` per registered server name (the
+    /// default `tls.serverName` and each SNI entry). Mirror the root router's
+    /// routes onto each of them, then switch back to the root router.
+    fn set_routes_for_server_names(&mut self) {
+        if !SSL {
+            return;
+        }
+        let app = self.app.unwrap();
+        let sni_len = self.config.sni.as_deref().map_or(0, <[_]>::len);
+        for i in 0..=sni_len {
+            let (name_ptr, name_len) = {
+                let ssl_config = if i == 0 {
+                    self.config.ssl_config.as_ref()
+                } else {
+                    self.config.sni.as_deref().map(|s| &s[i - 1])
+                };
+                match ssl_config
+                    .and_then(server_config::SSLConfig::server_name_cstr)
+                    .filter(|n| !n.to_bytes().is_empty())
+                {
+                    Some(n) => (n.as_ptr(), n.to_bytes().len()),
+                    None => continue,
+                }
+            };
+            // SAFETY: NUL-terminated `server_name` owned by `self.config`;
+            // `set_routes()` does not touch `ssl_config`/`sni`.
+            let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app).domain(z);
+            let _ = self.set_routes();
+        }
+        bun_opaque::opaque_deref_mut(app).domain(bun_core::ZStr::EMPTY);
+    }
+
     // ─── listen ──────────────────────────────────────────────────────────────
     /// Create the uws `App<SSL>` (and optional H3 app), register routes via
     /// `set_routes()`, and bind the listen socket. On any failure the server
@@ -2748,8 +2781,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
         // `this`; each use site reborrows fresh and the borrow ends before the
-        // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
-        // no `&self.config` outlives the per-domain `set_routes()` call.
+        // next derive.
         //
         // SAFETY (applies to every `&mut *this` below): `this` was produced by
         // `init()` and is live for this call; only one reference derived from
@@ -2825,20 +2857,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { (*this).set_routes() };
 
             // add serverName to the SSL context using the default ssl options
-            // extract raw (ptr, len) so no `&self.config` borrow
-            // outlives the `set_routes()` call below. set_routes() does not
-            // touch `config.ssl_config`, so the bytes remain valid.
-            let server_name_raw = this_ref
+            if let Some(server_name) = this_ref
                 .config
                 .ssl_config
                 .as_ref()
                 .and_then(|c| c.server_name_cstr())
                 .filter(|n| !n.to_bytes().is_empty())
-                .map(|n| (n.as_ptr(), n.to_bytes().len()));
-            if let Some((name_ptr, name_len)) = server_name_raw {
-                // SAFETY: name_ptr/name_len were just extracted from the live
-                // `config.ssl_config.server_name` CString; valid + NUL-terminated.
-                let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+            {
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
                     .add_server_name_with_options(server_name, &ssl_options, false)
@@ -2859,49 +2884,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-
-                // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-
-                // Ensure routes are set for that domain name.
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
             }
 
             // SNI: per-hostname contexts
-            // iterate by index and reborrow `&*this` per iteration so
-            // the `set_routes()` `&mut` at the bottom of the loop body never
-            // overlaps an outstanding `&self.config.sni` borrow.
-            let sni_len = this_ref.config.sni.as_ref().map_or(0, |s| s.slice().len());
-            for i in 0..sni_len {
-                let (name_ptr, name_len, sni_opts) = {
-                    let cfg = this_ref.get();
-                    let sni_ssl_config = &cfg.config.sni.as_ref().unwrap().slice()[i];
-                    let Some(sni_name) = sni_ssl_config.server_name_cstr() else {
-                        continue;
-                    };
-                    if sni_name.to_bytes().is_empty() {
-                        continue;
-                    }
-                    (
-                        sni_name.as_ptr(),
-                        sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
-                    )
+            for sni_ssl_config in this_ref.config.sni.as_deref().unwrap_or_default() {
+                let Some(sni_name) = sni_ssl_config
+                    .server_name_cstr()
+                    .filter(|n| !n.to_bytes().is_empty())
+                else {
+                    continue;
                 };
-                // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
-                // set_routes() does not mutate config.sni so the bytes are valid.
-                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+                let sni_opts = sni_ssl_config.as_usockets();
                 // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                let z = unsafe {
+                    bun_core::ZStr::from_raw(sni_name.as_ptr().cast(), sni_name.to_bytes().len())
+                };
 
                 if Self::HAS_H3 {
                     if let Some(h3_app) = this_ref.h3_app {
@@ -2937,17 +2934,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
             }
+
+            // SAFETY: `this` is the live boxed server from `init()`; no other
+            // borrow is live — `&mut` scoped to this call.
+            unsafe { (*this).set_routes_for_server_names() };
         } else {
             app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
             {

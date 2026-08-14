@@ -662,6 +662,12 @@ public:
         if (httpContext) {
             httpContext->getSocketContextData()->clearRoutes();
         }
+        if constexpr (SSL) {
+            /* Reset in place: the SNI trees on listen sockets hold this pointer. */
+            for (auto &p : pendingServerNames) {
+                *p.router = {};
+            }
+        }
     }
 
 

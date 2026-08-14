@@ -88,7 +88,6 @@ private:
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
-    // TODO: SNI
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;

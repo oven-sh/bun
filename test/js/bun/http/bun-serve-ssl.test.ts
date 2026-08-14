@@ -151,6 +151,41 @@ describe("Bun.serve SSL validations", () => {
       });
     }
   }
+
+  // Each serverName gets its own uWS router; reload() must re-apply routes to
+  // all of them, not just the default one.
+  test("reload() updates routes for every serverName", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: privateKey, cert: publicKey, serverName: "localhost" },
+        { key: privateKey, cert: publicKey, serverName: "sni.example.com" },
+      ],
+      routes: { "/old": new Response("old") },
+      fetch: () => new Response("fetch-old"),
+    });
+    const hosts = ["localhost", "sni.example.com", "unmatched.example.com"];
+    const get = (host: string, path: string) =>
+      fetch(`https://127.0.0.1:${server.port}${path}`, {
+        headers: { Host: host },
+        tls: { rejectUnauthorized: false },
+      }).then(res => res.text());
+
+    for (const host of hosts) {
+      expect({ host, body: await get(host, "/old") }).toEqual({ host, body: "old" });
+    }
+
+    server.reload({
+      routes: { "/new": new Response("new") },
+      fetch: () => new Response("fetch-new"),
+    });
+    Bun.gc(true);
+
+    for (const host of hosts) {
+      expect({ host, body: await get(host, "/new") }).toEqual({ host, body: "new" });
+      expect({ host, body: await get(host, "/old") }).toEqual({ host, body: "fetch-new" });
+    }
+  });
 });
 
 describe("Bun.serve per-serverName client certificate policy", () => {

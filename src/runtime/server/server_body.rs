@@ -2340,6 +2340,7 @@ where
         }
 
         let route_list_value = self.set_routes();
+        self.set_routes_for_server_names();
         if new_config.had_routes_object {
             Self::js_gc_route_list_set(server_js, global, route_list_value);
         }
@@ -2367,6 +2368,7 @@ where
             }
         }
         let route_list_value = self.set_routes();
+        self.set_routes_for_server_names();
         if !route_list_value.is_empty() {
             if let Some(server_js_value) = self.js_value_for_dispatch() {
                 Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);

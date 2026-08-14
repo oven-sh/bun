@@ -79,8 +79,8 @@ pub enum ImportKind {
 // arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
 // when the data is pure const).
 //
-// If these are changed, make sure to update
-// - src/js/builtins/codegen/replacements.ts
+// If the variants or the labels below change, make sure to update
+// - src/codegen/replacements.ts (`enums.ImportKind`, indexed by discriminant)
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {

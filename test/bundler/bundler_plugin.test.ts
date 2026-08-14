@@ -544,11 +544,22 @@ describe("bundler", () => {
       },
     };
   });
-  itBundled("plugin/ResolveKindForCssImports", () => {
+  // Every import kind an onResolve callback can receive. Not reachable from a plugin: entry-point-run
+  // (runtime only), html_manifest (the record is retagged after resolution) and internal (never created).
+  itBundled("plugin/ResolveKindForEveryImportKind", () => {
     const resolved: [string, string][] = [];
     return {
       files: {
-        "entry.css": /* css */ `
+        "entry.js": /* js */ `
+          import "./styles.css";
+          require("./required.js");
+          import("./dynamic.js");
+          console.log(require.resolve("./resolved.js"));
+        `,
+        "required.js": `module.exports = 1;`,
+        "dynamic.js": `export const dynamic = 1;`,
+        "resolved.js": `export const resolved = 1;`,
+        "styles.css": /* css */ `
           @import "./plain.css";
           @import "./conditional.css" supports(display: grid);
           @import "./a.module.css";
@@ -560,6 +571,7 @@ describe("bundler", () => {
         "b.module.css": `.b { color: green; }`,
         "image.png": "not really a png",
       },
+      outdir: "/out",
       plugins(builder) {
         builder.onResolve({ filter: /.*/ }, args => {
           resolved.push([path.basename(args.path), args.kind]);
@@ -571,9 +583,13 @@ describe("bundler", () => {
           ["a.module.css", "import-rule"],
           ["b.module.css", "composes"],
           ["conditional.css", "import-rule"],
-          ["entry.css", "entry-point-build"],
+          ["dynamic.js", "dynamic-import"],
+          ["entry.js", "entry-point-build"],
           ["image.png", "url-token"],
           ["plain.css", "import-rule"],
+          ["required.js", "require-call"],
+          ["resolved.js", "require-resolve"],
+          ["styles.css", "import-statement"],
         ]);
       },
     };

@@ -623,15 +623,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bundler: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
-    let mut static_route_visitor = StaticRouteVisitor {
-        // SAFETY: launder via raw ptr so this long-lived
-        // shared borrow doesn't conflict with `c.log_disjoint()` inside
-        // the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
-        cache: bun_collections::ArrayHashMap::default(),
-        visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
-    };
-    // defer static_route_visitor.deinit() — handled by Drop
+    let mut static_route_visitor = StaticRouteVisitor::default();
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
@@ -1128,10 +1120,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         } else {
                             // an error
                             // logger OOM-only
-                            // Split-borrow — `static_route_visitor.c` holds a
-                            // detached `&LinkerContext`; `log_disjoint` returns the
-                            // disjoint `Transpiler.log` backref so no `&mut c` is
-                            // materialized.
                             let _ = c.log_disjoint().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -1288,7 +1276,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             && side == options::Side::Server
                         {
                             extra.route = if static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index())
+                                .has_transitive_use_client(c, chunk.entry_point.source_index())?
                             {
                                 BakeRouteKind::Route
                             } else {

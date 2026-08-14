@@ -1,115 +1,112 @@
-//! The `is_fully_static(source_index)` function returns whether or not
-//! `source_index` imports a file with `"use client"`.
+//! Decides whether a bake route (a server entry point) transitively imports a
+//! file with `"use client"`. A route that imports none is prerendered without
+//! the client entry script (`BakeRouteKind::FullyStaticRoute`), so a false
+//! negative here ships a page that never hydrates.
 //!
-//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.rs`?
+//! `LinkerGraph::load` points every server side import of a `"use client"`
+//! file at the boundary's generated reference proxy
+//! (`ServerComponentBoundary::reference_source_index`), so a route needs the
+//! client script iff it has an import path to one of those proxies. That is
+//! computed for every file at once by walking the import records backwards from
+//! the proxies. Each file is marked the first time it is reached, so import
+//! cycles need no special handling; a forward walk per route has to deal with
+//! a file whose only path to a proxy leads through a file the walk is still
+//! inside of (see the import cycle test in `test/bake/dev/production.test.ts`).
 
 use crate::mal_prelude::*;
-use bun_collections::{ArrayHashMap, AutoBitSet};
+use bun_alloc::AllocError;
+use bun_collections::AutoBitSet;
 use bun_core::env_var;
 
-use crate::import_record;
-use crate::{Index, LinkerContext, UseDirective};
+use crate::{LinkerContext, UseDirective};
 
-pub(crate) struct StaticRouteVisitor<'a> {
-    pub(crate) c: &'a LinkerContext<'a>,
-    pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
-    pub(crate) visited: AutoBitSet,
+#[derive(Default)]
+pub(crate) struct StaticRouteVisitor {
+    /// The client reference proxies and every file that transitively imports
+    /// one, indexed by source index. Computed by the first query; only bake
+    /// production builds ever make one.
+    files_reaching_client: Option<AutoBitSet>,
 }
 
-impl<'a> StaticRouteVisitor<'a> {
-    /// This the quickest, simplest, dumbest way I can think of doing this.
-    /// Investigate performance. It can have false negatives (it doesn't properly
-    /// handle cycles), but that's okay as it's just used an optimization
-    pub(crate) fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
+impl StaticRouteVisitor {
+    pub(crate) fn has_transitive_use_client(
+        &mut self,
+        c: &LinkerContext,
+        entry_point_source_index: u32,
+    ) -> Result<bool, AllocError> {
         if cfg!(debug_assertions)
             && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
                 .get()
                 .unwrap_or(false)
         {
-            return false;
+            return Ok(false);
         }
 
-        // `self.c` is `&'a LinkerContext` (Copy), so these slice
-        // borrows are tied to `'a`, not to `&self`, and do not conflict with
-        // the `&mut self` call below. `parse_graph()` is the safe backref
-        // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
-        let parse_graph = self.c.parse_graph();
-        let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
-        let referenced_source_indices: &[u32] = parse_graph
-            .server_component_boundaries
-            .list
-            .items_reference_source_index();
-        let use_directives: &[UseDirective] = parse_graph
-            .server_component_boundaries
-            .list
-            .items_use_directive();
-
-        self.has_transitive_use_client_impl(
-            all_import_records,
-            referenced_source_indices,
-            use_directives,
-            Index::init(entry_point_source_index),
-        )
-    }
-
-    /// 1. Get AST for `source_index`
-    /// 2. Recursively traverse its imports in import records
-    /// 3. If any of the imports match any item in
-    ///    `referenced_source_indices` which has `use_directive ==
-    ///    .client`, then we know `source_index` is NOT fully
-    ///    static.
-    fn has_transitive_use_client_impl(
-        &mut self,
-        all_import_records: &[import_record::List<'_>],
-        referenced_source_indices: &[u32],
-        use_directives: &[UseDirective],
-        source_index: Index,
-    ) -> bool {
-        if let Some(result) = self.cache.get(&source_index.get()) {
-            return *result;
-        }
-        if self.visited.is_set(source_index.get() as usize) {
-            return false;
-        }
-        self.visited.set(source_index.get() as usize);
-
-        let import_records = &all_import_records[source_index.get() as usize];
-
-        let result = 'result: {
-            for import_record in import_records.as_slice() {
-                if !import_record.source_index.is_valid() {
-                    continue;
-                }
-
-                // check if this import is a client boundary
-                debug_assert_eq!(referenced_source_indices.len(), use_directives.len());
-                for (referenced_source_index, use_directive) in
-                    referenced_source_indices.iter().zip(use_directives)
-                {
-                    if *use_directive != UseDirective::Client {
-                        continue;
-                    }
-                    // it's a client boundary
-                    if *referenced_source_index == import_record.source_index.get() {
-                        break 'result true;
-                    }
-                }
-
-                // otherwise check its children
-                if self.has_transitive_use_client_impl(
-                    all_import_records,
-                    referenced_source_indices,
-                    use_directives,
-                    import_record.source_index,
-                ) {
-                    break 'result true;
-                }
-            }
-            false
+        let files_reaching_client = match &mut self.files_reaching_client {
+            Some(files) => files,
+            None => self.files_reaching_client.insert(files_reaching_client(c)?),
         };
-
-        self.cache.insert(source_index.get(), result);
-
-        result
+        Ok(files_reaching_client.is_set(entry_point_source_index as usize))
     }
+}
+
+fn files_reaching_client(c: &LinkerContext) -> Result<AutoBitSet, AllocError> {
+    let import_records = c.graph.ast.items_import_records();
+    let file_count = import_records.len();
+    let mut reaching = AutoBitSet::init_empty(file_count)?;
+
+    let boundaries = &c.parse_graph().server_component_boundaries.list;
+    let mut worklist: Vec<u32> = Vec::new();
+    for (&proxy, use_directive) in boundaries
+        .items_reference_source_index()
+        .iter()
+        .zip(boundaries.items_use_directive())
+    {
+        if *use_directive == UseDirective::Client && !reaching.is_set(proxy as usize) {
+            reaching.set(proxy as usize);
+            worklist.push(proxy);
+        }
+    }
+    if worklist.is_empty() {
+        return Ok(reaching);
+    }
+
+    // Every import record is an edge `importer -> imported`. Group the edges by
+    // imported file: the importers of `file` are
+    // `importers[importer_offsets[file]..importer_offsets[file + 1]]`.
+    let edges = import_records
+        .iter()
+        .enumerate()
+        .flat_map(|(importer, records)| {
+            records
+                .iter()
+                .filter(|record| record.source_index.is_valid())
+                .map(move |record| (importer as u32, record.source_index.get() as usize))
+        });
+
+    let mut importer_offsets = vec![0usize; file_count + 1];
+    for (_, imported) in edges.clone() {
+        importer_offsets[imported + 1] += 1;
+    }
+    for file in 0..file_count {
+        importer_offsets[file + 1] += importer_offsets[file];
+    }
+    let mut importers = vec![0u32; importer_offsets[file_count]];
+    let mut next_slot = importer_offsets[..file_count].to_vec();
+    for (importer, imported) in edges {
+        importers[next_slot[imported]] = importer;
+        next_slot[imported] += 1;
+    }
+
+    while let Some(file) = worklist.pop() {
+        let file = file as usize;
+        for &importer in &importers[importer_offsets[file]..importer_offsets[file + 1]] {
+            if !reaching.is_set(importer as usize) {
+                reaching.set(importer as usize);
+                worklist.push(importer);
+            }
+        }
+    }
+
+    Ok(reaching)
 }

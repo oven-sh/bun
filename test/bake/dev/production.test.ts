@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -594,4 +594,81 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test(
+    "route reaching a client component through an import cycle is not fully static",
+    async () => {
+      // Card and Panel only reach the "use client" component through the barrel
+      // file `components/index.ts`, which imports both of them back and lists
+      // the client component last. Each route imports one of the two, so
+      // whichever route is classified first, the other route's only path to the
+      // client component runs through the cycle; a walk that gives up on a file
+      // it is already inside of misclassifies that other route.
+      const dir = await tempDirWithBakeDeps("bake-production-use-client-import-cycle", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "components/Client.tsx": `"use client";
+export default function Client() {
+  return <button>client</button>;
+}`,
+        "components/index.ts": `export { default as Card } from "./Card";
+export { default as Panel } from "./Panel";
+export { default as Client } from "./Client";`,
+        "components/Card.tsx": `import { Client } from "./index";
+export default function Card() {
+  return <div>card <Client /></div>;
+}`,
+        "components/Panel.tsx": `import { Client } from "./index";
+export default function Panel() {
+  return <div>panel <Client /></div>;
+}`,
+        "pages/card.tsx": `import Card from "../components/Card";
+export default function CardPage() {
+  return <Card />;
+}`,
+        "pages/panel.tsx": `import Panel from "../components/Panel";
+export default function PanelPage() {
+  return <Panel />;
+}`,
+        // Control: a cycle without a client component in it stays fully static.
+        "lib/a.ts": `import { bName } from "./b";
+export const aName = "a";
+export function ab() { return aName + bName; }`,
+        "lib/b.ts": `import { aName } from "./a";
+export const bName = "b";
+export function ba() { return bName + aName; }`,
+        "pages/plain.tsx": `import { ab } from "../lib/a";
+export default function PlainPage() {
+  return <p>{ab()}</p>;
+}`,
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+      expect(exitCode, stderr.toString()).toBe(0);
+
+      const read = (route: string) => Bun.file(path.join(dir, "dist", route, "index.html")).text();
+      const [card, panel, plain] = await Promise.all([read("card"), read("panel"), read("plain")]);
+
+      expect(card).toContain("<button>client</button>");
+      expect(panel).toContain("<button>client</button>");
+      expect(plain).toContain("<p>ab</p>");
+
+      const hasClientScript = (html: string) => html.includes('<script type="module"');
+      expect({
+        card: hasClientScript(card),
+        panel: hasClientScript(panel),
+        plain: hasClientScript(plain),
+      }).toEqual({ card: true, panel: true, plain: false });
+    },
+    // Three bundler graphs plus prerendering; too slow for the default timeout
+    // on debug and sanitizer builds.
+    30_000 * WAIT_MULTIPLIER,
+  );
 });

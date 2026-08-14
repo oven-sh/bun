@@ -677,11 +677,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         } else if tag == S::SHORTHAND {
             let val = S::extract_shorthand(property);
 
-            // The shorthand overrides everything buffered, logical longhands included, so a
-            // category change is no reason to flush here: compiled inline longhands would land
-            // in `:lang()` rules after this rule and win over the shorthand. Only a target that
-            // rejects the shorthand (one unsupported side rejects the whole declaration) still
-            // needs the buffered values, as a fallback.
+            // The buffered values are only live for a target that rejects the whole declaration.
             if let Some(browsers) = context.targets.browsers {
                 let rejected_by_a_target = [
                     S::shorthand_top(val),
@@ -700,6 +696,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.right = Some(S::shorthand_right(val).clone());
             self.bottom = Some(S::shorthand_bottom(val).clone());
             self.left = Some(S::shorthand_left(val).clone());
+            // Dead in every writing mode; flushing would put compiled inline ones after this rule.
             self.block_start = None;
             self.block_end = None;
             self.inline_start = None;

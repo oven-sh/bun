@@ -467,6 +467,54 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
   });
 });
 
+// A udp4 socket cannot be connected to an IPv6 address: connect(2) itself
+// fails, on every platform and without touching the network. Node reports
+// that as an ExceptionWithHostPort; this used to be a bare "Failed to connect
+// socket" with no code. Linux and Windows reject the address family, the BSDs
+// may reject the sockaddr length first.
+const connectFamilyMismatchCodes = ["EAFNOSUPPORT", "EINVAL"];
+
+test("connect() failure reports Node's error shape to the callback", async () => {
+  const socket = createSocket("udp4");
+  try {
+    const err: any = await new Promise(resolve => socket.connect(1, "::1", resolve));
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBeOneOf(connectFamilyMismatchCodes);
+    expect(err.errno).toBeNegative();
+    expect({ syscall: err.syscall, address: err.address, port: err.port, message: err.message }).toEqual({
+      syscall: "connect",
+      address: "::1",
+      port: 1,
+      message: `connect ${err.code} ::1:1`,
+    });
+    // Like Node, a failed connect() leaves the socket disconnected and usable.
+    await new Promise<void>((resolve, reject) => socket.connect(1, "127.0.0.1", e => (e ? reject(e) : resolve())));
+    expect(socket.remoteAddress()).toEqual({ address: "127.0.0.1", family: "IPv4", port: 1 });
+  } finally {
+    socket.close();
+  }
+});
+
+test("connect() failure without a callback is emitted as 'error' in Node's shape", async () => {
+  const socket = createSocket("udp4");
+  try {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    socket.on("error", resolve);
+    socket.on("connect", () => resolve(new Error("connected unexpectedly")));
+    socket.connect(1, "::1");
+    const err = await promise;
+    expect(err.code).toBeOneOf(connectFamilyMismatchCodes);
+    expect({ syscall: err.syscall, address: err.address, port: err.port, message: err.message }).toEqual({
+      syscall: "connect",
+      address: "::1",
+      port: 1,
+      message: `connect ${err.code} ::1:1`,
+    });
+  } finally {
+    socket.close();
+  }
+});
+
 // Every send callback must fire with (null, byteLength) — never (null, 0) or
 // EAGAIN — even if the kernel refuses some writes (they queue and drain like
 // libuv's uv_udp_try_send → uv_udp_send fallback).

@@ -1828,8 +1828,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     return listenFd;
 }
 
+/* Returns 0, a getaddrinfo() error code, or LIBUS_SOCKET_ERROR with the last
+ * connect() error in errno (WSAGetLastError() on Windows), captured before
+ * freeaddrinfo() can clobber it. An empty result list reports EAFNOSUPPORT. */
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
-    struct addrinfo hints, *result;
+    struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_family = AF_UNSPEC;
@@ -1844,18 +1847,28 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
         return gai_error;
     }
 
-    if (result == NULL) {
-        return -1;
-    }
+#ifdef _WIN32
+    int last_error = WSAEAFNOSUPPORT;
+#else
+    int last_error = EAFNOSUPPORT;
+#endif
 
     for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
             freeaddrinfo(result);
             return 0;
         }
+        last_error = LIBUS_ERR;
     }
 
-    freeaddrinfo(result);
+    if (result != NULL) {
+        freeaddrinfo(result);
+    }
+#ifdef _WIN32
+    WSASetLastError(last_error);
+#else
+    errno = last_error;
+#endif
     return (int)LIBUS_SOCKET_ERROR;
 }
 

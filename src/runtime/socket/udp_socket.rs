@@ -30,46 +30,6 @@ use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, s
 
 bun_output::declare_scope!(UdpSocket, visible);
 
-/// Local errno-classification shim — `bun_sys::Result`
-/// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor.
-///
-/// POSIX `getErrno(c_int)` semantics: only `rc == -1` is failure (any other
-/// value — including positive packet counts from `us_udp_socket_send` and
-/// negative EAI codes from `connect` — is "not a libc errno", so callers
-/// handle it themselves).
-///
-/// Windows semantics: for any non-NTSTATUS
-/// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
-/// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
-/// WSA handling rather than synthesising an errno. This matters for the
-/// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
-/// status, not a CRT errno, so reading `_errno()` here would be the wrong
-/// source.
-#[inline]
-fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
-    #[cfg(windows)]
-    {
-        if rc != 0 {
-            return None;
-        }
-        // rc == 0 → read the CRT `_errno()`;
-        // a zero errno must still yield `None`.
-        let errno_val = bun_sys::last_errno();
-        if errno_val == 0 {
-            return None;
-        }
-        return Some(bun_sys::Error::from_code_int(errno_val, tag));
-    }
-    #[cfg(not(windows))]
-    {
-        if rc != -1 {
-            return None;
-        }
-        Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
-    }
-}
-
 use bun_core::ip_address;
 use bun_sys::net::Address;
 
@@ -762,22 +722,7 @@ impl UDPSocket {
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
                 .connect(address_z.as_ptr(), connect.port as u32);
-            if ret != 0 {
-                if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
-                    return Err(global_this.throw_value(sys_err.to_js(global_this)));
-                }
-
-                if let Some(eai_err) = c_ares::Error::init_eai(ret) {
-                    return Err(global_this.throw_value(
-                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
-                            eai_err,
-                            global_this,
-                            b"connect",
-                            address_z.as_bytes(),
-                        )?,
-                    ));
-                }
-            }
+            check_connect(global_this, ret, address_z.as_bytes())?;
             this.connect_info
                 .set(Some(ConnectInfo { port: connect.port }));
         }
@@ -1916,9 +1861,8 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
-            return Err(global_this.throw(format_args!("Failed to connect socket")));
-        }
+        let ret = uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32);
+        check_connect(global_this, ret, connect_host.as_bytes())?;
         this.connect_info.set(Some(ConnectInfo { port }));
 
         js::address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
@@ -2529,15 +2473,22 @@ struct Destination {
     address: JSValue,
 }
 
+/// `Some` when a usockets call returned its failure status: `-1` on POSIX
+/// (other values, such as `us_udp_socket_send`'s packet count, are results),
+/// any negative value on Windows.
 fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     #[cfg(windows)]
-    {
-        // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
-        // This applies to some other usockets functions too.
-        if res >= 0 {
-            return None;
-        }
+    let failed = res < 0;
+    #[cfg(not(windows))]
+    let failed = res == -1;
+    failed.then(|| last_socket_error::<USE_WSA>(tag))
+}
 
+/// The error the socket call that just failed left behind: `WSAGetLastError()`
+/// on Windows (the CRT errno when Winsock has nothing), `errno` elsewhere.
+fn last_socket_error<const USE_WSA: bool>(tag: bun_sys::Tag) -> bun_sys::Error {
+    #[cfg(windows)]
+    {
         if USE_WSA {
             // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
             // → `E` for us, so `e` is `bun_sys::E` here.
@@ -2547,17 +2498,32 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
                     // `bun_windows_sys::ws2_32` (thread-local Winsock error
                     // slot write — no preconditions).
                     bun_sys::windows::ws2_32::WSASetLastError(0);
-                    return Some(bun_sys::Error::from_code(e, tag));
+                    return bun_sys::Error::from_code(e, tag);
                 }
             }
         }
-
-        let errno_val = bun_sys::last_errno();
-        return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]
-    {
-        let _ = USE_WSA;
-        errno_sys(res, tag)
-    }
+    let _ = USE_WSA;
+    bun_sys::Error::from_code_int(bun_sys::last_errno(), tag)
+}
+
+/// Throws for a failed `us_udp_socket_connect`, whose status spans two
+/// namespaces: `-1` (`LIBUS_SOCKET_ERROR`) means connect(2) failed and errno /
+/// `WSAGetLastError()` hold the reason; any other non-zero value is the
+/// getaddrinfo(3) status for `address`. `-1` must be told apart before the EAI
+/// mapping sees it: `init_eai(-1)` is ENOTFOUND on Windows.
+fn check_connect(global_this: &JSGlobalObject, ret: c_int, address: &[u8]) -> JsResult<()> {
+    let error = match ret {
+        0 => return Ok(()),
+        -1 => last_socket_error::<true>(bun_sys::Tag::connect).to_js(global_this),
+        eai => crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+            // `init_eai` is only `None` for 0, matched above.
+            c_ares::Error::init_eai(eai).unwrap_or(c_ares::Error::ENOTFOUND),
+            global_this,
+            b"connect",
+            address,
+        )?,
+    };
+    Err(global_this.throw_value(error))
 }

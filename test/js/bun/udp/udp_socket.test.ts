@@ -78,12 +78,49 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("connect with invalid hostname rejects", async () => {
-    expect(async () =>
-      udpSocket({
-        connect: { hostname: "example!!!!!.com", port: 443 },
-      }),
-    ).toThrow();
+  // The native connect returns -1 when connect(2) fails and a getaddrinfo code
+  // when the name does not resolve. On Windows the -1 used to be run through
+  // the getaddrinfo mapping, which reported every connect(2) failure as a DNS
+  // ENOTFOUND for an address that had resolved fine.
+  describe("connect option failures", () => {
+    async function connectError(connect: { hostname: string; port: number }): Promise<any> {
+      let socket;
+      try {
+        socket = await udpSocket({ connect });
+      } catch (error) {
+        return error;
+      }
+      socket.close();
+      throw new Error(`connecting to ${connect.hostname} unexpectedly succeeded`);
+    }
+
+    test("connect with invalid hostname rejects with a DNS error", async () => {
+      const error = await connectError({ hostname: "example!!!!!.com", port: 443 });
+      expect(error.name).toBe("DNSException");
+      expect(error.syscall).toBe("connect");
+      expect(error.message).toBe(`connect ${error.code} example!!!!!.com`);
+    });
+
+    test("the default (IPv4) socket cannot connect to an IPv6 address", async () => {
+      const error = await connectError({ hostname: "::1", port: 1 });
+      expect(error.name).toBe("Error");
+      // Linux and Windows reject the address family; the BSDs may reject the
+      // sockaddr length first.
+      expect(error.code).toBeOneOf(["EAFNOSUPPORT", "EINVAL"]);
+      expect(error.errno).toBeNegative();
+      expect(error.syscall).toBe("connect");
+    });
+
+    // Winsock refuses INADDR_ANY as a destination (POSIX kernels rewrite it to
+    // loopback), so this is a second, different connect(2) error on Windows:
+    // the reported code comes from the failed call, not from a fixed mapping.
+    test.if(isWindows)("connecting to 0.0.0.0 reports EADDRNOTAVAIL", async () => {
+      const error = await connectError({ hostname: "0.0.0.0", port: 1 });
+      expect(error.name).toBe("Error");
+      expect(error.code).toBe("EADDRNOTAVAIL");
+      expect(error.errno).toBeNegative();
+      expect(error.syscall).toBe("connect");
+    });
   });
 
   // Out-of-range connect.port used to be silently rewritten to 0, so send()

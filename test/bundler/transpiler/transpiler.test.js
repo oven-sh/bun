@@ -2530,6 +2530,61 @@ console.log(<div {...obj} key="after" />);`),
     });
   });
 
+  // A JSX attribute string is passed through verbatim, with only entities
+  // decoded (esbuild and tsc agree on every value below). Only JSX text
+  // children get their lines trimmed and joined. The lexer used to route an
+  // attribute string through the text-child whitespace handling whenever it
+  // contained an entity or a non-ASCII character, so whether newlines and
+  // indentation survived depended on unrelated bytes in the same string.
+  it("JSX attribute strings keep their whitespace verbatim", async () => {
+    using dir = tempDir("jsx-attribute-whitespace", {
+      "fixture.jsx": [
+        "// @jsxRuntime classic",
+        "// @jsx h",
+        "const h = (tag, props, ...children) => (children.length ? { ...props, children } : props);",
+        "console.log(JSON.stringify([",
+        '  <a className="btn',
+        '      btn-primary" title="Line one',
+        '      line two" />,',
+        '  <a className="btn',
+        '      btn-prim\u00e4ry" title="Line one',
+        '      line two &amp; three" />,',
+        '  <a v="',
+        "  x",
+        '" w="',
+        "  \u00e9",
+        '" />,',
+        '  <a nbsp="1',
+        '\u00a0\u00a0z" ls="p\u2028q" crlf="x\r',
+        '  y&amp;" entities="a &amp;&nbsp;&#x1F600; b" />,',
+        "  <p>",
+        "    text &amp;",
+        "    child",
+        "  </p>,",
+        "]));",
+        "",
+      ].join("\n"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { className: "btn\n      btn-primary", title: "Line one\n      line two" },
+      { className: "btn\n      btn-prim\u00e4ry", title: "Line one\n      line two & three" },
+      { v: "\n  x\n", w: "\n  \u00e9\n" },
+      { nbsp: "1\n\u00a0\u00a0z", ls: "p\u2028q", crlf: "x\r\n  y&", entities: "a &\u00a0\u{1F600} b" },
+      { children: ["text & child"] },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

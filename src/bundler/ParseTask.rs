@@ -852,6 +852,7 @@ pub mod parse_worker {
                         bun_parsers::xml::Options {
                             compact: true,
                             encoding: bun_parsers::xml::InputEncoding::File,
+                            arrays: bun_parsers::xml::Arrays::Repeated,
                         },
                     )?;
                     let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;

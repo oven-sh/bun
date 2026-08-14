@@ -29,16 +29,49 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let options = frame.argument(1);
-    let compact = if options.is_undefined_or_null() {
-        true
-    } else if options.is_object() {
-        options
+    let mut compact = true;
+    // `arrays`: `true` for every child element, or the element names.
+    let mut arrays_all = false;
+    let mut array_names: Vec<Box<[u8]>> = Vec::new();
+    if options.is_object() {
+        compact = options
             .get_boolean_strict(global, "compact")?
-            .unwrap_or(true)
-    } else {
+            .unwrap_or(true);
+        if let Some(arrays) = options.get(global, "arrays")? {
+            if arrays.is_boolean() {
+                arrays_all = arrays.as_boolean();
+            } else if arrays.is_array() {
+                let mut iter = arrays.array_iterator(global)?;
+                while let Some(name) = iter.next()? {
+                    if !name.is_string() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "XML.parse: 'arrays' must be a boolean or an array of element names"
+                        )));
+                    }
+                    array_names.push(
+                        name.to_bun_string(global)?
+                            .to_utf8_bytes()
+                            .into_boxed_slice(),
+                    );
+                }
+            } else if !arrays.is_undefined_or_null() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "XML.parse: 'arrays' must be a boolean or an array of element names"
+                )));
+            }
+        }
+    } else if !options.is_undefined_or_null() {
         return Err(
             global.throw_invalid_arguments(format_args!("XML.parse options must be an object"))
         );
+    }
+    let name_refs: Vec<&[u8]> = array_names.iter().map(|n| &n[..]).collect();
+    let arrays = if arrays_all {
+        xml::Arrays::All
+    } else if name_refs.is_empty() {
+        xml::Arrays::Repeated
+    } else {
+        xml::Arrays::Names(&name_refs)
     };
 
     // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
@@ -60,12 +93,17 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
             };
             bun_core::analytics::Features::xml_parse_inc();
+            let options = xml::Options {
+                compact,
+                encoding,
+                arrays,
+            };
             let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
                 // The scaffold hands the string's code units over as bytes.
                 let units: &[u16] = bytemuck::cast_slice(&source.contents);
-                XML::parse_utf16(source, units, log, arena, compact)
+                XML::parse_utf16(source, units, log, arena, options)
             } else {
-                XML::parse(source, log, arena, xml::Options { compact, encoding })
+                XML::parse(source, log, arena, options)
             };
             let utf8;
             let utf8_source;
@@ -79,6 +117,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 let options = xml::Options {
                     compact,
                     encoding: xml::InputEncoding::Text,
+                    arrays,
                 };
                 result = XML::parse(&utf8_source, log, arena, options);
             }
@@ -385,7 +424,11 @@ impl Stringifier {
             }
             if child.is_object() && !child.is_array() && !child.is_date() {
                 // Inside `children` there is no compact/node ambiguity: any
-                // object is a node and must have a name.
+                // object is an element (`name`), a comment (`comment`) or a
+                // processing instruction (`target`).
+                if child.get(global, "name")?.is_none() && self.stringify_markup(global, child)? {
+                    continue;
+                }
                 self.stringify_node(global, child)?;
             } else if child.is_array() {
                 return Err(global
@@ -406,6 +449,109 @@ impl Stringifier {
         }
         self.append_end_tag(*name);
         Ok(())
+    }
+
+    /// `{ comment }` → `<!--comment-->`, `{ target, data }` → `<?target data?>`;
+    /// `false` if `child` is neither.
+    fn stringify_markup(
+        &mut self,
+        global: &JSGlobalObject,
+        child: JSValue,
+    ) -> StringifyResult<bool> {
+        if let Some(comment) = child.get(global, "comment")? {
+            if !comment.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a comment node's 'comment' must be a string"
+                    ))
+                    .into());
+            }
+            let text = OwnedString::new(comment.to_bun_string(global)?);
+            let len = text.length();
+            let mut i = 0;
+            let mut prev_dash = false;
+            while i < len {
+                let (cp, w) = code_point_at(&text, i);
+                i += w;
+                if !xml::is_xml_char(cp) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: XML cannot represent the character U+{:04X}",
+                            cp
+                        ))
+                        .into());
+                }
+                if cp == 0x2D && (prev_dash || i == len) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a comment cannot contain '--' or end with '-'"
+                        ))
+                        .into());
+                }
+                prev_dash = cp == 0x2D;
+            }
+            self.builder.append_latin1(b"<!--");
+            self.builder.append_string(*text);
+            self.builder.append_latin1(b"-->");
+            return Ok(true);
+        }
+        if let Some(target) = child.get(global, "target")? {
+            if !target.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a processing instruction's 'target' must be a string"
+                    ))
+                    .into());
+            }
+            let target = OwnedString::new(target.to_bun_string(global)?);
+            self.check_name(global, &target, "processing instruction target")?;
+            if target.length() == 3 {
+                let lower = |i| target.char_at(i) | 0x20;
+                if lower(0) == u16::from(b'x')
+                    && lower(1) == u16::from(b'm')
+                    && lower(2) == u16::from(b'l')
+                {
+                    return Err(global.throw(format_args!("XML.stringify: 'xml' is reserved and cannot be a processing instruction target")).into());
+                }
+            }
+            self.builder.append_latin1(b"<?");
+            self.builder.append_string(*target);
+            match child.get(global, "data")? {
+                None => {}
+                Some(data) if data.is_null() => {}
+                Some(data) if data.is_string() => {
+                    let data = OwnedString::new(data.to_bun_string(global)?);
+                    let len = data.length();
+                    if len > 0 {
+                        let mut i = 0;
+                        let mut prev_q = false;
+                        while i < len {
+                            let (cp, w) = code_point_at(&data, i);
+                            i += w;
+                            if !xml::is_xml_char(cp) {
+                                return Err(global.throw(format_args!("XML.stringify: XML cannot represent the character U+{:04X}", cp)).into());
+                            }
+                            if prev_q && cp == 0x3E {
+                                return Err(global.throw(format_args!("XML.stringify: processing instruction data cannot contain '?>'")).into());
+                            }
+                            prev_q = cp == 0x3F;
+                        }
+                        self.builder.append_lchar(b' ');
+                        self.builder.append_string(*data);
+                    }
+                }
+                Some(_) => {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a processing instruction's 'data' must be a string"
+                        ))
+                        .into());
+                }
+            }
+            self.builder.append_latin1(b"?>");
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     // ── compact object ─────────────────────────────────────────────────────

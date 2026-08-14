@@ -105,6 +105,7 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     let options = xml::Options {
         compact: false,
         encoding: xml::InputEncoding::Bytes,
+        arrays: xml::Arrays::Repeated,
     };
     let Ok(bun_ast::Expr {
         data: Data::EObjectJSON(root),

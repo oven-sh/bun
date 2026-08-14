@@ -46,10 +46,23 @@ const STOP_SKIPPED: u8 = CLASS_ALWAYS;
 pub struct XML;
 
 #[derive(Copy, Clone)]
-pub struct Options {
+pub struct Options<'o> {
     /// Build the compact object shape (`true`) or the node tree (`false`).
     pub compact: bool,
     pub encoding: InputEncoding,
+    /// Compact shape only: which child elements are always arrays.
+    pub arrays: Arrays<'o>,
+}
+
+/// See `Options::arrays`.
+#[derive(Copy, Clone)]
+pub enum Arrays<'o> {
+    /// Only names that repeat within their parent (the default).
+    Repeated,
+    /// Every child element.
+    All,
+    /// These element names (UTF-8), wherever they appear as a child.
+    Names(&'o [&'o [u8]]),
 }
 
 /// What the bytes handed to the parser are, which decides how much of
@@ -82,7 +95,7 @@ impl XML {
         source: &'a Source,
         log: &mut Log,
         bump: &'a Bump,
-        options: Options,
+        options: Options<'_>,
     ) -> crate::Result<Expr> {
         let contents: &'a [u8] = source.contents.as_ref();
         Self::parse_units(source, contents, log, bump, options)
@@ -96,12 +109,9 @@ impl XML {
         units: &'a [u16],
         log: &mut Log,
         bump: &'a Bump,
-        compact: bool,
+        mut options: Options<'_>,
     ) -> crate::Result<Expr> {
-        let options = Options {
-            compact,
-            encoding: InputEncoding::Text,
-        };
+        options.encoding = InputEncoding::Text;
         Self::parse_units(source, units, log, bump, options)
     }
 
@@ -110,7 +120,7 @@ impl XML {
         contents: &'a [U],
         log: &mut Log,
         bump: &'a Bump,
-        options: Options,
+        options: Options<'_>,
     ) -> crate::Result<Expr> {
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
@@ -122,8 +132,11 @@ impl XML {
             E::StrEncoding::Utf8
         };
         let result = if options.compact {
-            Parser::new(source, contents, log, bump, options, CompactSink::new(tape))
-                .parse_document()
+            let sink = CompactSink::new(
+                tape,
+                ForcedArrays::new::<U>(options.arrays, options.encoding),
+            );
+            Parser::new(source, contents, log, bump, options, sink).parse_document()
         } else {
             Parser::new(source, contents, log, bump, options, NodeSink::new(tape)).parse_document()
         };
@@ -187,6 +200,9 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     const KEY_NAME: &'static [Self];
     const KEY_ATTRIBUTES: &'static [Self];
     const KEY_CHILDREN: &'static [Self];
+    const KEY_COMMENT: &'static [Self];
+    const KEY_TARGET: &'static [Self];
+    const KEY_DATA: &'static [Self];
 }
 
 impl Unit for u8 {
@@ -211,6 +227,9 @@ impl Unit for u8 {
     const KEY_NAME: &'static [Self] = b"name";
     const KEY_ATTRIBUTES: &'static [Self] = b"attributes";
     const KEY_CHILDREN: &'static [Self] = b"children";
+    const KEY_COMMENT: &'static [Self] = b"comment";
+    const KEY_TARGET: &'static [Self] = b"target";
+    const KEY_DATA: &'static [Self] = b"data";
 }
 
 macro_rules! utf16 {
@@ -253,6 +272,9 @@ impl Unit for u16 {
     const KEY_NAME: &'static [Self] = utf16!(b"name");
     const KEY_ATTRIBUTES: &'static [Self] = utf16!(b"attributes");
     const KEY_CHILDREN: &'static [Self] = utf16!(b"children");
+    const KEY_COMMENT: &'static [Self] = utf16!(b"comment");
+    const KEY_TARGET: &'static [Self] = utf16!(b"target");
+    const KEY_DATA: &'static [Self] = utf16!(b"data");
 }
 
 #[inline(always)]
@@ -512,9 +534,10 @@ enum Kind<'a, U: Unit> {
     /// `<?xml` at the very start of the document; its pseudo-attributes
     /// follow as ordinary tokens.
     XmlDecl,
-    /// A comment or processing instruction, checked and dropped.
-    Comment,
-    Pi,
+    /// A comment's text, and a processing instruction's target and data
+    /// (empty outside element content unless `Scanner::keep_markup`).
+    Comment(&'a [U]),
+    Pi(&'a [U], &'a [U]),
     /// `<Name`
     StartTag(&'a [U]),
     /// `</Name`
@@ -582,8 +605,8 @@ impl<U: Unit> core::fmt::Display for KindDisplay<'_, U> {
             Kind::BracketClose => f.write_str("']'"),
             Kind::Decl(kind) => f.write_str(kind.opener()),
             Kind::XmlDecl => f.write_str("'<?xml'"),
-            Kind::Comment => f.write_str("a comment"),
-            Kind::Pi => f.write_str("a processing instruction"),
+            Kind::Comment(_) => f.write_str("a comment"),
+            Kind::Pi(..) => f.write_str("a processing instruction"),
             Kind::StartTag(n) => name(f, "<", n, ""),
             Kind::EndTag(n) => name(f, "</", n, ""),
             Kind::Text(_) => f.write_str("text"),
@@ -772,6 +795,10 @@ struct Scanner<'a, 'log, U: Unit> {
     cursor: usize,
     /// One byte per character (`InputEncoding::Latin1`).
     latin1: bool,
+    /// Comments and processing instructions in element content become
+    /// tokens (the node tree keeps them) instead of vanishing inside a text
+    /// run.
+    keep_markup: bool,
     /// The current token: `next` / `next_content` write it in place.
     tok: Token<'a, U>,
     /// A `>` was read as literal data since the last `<`: the index producer
@@ -1767,30 +1794,57 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
     }
 
-    /// The rest of a comment after `<!--` (§2.5 [15]); dropped.
-    fn scan_comment(&mut self, start_pos: usize) -> PResult<()> {
+    /// The rest of a comment after `<!--` (§2.5 [15]): its text.
+    fn scan_comment(&mut self, start_pos: usize) -> PResult<&'a [U]> {
+        let body_start = self.pos;
         let dashes = find_ascii(&self.src[self.pos..], b"--").map(|i| self.pos + i);
         self.skip_dropped(dashes.unwrap_or(self.src.len()))?;
         match dashes {
             None => Err(self.err(start_pos, "Unterminated comment")),
             Some(d) if self.peek_at(d + 2) == b'>' => {
                 self.pos = d + 3;
-                Ok(())
+                Ok(self.kept(body_start, d))
             }
             Some(_) => Err(self.err(self.here(), "'--' is not allowed inside a comment")),
         }
     }
 
-    /// The rest of a processing instruction after `<?` (§2.6 [16]); target
-    /// and data are checked and dropped. Returns `true` instead, leaving the
+    /// `src[start..end]` as data handed on (a kept comment or processing
+    /// instruction): line ends normalized if this is the document entity.
+    fn kept(&self, start: usize, end: usize) -> &'a [U] {
+        let raw = &self.src[start..end];
+        if !self.keep_markup {
+            return &[];
+        }
+        if self.frame_kind != FrameKind::Document || !raw.iter().any(|u| u.low() == b'\r') {
+            return raw;
+        }
+        let mut out: ArenaVec<'a, U> = ArenaVec::with_capacity_in(raw.len(), self.bump);
+        let mut i = 0;
+        while i < raw.len() {
+            if raw[i].low() == b'\r' {
+                out.push(U::ascii(b'\n'));
+                if i + 1 < raw.len() && raw[i + 1].low() == b'\n' {
+                    i += 1;
+                }
+            } else {
+                out.push(raw[i]);
+            }
+            i += 1;
+        }
+        out.into_bump_slice()
+    }
+
+    /// The rest of a processing instruction after `<?` (§2.6 [16]): its
+    /// target and data. Returns `None` instead, leaving the
     /// pseudo-attributes unread, when this is the XML declaration: `<?xml`
     /// as the very first thing in the document.
-    fn scan_pi(&mut self, start_pos: usize) -> PResult<bool> {
+    fn scan_pi(&mut self, start_pos: usize) -> PResult<Option<(&'a [U], &'a [U])>> {
         let at_document_start = self.in_document() && start_pos == self.content_start;
         let target =
             self.scan_name("Expected a processing instruction target after '<?' but found")?;
         if eq_ascii(target, b"xml") && at_document_start {
-            return Ok(true);
+            return Ok(None);
         }
         if eq_ascii_ignore_case(target, b"xml") {
             return Err(self.err(
@@ -1800,20 +1854,24 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
         if self.starts_with(b"?>") {
             self.pos += 2;
-            return Ok(false);
+            return Ok(Some((target, &[])));
         }
         if !is_ws(self.peek()) {
             return Err(self.err_here(
                 "Expected whitespace or '?>' after the processing instruction target but found",
             ));
         }
+        while !self.at_end() && is_ws(self.peek()) {
+            self.pos += 1;
+        }
+        let data_start = self.pos;
         let close = find_ascii(&self.src[self.pos..], b"?>").map(|i| self.pos + i);
         self.skip_dropped(close.unwrap_or(self.src.len()))?;
         match close {
             None => Err(self.err(start_pos, "Unterminated processing instruction")),
             Some(end) => {
                 self.pos = end + 2;
-                Ok(false)
+                Ok(Some((target, self.kept(data_start, end))))
             }
         }
     }
@@ -1886,10 +1944,10 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     match self.peek_at(self.pos + 1) {
                         b'?' => {
                             self.pos += 2;
-                            if self.scan_pi(pos)? {
-                                break (Kind::XmlDecl, pos);
+                            match self.scan_pi(pos)? {
+                                None => break (Kind::XmlDecl, pos),
+                                Some((target, data)) => break (Kind::Pi(target, data), pos),
                             }
-                            break (Kind::Pi, pos);
                         }
                         b'/' => {
                             self.pos += 2;
@@ -1900,8 +1958,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                         b'!' => {
                             if self.starts_with(b"<!--") {
                                 self.pos += 4;
-                                self.scan_comment(pos)?;
-                                break (Kind::Comment, pos);
+                                let body = self.scan_comment(pos)?;
+                                break (Kind::Comment(body), pos);
                             }
                             const OPENERS: [(&[u8], DeclKind); 5] = [
                                 (b"<!DOCTYPE", DeclKind::Doctype),
@@ -2209,7 +2267,32 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     self.tag_degraded &= !self.in_document();
                     let pos = self.here();
                     let next = self.peek_at(self.pos + 1);
-                    if next == b'!' && self.starts_with(b"<!--") {
+                    if self.keep_markup
+                        && (next == b'?' || (next == b'!' && self.starts_with(b"<!--")))
+                    {
+                        if have_text!() {
+                            self.finish_text(start, buf, text_pos);
+                            return Ok(());
+                        }
+                        let frame = self.frame_id;
+                        let kind = if next == b'?' {
+                            self.pos += 2;
+                            let Some((target, data)) = self.scan_pi(pos)? else {
+                                unreachable!("content never starts the document");
+                            };
+                            Kind::Pi(target, data)
+                        } else {
+                            self.pos += 4;
+                            Kind::Comment(self.scan_comment(pos)?)
+                        };
+                        self.tok = Token {
+                            kind,
+                            pos,
+                            frame,
+                            spaced: false,
+                        };
+                        return Ok(());
+                    } else if next == b'!' && self.starts_with(b"<!--") {
                         flush!();
                         self.pos += 4;
                         self.scan_comment(pos)?;
@@ -2234,8 +2317,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     } else if next == b'?' {
                         flush!();
                         self.pos += 2;
-                        let is_xml_decl = self.scan_pi(pos)?;
-                        debug_assert!(!is_xml_decl, "content never starts the document");
+                        let pi = self.scan_pi(pos)?;
+                        debug_assert!(pi.is_some(), "content never starts the document");
                         start = self.pos;
                     } else if have_text!() {
                         // A tag ends the run; leave it for the next call.
@@ -2342,6 +2425,9 @@ trait Sink<'a, U: Unit> {
     fn begin_element(&mut self, name: &'a [U], loc: Loc);
     fn attribute(&mut self, name: &'a [U], value: &'a [U]);
     fn text(&mut self, text: &'a [U], loc: Loc);
+    /// Only called when `Scanner::keep_markup`.
+    fn comment(&mut self, _text: &'a [U], _loc: Loc) {}
+    fn pi(&mut self, _target: &'a [U], _data: &'a [U], _loc: Loc) {}
     fn end_element(&mut self);
     /// `text` (the element's only content) then `end_element`, in one step.
     fn end_leaf(&mut self, text: &'a [U], loc: Loc);
@@ -2483,8 +2569,7 @@ struct CompactSink<'a, U: Unit> {
     tape: Tape<'a>,
     stack: Vec<CompactFrame<'a, U>>,
     /// The text runs of every open element, oldest first; each frame owns
-    /// the tail from its `text_mark`. Concatenated (if more than one
-    /// survives trimming) when the element ends.
+    /// the tail from its `text_mark`. Concatenated when the element ends.
     text_runs: Vec<&'a [U]>,
     /// Recently built `@name` keys, direct-mapped by a cheap hash of the
     /// name: attribute names repeat, their keys need not be rebuilt.
@@ -2495,18 +2580,76 @@ struct CompactSink<'a, U: Unit> {
     gathered: Vec<E::JsonValue>,
     gathered_locs: Vec<Loc>,
     group_index: HashMap<&'a [u8], u32>,
+    forced: ForcedArrays,
     root: Option<(&'a [U], E::JsonValue, Loc)>,
+}
+
+/// `Options::arrays`, with the names in the tape's encoding.
+pub struct ForcedArrays {
+    all: bool,
+    names: HashMap<Box<[u8]>, ()>,
+}
+
+impl ForcedArrays {
+    fn new<U: Unit>(arrays: Arrays<'_>, encoding: InputEncoding) -> ForcedArrays {
+        let mut names = HashMap::default();
+        let all = match arrays {
+            Arrays::Repeated => false,
+            Arrays::All => true,
+            Arrays::Names(list) => {
+                for &name in list {
+                    let key: Box<[u8]> = if U::WIDE {
+                        let mut units: Vec<u16> = Vec::with_capacity(name.len());
+                        let text = core::str::from_utf8(name).unwrap_or("");
+                        units.extend(text.encode_utf16());
+                        Box::from(U::bytes(
+                            // SAFETY: `U` is `u16` (`U::WIDE`).
+                            unsafe {
+                                core::slice::from_raw_parts(units.as_ptr().cast::<U>(), units.len())
+                            },
+                        ))
+                    } else if encoding == InputEncoding::Latin1 {
+                        // Names not representable in Latin-1 cannot occur in the document.
+                        let text = core::str::from_utf8(name).unwrap_or("");
+                        if text.chars().any(|c| c as u32 > 0xFF) {
+                            continue;
+                        }
+                        text.chars().map(|c| c as u8).collect()
+                    } else {
+                        Box::from(name)
+                    };
+                    let _ = names.insert(key, ());
+                }
+                false
+            }
+        };
+        ForcedArrays { all, names }
+    }
+
+    #[inline]
+    fn active(&self) -> bool {
+        self.all || !self.names.is_empty()
+    }
+
+    #[inline]
+    fn forces(&self, key: &[u8]) -> bool {
+        (self.all || self.names.contains_key(key)) && !key.is_empty() && key[0] != b'#'
+    }
 }
 
 /// An open element. Its properties are staged on `Tape::props` from
 /// `props_mark`: the `@`-attributes, then one per child element as each one
-/// ends (repeats are folded when this element ends).
+/// ends (repeats are folded when this element ends), with a `#text`
+/// placeholder where the first non-whitespace text run fell among them.
 struct CompactFrame<'a, U: Unit> {
     name: &'a [U],
     loc: Loc,
     attribute_count: u32,
     props_mark: u32,
     text_mark: u32,
+    /// Index on `Tape::props` of this element's `#text` placeholder, or `u32::MAX`.
+    text_prop: u32,
+    has_elements: bool,
 }
 
 const KEY_CACHE_SIZE: usize = 64;
@@ -2531,14 +2674,19 @@ struct Group {
     /// While gathering a repeated group: the next free slot of its run in
     /// `CompactSink::gathered`.
     cursor: u32,
+    forced: bool,
 }
 
 /// Up to this many child properties, a repeat is found by comparing names
 /// pairwise; beyond it, through a hash map.
 const LINEAR_CHILD_LIMIT: usize = 16;
 
+fn is_ws_only<U: Unit>(text: &[U]) -> bool {
+    text.iter().all(|u| is_ws(u.low()))
+}
+
 impl<'a, U: Unit> CompactSink<'a, U> {
-    fn new(tape: Tape<'a>) -> Self {
+    fn new(tape: Tape<'a>, forced: ForcedArrays) -> Self {
         CompactSink {
             stack: Vec::with_capacity(64),
             text_runs: Vec::with_capacity(tape.items.capacity()),
@@ -2549,69 +2697,71 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             gathered: Vec::new(),
             gathered_locs: Vec::new(),
             group_index: HashMap::default(),
+            forced,
             root: None,
         }
     }
 
-    /// The element's character data — the runs from `mark` — concatenated
-    /// and trimmed. Only whitespace that trimming removes is ever scanned,
-    /// and a single surviving run is borrowed, not copied.
+    /// The element's character data: the runs from `mark`, concatenated —
+    /// every run when `exact` (no child elements), otherwise without the
+    /// whitespace-only runs, which are layout between the children. A single
+    /// surviving run is borrowed, not copied.
     #[inline]
-    fn take_text(&mut self, mark: usize) -> &'a [U] {
+    fn take_text(&mut self, mark: usize, exact: bool) -> &'a [U] {
         let runs = &self.text_runs[mark..];
         let text: &'a [U] = match runs {
             [] => &[],
-            [one] => trim_ws(one),
-            _ => self.join_text(mark),
+            [one] if exact => one,
+            [one] => {
+                if is_ws_only(one) {
+                    &[]
+                } else {
+                    one
+                }
+            }
+            _ => self.join_text(mark, !exact),
         };
         self.text_runs.truncate(mark);
         text
     }
 
     #[cold]
-    fn join_text(&mut self, mark: usize) -> &'a [U] {
-        let runs = &mut self.text_runs[mark..];
-        let mut first = 0;
-        let mut last = runs.len();
-        while first < last {
-            let t = trim_ws_start(runs[first]);
-            if t.is_empty() {
-                first += 1;
-            } else {
-                runs[first] = t;
-                break;
-            }
+    fn join_text(&mut self, mark: usize, has_elements: bool) -> &'a [U] {
+        let runs = &self.text_runs[mark..];
+        let keep = |r: &'a [U]| !has_elements || !is_ws_only(r);
+        let mut kept = runs.iter().copied().filter(|r| keep(r));
+        let (Some(first), second) = (kept.next(), kept.next()) else {
+            return &[];
+        };
+        if second.is_none() {
+            return first;
         }
-        while last > first {
-            let t = trim_ws_end(runs[last - 1]);
-            if t.is_empty() {
-                last -= 1;
-            } else {
-                runs[last - 1] = t;
-                break;
-            }
+        let len = runs
+            .iter()
+            .copied()
+            .filter(|r| keep(r))
+            .map(<[U]>::len)
+            .sum();
+        let mut buf: ArenaVec<'a, U> = ArenaVec::with_capacity_in(len, self.tape.bump);
+        for r in runs.iter().copied().filter(|r| keep(r)) {
+            buf.extend_from_slice(r);
         }
-        match &runs[first..last] {
-            [] => &[],
-            [one] => one,
-            kept => {
-                let len = kept.iter().map(|r| r.len()).sum();
-                let mut buf: ArenaVec<'a, U> = ArenaVec::with_capacity_in(len, self.tape.bump);
-                for r in kept {
-                    buf.extend_from_slice(r);
-                }
-                buf.into_bump_slice()
-            }
-        }
+        buf.into_bump_slice()
     }
 
     /// Folds the child properties staged from `mark` so each name keeps one
-    /// property, in order of first occurrence, a repeated name holding the
-    /// array of its values.
+    /// property, in order of first occurrence, a repeated (or forced) name
+    /// holding the array of its values.
     #[inline]
     fn fold_repeats(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
         let n = children.len();
+        if self.forced.active() {
+            return self.fold_repeats_slow(mark);
+        }
+        if n < 2 {
+            return;
+        }
         // Usually every name is distinct: settle that cheaply first. A
         // 64-slot filter on (length, first, last byte) says "all distinct"
         // with no comparisons; a collision falls to comparing pairwise.
@@ -2671,6 +2821,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                     first: i as u32,
                     count: 1,
                     cursor: 0,
+                    forced: self.forced.forces(name),
                 });
             }
         } else {
@@ -2684,21 +2835,22 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                         first: i as u32,
                         count: 0,
                         cursor: 0,
+                        forced: self.forced.forces(child.key.slice()),
                     });
                 }
                 self.groups[g as usize].count += 1;
                 self.group_of.push(g);
             }
         }
-        if self.groups.len() == n {
+        if self.groups.len() == n && !self.groups.iter().any(|g| g.forced) {
             return;
         }
-        // Lay the values of repeated names out group by group and cut one
-        // array per repeated group.
+        // Lay the values of array-valued names out group by group and cut
+        // one array per group.
         let mut next = 0u32;
         for g in self.groups.iter_mut() {
             g.cursor = next;
-            if g.count > 1 {
+            if g.count > 1 || g.forced {
                 next += g.count;
             }
         }
@@ -2708,7 +2860,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.gathered_locs.resize(next as usize, Loc::EMPTY);
         for (i, &g) in self.group_of.iter().enumerate() {
             let group = &mut self.groups[g as usize];
-            if group.count > 1 {
+            if group.count > 1 || group.forced {
                 self.gathered[group.cursor as usize] = children[i].value;
                 self.gathered_locs[group.cursor as usize] = self.tape.prop_locs[mark + i];
                 group.cursor += 1;
@@ -2718,7 +2870,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         // property is never behind its final slot, so this is in place).
         for (slot, g) in self.groups.iter().enumerate() {
             let mut prop = self.tape.props[mark + g.first as usize];
-            if g.count > 1 {
+            if g.count > 1 || g.forced {
                 let run = (g.cursor - g.count) as usize..g.cursor as usize;
                 prop.value = E::JsonValue::Array(Tape::array_of(
                     self.tape.tape,
@@ -2733,6 +2885,18 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.tape.props.truncate(mark + self.groups.len());
         self.tape.prop_locs.truncate(mark + self.groups.len());
     }
+
+    /// Hands a finished element to its parent (or keeps it as the root).
+    #[inline]
+    fn deliver(&mut self, name: &'a [U], value: E::JsonValue, loc: Loc) {
+        match self.stack.last_mut() {
+            Some(parent) => {
+                parent.has_elements = true;
+                self.tape.push_prop(U::bytes(name), value, loc);
+            }
+            None => self.root = Some((name, value, loc)),
+        }
+    }
 }
 
 impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
@@ -2744,6 +2908,8 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
             attribute_count: 0,
             props_mark: self.tape.props.len() as u32,
             text_mark: self.text_runs.len() as u32,
+            text_prop: u32::MAX,
+            has_elements: false,
         });
     }
 
@@ -2775,50 +2941,58 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
     #[inline]
     fn text(&mut self, text: &'a [U], _loc: Loc) {
         self.text_runs.push(text);
+        let frame = self.stack.last_mut().expect("text outside an element");
+        if frame.text_prop == u32::MAX && !is_ws_only(text) {
+            // Reserve `#text`'s place among the children; filled in at the end.
+            frame.text_prop = self.tape.props.len() as u32;
+            let loc = frame.loc;
+            self.tape
+                .push_prop(U::bytes(U::KEY_TEXT), E::JsonValue::Null, loc);
+        }
     }
 
     #[inline]
     fn end_leaf(&mut self, text: &'a [U], _loc: Loc) {
         let frame = self.stack.pop().expect("end_leaf without start_element");
-        let trimmed = trim_ws(text);
         let value = if frame.attribute_count == 0 {
-            Tape::str(trimmed)
+            Tape::str(text)
         } else {
-            if !trimmed.is_empty() {
+            if !text.is_empty() {
                 self.tape
-                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
+                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(text), frame.loc);
             }
             E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
         };
-        match self.stack.last() {
-            Some(_) => self.tape.push_prop(U::bytes(frame.name), value, frame.loc),
-            None => self.root = Some((frame.name, value, frame.loc)),
-        }
+        self.deliver(frame.name, value, frame.loc);
     }
 
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
-        let trimmed = self.take_text(frame.text_mark as usize);
+        let bare = frame.attribute_count == 0 && !frame.has_elements;
+        // Only layout around child elements is ever left out of the text.
+        let text = self.take_text(frame.text_mark as usize, !frame.has_elements);
         let props_mark = frame.props_mark as usize;
         let children_mark = props_mark + frame.attribute_count as usize;
-        let has_children = self.tape.props.len() > children_mark;
         // No attributes and no child elements: the element is its text.
-        let value = if frame.attribute_count == 0 && !has_children {
-            Tape::str(trimmed)
+        let value = if bare {
+            self.tape.props.truncate(props_mark);
+            self.tape.prop_locs.truncate(props_mark);
+            Tape::str(text)
         } else {
-            if self.tape.props.len() > children_mark + 1 {
-                self.fold_repeats(children_mark);
-            }
-            if !trimmed.is_empty() {
+            if frame.text_prop != u32::MAX {
+                debug_assert!(!text.is_empty());
+                self.tape.props[frame.text_prop as usize].value = Tape::str(text);
+            } else if !text.is_empty() {
+                // Whitespace-only text of an element without child elements.
                 self.tape
-                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
+                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(text), frame.loc);
+            }
+            if self.tape.props.len() > children_mark + 1 || self.forced.active() {
+                self.fold_repeats(children_mark);
             }
             E::JsonValue::Object(self.tape.object_from(props_mark, frame.loc))
         };
-        match self.stack.last() {
-            Some(_) => self.tape.push_prop(U::bytes(frame.name), value, frame.loc),
-            None => self.root = Some((frame.name, value, frame.loc)),
-        }
+        self.deliver(frame.name, value, frame.loc);
     }
 
     fn finish(&mut self) -> Expr {
@@ -2882,6 +3056,24 @@ impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
 
     fn text(&mut self, text: &'a [U], loc: Loc) {
         self.tape.push_item(Tape::str(text), loc);
+    }
+
+    fn comment(&mut self, text: &'a [U], loc: Loc) {
+        let mark = self.tape.props.len();
+        self.tape
+            .push_prop(U::bytes(U::KEY_COMMENT), Tape::str(text), loc);
+        let node = self.tape.object_from(mark, loc);
+        self.tape.push_item(E::JsonValue::Object(node), loc);
+    }
+
+    fn pi(&mut self, target: &'a [U], data: &'a [U], loc: Loc) {
+        let mark = self.tape.props.len();
+        self.tape
+            .push_prop(U::bytes(U::KEY_TARGET), Tape::str(target), loc);
+        self.tape
+            .push_prop(U::bytes(U::KEY_DATA), Tape::str(data), loc);
+        let node = self.tape.object_from(mark, loc);
+        self.tape.push_item(E::JsonValue::Object(node), loc);
     }
 
     #[inline]
@@ -2996,7 +3188,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,
-        options: Options,
+        options: Options<'_>,
         sink: S,
     ) -> Self {
         Parser {
@@ -3028,6 +3220,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 idx: None,
                 cursor: 0,
                 latin1: options.encoding == InputEncoding::Latin1,
+                keep_markup: !options.compact,
                 tok: Token {
                     kind: Kind::Eof(None),
                     pos: 0,
@@ -3166,7 +3359,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         let mut seen_doctype = false;
         loop {
             match self.scanner.tok.kind {
-                Kind::Comment | Kind::Pi => {}
+                Kind::Comment(_) | Kind::Pi(..) => {}
                 Kind::Decl(DeclKind::Doctype) if !seen_doctype => {
                     seen_doctype = true;
                     self.parse_doctype()?;
@@ -3201,7 +3394,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         loop {
             self.advance()?;
             match self.scanner.tok.kind {
-                Kind::Comment | Kind::Pi => {}
+                Kind::Comment(_) | Kind::Pi(..) => {}
                 Kind::Eof(_) => break,
                 Kind::StartTag(_) => {
                     return Err(self
@@ -3440,7 +3633,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                         "']' inside a parameter entity cannot close the internal subset",
                     ));
                 }
-                Kind::Comment | Kind::Pi => continue,
+                Kind::Comment(_) | Kind::Pi(..) => continue,
                 Kind::PeReference(name) => {
                     self.scanner.include_parameter_entity(name, pos)?;
                     continue;
@@ -3834,6 +4027,14 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     let pos = self.scanner.tok.pos;
                     let end_frame = self.scanner.tok.frame;
                     self.close_element(name, frame, end_name, pos, end_frame)?;
+                }
+                Kind::Comment(text) => {
+                    let loc = self.scanner.loc(self.scanner.tok.pos);
+                    self.sink.comment(text, loc);
+                }
+                Kind::Pi(target, data) => {
+                    let loc = self.scanner.loc(self.scanner.tok.pos);
+                    self.sink.pi(target, data, loc);
                 }
                 Kind::Eof(_) => {
                     return Err(self.scanner.err_named(

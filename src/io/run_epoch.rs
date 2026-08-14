@@ -5,9 +5,9 @@
 //! usockets socket, via `Bun__runEpoch`) records the epoch at creation; entering
 //! a run bumps the epoch and remembers where it started. While a run is active,
 //! readiness of a poll created *before* the run began belongs to outer code and
-//! is not dispatched: the poll is disarmed (kept in the kernel set but masked)
-//! and re-armed when the run exits, where — readiness being level-triggered —
-//! it reports again, now for its real owner. Everything the run itself creates
+//! is not dispatched: the poll is disarmed (taken out of the kernel set, its
+//! own flags untouched) and re-armed when the run exits, where — readiness being
+//! level-triggered — it reports again, now for its real owner. Everything the run itself creates
 //! (a spawned child's pipes, a connection it opens) carries a newer epoch and
 //! dispatches normally.
 

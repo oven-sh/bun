@@ -52,7 +52,7 @@ Here's how to open a helpful issue for a bug, a performance problem, or a featur
     		<Note>
     			- For macOS and Linux: copy the output of `uname -mprs`
     		  - For Windows: copy the output of this command in the PowerShell console:
-    				`"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"`
+    				`"$([Environment]::OSVersion | ForEach-Object VersionString) $((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE)"`
     		</Note>
     </Step>
 

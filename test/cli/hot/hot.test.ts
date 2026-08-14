@@ -884,30 +884,35 @@ describe.concurrent("a generation whose top-level await never settles", () => {
   );
 
   // A save that lands while a generation is still being loaded is applied once
-  // that generation has loaded, even though it then hangs. The plugin keeps the
-  // load of a `// HOLD` generation open until the save has landed, then lets
-  // the stale contents evaluate. Covered twice: for the first generation, while
-  // the process is still in its initial load, and for a later one, once it is
-  // in its run loop.
+  // that generation has loaded, even though it then hangs. The entry imports
+  // dep.ts, whose load the plugin holds open until entry.ts has been saved
+  // over; dep.ts then evaluates and hangs. The save goes to entry.ts because it
+  // was transpiled, and so watched, before dep.ts started loading; a file the
+  // plugin provides is not watched on every platform until its generation is
+  // up. Covered twice: for the first generation, while the process is still in
+  // its initial load, and for a later one, once it is in its run loop.
   it(
     "still lets a save that landed while it was loading reload it",
     async () => {
+      const importsDep = `import "./dep.ts";\n`;
       using dir = tempDir("hot-tla-held", {
-        "entry.ts": "// HOLD\n" + hangs("[#!tla] 1 stale hung"),
+        "entry.ts": importsDep,
+        "dep.ts": hangs("[#!tla] dep hung"),
         "hold-plugin.ts": `
           import { readFileSync } from "fs";
+          import { join } from "path";
+          const entry = join(import.meta.dir, "entry.ts");
           Bun.plugin({
             name: "hold",
             setup(build) {
-              build.onLoad({ filter: /entry[.]ts$/ }, async ({ path }) => {
+              build.onLoad({ filter: /dep[.]ts$/ }, async ({ path }) => {
                 const contents = readFileSync(path, "utf8");
-                if (contents.startsWith("// HOLD")) {
-                  console.write("[#!tla] holding\\n");
-                  while (readFileSync(path, "utf8") === contents) await Bun.sleep(5);
-                  // A deferred reload is not observable; give the save's watcher
-                  // event time to be seen by the still-loading generation.
-                  await Bun.sleep(300);
-                }
+                const entryBefore = readFileSync(entry, "utf8");
+                console.write("[#!tla] holding dep\\n");
+                while (readFileSync(entry, "utf8") === entryBefore) await Bun.sleep(5);
+                // A deferred reload is not observable; give the save's watcher
+                // event time to reach the still-loading generation.
+                await Bun.sleep(300);
                 return { contents, loader: "ts" };
               });
             },
@@ -918,22 +923,22 @@ describe.concurrent("a generation whose top-level await never settles", () => {
       await using runner = spawnHot(String(dir), `--preload=${join(String(dir), "hold-plugin.ts")}`);
       const markers = stdoutMarkers(runner);
 
-      await markers.next("[#!tla] holding");
+      await markers.next("[#!tla] holding dep");
       // Only the run loop emits beforeExit: once it has, the next generation is
       // held while the process is in its run loop, not still in its initial load.
       writeFileSync(
         entry,
-        finishes("[#!tla] 2 ok") + `process.on("beforeExit", () => console.log("[#!tla] 2 idle"));\n`,
+        finishes("[#!tla] save 1 applied") + `process.on("beforeExit", () => console.log("[#!tla] idle"));\n`,
       );
-      await markers.next("[#!tla] 1 stale hung");
-      await markers.next("[#!tla] 2 ok");
-      await markers.next("[#!tla] 2 idle");
+      await markers.next("[#!tla] dep hung");
+      await markers.next("[#!tla] save 1 applied");
+      await markers.next("[#!tla] idle");
 
-      writeFileSync(entry, "// HOLD\n" + hangs("[#!tla] 3 stale hung"));
-      await markers.next("[#!tla] holding");
-      writeFileSync(entry, finishes("[#!tla] 4 ok"));
-      await markers.next("[#!tla] 3 stale hung");
-      await markers.next("[#!tla] 4 ok");
+      writeFileSync(entry, importsDep);
+      await markers.next("[#!tla] holding dep");
+      writeFileSync(entry, finishes("[#!tla] save 2 applied"));
+      await markers.next("[#!tla] dep hung");
+      await markers.next("[#!tla] save 2 applied");
     },
     timeout,
   );

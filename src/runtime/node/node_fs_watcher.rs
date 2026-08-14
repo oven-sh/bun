@@ -54,6 +54,9 @@ pub struct FSWatcher {
     handle: bun_jsc::VmHandle,
     #[cfg(not(windows))]
     loop_kind: bun_jsc::LoopKind,
+    /// Domain that created the watcher: its events are that domain's callbacks,
+    /// not whichever domain run is turning the loop when they arrive.
+    task_domain: u32,
     verbose: bool,
 
     mutex: Mutex,
@@ -107,6 +110,8 @@ impl FSWatcher {
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted {
+        // SAFETY: `task` is a live carrier not yet posted.
+        unsafe { (*task.as_ptr()).task.domain = self.task_domain };
         self.handle.post(self.loop_kind, task)
     }
 
@@ -1138,6 +1143,7 @@ impl FSWatcher {
             handle: vm_ref.handle(),
             #[cfg(not(windows))]
             loop_kind: vm_ref.current_loop_kind(),
+            task_domain: bun_event_loop::current_task_domain(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

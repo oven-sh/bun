@@ -127,7 +127,7 @@ impl MySQLRequestQueue {
         // work, once the head finished (a prepare in flight bumps neither counter).
         if queue_ref.pipelined_requests.get() == 0
             && queue_ref.nonpipelinable_requests.get() == 0
-            && queue_ref.current_ref().is_none_or(|r| r.is_completed())
+            && queue_ref.current().is_none_or(|r| r.is_completed())
             && conn_ref.retire_if_lifetime_exceeded()
         {
             return;

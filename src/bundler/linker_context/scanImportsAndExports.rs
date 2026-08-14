@@ -1534,8 +1534,6 @@ mod __css_validation {
                     },
                 ]);
 
-                // A warning, like esbuild: the build still succeeds, this only flags
-                // behavior the CSS modules spec leaves undefined.
                 self.log.add_range_warning_fmt_with_notes(
                     Some(&col_ref!(self.all_sources)[source_index as usize]),
                     range,

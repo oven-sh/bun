@@ -437,17 +437,12 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// Length of the name the recursive mkdir hands to mkdir(2) for `path`: the
-/// path without its trailing separator run (a lone `/` stays).
-///
-/// Given `link/`, mkdir(2) on macOS and FreeBSD resolves the symlink and
-/// creates its target, where `link` fails with EEXIST (Linux fails both), so
-/// `mkdir -p dangling/`, or a `Bun.write` to `dangling//f` (whose parent is
-/// derived as `dangling/`), would create the link's target. Only the names
-/// given to mkdir(2) are trimmed; everything the walk reports (the stat of an
-/// existing entry, the returned first directory, error paths, `on_create_dir`)
-/// keeps the caller's spelling, as node does. On Windows a trailing separator
-/// has no such effect.
+/// Length of `path` without its trailing separator run (a lone `/` stays), the
+/// name the recursive mkdir gives mkdir(2): on macOS and FreeBSD `mkdir("link/")`
+/// follows the symlink and creates its target, whereas `mkdir("link")` fails
+/// with EEXIST everywhere. Only the names given to mkdir(2) are trimmed; what
+/// the walk reports keeps the caller's spelling, as node does. Windows has no
+/// such mkdir behaviour and its roots (`C:\`) end in a separator.
 fn mkdir_name_len(path: &OSPathSliceZ) -> usize {
     let mut len = path.len();
     if cfg!(not(windows)) {
@@ -5678,8 +5673,6 @@ impl NodeFS {
         path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
-        // The walk below works on the name without its trailing separators (see
-        // `mkdir_name_len`); `path` itself is what gets reported.
         let len: u16 = mkdir_name_len(path) as u16;
 
         // First, attempt to create the desired directory

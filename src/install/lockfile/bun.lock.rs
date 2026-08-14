@@ -165,10 +165,8 @@ impl<'a> TreeDepsSortCtx<'a> {
     }
 }
 
-/// `std.AutoHashMap(u64)`'s hash. `trustedDependencies` and
-/// `patchedDependencies` are written in the iteration order of the maps they
-/// are collected in, so every existing bun.lock has them in this hash's slot
-/// order; `AutoHashContext` hashes integers differently and would reorder them.
+/// The slot order every existing bun.lock has its `trustedDependencies` and
+/// `patchedDependencies` in (`std.AutoHashMap(u64)`'s hash).
 struct WrittenOrderContext;
 
 impl HashContext<u64> for WrittenOrderContext {
@@ -323,7 +321,7 @@ impl Stringifier {
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
-        // The reserved capacity is part of the written order too (`WrittenOrderContext`).
+        // Written out in iteration order, which the hash and the reserved capacity decide.
         let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
             HashMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {

@@ -6797,6 +6797,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
+    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
@@ -6815,32 +6816,6 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
             if (scope.exception()) [[unlikely]]
                 return clearAndEncode(JSC::jsUndefined());
         }
-    }
-
-    // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    if (scope.exception()) [[unlikely]]
-        return clearAndEncode(completions);
-
-    while (proto && proto.isObject()) {
-        JSC::JSObject* protoObj = proto.getObject();
-        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(completions);
-
-        for (const auto& propertyName : protoNames) {
-            WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
-                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                if (scope.exception()) [[unlikely]]
-                    return clearAndEncode(completions);
-            }
-        }
-
-        proto = protoObj->getPrototype(globalObject);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(completions);
     }
 
     return JSC::JSValue::encode(completions);

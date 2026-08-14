@@ -22,7 +22,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
-use bun_core::{Environment, Output, env_var, fmt};
+use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -1287,8 +1287,7 @@ impl<'a> Repl<'a> {
     // Inline Suggestions (ghost text)
     // ========================================================================
 
-    /// Walk `a.b.c` from globalThis via property gets (not the evaluator, so `_` is
-    /// untouched). `UNDEFINED` on any failure.
+    /// Walks `a.b.c` via property gets, not the evaluator (so `_` is untouched).
     fn resolve_object_expr(&self, expr: &[u8]) -> JSValue {
         let Some(global) = self.global else {
             return JSValue::UNDEFINED;
@@ -1299,10 +1298,7 @@ impl<'a> Repl<'a> {
 
         let mut current = global.to_js_value();
         for part in strings::split(expr, b".") {
-            if part.is_empty() || !is_ident_start(part[0]) {
-                return JSValue::UNDEFINED;
-            }
-            if !current.is_object() {
+            if !identifier::is_identifier(part) || !current.is_object() {
                 return JSValue::UNDEFINED;
             }
             match current.get(global, part) {
@@ -1335,7 +1331,9 @@ impl<'a> Repl<'a> {
             return; // skip REPL dot-commands
         }
 
-        let ctx = parse_completion_context(&line, self.line_editor.cursor);
+        let Some(ctx) = parse_completion_context(&line, self.line_editor.cursor) else {
+            return;
+        };
         if ctx.prefix.is_empty() && ctx.object_expr.is_empty() {
             return;
         }
@@ -1387,21 +1385,20 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let name = slice.slice();
-                if name.len() <= ctx.prefix.len() {
+                let Some(rest) = name.strip_prefix(ctx.prefix) else {
                     continue;
-                }
-                if !is_dot_accessible(name) {
+                };
+                // Skips keys like `"foo-bar"` or `"0"`, which can't follow a `.`.
+                if rest.is_empty() || !identifier::is_identifier(name) {
                     continue;
-                }
-                if ctx.prefix.is_empty() {
-                    self.suggestion.clear();
-                    self.suggestion.extend_from_slice(name);
-                    break;
                 }
                 if name.len() < best_len {
                     best_len = name.len();
                     self.suggestion.clear();
-                    self.suggestion.extend_from_slice(&name[ctx.prefix.len()..]);
+                    self.suggestion.extend_from_slice(rest);
+                    if ctx.prefix.is_empty() {
+                        break;
+                    }
                 }
             }
         }
@@ -1417,11 +1414,12 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // A wrapped ghost would put refresh_line()'s cursor restore on the wrong row;
-        // dropping it here (not at render) also keeps accept in sync with what's shown.
+        // Dropped here, not at render, so accept can never apply more than was drawn.
         if !self.suggestion.is_empty() {
             let line_width = strings::visible::width::exclude_ansi_colors::utf8(&line);
-            if self.get_prompt_length() + line_width + self.suggestion.len()
+            let suggestion_width =
+                strings::visible::width::exclude_ansi_colors::utf8(&self.suggestion);
+            if self.get_prompt_length() + line_width + suggestion_width
                 >= self.terminal_width as usize
             {
                 self.suggestion.clear();
@@ -2528,6 +2526,12 @@ impl<'a> Repl<'a> {
         self.refresh_line();
     }
 
+    /// Tab with nothing to complete indents instead.
+    fn insert_tab_spaces(&mut self) {
+        let _ = self.line_editor.insert_slice(b"  ");
+        self.refresh_line();
+    }
+
     fn handle_tab(&mut self) {
         if !self.suggestion.is_empty() && self.line_editor.cursor == self.line_editor.buffer.len() {
             self.accept_suggestion();
@@ -2570,22 +2574,22 @@ impl<'a> Repl<'a> {
 
         // Property completion using JSC
         let Some(global) = self.global else {
-            // No VM, just insert spaces
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         };
 
         let cursor = self.line_editor.cursor;
 
         // Mid-identifier (`con|sole`): completing would duplicate the suffix.
-        if cursor < line.len() && is_ident_part(line[cursor]) {
+        if cursor < line.len() && is_word_byte(line[cursor]) {
             self.refresh_line();
             return;
         }
 
-        let ctx = parse_completion_context(&line, cursor);
+        let Some(ctx) = parse_completion_context(&line, cursor) else {
+            self.insert_tab_spaces();
+            return;
+        };
         let word_start = ctx.prefix_start;
         let prefix = ctx.prefix;
 
@@ -2593,9 +2597,7 @@ impl<'a> Repl<'a> {
         if !ctx.object_expr.is_empty() {
             target = self.resolve_object_expr(ctx.object_expr);
             if target.is_undefined_or_null() {
-                let _ = self.line_editor.insert(b' ');
-                let _ = self.line_editor.insert(b' ');
-                self.refresh_line();
+                self.insert_tab_spaces();
                 return;
             }
         }
@@ -2606,9 +2608,7 @@ impl<'a> Repl<'a> {
             unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
 
         if completions.is_undefined() || !completions.is_array() {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         }
 
@@ -2621,9 +2621,7 @@ impl<'a> Repl<'a> {
             }
         };
         if len == 0 {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         }
 
@@ -2645,7 +2643,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let completion = slice.slice();
-                if is_dot_accessible(completion) {
+                if identifier::is_identifier(completion) {
                     while self.line_editor.cursor > word_start {
                         self.line_editor.backspace();
                     }
@@ -2727,21 +2725,10 @@ extern "C" fn sigint_handler(_: c_int) {
 // Inline Suggestions (ghost text)
 // ============================================================================
 
+/// Word bytes for the prefix/chain scan; non-ASCII is taken wholesale (a junk prefix matches nothing).
 #[inline]
-fn is_ident_part(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
-}
-
-#[inline]
-fn is_ident_start(c: u8) -> bool {
-    c.is_ascii_alphabetic() || c == b'_' || c == b'$'
-}
-
-fn is_dot_accessible(name: &[u8]) -> bool {
-    match name.first() {
-        Some(&c) if is_ident_start(c) => name[1..].iter().all(|&c| is_ident_part(c)),
-        _ => false,
-    }
+fn is_word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
 }
 
 /// Fallback suggestions when no global matches the prefix.
@@ -2785,46 +2772,39 @@ const JS_KEYWORDS: &[&[u8]] = &[
     b"yield",
 ];
 
-/// For `console.lo|`: `object_expr = "console"`, `prefix = "lo"`. An empty
-/// `object_expr` means complete against globalThis.
+/// `console.lo|` → `object_expr = "console"`, `prefix = "lo"`; empty `object_expr` = globalThis.
 struct CompletionContext<'a> {
     object_expr: &'a [u8],
     prefix: &'a [u8],
     prefix_start: usize,
 }
 
-/// Only recognises `ident(.ident)*` before the cursor; anything else (calls,
-/// indexing, `?.`) degrades to global completion of the bare prefix.
-fn parse_completion_context(line: &[u8], cursor: usize) -> CompletionContext<'_> {
+/// `None` for e.g. `foo().th|`: a property name follows the `.`, so globals/keywords don't apply.
+fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionContext<'_>> {
     let mut i = cursor;
-    while i > 0 && is_ident_part(line[i - 1]) {
+    while i > 0 && is_word_byte(line[i - 1]) {
         i -= 1;
     }
     let prefix_start = i;
     let prefix = &line[prefix_start..cursor];
 
     if i == 0 || line[i - 1] != b'.' {
-        return CompletionContext {
+        return Some(CompletionContext {
             object_expr: b"",
             prefix,
             prefix_start,
-        };
+        });
     }
     i -= 1; // skip the `.`
     let chain_end = i;
 
     loop {
         let ident_end = i;
-        while i > 0 && is_ident_part(line[i - 1]) {
+        while i > 0 && is_word_byte(line[i - 1]) {
             i -= 1;
         }
         if i == ident_end {
-            // e.g. `(expr).foo`
-            return CompletionContext {
-                object_expr: b"",
-                prefix,
-                prefix_start,
-            };
+            return None;
         }
         if i == 0 || line[i - 1] != b'.' {
             break;
@@ -2832,11 +2812,11 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> CompletionContext<'_>
         i -= 1;
     }
 
-    CompletionContext {
+    Some(CompletionContext {
         object_expr: &line[i..chain_end],
         prefix,
         prefix_start,
-    }
+    })
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {

@@ -108,8 +108,10 @@ async function withTerminalRepl(
 
   await fn({ terminal, proc, send, waitFor, allOutput });
 
-  // Clean exit
-  send(".exit\n");
+  // Clean exit. Ctrl+U first discards whatever the test left on the line, so
+  // `.exit` is not appended to it (which would leave the REPL running until
+  // the kill below).
+  send("\x15.exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
 }
@@ -1082,11 +1084,11 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           send("JSO");
           await waitFor(`${DIM}N`);
-          send("\x1b[C"); // Right arrow — accepts the ghost text
+          send("\x1b[C"); // Right arrow accepts the ghost text
           // After acceptance the input is `JSON`; extend it and evaluate.
           // The result "81" never appears in the echoed input, so this only
-          // matches once the expression actually evaluates — proving the
-          // ghost was accepted (otherwise `JSO.stringify` → ReferenceError).
+          // matches once the expression actually evaluates, proving the ghost
+          // was accepted (otherwise `JSO.stringify` is a ReferenceError).
           send(".stringify(9*9)\n");
           await waitFor('"81"');
         },
@@ -1129,7 +1131,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           send("Mat");
           await waitFor(`${DIM}h`);
-          send("\x1b[F"); // End — accepts suggestion -> "Math"
+          send("\x1b[F"); // End accepts the suggestion -> "Math"
           // Result 63 cannot occur in the echoed input; if End didn't accept,
           // `Mat.max(...)` would throw instead of producing it.
           send(".max(4,7)*9\n");
@@ -1164,9 +1166,61 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       );
     });
 
+    test("no global or keyword suggestion for a property of an unresolvable expression", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send('globalThis.__o = () => ({ th: "no" + "Ghost", this: "had" + "Ghost" }); "o" + "Ready"\n');
+          await waitFor("oReady");
+          // `.th` names a property of the call result, so the keyword fallback
+          // (`this`) must not kick in. Right arrow would accept such a ghost,
+          // turning the line into `__o().this`.
+          send("__o().th\x1b[C\n");
+          await waitFor("noGhost");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests non-ASCII property names that are valid identifiers", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Both keys start with "caf" and have the same byte length, and `caf→`
+          // comes first; only `cafés` can follow a `.`, so the ghost must be its
+          // remainder.
+          send('globalThis.__u = { "caf\\u2192": 1, "caf\\u00e9s": 2 }; "u" + "Ready"\n');
+          await waitFor("uReady");
+          send("__u.caf");
+          await waitFor(`${DIM}és`);
+          // The typed prefix itself may contain non-ASCII characters.
+          send("é");
+          await waitFor(`${DIM}s`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("completion on a Proxy with a misbehaving getPrototypeOf trap does not hang", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // The trap alternates between ending the chain and pointing back at
+          // the proxy, so any completer that walks the chain itself never finishes.
+          send(
+            'globalThis.__flipN = 0; globalThis.__flip = new Proxy({}, { getPrototypeOf: () => (__flipN++ % 2 ? __flip : null) }); "flip" + "Ready"\n',
+          );
+          await waitFor("flipReady");
+          // Typing the `.` computes completions for `__flip`; Ctrl+C then
+          // discards the line and the REPL must still evaluate the next one.
+          send("__flip.\x03");
+          send('"still" + "Alive"\n');
+          await waitFor("stillAlive");
+        },
+        { env: colorEnv },
+      );
+    });
+
     test("tab completes properties on an object (no ghost)", async () => {
-      // Tab completion now resolves `obj.prefix` chains even when ghost text
-      // is disabled (NO_COLOR) — verifies parseCompletionContext + resolve.
+      // Tab completion resolves `obj.prefix` chains even when ghost text is
+      // disabled (NO_COLOR), so this covers parse_completion_context + resolve.
       await withTerminalRepl(async ({ send, waitFor }) => {
         // Store the marker as two halves so it never appears in the echoed
         // input; it only shows up once the completed property is evaluated.
@@ -1188,7 +1242,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           // Type a prefix that triggers a suggestion but don't accept it.
           send("zz");
           await waitFor(`${DIM}GhostMarker`);
-          // Hit Enter without accepting — the ghost text must not be part of
+          // Hit Enter without accepting: the ghost text must not be part of
           // the evaluated input, so `zz` alone is a ReferenceError.
           send("\n");
           await waitFor(/ReferenceError|not defined/);

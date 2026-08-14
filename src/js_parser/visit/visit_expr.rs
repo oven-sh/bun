@@ -271,9 +271,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
-                    // Substituting anything else into an assignment target is a syntax error
-                    if matches!(newvalue.data.tag(), Tag::EIdentifier | Tag::EDot)
-                        || in_.assign_target == js_ast::AssignTarget::None
+                    // Substituting a constant into an assignment target is a syntax error
+                    if matches!(
+                        newvalue.data.tag(),
+                        Tag::EIdentifier | Tag::EDot | Tag::EImportIdentifier
+                    ) || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;

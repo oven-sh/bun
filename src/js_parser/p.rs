@@ -4895,7 +4895,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts[0],
             parts[1..].iter().copied(),
             true,
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            IdentifierOpts::new(),
         )
     }
 
@@ -4906,9 +4906,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         first: &'a [u8],
         rest: impl Iterator<Item = &'a [u8]>,
         can_be_removed_if_unused: bool,
-        opts: IdentifierOpts,
+        last_link_opts: IdentifierOpts,
     ) -> Result<Expr, crate::Error> {
+        let mut rest = rest.peekable();
         let result = self.find_symbol(loc, first)?;
+        let head_opts = if rest.peek().is_some() {
+            IdentifierOpts::new()
+        } else {
+            last_link_opts
+        };
 
         let value = self.handle_identifier(
             loc,
@@ -4916,28 +4922,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(can_be_removed_if_unused),
             None,
-            opts,
+            head_opts.with_was_originally_identifier(true),
         );
-        Ok(self.member_expression(loc, value, rest))
+        Ok(self.member_expression(loc, value, rest, last_link_opts))
     }
 
-    fn member_expression(
+    fn member_expression<I: Iterator<Item = &'a [u8]>>(
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
-        parts: impl Iterator<Item = &'a [u8]>,
+        mut parts: core::iter::Peekable<I>,
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
-            ) {
+        while let Some(part) = parts.next() {
+            let opts = if parts.peek().is_some() {
+                IdentifierOpts::new()
+            } else {
+                last_link_opts
+            };
+            if let Some(rewrote) = self.maybe_rewrite_property_access(loc, value, part, loc, opts) {
                 value = rewrote;
             } else {
                 value = self.new_expr(
@@ -6351,14 +6356,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .original_name()
                     .expect("identifier define must have original_name");
                 let (first, rest) = strings::split_once_char(path, b'.').unwrap_or((path, b""));
-                // `X = 1` assigns to the property access built below, not to `first`.
-                let opts = if rest.is_empty() {
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                } else {
-                    IdentifierOpts::new()
-                };
                 return self
                     .member_expression_for_names(
                         loc,
@@ -6366,7 +6363,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // `tokenize`, not `split`: an empty `rest` has no parts.
                         strings::tokenize(rest, b"."),
                         id.can_be_removed_if_unused(),
-                        opts.with_was_originally_identifier(true),
+                        IdentifierOpts::new()
+                            .with_assign_target(assign_target)
+                            .with_is_delete_target(is_delete_target),
                     )
                     .expect("unreachable");
             }

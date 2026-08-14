@@ -3262,8 +3262,9 @@ describe("bundler", () => {
     },
     run: { stdout: "esm esm true cjs" },
   });
-  // Assigning through a define is assigning to its value: an import binding
-  // is rejected like a direct assignment would be, a property of one is fine.
+  // Assigning through a define is assigning to its value, with the same rules
+  // as writing the value out: import bindings and namespace members are
+  // rejected, a property of an imported object is fine.
   itBundled("edgecase/DefineValueImportBindingCannotBeAssigned", {
     files: {
       "/entry.js": /* js */ `
@@ -3275,6 +3276,19 @@ describe("bundler", () => {
     define: { X: "binding" },
     bundleErrors: {
       "/entry.js": ['Cannot assign to import "binding"'],
+    },
+  });
+  itBundled("edgecase/DefineValueNamespaceMemberCannotBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./other.js";
+        X = 1;
+      `,
+      "/other.js": /* js */ `export let member = 0;`,
+    },
+    define: { X: "ns.member" },
+    bundleErrors: {
+      "/entry.js": ['Cannot assign to import "member"'],
     },
   });
   itBundled("edgecase/DefineValuePropertyOfImportCanBeAssigned", {

@@ -2945,12 +2945,10 @@ static void ungated_calls_round(napi_env env, napi_value bigint,
 
 // spin(bigint, string): a callback that does nothing but ungated calls, for a
 // script or worker to loop on while it gets terminated (node:vm `timeout`,
-// worker.terminate()). The termination is delivered at whichever exception
-// check comes first; several rounds per call keep that inside one of these
-// calls nearly every time, and it has to come back out of the call for the
-// loop to end. A plain napi_callback rather than a Napi::Function, because
-// node-addon-api aborts the process if one of its own calls fails once the
-// termination is pending.
+// worker.terminate()). Several rounds per call, so the request nearly always
+// lands while one of these calls is running; the loop must still stop once
+// control is back in JS. A plain napi_callback rather than a Napi::Function so
+// that only the calls under test are made.
 static napi_value ungated_calls_spin(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value argv[2];
@@ -3043,50 +3041,62 @@ test_ungated_calls_with_engine_exception(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_get_value_string_utf8(env, code, code_buf,
                                                 sizeof code_buf, nullptr));
   printf("pending exception code: %s\n", code_buf);
+  fflush(stdout);
 
   return ok(env);
 }
 
-// Bun-only. Run from a node:vm script with a `timeout`: with an engine
-// exception pending, keeps making an ungated call until the timeout's
-// termination is delivered inside one of them, which the call reports. The
-// termination must then be what is left pending (it is the one exception
-// napi_get_and_clear_last_exception cannot clear), not the exception the
-// call found pending when it was entered. Bounded so that a runtime that
-// never reports the termination fails instead of hanging.
+// ungated_calls_through_timeout(ms): run from a node:vm script whose `timeout`
+// is much shorter than `ms`. With an engine exception pending, loops through
+// the ungated calls for `ms`, so the timeout is requested while they run. None
+// of them may report it, the exception they found pending must still be the
+// (clearable) one pending afterwards, and the timeout must still stop the
+// script once this returns.
 static napi_value
-ungated_calls_until_terminated(const Napi::CallbackInfo &info) {
+ungated_calls_through_timeout(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+  const auto duration =
+      std::chrono::milliseconds(info[0].As<Napi::Number>().Int64Value());
 
 #ifndef _WIN32
   BlockingStdoutScope stdout_scope;
 #endif
 
-  napi_value bigint;
+  napi_value bigint, string;
   NODE_API_CALL(env, napi_create_bigint_int64(env, -7, &bigint));
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "ungated", NAPI_AUTO_LENGTH, &string));
   if (!arm_engine_exception(env)) {
     return nullptr;
   }
 
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  napi_status st;
+  const auto deadline = std::chrono::steady_clock::now() + duration;
+  unsigned failures = 0;
   do {
-    int64_t value;
+    int64_t i64;
+    uint64_t u64;
     bool lossless;
-    st = napi_get_value_bigint_int64(env, bigint, &value, &lossless);
-  } while (st == napi_ok && std::chrono::steady_clock::now() < deadline);
-  printf("napi_get_value_bigint_int64 eventually returned: status=%d\n",
-         (int)st);
+    char utf8[16];
+    napi_value out;
+    failures +=
+        napi_get_value_bigint_int64(env, bigint, &i64, &lossless) != napi_ok;
+    failures +=
+        napi_get_value_bigint_uint64(env, bigint, &u64, &lossless) != napi_ok;
+    failures += napi_get_value_string_utf8(env, string, utf8, sizeof utf8,
+                                           nullptr) != napi_ok;
+    failures += napi_create_bigint_int64(env, i64, &out) != napi_ok;
+    failures += napi_create_bigint_uint64(env, u64, &out) != napi_ok;
+    failures += napi_create_symbol(env, string, &out) != napi_ok;
+  } while (std::chrono::steady_clock::now() < deadline);
+  printf("ungated call failures: %u\n", failures);
 
+  bool before = false, after = false;
   napi_value exception;
+  napi_is_exception_pending(env, &before);
   napi_get_and_clear_last_exception(env, &exception);
-  bool pending = false;
-  napi_is_exception_pending(env, &pending);
-  printf("pending after napi_get_and_clear_last_exception: %s\n",
-         pending ? "true" : "false");
-  // The driver prints the vm error after this returns; on Windows (no
-  // BlockingStdoutScope) a piped stdout is otherwise only flushed at exit.
+  napi_is_exception_pending(env, &after);
+  printf("exception pending: before clear=%s after clear=%s\n",
+         before ? "true" : "false", after ? "true" : "false");
   fflush(stdout);
   return nullptr;
 }
@@ -4370,7 +4380,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
   REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);
-  REGISTER_FUNCTION(env, exports, ungated_calls_until_terminated);
+  REGISTER_FUNCTION(env, exports, ungated_calls_through_timeout);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

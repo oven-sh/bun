@@ -1453,10 +1453,9 @@ nativeTests.test_threadsafe_function_microtask_order = async () => {
 };
 
 // A script that only ever calls the ungated napi functions (ungated-calls-
-// spin-worker.js has the worker version) still has to be stoppable: the
-// termination is delivered inside one of those calls and must come back out of
-// it. Several rounds, since whether it lands inside a call or in the loop
-// itself is down to timing.
+// spin-worker.js has the worker version) still has to be stoppable when the
+// stop is requested while one of those calls is running. Several rounds, since
+// whether it lands inside a call or in the loop itself is down to timing.
 nativeTests.test_ungated_calls_vm_timeout = () => {
   const vm = require("node:vm");
   const spin = nativeTests.make_ungated_calls_spinner();
@@ -1483,11 +1482,12 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
   }
 };
 
-// Bun-only, see ungated_calls_until_terminated in standalone_tests.cpp.
-nativeTests.test_ungated_calls_termination_with_engine_exception = () => {
+// See ungated_calls_through_timeout in standalone_tests.cpp: 200ms of ungated
+// calls under a 20ms timeout.
+nativeTests.test_ungated_calls_through_vm_timeout = () => {
   const vm = require("node:vm");
   try {
-    vm.runInNewContext("f()", { f: nativeTests.ungated_calls_until_terminated }, { timeout: 20 });
+    vm.runInNewContext("f(200)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 20 });
     console.log("returned");
   } catch (e) {
     console.log(e.code);

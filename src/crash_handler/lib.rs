@@ -776,7 +776,15 @@ mod draft {
         /// becomes frame 0. POSIX: `fp` is the saved frame-pointer register and
         /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
         /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
-        Fault { pc: usize, fp: usize },
+        /// `exact_pc`: `pc` is the faulting instruction itself, as opposed to
+        /// already pointing past it the way a trap leaves it (see
+        /// `signal_pc_is_exact`); decides whether frame 0 is symbolized as is
+        /// or stepped back like a return address.
+        Fault {
+            pc: usize,
+            fp: usize,
+            exact_pc: bool,
+        },
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
         /// Walk the current stack and trim the capture machinery above this PC.
@@ -1027,7 +1035,7 @@ mod draft {
                     let trace_buf: StackTrace;
 
                     let trace: &StackTrace = 'blk: {
-                        let idx: usize = match seed {
+                        let (idx, first_frame_is_exact_pc): (usize, bool) = match seed {
                             TraceSeed::ErrorReturn(ert) => break 'blk ert,
                             // For an actual fault the signal/exception handler hands
                             // us the saved register context. Seeding the walk from
@@ -1036,19 +1044,22 @@ mod draft {
                             // `SA_ONSTACK` altstack, so its own frame chain is
                             // disjoint from the faulting thread's, and release builds
                             // strip the unwind tables a CFI-based capture would need.
-                            TraceSeed::Fault { pc, fp } => {
-                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
-                            }
+                            TraceSeed::Fault { pc, fp, exact_pc } => (
+                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf),
+                                exact_pc,
+                            ),
                             TraceSeed::BeginAddr(addr) => {
-                                debug::capture_stack_trace(addr, &mut addr_buf)
+                                (debug::capture_stack_trace(addr, &mut addr_buf), false)
                             }
-                            TraceSeed::None => {
-                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf)
-                            }
+                            TraceSeed::None => (
+                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf),
+                                false,
+                            ),
                         };
                         trace_buf = StackTrace {
                             index: idx,
                             instruction_addresses: &addr_buf,
+                            first_frame_is_exact_pc,
                         };
                         break 'blk &trace_buf;
                     };
@@ -1568,6 +1579,25 @@ mod draft {
         }
     }
 
+    /// Whether the pc saved in the signal context is the instruction that raised
+    /// `sig`. Faults (SIGSEGV, SIGBUS, SIGILL, SIGFPE) are reported before the
+    /// instruction completes, so it is. Traps are reported after it: x86_64
+    /// `int3` (WTF's CRASH()) leaves pc on the byte following it, and SIGABRT is
+    /// delivered on return from the kill(2) that raised it. For those, stepping
+    /// back one byte like a return address lands inside the instruction that
+    /// trapped.
+    #[cfg(unix)]
+    fn signal_pc_is_exact(sig: c_int) -> bool {
+        // The exception among traps: the kernel leaves pc on an aarch64 `brk`
+        // itself (which is also why a handler that returns re-traps forever).
+        const TRAP_LEAVES_PC_ON_INSTRUCTION: bool = cfg!(target_arch = "aarch64");
+        match sig {
+            libc::SIGABRT => false,
+            libc::SIGTRAP => TRAP_LEAVES_PC_ON_INSTRUCTION,
+            _ => true,
+        }
+    }
+
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
@@ -1586,7 +1616,11 @@ mod draft {
                 _ => unreachable!(),
             },
             match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                Some((pc, fp)) => TraceSeed::Fault {
+                    pc,
+                    fp,
+                    exact_pc: signal_pc_is_exact(sig),
+                },
                 None => TraceSeed::None,
             },
         );
@@ -1818,6 +1852,7 @@ mod draft {
             let trace = StackTrace {
                 index: idx,
                 instruction_addresses: &addr_buf,
+                first_frame_is_exact_pc: false,
             };
 
             if debug_trace {
@@ -1902,6 +1937,7 @@ mod draft {
             let stack = StackTrace {
                 index: n,
                 instruction_addresses: &addrs,
+                first_frame_is_exact_pc: false,
             };
             let _ = writeln!(
                 stderr,
@@ -1968,6 +2004,8 @@ mod draft {
     #[cfg(windows)]
     static WINDOWS_EXE_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
 
+    /// For every code classified here `ExceptionAddress` is the faulting
+    /// instruction itself, hence `exact_pc: true` at the three callers.
     #[cfg(windows)]
     fn classify_exception_windows(
         record: &bun_sys::windows::EXCEPTION_RECORD,
@@ -2038,6 +2076,7 @@ mod draft {
             TraceSeed::Fault {
                 pc,
                 fp: info.ContextRecord as usize,
+                exact_pc: true,
             },
         );
     }
@@ -2079,6 +2118,7 @@ mod draft {
             TraceSeed::Fault {
                 pc,
                 fp: context as usize,
+                exact_pc: true,
             },
         );
     }
@@ -2099,6 +2139,7 @@ mod draft {
             TraceSeed::Fault {
                 pc,
                 fp: info.ContextRecord as usize,
+                exact_pc: true,
             },
         );
     }
@@ -2426,10 +2467,23 @@ mod draft {
     }
 
     impl StackLine {
-        /// `None` implies the trace is not known.
-        fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+        /// One frame of `trace`, as bun.report expects it. `None` implies the
+        /// frame is not known.
+        ///
+        /// POSIX strings carry the address to symbolize
+        /// (`StackTrace::symbol_address`), which bun.report hands to
+        /// llvm-symbolizer unchanged. Windows strings carry the addresses as
+        /// captured: bun.report treats the first frame as the fault pc and steps
+        /// the frames after it back itself, so adjusting here as well would step
+        /// return addresses back twice.
+        fn from_frame(
+            trace: &StackTrace,
+            frame: usize,
+            name_bytes: &mut [u8],
+        ) -> Option<StackLine> {
             #[cfg(windows)]
             {
+                let addr = trace.instruction_addresses[frame];
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
 
                 let base_address = module as usize;
@@ -2462,7 +2516,7 @@ mod draft {
             }
             #[cfg(target_os = "macos")]
             {
-                let address = if addr == 0 { 0 } else { addr - 1 };
+                let address = trace.symbol_address(frame);
 
                 let image_count = bun_sys::c::_dyld_image_count();
 
@@ -2545,7 +2599,7 @@ mod draft {
             #[cfg(not(any(windows, target_os = "macos")))]
             {
                 let _ = name_bytes;
-                let address = addr.saturating_sub(1);
+                let address = trace.symbol_address(frame);
                 let m = bun_sys::elf::find_loaded_module(address)?;
                 return Some(StackLine {
                     address: i32::try_from(address - m.base_address).expect("int cast"),
@@ -2631,8 +2685,8 @@ mod draft {
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
 
-        for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
-            let line = StackLine::from_address(addr, &mut name_bytes);
+        for frame in 0..opts.trace.index {
+            let line = StackLine::from_frame(opts.trace, frame, &mut name_bytes);
             StackLine::write_encoded(line.as_ref(), writer)?;
         }
 
@@ -3268,8 +3322,8 @@ mod draft {
         });
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
-        for &addr in &trace.instruction_addresses[0..trace.index] {
-            let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
+        for frame in 0..trace.index {
+            let Some(line) = StackLine::from_frame(trace, frame, &mut name_bytes) else {
                 continue;
             };
             argv.push(format!("0x{:X}", line.address).into_bytes());
@@ -3373,15 +3427,15 @@ mod draft {
             if frame_index >= limits.frame_count {
                 break;
             }
-            let return_address = stack_trace.instruction_addresses[frame_index];
-            let source = match get_source_at_address(debug_info, return_address - 1)? {
+            let address = stack_trace.symbol_address(frame_index);
+            let source = match get_source_at_address(debug_info, address)? {
                 Some(s) => s,
                 None => {
-                    let module_name = debug_info.get_module_name_for_address(return_address - 1);
+                    let module_name = debug_info.get_module_name_for_address(address);
                     print_line_info(
                         out_stream,
                         None,
-                        return_address - 1,
+                        address,
                         b"???",
                         module_name.as_deref().unwrap_or(b"???"),
                         tty_config,
@@ -3424,7 +3478,7 @@ mod draft {
             print_line_info(
                 out_stream,
                 source.source_location.as_ref(),
-                return_address - 1,
+                address,
                 &source.symbol_name,
                 &source.compile_unit_name,
                 tty_config,

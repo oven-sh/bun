@@ -119,6 +119,12 @@ export const cssInternals = {
 export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
+  /** Faults (SIGILL / illegal instruction) on the first instruction of a function. */
+  faultAtFunctionEntry: () => void;
+  /** POSIX only. Traps (int3 / brk) on the first instruction of a function. */
+  trapAtFunctionEntry?: () => void;
+  /** Crashes with a one-frame trace holding `faultAtFunctionEntry`'s entry as a return address. */
+  functionEntryAsReturnAddress: () => void;
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;

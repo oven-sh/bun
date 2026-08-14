@@ -43,6 +43,123 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   60_000, // symbolizing the debug binary takes several seconds
 );
 
+// Frame 0 of a fault trace is the faulting instruction itself; every other
+// frame is a return address, which points one past its call and is therefore
+// symbolized one byte back so it lands inside the call. Applying that step to
+// the fault pc as well blames the instruction before the fault. The hook
+// faults on the first instruction of a function, where the skew is most
+// visible: one byte back is the padding (or the function) before it.
+test.if(isDebug && isLinux && hasSymbolizer)(
+  "a fault on the first instruction of a function is symbolized to that function",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "faultAtFunctionEntry"],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Illegal instruction at address");
+    expect(exitCode).not.toBe(0);
+
+    const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
+    expect(firstFrame ?? "<no frames printed>").toContain("::fault_at_function_entry");
+  },
+  60_000, // symbolizing the debug binary takes several seconds
+);
+
+// The same property at the trace-string level, which is what bun.report
+// decodes, on every platform and build flavor. All three approaches crash with
+// frame 0 holding the entry address of one and the same function:
+// `faultAtFunctionEntry` / `trapAtFunctionEntry` really fault / trap on its
+// first instruction, `functionEntryAsReturnAddress` reports the address as an
+// ordinary return-address frame. Frames are encoded image-relative, so the
+// offsets are comparable across the two processes regardless of ASLR, and the
+// return-address encoding is by definition one below the function's entry.
+describe.concurrent("fault trace strings encode frame 0 as the faulting instruction", () => {
+  const VLQ_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  // Source-map style VLQ, as bun.report's decoder reads it: 5 data bits per
+  // character, bit 32 continues, bit 0 of the assembled value is the sign.
+  function decodeVLQ(encoded: string, start: number): { value: number; end: number } {
+    let assembled = 0;
+    let scale = 1;
+    let i = start;
+    for (;;) {
+      const digit = VLQ_ALPHABET.indexOf(encoded[i] ?? "");
+      if (digit < 0) throw new Error(`no VLQ at index ${i} of ${JSON.stringify(encoded)}`);
+      i++;
+      assembled += (digit & 31) * scale;
+      scale *= 32;
+      if ((digit & 32) === 0) break;
+    }
+    const magnitude = Math.floor(assembled / 2);
+    return { value: assembled % 2 === 1 ? -magnitude : magnitude, end: i };
+  }
+
+  // Trace string layout (see `encode_trace_string`): platform char, command
+  // char, trace-string version char, 7-char commit, packed features as two
+  // VLQs, then one VLQ per frame.
+  function decodeFrameZero(trace: string): number {
+    let i = 1 + 1 + 1 + 7;
+    i = decodeVLQ(trace, i).end;
+    i = decodeVLQ(trace, i).end;
+    return decodeVLQ(trace, i).value;
+  }
+
+  async function frameZeroOf(approach: string): Promise<number> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        approach,
+        // Debug builds otherwise symbolize locally instead of printing the
+        // trace string.
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Printed as `{report url}/{x.y.z}/{trace string}`; the report url is
+    // empty in `noReportEnv`.
+    const version = Bun.version.match(/^\d+\.\d+\.\d+/)![0];
+    const trace = stderr.match(new RegExp(`/${version.replaceAll(".", "\\.")}/(\\S+)`));
+    expect(trace, `no trace string in:\n${stderr}`).not.toBeNull();
+    expect(exitCode).not.toBe(0);
+    return decodeFrameZero(trace![1]);
+  }
+
+  test("fault pc is not stepped back like a return address", async () => {
+    const [fault, asReturnAddress] = await Promise.all([
+      frameZeroOf("faultAtFunctionEntry"),
+      frameZeroOf("functionEntryAsReturnAddress"),
+    ]);
+    expect(asReturnAddress).toBeGreaterThan(0);
+    if (isWindows) {
+      // Windows trace strings carry every address as captured; bun.report
+      // steps the frames after the first back itself.
+      expect(fault).toBe(asReturnAddress);
+    } else {
+      expect(fault).toBe(asReturnAddress + 1);
+    }
+  });
+
+  // The kernel reports an x86_64 `int3` with pc already past it (stepping back
+  // is what lands on the trap, exactly like a return address) but an aarch64
+  // `brk` with pc on the instruction; either way the report must resolve to
+  // the function that trapped. Needs the real signal handler, which ASAN
+  // builds do not install, and Windows claims no trap-class exceptions.
+  test.skipIf(isASAN || isWindows)("trap pc resolves to the trapping instruction", async () => {
+    const [trap, asReturnAddress] = await Promise.all([
+      frameZeroOf("trapAtFunctionEntry"),
+      frameZeroOf("functionEntryAsReturnAddress"),
+    ]);
+    expect(trap).toBe(asReturnAddress + 1);
+  });
+});
+
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
 // npm's widely-used signal-exit package) cannot swallow the termination. A

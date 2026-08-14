@@ -44,8 +44,14 @@ static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(Pa
 // Elements must be `&OSPathSlice` because `OSPathSlice` itself is unsized.
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
+// `.git` as a file is a worktree/submodule pointer; never scan or copy it.
 #[cfg(not(windows))]
-const SKIP_FILES: &[&OSPathSlice] = &[b"package-lock.json", b"yarn.lock", b"pnpm-lock.yaml"];
+const SKIP_FILES: &[&OSPathSlice] = &[
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
+    b".git",
+];
 #[cfg(windows)]
 const SKIP_DIRS: &[&OSPathSlice] = &[bun_core::w!("node_modules"), bun_core::w!(".git")];
 #[cfg(windows)]
@@ -53,6 +59,7 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!("package-lock.json"),
     bun_core::w!("yarn.lock"),
     bun_core::w!("pnpm-lock.yaml"),
+    bun_core::w!(".git"),
 ];
 
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
@@ -338,6 +345,9 @@ impl CreateCommand {
 
         let mut package_json_contents: MutableString = MutableString::default();
         let mut package_json_file: Option<bun_sys::File> = None;
+        // Gate the post-copy gitignore/.npmignore cleanup on template contents.
+        let mut template_has_gitignore = true;
+        let mut template_has_npmignore = true;
 
         if example_tag != ExampleTag::LocalFolder {
             if create_options.verbose {
@@ -600,7 +610,198 @@ impl CreateCommand {
                     }
                 };
 
-                let _ = bun_sys::delete_tree_absolute(destination);
+                template_has_gitignore =
+                    bun_sys::exists_at(template_dir.fd, bun_core::zstr!("gitignore"));
+                template_has_npmignore =
+                    bun_sys::exists_at(template_dir.fd, bun_core::zstr!(".npmignore"));
+
+                // Under --force the scan removes kind-mismatched entries instead.
+                let existing_destination = match bun_sys::Dir::open(destination) {
+                    Ok(d) => Some(d),
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
+                    Err(err) => {
+                        node.end();
+                        progress.refresh();
+
+                        pretty_errorln!(
+                            "<r><red>{}<r>: opening dir {}",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(destination),
+                        );
+                        Global::exit(1);
+                    }
+                };
+                if let Some(existing_destination) = existing_destination {
+                    // The walker consumes the fd's directory stream, so the
+                    // copy below needs its own handle on the template.
+                    let scan_dir = match bun_sys::Dir::open(abs_template_path) {
+                        Ok(d) => d,
+                        Err(err) => {
+                            node.end();
+                            progress.refresh();
+
+                            pretty_errorln!(
+                                "<r><red>{}<r>: opening dir {}",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(template),
+                            );
+                            Global::exit(1);
+                        }
+                    };
+                    let mut scan_walker =
+                        bun_sys::walker_skippable::walk(scan_dir.fd, SKIP_FILES, SKIP_DIRS)?;
+
+                    let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
+                    while let Some(entry) = scan_walker.next()? {
+                        // POSIX no-follow; Windows classifies reparse points by target.
+                        #[cfg(not(windows))]
+                        let existing_kind = bun_sys::lstatat(existing_destination.fd, entry.path)
+                            .map(|st| bun_sys::kind_from_mode(st.st_mode as _));
+                        #[cfg(windows)]
+                        let existing_kind = bun_sys::exists_at_type_w(
+                            existing_destination.fd,
+                            entry.path.as_slice(),
+                        )
+                        .map(|k| match k {
+                            bun_sys::ExistsAtType::Directory => bun_sys::FileKind::Directory,
+                            bun_sys::ExistsAtType::File => bun_sys::FileKind::File,
+                        });
+                        let existing_kind = match existing_kind {
+                            Ok(k) => k,
+                            // ENOTDIR: a parent component is a file, already a conflict.
+                            Err(err)
+                                if matches!(
+                                    err.get_errno(),
+                                    bun_sys::E::ENOENT | bun_sys::E::ENOTDIR
+                                ) =>
+                            {
+                                continue;
+                            }
+                            Err(err) => {
+                                node.end();
+                                progress.refresh();
+
+                                #[cfg(not(windows))]
+                                let entry_path: &[u8] = entry.path.as_bytes();
+                                #[cfg(windows)]
+                                let entry_path: &[u16] = entry.path.as_slice();
+                                pretty_errorln!(
+                                    "<r><red>{}<r>: checking {}",
+                                    bstr::BStr::new(err.name()),
+                                    bun_core::fmt::fmt_os_path(entry_path, Default::default()),
+                                );
+                                Global::exit(1);
+                            }
+                        };
+
+                        if create_options.overwrite {
+                            let mismatch = match entry.kind {
+                                bun_sys::FileKind::File => existing_kind != bun_sys::FileKind::File,
+                                bun_sys::FileKind::Directory => {
+                                    existing_kind != bun_sys::FileKind::Directory
+                                }
+                                _ => false,
+                            };
+                            if mismatch {
+                                #[cfg(not(windows))]
+                                let removed = if existing_kind == bun_sys::FileKind::Directory {
+                                    existing_destination.delete_tree(entry.path.as_bytes())
+                                } else {
+                                    bun_sys::unlinkat(&existing_destination, entry.path)
+                                };
+                                #[cfg(windows)]
+                                let removed = {
+                                    let mut utf8 = bun_core::strings::convert_utf16_to_utf8(
+                                        Vec::new(),
+                                        entry.path.as_slice(),
+                                    );
+                                    if existing_kind == bun_sys::FileKind::Directory {
+                                        existing_destination.delete_tree(&utf8)
+                                    } else {
+                                        utf8.push(0);
+                                        bun_sys::unlinkat(
+                                            &existing_destination,
+                                            bun_core::ZStr::from_slice_with_nul(&utf8),
+                                        )
+                                    }
+                                };
+                                if let Err(err) = removed {
+                                    node.end();
+                                    progress.refresh();
+
+                                    #[cfg(not(windows))]
+                                    let entry_path: &[u8] = entry.path.as_bytes();
+                                    #[cfg(windows)]
+                                    let entry_path: &[u16] = entry.path.as_slice();
+                                    pretty_errorln!(
+                                        "<r><red>{}<r>: removing {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::fmt_os_path(entry_path, Default::default()),
+                                    );
+                                    Global::exit(1);
+                                }
+                            }
+                            continue;
+                        }
+
+                        let conflicting = match entry.kind {
+                            bun_sys::FileKind::File => true,
+                            // Merging into an existing directory is fine.
+                            bun_sys::FileKind::Directory => {
+                                existing_kind != bun_sys::FileKind::Directory
+                            }
+                            _ => false,
+                        };
+                        if !conflicting {
+                            continue;
+                        }
+
+                        // A directory or symlink in the way conflicts even for these names.
+                        if entry.kind == bun_sys::FileKind::File
+                            && existing_kind == bun_sys::FileKind::File
+                        {
+                            #[cfg(not(windows))]
+                            let never_conflict = NEVER_CONFLICT
+                                .iter()
+                                .any(|p| strings::eql(entry.path.as_bytes(), p));
+                            #[cfg(windows)]
+                            let never_conflict = NEVER_CONFLICT
+                                .iter()
+                                .any(|p| strings::eql_comptime_utf16(entry.path.as_slice(), p));
+                            if never_conflict {
+                                continue;
+                            }
+                        }
+
+                        #[cfg(not(windows))]
+                        conflicts.push(entry.path.as_bytes().to_vec());
+                        #[cfg(windows)]
+                        conflicts.push(entry.path.as_slice().to_vec());
+                    }
+
+                    if !conflicts.is_empty() {
+                        node.end();
+                        progress.refresh();
+
+                        pretty_errorln!(
+                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
+                            bstr::BStr::new(bun_paths::basename(destination)),
+                        );
+                        for path in &conflicts {
+                            pretty_errorln!(
+                                "<r>  {}",
+                                bun_core::fmt::fmt_os_path(path.as_slice(), Default::default())
+                            );
+                        }
+
+                        pretty_errorln!(
+                            "<r>\n<d>To copy {} anyway, use --force<r>",
+                            bstr::BStr::new(template),
+                        );
+                        Global::exit(1);
+                    }
+                }
+
                 let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {
@@ -661,9 +862,15 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
-                package_json_file = destination_dir
-                    .open_file(b"package.json", bun_sys::O::RDWR, 0)
-                    .ok();
+                // A template without package.json must leave the user's file untouched.
+                package_json_file =
+                    if bun_sys::exists_at(template_dir.fd, bun_core::zstr!("package.json")) {
+                        destination_dir
+                            .open_file(b"package.json", bun_sys::O::RDWR, 0)
+                            .ok()
+                    } else {
+                        None
+                    };
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
@@ -751,27 +958,41 @@ impl CreateCommand {
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            #[cfg(windows)]
-            {
-                let _ = parent_dir.copy_file(
-                    b"gitignore",
-                    &parent_dir,
-                    b".gitignore",
-                    Default::default(),
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = bun_sys::linkat(
+            if template_has_gitignore {
+                // rename replaces files; only a directory blocks it (--force clears it).
+                if create_options.overwrite
+                    && bun_sys::directory_exists_at(parent_dir.fd(), bun_core::zstr!(".gitignore"))
+                        .unwrap_or(false)
+                {
+                    if let Err(err) = parent_dir.delete_tree(b".gitignore") {
+                        pretty_errorln!(
+                            "<r><red>{}<r>: removing .gitignore",
+                            bstr::BStr::new(err.name()),
+                        );
+                        Global::exit(1);
+                    }
+                }
+                match bun_sys::renameat(
                     parent_dir.fd(),
                     bun_core::zstr!("gitignore"),
                     parent_dir.fd(),
                     bun_core::zstr!(".gitignore"),
-                );
+                ) {
+                    Ok(()) => {}
+                    // Tarballs default the flag on; nothing to rename is fine.
+                    Err(ref err) if err.get_errno() == bun_sys::E::ENOENT => {}
+                    Err(err) => {
+                        pretty_errorln!(
+                            "<r><red>{}<r>: renaming gitignore to .gitignore",
+                            bstr::BStr::new(err.name()),
+                        );
+                        Global::exit(1);
+                    }
+                }
             }
-
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+            if template_has_npmignore {
+                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+            }
         }
 
         let mut start_command: &[u8] = b"bun dev";
@@ -1079,6 +1300,17 @@ impl CreateCommand {
         // dependencies should still run its documented postinstall hooks.
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
+
+        // Any .git entry counts (worktrees use a file); check errors skip git.
+        if !create_options.skip_git {
+            create_options.skip_git = match bun_sys::Dir::open(destination) {
+                Ok(d) => !matches!(
+                    bun_sys::exists_at_type(d.fd, bun_core::zstr!(".git")),
+                    Err(ref err) if err.get_errno() == bun_sys::E::ENOENT
+                ),
+                Err(_) => true,
+            };
+        }
 
         if !create_options.skip_git {
             if !create_options.skip_install {

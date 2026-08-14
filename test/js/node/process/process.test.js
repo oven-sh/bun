@@ -1558,9 +1558,10 @@ it("process.execArgv", async () => {
     ["--smol -- index.ts a", ["--smol"], ["a"]],
     ["run --smol -- - a", ["--smol"], ["a"]],
     ["--bun node --no-warnings -- index.ts a", ["--no-warnings"], ["a"]],
-    // ...unless they are the value of an option that takes one.
+    // ...unless they are the value of an option that takes one (and so is a value spelled `run`).
     ["--conditions - index.ts", ["--conditions", "-"], []],
     ["--conditions -- index.ts", ["--conditions", "--"], []],
+    ["--conditions run index.ts", ["--conditions", "run"], []],
     // `-c`/`--config` only take a value as `--config=path`, so the next arg is the script.
     ["-c index.ts a", ["-c"], ["a"]],
   ];

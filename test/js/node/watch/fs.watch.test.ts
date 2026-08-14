@@ -834,6 +834,125 @@ describe("fs.watch", () => {
       }
     },
   );
+
+  // A directory can sit deeper than PATH_MAX: every component is legal, it just
+  // has to be created relative to a cwd that is itself below the limit. The
+  // recursive walk used to join such an entry's path into a fixed PATH_MAX
+  // buffer and abort the process with a bounds panic, both during the initial
+  // walk inside fs.watch() and later on the inotify reader thread when an entry
+  // appeared under a watched directory that is close to the limit. inotify
+  // cannot watch a path that long (ENAMETOOLONG), so that subtree is reported
+  // through the 'error' event like any other registration failure; events whose
+  // relative path exceeds PATH_MAX are still delivered and the rest of the tree
+  // stays watched. Runs in a subprocess because the unfixed behavior is an abort.
+  test.skipIf(!isLinux)("recursive watch survives directories deeper than PATH_MAX", async () => {
+    const PATH_MAX = 4096;
+    // Absolute length of the deepest directory inotify can still watch. Any
+    // entry inside it (names below are NAME_MAX bytes) ends up beyond PATH_MAX.
+    const deepLength = PATH_MAX - 16;
+    const existingDir = Buffer.alloc(255, "e").toString();
+    const createdDir = Buffer.alloc(255, "d").toString();
+    const createdFile = Buffer.alloc(255, "f").toString();
+
+    using dir = tempDir("fs-watch-deeper-than-path-max", {});
+
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const deepLength = ${deepLength};
+      const existingDir = ${JSON.stringify(existingDir)};
+      const createdDir = ${JSON.stringify(createdDir)};
+      const createdFile = ${JSON.stringify(createdFile)};
+      const root = fs.realpathSync(process.env.WATCH_ROOT);
+
+      // root/ccc…/ccc…/ppp… with an absolute length of exactly deepLength.
+      process.chdir(root);
+      const segment = Buffer.alloc(200, "c").toString();
+      let length = root.length;
+      while (deepLength - length > 1 + 255) {
+        fs.mkdirSync(segment);
+        process.chdir(segment);
+        length += 1 + segment.length;
+      }
+      const last = Buffer.alloc(deepLength - length - 1, "p").toString();
+      fs.mkdirSync(last);
+      process.chdir(last);
+      const deep = process.cwd();
+      const deepRel = path.relative(root, deep);
+      // Exists before the watch starts, so the initial walk meets it.
+      fs.mkdirSync(existingDir);
+      process.chdir(root);
+
+      const events = [], errors = [], waiters = [];
+      const settle = () => {
+        for (const waiter of waiters.splice(0)) {
+          if (waiter.ready()) waiter.resolve();
+          else waiters.push(waiter);
+        }
+      };
+      const until = ready => new Promise(resolve => { waiters.push({ ready, resolve }); settle(); });
+      const delivered = name => () => events.some(event => event.name === name);
+
+      const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+        events.push({ type, name });
+        settle();
+      });
+      watcher.on("error", error => {
+        errors.push({ code: error.code, syscall: error.syscall, path: error.path });
+        settle();
+      });
+
+      const deadline = setTimeout(() => {
+        console.log(JSON.stringify({
+          timedOut: true,
+          errors,
+          events: events.map(event => [event.type, String(event.name).length]),
+        }));
+        process.exit(1);
+      }, 4000);
+
+      (async () => {
+        await until(() => errors.length === 1);
+
+        // Created under a running watch: the absolute path is beyond PATH_MAX
+        // (reported), and so is the relative path (delivered).
+        process.chdir(deep);
+        fs.mkdirSync(createdDir);
+        process.chdir(root);
+        await until(() => errors.length === 2);
+        await until(delivered(path.join(deepRel, createdDir)));
+
+        // Nothing to register for a file; only its relative path is over the limit.
+        process.chdir(deep);
+        fs.writeFileSync(createdFile, "x");
+        process.chdir(root);
+        await until(delivered(path.join(deepRel, createdFile)));
+
+        fs.writeFileSync(path.join(root, "shallow.txt"), "x");
+        await until(delivered("shallow.txt"));
+
+        clearTimeout(deadline);
+        watcher.close();
+        console.log(JSON.stringify({ deep, relativeLength: path.join(deepRel, createdFile).length, errors }));
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.deep).toHaveLength(deepLength);
+    expect(result.relativeLength).toBeGreaterThan(PATH_MAX);
+    expect(result.errors).toEqual([
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${existingDir}` },
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${createdDir}` },
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("fs.promises.watch", () => {

@@ -45,7 +45,7 @@ use bun_paths::PathBuffer;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_paths::resolve_path::{join_string_buf, join_z_buf};
+use bun_paths::resolve_path::join_z_buf_spill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
@@ -589,6 +589,11 @@ pub(crate) fn watch(
 /// (inotify delivers file events on the parent dir's wd so we only need a watch
 /// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
 /// subdirectory just stops that branch (matches Node).
+///
+/// A directory can sit deeper than `PATH_MAX` (anything doing relative `mkdir`s
+/// can create one), so the joined paths are spilled to the heap when they
+/// outgrow a `PathBuffer`; `open`/`inotify_add_watch` then reject them with
+/// ENAMETOOLONG, which reaches `cb` like any other per-directory failure.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
@@ -606,7 +611,9 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     let _close = sys::CloseOnDrop::new(dfd);
     let mut it = sys::dir_iterator::iterate(dfd);
     let mut abs_buf = path::path_buffer_pool::get();
+    let mut abs_spill: Vec<u8> = Vec::new();
     let mut rel_buf = path::path_buffer_pool::get();
+    let mut rel_spill: Vec<u8> = Vec::new();
     loop {
         let entry = match it.next() {
             Err(_) => return,
@@ -619,12 +626,20 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         }
         // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
         let name = entry.name.slice_u8();
-        let child_abs =
-            join_z_buf::<platform::Posix>(abs_buf.as_mut_slice(), &[abs_dir.as_bytes(), name]);
+        let child_abs = join_z_buf_spill::<platform::Posix>(
+            abs_buf.as_mut_slice(),
+            &mut abs_spill,
+            &[abs_dir.as_bytes(), name],
+        );
         let child_rel: &[u8] = if rel_dir.is_empty() {
             name
         } else {
-            join_string_buf::<platform::Posix>(rel_buf.as_mut_slice(), &[rel_dir, name])
+            join_z_buf_spill::<platform::Posix>(
+                rel_buf.as_mut_slice(),
+                &mut rel_spill,
+                &[rel_dir, name],
+            )
+            .as_bytes()
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
@@ -892,6 +907,7 @@ impl Linux {
             }
         };
         let mut path_buf = PathBuffer::uninit();
+        let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
             // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
@@ -1083,10 +1099,14 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_string_buf::<platform::Posix>(
+                        // The watched directory itself fits in PATH_MAX (inotify
+                        // accepted it) but `subpath/name` need not.
+                        join_z_buf_spill::<platform::Posix>(
                             path_buf.as_mut_slice(),
+                            &mut rel_spill,
                             &[owner_subpath, name],
                         )
+                        .as_bytes()
                     };
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
@@ -1111,8 +1131,10 @@ impl Linux {
                         && !name.is_empty()
                     {
                         let mut abs_buf = path::path_buffer_pool::get();
-                        let child_abs = join_z_buf::<platform::Posix>(
+                        let mut abs_spill: Vec<u8> = Vec::new();
+                        let child_abs = join_z_buf_spill::<platform::Posix>(
                             abs_buf.as_mut_slice(),
+                            &mut abs_spill,
                             &[watcher_path, owner_subpath, name],
                         );
                         // Borrowck: `rel` may borrow `path_buf`,

@@ -1,5 +1,7 @@
+import { RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-utils";
+import net from "net";
+import { ConnectionType, createClient, ctx, isEnabled, readRespCommands, testKey } from "../test-utils";
 
 /**
  * Test suite for RESP protocol handling, focusing on edge cases
@@ -397,5 +399,160 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         await Promise.all(clients.map(client => client.close()));
       }
     });
+  });
+});
+
+/**
+ * A RESP3 attribute (`|N`) is out-of-band metadata that may prefix *any* reply
+ * or push, so the outer frame type of a decorated reply says nothing about how
+ * the client should route it. These tests script the wire directly because no
+ * real server emits attributes on demand.
+ */
+describe("Valkey: RESP3 attributes", () => {
+  const CRLF = "\r\n";
+  const bulk = (value: string) => `$${Buffer.byteLength(value)}${CRLF}${value}${CRLF}`;
+  const pushFrame = (...frames: string[]) => `>${frames.length}${CRLF}${frames.join("")}`;
+  const HELLO_REPLY = `%3${CRLF}${bulk("server")}${bulk("redis")}${bulk("proto")}:3${CRLF}${bulk("version")}${bulk("7.4.0")}`;
+  // One-entry attribute map, the shape Redis/Valkey use for key-popularity hints.
+  const ATTRIBUTE = `|1${CRLF}${bulk("key-popularity")}:42${CRLF}`;
+
+  /**
+   * Run `body` against a client wired to a scripted RESP3 server. `reply` gets
+   * the upper-cased command name and its arguments and returns the raw bytes to
+   * answer with; returning `undefined` falls back to the HELLO handshake reply
+   * for HELLO and `+OK` for everything else.
+   */
+  async function withScriptedServer<T>(
+    reply: (name: string, args: string[]) => string | undefined,
+    body: (client: RedisClient) => Promise<T>,
+  ): Promise<T> {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const args of readRespCommands(state)) {
+          const name = (args[0] ?? "").toUpperCase();
+          socket.write(reply(name, args.slice(1)) ?? (name === "HELLO" ? HELLO_REPLY : `+OK${CRLF}`));
+        }
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      return await body(client);
+    } finally {
+      client.close();
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  }
+
+  test("an attribute-decorated out-of-band push is not consumed as a command reply", async () => {
+    const values = ["A", "B", "C"];
+    const results = await withScriptedServer(
+      name => {
+        if (name !== "GET") return undefined;
+        // The push arrives before the first GET's reply, decorated by an attribute.
+        const push = values.length === 3 ? ATTRIBUTE + pushFrame(bulk("message"), bulk("chan"), bulk("hi")) : "";
+        return push + bulk(values.shift()!);
+      },
+      async client => {
+        await client.connect();
+        return [await client.get("a"), await client.get("b"), await client.get("c")];
+      },
+    );
+
+    // Without unwrapping the attribute the push is handed to `get("a")` and every
+    // later reply on the connection is shifted by one, forever.
+    expect(results).toEqual(["A", "B", "C"]);
+  });
+
+  test("an attribute-decorated subscribe confirmation enters subscriber mode", async () => {
+    const received = Promise.withResolvers<[string, string]>();
+    const subscribeResult = await withScriptedServer(
+      (name, args) => {
+        if (name !== "SUBSCRIBE") return undefined;
+        return (
+          ATTRIBUTE +
+          pushFrame(bulk("subscribe"), bulk(args[0]), `:1${CRLF}`) +
+          pushFrame(bulk("message"), bulk(args[0]), bulk("hi"))
+        );
+      },
+      async client => {
+        await client.connect();
+        const count = await client.subscribe("chan", (message, channel) => {
+          received.resolve([message, channel]);
+        });
+        // Without unwrapping, `subscribe()` resolves with the raw push object and
+        // the client never enters subscriber mode, so the listener never fires.
+        expect(count).toBe(1);
+        expect(await received.promise).toEqual(["hi", "chan"]);
+        return count;
+      },
+    );
+
+    expect(subscribeResult).toBe(1);
+  });
+
+  test("an attribute-decorated HELLO reply completes the handshake", async () => {
+    const value = await withScriptedServer(
+      name => {
+        if (name === "HELLO") return ATTRIBUTE + HELLO_REPLY;
+        if (name === "GET") return bulk("value");
+        return undefined;
+      },
+      async client => {
+        await client.connect();
+        return client.get("key");
+      },
+    );
+
+    expect(value).toBe("value");
+  });
+
+  test("an attribute-decorated error reply rejects the command", async () => {
+    await withScriptedServer(
+      name => (name === "GET" ? `${ATTRIBUTE}-ERR decorated failure${CRLF}` : undefined),
+      async client => {
+        await client.connect();
+        // Without unwrapping, the error is *resolved* as an Error object.
+        await expect(client.get("key")).rejects.toThrow("ERR decorated failure");
+      },
+    );
+  });
+
+  test("an attribute-decorated integer reply still coerces to boolean for EXISTS", async () => {
+    const exists = await withScriptedServer(
+      name => (name === "EXISTS" ? `${ATTRIBUTE}:1${CRLF}` : undefined),
+      async client => {
+        await client.connect();
+        return client.exists("key");
+      },
+    );
+
+    expect(exists).toBe(true);
+  });
+
+  test("attributes are transparent metadata around the value they decorate", async () => {
+    const [value, array] = await withScriptedServer(
+      name => {
+        if (name === "GET") return ATTRIBUTE + bulk("value");
+        // Attributes can also decorate an element nested inside an aggregate.
+        if (name === "LRANGE") return `*2${CRLF}${ATTRIBUTE}${bulk("a")}${bulk("b")}`;
+        return undefined;
+      },
+      async client => {
+        await client.connect();
+        return [await client.get("key"), await client.send("LRANGE", ["list", "0", "-1"])];
+      },
+    );
+
+    expect(value).toBe("value");
+    expect(array).toEqual(["a", "b"]);
   });
 });

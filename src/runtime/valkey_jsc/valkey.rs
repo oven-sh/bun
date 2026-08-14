@@ -1050,6 +1050,10 @@ impl ValkeyClient {
 
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+        // Everything below (HELLO, SELECT, push routing, promise pairing)
+        // dispatches on the variant, so strip any attribute decoration first.
+        value.unwrap_attributes();
+
         // Special handling for the initial HELLO response
         if self.status != Status::Connected {
             self.handle_hello_response(value)?;

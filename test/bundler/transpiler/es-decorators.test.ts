@@ -31,6 +31,21 @@ async function runDecorator(code: string) {
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
+async function runDecoratorTS(code: string) {
+  using dir = tempDir("es-dec-ts", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": code,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {
@@ -390,21 +405,6 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
     });
-
-    async function runDecoratorTS(code: string) {
-      using dir = tempDir("es-dec-ts", {
-        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "test.ts": code,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: filterStderr(rawStderr), exitCode };
-    }
 
     test("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
@@ -1151,6 +1151,309 @@ describe("ES Decorators", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("i0 b 1 1\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // A class with a private member and a decorated member has all of its private
+  // members lowered to WeakMap/WeakSet storage, so their initializers move into
+  // the constructor (or a static block). The undecorated public fields have to
+  // move with them: their initializers must be rewritten too (`this.#p` no
+  // longer exists), and they must keep initializing in source order relative to
+  // the private fields. Expected outputs were checked against esbuild's lowering.
+  describe("fields in classes with lowered private members", () => {
+    test("public field initializers can read lowered private fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        class C {
+          #p = 1;
+          @dec m() {}
+          x = this.#p + 1;
+          static #sp = 5;
+          static sx = C.#sp + 1;
+        }
+        console.log(new C().x, C.sx);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private field initializers can read other lowered private fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) { return v; }
+        class Broken {
+          @dec accessor label = "";
+          #name = "hello";
+          #callback = () => this.#name;
+          #read = function () { return this.#name + "!"; };
+          run() { return this.#callback() + " " + this.#read(); }
+        }
+        console.log(new Broken().run());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hello hello!\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static private fields and undecorated accessors can read lowered private fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        class S {
+          static #a = 1;
+          static #b = S.#a + 1;
+          static accessor acc = S.#b + 1;
+          static sum = S.#a + S.#b + S.acc;
+          @dec m() {}
+        }
+        class I {
+          #a = 1;
+          accessor acc = this.#a + 1;
+          sum = this.#a + this.acc;
+          @dec m() {}
+        }
+        console.log(S.sum, new I().sum);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance fields initialize in source order with computed keys evaluated once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        function dec(v, ctx) {}
+        const sym = Symbol("sym");
+        let keys = 0;
+        class C {
+          a = log.push("a");
+          #p = log.push("#p");
+          b;
+          accessor c = log.push("c");
+          [(keys++, "d")] = log.push("d");
+          [sym] = log.push("sym");
+          1 = log.push("1");
+          "e-f" = log.push("e-f");
+          @dec m() {}
+          g = this.#p;
+        }
+        new C();
+        const c = new C();
+        console.log(log.join(","));
+        console.log(Object.keys(c).join(","), keys);
+        console.log(c.b, c.c, c.d, c[sym], c[1], c["e-f"], c.g);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n")).toEqual([
+        "a,#p,c,d,sym,1,e-f,a,#p,c,d,sym,1,e-f",
+        "1,a,b,d,e-f,g 1",
+        "undefined 10 11 12 13 14 9",
+        "",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("static fields initialize in source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        function dec(v, ctx) {}
+        const sym = Symbol("sym");
+        class C {
+          static a = log.push("a");
+          static #p = log.push("#p");
+          static b;
+          static accessor c = log.push("c");
+          static [("d")] = log.push("d");
+          static [sym] = log.push("sym");
+          static g = C.#p;
+          @dec m() {}
+          static h = log.push("h");
+        }
+        console.log(log.join(","));
+        console.log(Object.keys(C).join(","));
+        console.log(C.b, C.c, C.d, C[sym], C.g, C.h);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n")).toEqual(["a,#p,c,d,sym,h", "a,b,d,g,h", "undefined 3 4 5 2 6", ""]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("private field initializers see public fields declared before them", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        class O {
+          static pub = 3;
+          static #spriv = O.pub * 2;
+          static get spriv() { return O.#spriv; }
+          pub = 5;
+          #ipriv = this.pub * 2;
+          get ipriv() { return this.#ipriv; }
+          @dec m() {}
+        }
+        console.log(O.spriv, new O().ipriv);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6 10\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private methods are installed before any field initializer runs", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        class C {
+          x = this.#m();
+          #p = this.#m() + 1;
+          static sx = C.#sm();
+          static #sp = C.#sm() + 1;
+          @dec n() {}
+          #m() { return 10; }
+          static #sm() { return 20; }
+          get p() { return this.#p; }
+          static get sp() { return C.#sp; }
+        }
+        const c = new C();
+        console.log(c.x, c.p, C.sx, C.sp);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 11 20 21\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("method extra initializers run before field initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(v, ctx) {
+          ctx.addInitializer(function () { this.tagged = ctx.name; });
+        }
+        class C {
+          seen = this.tagged;
+          @tag #m() {}
+        }
+        console.log(new C().seen);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("#m\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("moved public fields keep [[Define]] semantics", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        class Base {
+          set x(v) { throw new Error("setter invoked with " + v); }
+          get x() { return "getter"; }
+          static set s(v) { throw new Error("static setter invoked with " + v); }
+          static get s() { return "static getter"; }
+        }
+        class C extends Base {
+          #p = 1;
+          x = 1;
+          static s = 2;
+          @dec m() {}
+        }
+        const c = new C();
+        console.log(c.x, Object.hasOwn(c, "x"), C.s, Object.hasOwn(C, "s"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 true 2 true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expressions and `this` in static initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        const C = class {
+          #p = 1;
+          x = this.#p + 1;
+          static #sp = 2;
+          static sx = this.#sp + 1;
+          @dec m() {}
+        };
+        console.log(new C().x, C.sx);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("derived classes initialize moved fields right after super()", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        const log = [];
+        class Base { constructor() { log.push("base"); } }
+        class A extends Base {
+          #p = log.push("#p");
+          x = log.push("x");
+          @dec m() {}
+        }
+        class B extends Base {
+          #p = log.push("#p");
+          x = this.#p;
+          constructor() {
+            log.push("before-super");
+            super();
+            log.push("x=" + this.x);
+          }
+          @dec m() {}
+        }
+        new A();
+        new B();
+        console.log(log.join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("base,#p,x,before-super,base,#p,x=6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private method calls in moved initializers evaluate their receiver once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, ctx) {}
+        let calls = 0;
+        function obj(o) { calls++; return o; }
+        class C {
+          #m() { return this.v; }
+          static #sm() { return this.sv; }
+          v = 1;
+          static sv = 2;
+          x = obj(this).#m();
+          static sx = obj(C).#sm();
+          @dec n() {}
+        }
+        console.log(new C().x, C.sx, calls);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("TypeScript parameter properties stay ahead of the moved fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        function dec(v: any, ctx: any) {}
+        class A {
+          #p = 1;
+          x = this.#p;
+          constructor(public a: number) {}
+          @dec m() {}
+        }
+        const a = new A(5);
+        console.log(a.a, a.x, Object.keys(a).join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5 1 a,x\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("no private name survives in the output", () => {
+      const source = `class C {
+        #p = 1;
+        static #sp = 2;
+        @dec m() {}
+        x = this.#p;
+        static sx = C.#sp;
+        static accessor acc = C.#sp;
+      }`;
+      const output = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(source);
+      expect(output).not.toContain("#p");
+      expect(output).not.toContain("#sp");
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
     });
   });
 

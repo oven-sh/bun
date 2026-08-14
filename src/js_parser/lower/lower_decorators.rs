@@ -139,6 +139,28 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
+/// An undecorated public field (`x = 1`, `static [k];`, `1n;`, …), i.e. an
+/// element whose key can be passed to `__publicField` as-is (a literal, or a
+/// computed key once Phase 2 has hoisted it into a temporary). The visitor also
+/// synthesizes initializer-less fields keyed by an `E::Identifier` for TypeScript
+/// parameter properties; those have nothing to evaluate and stay in the body.
+#[inline]
+fn is_public_field(prop: &Property) -> bool {
+    let Some(key) = prop.key else {
+        return false;
+    };
+    prop.kind == PropertyKind::Normal
+        && !prop.flags.contains(Flags::Property::IsMethod)
+        && prop.value.is_none()
+        && (prop.flags.contains(Flags::Property::IsComputed)
+            || matches!(
+                key.data,
+                js_ast::ExprData::EString(_)
+                    | js_ast::ExprData::ENumber(_)
+                    | js_ast::ExprData::EBigInt(_)
+            ))
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -272,17 +294,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
+    /// Create a static block property from a list of statements.
+    fn make_static_block(&mut self, stmts: &[Stmt], l: bun_ast::Loc) -> Property {
         let bump = self.arena;
-        let stmt = self.s(
-            S::SExpr {
-                value: expr,
-                ..Default::default()
-            },
-            l,
-        );
-        let stmts = bump.alloc_slice_copy(&[stmt]);
+        let stmts = bump.alloc_slice_copy(stmts);
         let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock {
             loc: l,
@@ -293,6 +308,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
             ..Default::default()
         }
+    }
+
+    fn expr_stmt(&self, value: Expr, l: bun_ast::Loc) -> Stmt {
+        self.s(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            l,
+        )
     }
 
     /// Build property access: target.name or target[key].
@@ -344,15 +369,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (((5 + 2 * idx) << 1) | 1) as f64
     }
 
-    /// Emit __privateAdd for a given storage ref.
+    /// Emit `__privateAdd(this, storage[, value])` into the instance list (spliced
+    /// into the constructor) or the static list (a static block at the top of the
+    /// class body); `this` is the instance or the class respectively.
     fn emit_private_add(
         &mut self,
         is_static: bool,
         storage_ref: Ref,
         value: Option<Expr>,
         loc: bun_ast::Loc,
-        constructor_inject: &mut BumpVec<'_, Stmt>,
-        static_blocks: &mut BumpVec<'_, Property>,
+        instance_out: &mut BumpVec<'_, Stmt>,
+        static_out: &mut BumpVec<'_, Stmt>,
     ) {
         let target = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage_ref, loc);
@@ -361,16 +388,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             self.call_rt(loc, b"__privateAdd", &[target, storage])
         };
+        let stmt = self.expr_stmt(call, loc);
         if is_static {
-            static_blocks.push(self.make_static_block(call, loc));
+            static_out.push(stmt);
         } else {
-            constructor_inject.push(self.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                loc,
-            ));
+            instance_out.push(stmt);
+        }
+    }
+
+    /// Emit `__publicField(this, key[, initializer])` for an undecorated field
+    /// that leaves the class body; same placement rules as `emit_private_add`.
+    fn emit_public_field(
+        &mut self,
+        prop: &Property,
+        loc: bun_ast::Loc,
+        instance_out: &mut BumpVec<'_, Stmt>,
+        static_out: &mut BumpVec<'_, Stmt>,
+    ) {
+        let target = self.new_expr(E::This {}, loc);
+        let key = prop.key.expect("infallible: public field has a key");
+        let call = if let Some(init) = prop.initializer {
+            self.call_rt(loc, b"__publicField", &[target, key, init])
+        } else {
+            self.call_rt(loc, b"__publicField", &[target, key])
+        };
+        let stmt = self.expr_stmt(call, loc);
+        if prop.flags.contains(Flags::Property::IsStatic) {
+            static_out.push(stmt);
+        } else {
+            instance_out.push(stmt);
         }
     }
 
@@ -1197,6 +1243,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // With a private and a decorated member, every private member is lowered
+        // to WeakMap/WeakSet storage and its initializer moves into the
+        // constructor / a static block. The public fields move along: a field left
+        // in the body would initialize before all of them, i.e. out of source
+        // order and before the storage its rewritten initializer reads exists.
+        let lower_all_private = {
+            let mut has_any_private = false;
+            let mut has_any_decorated = false;
+            for cprop in class.properties.slice().iter() {
+                if cprop.kind == PropertyKind::ClassStaticBlock {
+                    continue;
+                }
+                has_any_private |= matches!(
+                    cprop.key,
+                    Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_))
+                );
+                has_any_decorated |= cprop.ts_decorators.len_u32() > 0;
+                if has_any_private && has_any_decorated {
+                    break;
+                }
+            }
+            has_any_private && has_any_decorated
+        };
+
         // ── Phase 2: Pre-evaluate decorators/keys ────────
         let mut dec_counter: usize = 0;
         let mut class_dec_ref: Option<Ref> = None;
@@ -1266,9 +1336,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
-            if prop.flags.contains(Flags::Property::IsComputed)
-                && prop.key.is_some()
-                && prop.ts_decorators.len_u32() > 0
+            // Elements that leave the class body must have their computed key
+            // evaluated here, once, at class definition time.
+            let leaves_body =
+                prop.ts_decorators.len_u32() > 0 || (lower_all_private && is_public_field(prop));
+            if prop.flags.contains(Flags::Property::IsComputed) && prop.key.is_some() && leaves_body
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
@@ -1372,7 +1444,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 4: Property loop ───────────────────────
         let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
-        let mut constructor_inject_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut new_properties = BumpVec::<Property>::new_in(bump);
         let mut static_non_field_elements = BumpVec::<Expr>::new_in(bump);
         let mut instance_non_field_elements = BumpVec::<Expr>::new_in(bump);
@@ -1391,43 +1462,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
-        let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
-
-        // Pre-scan: determine if all private members need lowering
-        let mut lower_all_private = false;
-        {
-            let mut has_any_private = false;
-            let mut has_any_decorated = false;
-            let cprops: &[Property] = class.properties.slice();
-            for cprop in cprops.iter() {
-                if cprop.kind == PropertyKind::ClassStaticBlock {
-                    continue;
-                }
-                if cprop.ts_decorators.len_u32() > 0 {
-                    has_any_decorated = true;
-                    if cprop.key.is_some()
-                        && matches!(
-                            cprop.key.unwrap().data,
-                            js_ast::ExprData::EPrivateIdentifier(_)
-                        )
-                    {
-                        lower_all_private = true;
-                        break;
-                    }
-                }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
-                {
-                    has_any_private = true;
-                }
-            }
-            if !lower_all_private && has_any_private && has_any_decorated {
-                lower_all_private = true;
-            }
-        }
+        // Method `__privateAdd`s run before the field initializers, which stay in
+        // source order. Instance lists are spliced into the constructor in Phase 7,
+        // static lists become a static block.
+        let mut instance_private_method_adds = BumpVec::<Stmt>::new_in(bump);
+        let mut static_private_method_adds = BumpVec::<Stmt>::new_in(bump);
+        let mut instance_field_inits = BumpVec::<Stmt>::new_in(bump);
+        let mut static_field_inits = BumpVec::<Stmt>::new_in(bump);
 
         let props_slice2: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
@@ -1506,8 +1547,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ws_ref,
                                 None,
                                 loc,
-                                &mut constructor_inject_stmts,
-                                &mut static_private_add_blocks,
+                                &mut instance_private_method_adds,
+                                &mut static_private_method_adds,
                             );
                         }
                         continue;
@@ -1522,20 +1563,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let init_val = prop
                             .initializer
                             .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                        let this_e = p.new_expr(E::This {}, loc);
-                        let wm_e = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
-                        if !prop.flags.contains(Flags::Property::IsStatic) {
-                            constructor_inject_stmts.push(p.s(
-                                S::SExpr {
-                                    value: call,
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
-                        } else {
-                            static_private_add_blocks.push(p.make_static_block(call, loc));
-                        }
+                        p.emit_private_add(
+                            prop.flags.contains(Flags::Property::IsStatic),
+                            wm_ref,
+                            Some(init_val),
+                            loc,
+                            &mut instance_field_inits,
+                            &mut static_field_inits,
+                        );
                         continue;
                     }
                 }
@@ -1628,18 +1663,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let init_val = prop
                         .initializer
                         .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                    if !prop.flags.contains(Flags::Property::IsStatic) {
-                        let this_e3 = p.new_expr(E::This {}, loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e3, wm_e3, init_val]);
-                        constructor_inject_stmts.push(p.s(
-                            S::SExpr {
-                                value: call,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    } else {
+                    let is_static = prop.flags.contains(Flags::Property::IsStatic);
+                    if is_static && !lower_all_private {
+                        // The public static fields stay in the body, so there is no
+                        // ordered static sequence to join; initialize after the class.
                         let cn_e = p.use_ref(class_name_ref, class_name_loc);
                         let wm_e3 = p.use_ref(wm_ref, loc);
                         suffix_exprs.push(p.call_rt(
@@ -1647,6 +1674,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             b"__privateAdd",
                             &[cn_e, wm_e3, init_val],
                         ));
+                    } else {
+                        p.emit_private_add(
+                            is_static,
+                            wm_ref,
+                            Some(init_val),
+                            loc,
+                            &mut instance_field_inits,
+                            &mut static_field_inits,
+                        );
                     }
                     continue;
                 }
@@ -1659,6 +1695,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                         extracted_static_blocks.push(sb);
                     }
+                    continue;
+                }
+                if lower_all_private && is_public_field(prop) {
+                    p.emit_public_field(
+                        prop,
+                        loc,
+                        &mut instance_field_inits,
+                        &mut static_field_inits,
+                    );
                     continue;
                 }
                 new_properties.push(prop_full_copy(prop));
@@ -1950,8 +1995,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         private_storage_ref.unwrap(),
                         None,
                         loc,
-                        &mut constructor_inject_stmts,
-                        &mut static_private_add_blocks,
+                        &mut instance_private_method_adds,
+                        &mut static_private_method_adds,
                     );
                 }
                 if prop.flags.contains(Flags::Property::IsStatic) {
@@ -1974,7 +2019,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 5: Rewrite private accesses ────────────
         if !private_lowered_map.is_empty() {
+            // Only `lower_all_private` classes get here, so every field initializer
+            // is in `*_field_inits` or `*_init_entries`, none in the body or suffix.
+            debug_assert!(lower_all_private);
+            debug_assert!(suffix_exprs.is_empty());
             for nprop in new_properties.iter_mut() {
+                debug_assert!(nprop.initializer.is_none());
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
@@ -1982,6 +2032,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
             }
+            p.rewrite_private_accesses_in_stmts(&mut instance_field_inits, &private_lowered_map);
+            p.rewrite_private_accesses_in_stmts(&mut static_field_inits, &private_lowered_map);
             for entry in instance_init_entries.iter_mut() {
                 if let Some(ini) = &mut entry.prop.initializer {
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
@@ -2217,21 +2269,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── Phase 7: Constructor injection ───────────────
+        // Private methods are installed first, then the extra initializers added
+        // by method/accessor decorators run, then the fields initialize in order.
+        let mut constructor_inject_stmts = instance_private_method_adds;
         if !instance_non_field_elements.is_empty() || has_instance_private_methods {
             let i_e = p.use_ref(init_ref, loc);
             let n_e = p.new_expr(E::Number::new(5.0), loc);
             let t_e = p.new_expr(E::This {}, loc);
             let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
-            constructor_inject_stmts.push(p.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                loc,
-            ));
+            constructor_inject_stmts.push(p.expr_stmt(call, loc));
         }
+        constructor_inject_stmts.extend_from_slice(&instance_field_inits);
 
-        // Instance field/accessor init + extra-init
+        // Decorated instance field/accessor init + extra-init
         {
             let mut i_accessor_idx: usize = 0;
             let mut i_field_idx: usize = 0;
@@ -2407,19 +2457,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Static private __privateAdd blocks at beginning
-        if !static_private_add_blocks.is_empty() {
-            let mut merged = BumpVec::<Property>::with_capacity_in(
-                static_private_add_blocks.len() + new_properties.len(),
-                bump,
-            );
-            for sp in static_private_add_blocks.drain(..) {
-                merged.push(sp);
-            }
-            for np in new_properties.drain(..) {
-                merged.push(np);
-            }
-            new_properties = merged;
+        // Same order as the constructor, as a single static block.
+        let mut static_inits = static_private_method_adds;
+        static_inits.extend_from_slice(&static_field_inits);
+        if !static_inits.is_empty() {
+            let block = p.make_static_block(&static_inits, loc);
+            new_properties.insert(0, block);
         }
 
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());

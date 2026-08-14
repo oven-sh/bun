@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
+import vm from "node:vm";
 
 test("name property is used for function calls in Error.stack", () => {
   function WRONG() {
@@ -267,5 +268,47 @@ console.log(JSON.stringify({ derived: frame(new Derived().err, "Derived"), later
     expect(stderr).toContain("1 | class Nullary extends null {}\n    ^\n");
     expect(stderr).toMatch(/^\s+at new Nullary \(.*fixture\.js:1:1\)/m);
     expect(exitCode).toBe(1);
+  });
+
+  test("node:vm lineOffset and columnOffset are applied to the class position", () => {
+    class Thrower {
+      err: Error;
+      constructor() {
+        this.err = new Error("T");
+      }
+    }
+    const context = vm.createContext({ Thrower });
+    const run = (code: string, options: vm.ScriptOptions) =>
+      new vm.Script(code, options).runInContext(context) as Error;
+    const frame = (err: Error, name: string) =>
+      err
+        .stack!.split("\n")
+        .map(line => line.trim())
+        .find(line => line.startsWith(`at new ${name} `));
+    const offsets = { filename: "offsets.vm.js", lineOffset: 10, columnOffset: 5 };
+
+    // The expected positions are what node prints for the same scripts.
+    expect({
+      firstLine: frame(run("class First extends Thrower {} new First().err;", offsets), "First"),
+      laterLine: frame(run("\n\n    class Later extends Thrower {}\nnew Later().err;", offsets), "Later"),
+      negativeColumn: frame(
+        run("         class NegCol extends Thrower {} new NegCol().err;", { filename: "neg.vm.js", columnOffset: -3 }),
+        "NegCol",
+      ),
+      negativeLine: frame(
+        run("\n\n\n  class NegLine extends Thrower {}\n  new NegLine().err;", {
+          filename: "neg.vm.js",
+          lineOffset: -2,
+        }),
+        "NegLine",
+      ),
+    }).toEqual({
+      // The column offset only applies to the first line.
+      firstLine: "at new First (offsets.vm.js:11:6)",
+      laterLine: "at new Later (offsets.vm.js:13:5)",
+      // JSC clamps negative offsets away for the positions it reports itself.
+      negativeColumn: "at new NegCol (neg.vm.js:1:7)",
+      negativeLine: "at new NegLine (neg.vm.js:2:3)",
+    });
   });
 });

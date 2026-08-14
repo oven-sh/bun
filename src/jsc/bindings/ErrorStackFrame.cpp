@@ -29,6 +29,10 @@ ZigStackFramePosition classSourceStartPosition(const SourceCode& classSource)
     auto* provider = classSource.provider();
     int start = classSource.startOffset();
     WTF::StringView source = provider->source();
+    // node:vm lineOffset/columnOffset: JSC applies them (the column to the first line only) but clamps negative ones away; V8 does not.
+    TextPosition providerStart = provider->startPosition();
+
+    int line = classSource.firstLine().zeroBasedInt() + std::min(providerStart.m_line.zeroBasedInt(), 0);
 
     // startColumn() is only a fallback: on the first line of a lazily parsed function it counts from the function.
     int column = classSource.startColumn().zeroBasedInt();
@@ -37,13 +41,12 @@ ZigStackFramePosition classSourceStartPosition(const SourceCode& classSource)
         while (lineStart > 0 && !isLineTerminator(source[lineStart - 1]))
             lineStart--;
         column = start - lineStart;
-        // JSC's columns on the first line of a source include its start column (node:vm columnOffset).
         if (lineStart == 0)
-            column += provider->startPosition().m_column.zeroBasedInt();
+            column += providerStart.m_column.zeroBasedInt();
     }
 
     return ZigStackFramePosition {
-        .line_zero_based = classSource.firstLine().zeroBasedInt(),
+        .line_zero_based = line,
         .column_zero_based = column,
         .byte_position = start,
     };

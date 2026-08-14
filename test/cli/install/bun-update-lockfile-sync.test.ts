@@ -326,13 +326,23 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir, ["", PKG1]);
   });
 
-  test("bun update -r --latest keeps a member's dist-tag literal", async () => {
+  test("bun update -r keeps a member's dist-tag literal", async () => {
     const dir = await setup(MONOREPO({ dependencies: { "dep-with-tags": "pre-2", "no-deps": "~1.0.0" } }));
-    await run(dir, "update", "-r", "--latest");
-    const expected = { "dep-with-tags": "pre-2", "no-deps": "~2.0.0" };
+    await run(dir, "update", "-r");
+    const expected = { "dep-with-tags": "pre-2", "no-deps": "~1.0.1" };
     expect((await pkg(dir, PKG1)).dependencies).toStrictEqual(expected);
     expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual(expected);
     expect(await resolutions(dir, "dep-with-tags")).toStrictEqual(["dep-with-tags@2.0.1"]);
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update -r --latest replaces a member's dist-tag literal with the latest version", async () => {
+    const dir = await setup(MONOREPO({ dependencies: { "dep-with-tags": "pre-2", "no-deps": "~1.0.0" } }));
+    await run(dir, "update", "-r", "--latest");
+    const expected = { "dep-with-tags": "^3.0.0", "no-deps": "~2.0.0" };
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual(expected);
+    expect(await resolutions(dir, "dep-with-tags")).toStrictEqual(["dep-with-tags@3.0.0"]);
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -501,8 +511,8 @@ describe.concurrent("npm: aliases", () => {
     {
       before: "npm:dep-with-tags@pre-2",
       args: ["--latest"],
-      after: "npm:dep-with-tags@pre-2",
-      installs: ["dep-with-tags", "2.0.1"],
+      after: "npm:dep-with-tags@^3.0.0",
+      installs: ["dep-with-tags", "3.0.0"],
     },
     {
       before: "npm:no-deps@~1.0.0",
@@ -657,11 +667,19 @@ describe.concurrent("catalogs", () => {
     await expectInSync(dir, ["", PKG1]);
   });
 
-  test("bun update --latest keeps a dist-tag catalog entry", async () => {
+  test("bun update keeps a dist-tag catalog entry", async () => {
     const dir = await setup(CATALOG_REPO({ "dep-with-tags": "pre-2" }));
-    await run(dir, "update", "--latest");
+    await run(dir, "update");
     await expectCatalog(dir, { "dep-with-tags": "pre-2" });
     expect(await installed(dir, "dep-with-tags")).toMatchObject({ version: "2.0.1" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update --latest replaces a dist-tag catalog entry with the latest version", async () => {
+    const dir = await setup(CATALOG_REPO({ "dep-with-tags": "pre-2" }));
+    await run(dir, "update", "--latest");
+    await expectCatalog(dir, { "dep-with-tags": "^3.0.0" });
+    expect(await installed(dir, "dep-with-tags")).toMatchObject({ version: "3.0.0" });
     await expectInSync(dir, ["", PKG1]);
   });
 

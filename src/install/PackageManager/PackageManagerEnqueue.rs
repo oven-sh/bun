@@ -2434,7 +2434,10 @@ fn get_or_put_resolved_package(
 
             // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
             let latest_for_target = !version_was_replaced
-                && version.tag == dependency::version::Tag::Npm
+                && matches!(
+                    version.tag,
+                    dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+                )
                 && this.to_update
                 && this.update_requests.is_empty()
                 && this

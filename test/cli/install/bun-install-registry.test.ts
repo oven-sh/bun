@@ -5167,7 +5167,7 @@ describe("update", () => {
       },
     });
 
-    // a dist-tag literal is kept in every mode; only bun.lock follows the tag
+    // Update with `a-dep` and without `--latest`, `latest` should stay; only bun.lock follows the tag
     await runBunUpdate(env, packageDir, ["a-dep"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
@@ -5177,13 +5177,15 @@ describe("update", () => {
         "a-dep": "latest",
       },
     });
+
+    // Update with `--latest`, `latest` should be replaced with the installed version
     await runBunUpdate(env, packageDir, ["--latest"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(await file(packageJson).json()).toStrictEqual({
       name: "foo",
       dependencies: {
-        "a-dep": "latest",
+        "a-dep": "^1.0.10",
       },
     });
     expect((await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version).toBe("1.0.10");

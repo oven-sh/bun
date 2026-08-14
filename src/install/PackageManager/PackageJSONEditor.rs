@@ -113,7 +113,7 @@ fn keeps_declared_range(version_literal: &[u8]) -> bool {
     }
 }
 
-/// `resolved` in the pin style of the declared literal (None = the literal is kept as written).
+/// `resolved` in the pin style of the declared literal (None = the literal is kept as written); --latest rewrites dist-tags too.
 fn updated_version_literal(
     original_version_literal: &[u8],
     resolved: semver::Version,
@@ -121,9 +121,6 @@ fn updated_version_literal(
     exact_versions: bool,
     update_to_latest: bool,
 ) -> Option<Vec<u8>> {
-    if dependency::Tag::infer(original_version_literal) == dependency::Tag::DistTag {
-        return None;
-    }
     let mut v = Vec::new();
     let version_literal = match split_npm_alias(original_version_literal) {
         Some((alias, version_literal)) => {
@@ -464,8 +461,10 @@ fn edit_update_entries(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let tag = dependency::Tag::infer(version_literal);
 
-                        // npm ranges only: dist-tags stay as written even with --latest; `catalog:` is handled by edit_catalogs_*.
-                        if tag != dependency::Tag::Npm {
+                        // npm ranges only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
+                        if tag != dependency::Tag::Npm
+                            && (tag != dependency::Tag::DistTag || !update_to_latest)
+                        {
                             continue;
                         }
 
@@ -692,7 +691,8 @@ pub(crate) fn edit_catalogs_before_update(
             let tag = dependency::Tag::infer(version_literal);
 
             // same tag rule as direct dependencies
-            if tag != dependency::Tag::Npm {
+            if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
+            {
                 continue;
             }
 
@@ -1325,10 +1325,7 @@ pub(crate) fn edit(
                 if let Some(existing) = existing {
                     version_literal = with_alias_of(arena, existing, version_literal);
                 }
-                // a declared dist-tag (`next`, `npm:bar@next`) keeps resolving through that tag under --latest
-                let existing_is_dist_tag =
-                    existing.is_some_and(|e| dependency::Tag::infer(e) == dependency::Tag::DistTag);
-                if update_to_latest && !existing_is_dist_tag {
+                if update_to_latest {
                     version_literal = with_alias_of(arena, version_literal, b"latest");
                 }
                 e_string.data = arena_dup(arena, version_literal).into();
@@ -1341,7 +1338,7 @@ pub(crate) fn edit(
                         let installed = request.version.literal.slice(request.version_buf());
                         let resolved = resolutions[request.package_id as usize].npm().version;
                         let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                        // under --latest the row literal is `latest` for rewritable entries; a declared dist-tag is kept below via updated_version_literal.
+                        // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
                         if manager.subcommand == Subcommand::Update
                             && request.version.tag == dependency::Tag::DistTag
                             && !update_to_latest

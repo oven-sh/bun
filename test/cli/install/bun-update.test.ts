@@ -1153,14 +1153,27 @@ it("--recursive --no-save updates node_modules but not any package.json", async 
   });
 });
 
-it("--recursive --latest keeps a member's dist-tag literal and follows the tag", async () => {
+it("--recursive keeps a member's dist-tag literal and only moves bun.lock", async () => {
+  await setupWorkspaces({}, { "pkg-a": { dependencies: { baz: "latest" } } }, BAZ_0_0_3_ONLY);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    version: "0.0.3",
+  });
+  bumpBazTo_0_0_5();
+  await runUpdate(["--recursive"]);
+  expect((await pkgJson("pkg-a")).dependencies).toStrictEqual({ baz: "latest" });
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    version: "0.0.5",
+  });
+});
+
+it("--recursive --latest replaces a member's dist-tag literal with the resolved version", async () => {
   await setupWorkspaces({}, { "pkg-a": { dependencies: { baz: "latest" } } }, BAZ_0_0_3_ONLY);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
     version: "0.0.3",
   });
   bumpBazTo_0_0_5();
   await runUpdate(["--recursive", "--latest"]);
-  expect((await pkgJson("pkg-a")).dependencies).toStrictEqual({ baz: "latest" });
+  expect((await pkgJson("pkg-a")).dependencies).toStrictEqual({ baz: "^0.0.5" });
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
     version: "0.0.5",
   });
@@ -1465,7 +1478,7 @@ it("bun update <name> --latest holds back only the root's entry; a transitive ed
   });
 });
 
-it("bun update <name> --latest on a dist-tag entry follows the tag even when it moved backwards", async () => {
+it("bun update <name> on a dist-tag entry follows the tag even when it moved backwards; --latest then writes that version", async () => {
   const tgzDir = join(package_dir, ".tarballs");
   const versions = { "1.0.0": {}, "1.1.0": {} };
   await packPerName(tgzDir, { shared: { versions, latest: "1.1.0" } });
@@ -1477,7 +1490,7 @@ it("bun update <name> --latest on a dist-tag entry follows the tag even when it 
   expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"']);
 
   setHandler(perNameHandler(tgzDir, { shared: { versions, latest: "1.0.0" } }));
-  await runInPackageDir("update", "shared", "--latest");
+  await runInPackageDir("update", "shared");
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
   expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
   expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
@@ -1487,6 +1500,16 @@ it("bun update <name> --latest on a dist-tag entry follows the tag even when it 
   await runInPackageDir("update");
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
   expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
+
+  await runInPackageDir("update", "shared", "--latest");
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    ...packageJson,
+    dependencies: { shared: "^1.0.0" },
+  });
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
+  expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+  });
 });
 
 // `shared` is only reachable through dep-x; the install below pins 1.0.0 before the registry starts serving 1.1.0.
@@ -1686,48 +1709,55 @@ describe("bun update <name> semantics", () => {
 
   for (const args of [[], ["dep-with-tags"]]) {
     it.concurrent(
-      `bun update ${[...args, "--latest"].join(" ")} keeps a dist-tag literal and follows the tag`,
+      `bun update ${[...args, "--latest"].join(" ")} replaces a dist-tag literal with the latest version`,
       async () => {
         const dir = await setup({ "dep-with-tags": "pre-2" });
         expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");
-        const lockBefore = await lockText(dir);
         await update(dir, ...args, "--latest");
-        await expectInSync(dir, { "dep-with-tags": "pre-2" });
-        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1"]);
-        expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");
-        expect(await lockText(dir)).toBe(lockBefore);
+        await expectInSync(dir, { "dep-with-tags": "^3.0.0" });
+        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.0"]);
+        expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.0");
       },
     );
   }
 
-  it.concurrent("bun update --latest keeps a dist-tag literal next to a range it does rewrite", async () => {
+  it.concurrent("bun update --latest rewrites a dist-tag literal next to a range", async () => {
     const dir = await setup({ "dep-with-tags": "pre-2", "no-deps": "~1.0.0" });
     const { stdout } = await update(dir, "--latest");
-    await expectInSync(dir, { "dep-with-tags": "pre-2", "no-deps": "~2.0.0" });
-    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1"]);
+    await expectInSync(dir, { "dep-with-tags": "^3.0.0", "no-deps": "~2.0.0" });
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.0"]);
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
     expect(stdout).toContain("no-deps");
-    expect(stdout).not.toContain("dep-with-tags");
+    expect(stdout).toContain("dep-with-tags");
   });
 
-  it.concurrent("bun update --latest keeps an aliased dist-tag", async () => {
+  it.concurrent("bun update --latest replaces an aliased dist-tag behind its alias", async () => {
     const dir = await setup({ tagged: "npm:dep-with-tags@pre-2" });
-    const before = await snapshotFiles(dir);
-    await update(dir, "--latest");
-    await expectUnchanged(dir, before);
-    await expectInSync(dir, { tagged: "npm:dep-with-tags@pre-2" });
     expect(await installedVersion(dir, "tagged")).toBe("2.0.1");
+    await update(dir, "--latest");
+    await expectInSync(dir, { tagged: "npm:dep-with-tags@^3.0.0" });
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.0"]);
+    expect(await installedVersion(dir, "tagged")).toBe("3.0.0");
   });
 
-  it.concurrent("bun update --latest is a no-op on `latest` literals whose tag has not moved", async () => {
+  it.concurrent("bun update --latest replaces `latest` literals even when the tag has not moved", async () => {
     const dir = await setup({ "no-deps": "latest", aliased: "npm:a-dep@latest" });
-    const before = await snapshotFiles(dir);
     const { stdout } = await update(dir, "--latest");
     expect(stdout).not.toContain("->");
     expect(stdout).not.toContain("→");
-    await expectUnchanged(dir, before);
+    await expectInSync(dir, { "no-deps": "^2.0.0", aliased: "npm:a-dep@^1.0.10" });
     expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
     expect(await installedVersion(dir, "aliased")).toBe("1.0.10");
+  });
+
+  it.concurrent("bun update keeps `latest` literals and an aliased dist-tag as written", async () => {
+    const dir = await setup({ "no-deps": "latest", tagged: "npm:dep-with-tags@pre-2" });
+    const before = await snapshotFiles(dir);
+    await update(dir);
+    await expectUnchanged(dir, before);
+    await expectInSync(dir, { "no-deps": "latest", tagged: "npm:dep-with-tags@pre-2" });
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+    expect(await installedVersion(dir, "tagged")).toBe("2.0.1");
   });
 
   it.concurrent.each<[string, string, string[]]>([

@@ -147,6 +147,25 @@ test("keepalive: true with a Request source body does not throw", async () => {
   ).toThrow(TypeError);
 });
 
+test("init ReadableStream body uses the resolved keepalive, inherited from the input Request", () => {
+  // Spec: init.body is extracted with the request's keepalive, which is
+  // copied from the input Request when init has no `keepalive` member.
+  const base = new Request("https://example.org/", { method: "POST", body: "x", keepalive: true });
+  expect(() => new Request(base, { body: new ReadableStream() } as any)).toThrow(TypeError);
+
+  class MySubRequest extends Request {}
+  const sub = new MySubRequest("https://example.org/", { method: "POST", body: "x", keepalive: true });
+  expect(() => new Request(sub, { body: new ReadableStream() } as any)).toThrow(TypeError);
+
+  // An explicit init.keepalive overrides the inherited value.
+  const overridden = new Request(base, { body: new ReadableStream(), keepalive: false, duplex: "half" } as any);
+  expect(overridden.keepalive).toBe(false);
+
+  // A base without keepalive does not make stream bodies throw.
+  const plain = new Request("https://example.org/", { method: "POST", body: "x" });
+  expect(() => new Request(plain, { body: new ReadableStream(), duplex: "half" } as any)).not.toThrow();
+});
+
 test("new Request(other) copies referrer, integrity, keepalive", () => {
   const base = new Request("https://example.org/", {
     referrer: "https://foo.example/",

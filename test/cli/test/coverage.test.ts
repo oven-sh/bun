@@ -589,3 +589,144 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+/** Runs `bun test --coverage` in `dir` and returns whether each of `lines` of `file` was hit, missed, or not executable ("-"). */
+async function lineCoverage(dir: string, file: string, lines: number[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cov"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+  const record = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8")
+    .split("end_of_record")
+    .find(record => record.includes(`SF:${file}\n`))!;
+  const hits = new Map<number, number>();
+  for (const [, line, count] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    hits.set(Number(line), Number(count));
+  }
+  return Object.fromEntries(
+    lines.map(line => [line, !hits.has(line) ? "-" : hits.get(line)! > 0 ? "hit" : "MISSED"] as const),
+  );
+}
+
+// JSC normally compiles `if (c) { break; }` / `if (c) { continue; }` down to a single conditional
+// jump with no bytecode for the body, which left the body's coverage block recording the path
+// that skipped it. The body line must be reported from what the body did, in both directions.
+test.concurrent("coverage of if bodies that only break or continue reflects whether they ran", async () => {
+  using dir = tempDir("cov", {
+    "lib.js": `export function continueTaken(xs) {
+  let n = 0;
+  for (const x of xs) {
+    if (x) {
+      continue;
+    }
+    n++;
+  }
+  return n;
+}
+export function continueSkipped(xs) {
+  let n = 0;
+  for (const x of xs) {
+    if (x) {
+      continue;
+    }
+    n++;
+  }
+  return n;
+}
+export function breakTaken() {
+  let i = 0;
+  while (true) {
+    if (i === 0) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+export function breakSkipped(xs) {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] < 0) {
+      break;
+    }
+    n++;
+  }
+  return n;
+}
+export function bracelessContinueTaken(xs) {
+  let n = 0;
+  for (const x of xs) {
+    if (x)
+      continue;
+    n++;
+  }
+  return n;
+}
+export function switchBreakTaken(v) {
+  let fellThrough = false;
+  switch (v) {
+    case 1:
+      if (v === 1) {
+        break;
+      }
+      fellThrough = true;
+      break;
+  }
+  return fellThrough;
+}
+export function constantConditionBreak() {
+  let spins = 0;
+  while (true) {
+    if (2 === 2) {
+      break;
+    }
+    spins++;
+  }
+  return spins;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import * as lib from "./lib.js";
+test("each if body either runs on every pass or never", () => {
+  expect(lib.continueTaken([1, 1])).toBe(0);
+  expect(lib.continueSkipped([0, 0])).toBe(2);
+  expect(lib.breakTaken()).toBe(0);
+  expect(lib.breakSkipped([1, 2])).toBe(2);
+  expect(lib.bracelessContinueTaken([1, 1])).toBe(0);
+  expect(lib.switchBreakTaken(1)).toBe(false);
+  expect(lib.constantConditionBreak()).toBe(0);
+});
+`,
+  });
+
+  // Each pair is the break/continue line followed by the statement the jump skips over.
+  expect(await lineCoverage(String(dir), "lib.js", [5, 7, 15, 17, 25, 27, 35, 37, 45, 46, 55, 57, 66, 68])).toEqual({
+    // continueTaken: `continue` ran on every iteration, `n++` never did
+    5: "hit",
+    7: "MISSED",
+    // continueSkipped
+    15: "MISSED",
+    17: "hit",
+    // breakTaken
+    25: "hit",
+    27: "MISSED",
+    // breakSkipped
+    35: "MISSED",
+    37: "hit",
+    // bracelessContinueTaken
+    45: "hit",
+    46: "MISSED",
+    // switchBreakTaken
+    55: "hit",
+    57: "MISSED",
+    // constantConditionBreak: the shape from #20141, the transpiler folds the condition to `true`
+    66: "hit",
+    68: "MISSED",
+  });
+});

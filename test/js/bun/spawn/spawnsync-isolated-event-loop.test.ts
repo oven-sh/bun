@@ -298,7 +298,7 @@ describe.concurrent("spawnSync on the real loop holds everything that predates i
               if (String(d) === "first") {
                 res.write("partial");
                 during = true;
-                execSync(process.execPath + " -e 'Bun.sleepSync(200)'");
+                execSync("sleep 0.2");
                 during = false;
                 log.push("returned");
               }

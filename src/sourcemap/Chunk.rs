@@ -534,17 +534,19 @@ impl NewBuilder<'_, VLQSourceMap> {
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
+        // Same decoder as `LineOffsetTable::generate` and `LineColumnOffset::advance`:
+        // a lead byte whose continuation bytes are missing (a Latin-1 byte in a legal
+        // comment) is one U+FFFD, one byte wide, so a line terminator right after it is
+        // still seen below instead of being skipped with the width the lead byte declared.
+        let iter = strings::CodepointIterator::init(slice);
         while i < n {
-            let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            let mut cp_bytes = [0u8; 4];
-            let take = (len as usize).min(n - i);
-            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
-            c = strings::decode_wtf8_rune_t::<i32>(
-                cp_bytes,
-                len,
-                strings::UNICODE_REPLACEMENT as i32,
-            );
-            i += len as usize;
+            let mut cursor = strings::Cursor {
+                i: i as u32,
+                ..Default::default()
+            };
+            let _ = iter.next(&mut cursor);
+            c = cursor.c;
+            i += cursor.width as usize;
 
             match c {
                 14..=127 => {

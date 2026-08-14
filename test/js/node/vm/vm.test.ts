@@ -1605,43 +1605,47 @@ test("a vm timeout that never fires leaves nothing behind either", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("nested vm runs each keep their own deadline", () => {
-  const vm = require("node:vm");
-  const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  // Inner run times out; the outer script catches that (catchable) error and carries on within its budget.
-  expect(
-    vm.runInNewContext(
-      `let r; try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch (e) { r = "inner:" + e.code } r`,
-      { vm },
-      { timeout: 5000 },
-    ),
-  ).toBe("inner:ERR_SCRIPT_EXECUTION_TIMEOUT");
-  // Outer deadline passes while the inner run is on the stack: the outer run is what times out.
-  expect(() =>
-    vm.runInNewContext(`vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })`, { vm }, { timeout: 30 }),
-  ).toThrow(expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }));
-  // Both deadlines pass before the inner run ends (it is blocked off-CPU past both): the inner
-  // run's error is caught by the outer script, which must nevertheless still be stopped by its own,
-  // already-fired deadline rather than loop forever.
-  const t = performance.now();
-  expect(() =>
-    vm.runInNewContext(
-      `try { vm.runInNewContext("sleepSync(120)", { sleepSync }, { timeout: 20 }) } catch {} for (;;) {}`,
-      { vm, sleepSync },
-      { timeout: 40 },
-    ),
-  ).toThrow(expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }));
-  expect(performance.now() - t).toBeLessThan(2000);
-});
+// The next two run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
+// a child: a regression then fails that child (spawn timeout) instead of hanging this file.
+test("nested vm runs each keep their own deadline", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const codeOf = (fn) => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+    // Inner run times out; the outer script catches that (catchable) error and carries on within its budget.
+    console.log(vm.runInNewContext(
+      'let r; try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch (e) { r = "inner:" + e.code } r',
+      { vm }, { timeout: 5000 }));
+    // Outer deadline passes while the inner run is on the stack: the outer run is what times out.
+    console.log(codeOf(() => vm.runInNewContext('vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })', { vm }, { timeout: 30 })));
+    // Both deadlines pass before the inner run ends (it is blocked off-CPU past both): the inner
+    // run's error is caught by the outer script, which must nevertheless still be stopped by its own,
+    // already-fired deadline rather than loop forever.
+    const t = performance.now();
+    console.log(codeOf(() => vm.runInNewContext(
+      'try { vm.runInNewContext("sleepSync(120)", { sleepSync }, { timeout: 20 }) } catch {} for (;;) {}',
+      { vm, sleepSync }, { timeout: 40 })), performance.now() - t < 2000);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("inner:ERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT true\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 test("a module whose evaluation times out is errored", async () => {
-  const vm = require("node:vm");
-  const m = new vm.SourceTextModule("for (;;) {}", { context: vm.createContext({}) });
-  await m.link(() => {
-    throw new Error("unreachable");
-  });
-  await expect(m.evaluate({ timeout: 20 })).rejects.toMatchObject({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" });
-  expect(m.status).toBe("errored");
-  // A second evaluate() re-throws the recorded error rather than complaining about the status.
-  await expect(m.evaluate({ timeout: 20 })).rejects.toMatchObject({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" });
-});
+  const code = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("for (;;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    const first = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
+    // A second evaluate() re-throws the recorded error rather than complaining about the status.
+    const second = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
+    console.log(first, m.status, second);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT errored ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+  expect(exitCode).toBe(0);
+}, 30_000);

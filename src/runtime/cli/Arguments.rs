@@ -745,6 +745,13 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
+/// The cwd was deleted or does not fit in a path buffer: the user's
+/// environment, reported as such rather than as an internal error.
+fn exit_without_cwd(err: bun_sys::Error) -> ! {
+    Output::err(err, "Could not get the current working directory", ());
+    Global::exit(1)
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BunCAStore {
@@ -834,8 +841,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            let len = bun_sys::getcwd(&mut *outbuf)?;
-            &outbuf[..len]
+            match bun_sys::getcwd(&mut *outbuf) {
+                Ok(len) => &outbuf[..len],
+                Err(err) => exit_without_cwd(err),
+            }
         };
         let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
         // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
@@ -857,20 +866,30 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Ok(p) => Box::<[u8]>::from(p.as_bytes()),
             Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
         }
-    } else if matches!(
-        cmd,
-        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
-    ) {
-        // A deleted cwd must not abort the runtime (Node boots and lets
-        // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = PathBuffer::uninit();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
-        // Everything else (install/test/build/...) must not silently act on
-        // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        match bun_sys::getcwd(&mut *temp) {
+            Ok(len) => Box::<[u8]>::from(&temp[..len]),
+            // A deleted cwd must not abort the runtime (Node boots and lets
+            // `process.cwd()` throw later); fall back to the executable's dir.
+            // Only the runtime, and only for a deleted cwd: install/test/build
+            // must not act on whatever project lives above the executable, and
+            // a cwd that merely does not fit in PATH_MAX still exists, so
+            // resolving against any other directory would silently run that
+            // directory's files.
+            Err(err)
+                if err.get_errno() == bun_sys::E::ENOENT
+                    && matches!(
+                        cmd,
+                        CommandTag::AutoCommand
+                            | CommandTag::RunCommand
+                            | CommandTag::RunAsNodeCommand
+                    ) =>
+            {
+                Box::<[u8]>::from(bun_core::self_exe_dir(&mut temp).as_bytes())
+            }
+            Err(err) => exit_without_cwd(err),
+        }
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely

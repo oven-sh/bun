@@ -270,11 +270,7 @@ impl JobContext for Pbkdf2Job {
     type OffThread = Self;
     type Js = JSPromiseStrong;
 
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         let len = usize::try_from(this.pbkdf2.length).expect("int cast");
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();

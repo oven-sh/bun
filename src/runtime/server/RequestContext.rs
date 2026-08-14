@@ -2341,7 +2341,7 @@ where
                         Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
-                    ))?;
+                    ));
                     err.reset();
                     return Ok(true);
                 }
@@ -4061,7 +4061,7 @@ where
                         "Request body exceeded maxRequestBodySize",
                     ));
                     // TODO: properly propagate exception upwards
-                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                    bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
                     err.reset();
@@ -4096,7 +4096,7 @@ where
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
                 // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+                bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
@@ -4129,7 +4129,7 @@ where
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
                 // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
 
             return;

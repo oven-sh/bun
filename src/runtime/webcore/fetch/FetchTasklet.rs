@@ -779,7 +779,7 @@ impl FetchTasklet {
                     js_err.ensure_still_alive();
                     bytes.on_data(StreamResult::Err(StreamError::JSValue(
                         bun_jsc::strong::Optional::create(js_err, &global_this),
-                    )))?;
+                    )));
                 }
             }
             // A failure result is terminal (`to_result` forces `has_more =
@@ -816,7 +816,7 @@ impl FetchTasklet {
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, false));
                     self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
                     self.clear_stream_handlers();
@@ -824,7 +824,7 @@ impl FetchTasklet {
                     buffer_reset.set(false);
 
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, true));
                     drop(prev);
                 }
                 return Ok(());
@@ -844,12 +844,12 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, false));
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, true));
                     }
 
                     return Ok(());

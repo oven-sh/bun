@@ -1099,13 +1099,11 @@ impl Value {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let res = bytes.on_data(streams::Result::TemporaryAndDone(
-                            bun_ptr::RawSlice::new(blob.slice()),
-                        ));
+                        bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
+                            blob.slice(),
+                        )));
                         blob.detach();
-                        res
-                    })
-                    .transpose()?;
+                    });
 
                 if fed.is_some() {
                     *new = Value::Used;
@@ -1389,7 +1387,7 @@ impl Value {
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
-                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)))?;
+                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
                     readable.abort(global);
                 }

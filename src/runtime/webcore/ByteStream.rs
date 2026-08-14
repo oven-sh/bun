@@ -240,7 +240,7 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) -> jsc::JsResult<()> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -249,7 +249,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
-            return Ok(());
+            return;
         }
 
         debug_assert!(
@@ -265,14 +265,14 @@ impl ByteStream {
                 self.sink.set(SinkHandle::None);
                 self.sink_paused.set(false);
                 sink.end(Some(err));
-                return Ok(());
+                return;
             }
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
                 self.append(stream, 0)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-                return Ok(());
+                return;
             }
 
             let is_done = stream.is_done();
@@ -284,13 +284,13 @@ impl ByteStream {
                     self.sink.set(SinkHandle::None);
                     self.sink_paused.set(false);
                     sink.end(Some(streams::StreamError::Error(e)));
-                    return Ok(());
+                    return;
                 }
                 streams::Writable::Done => {
                     self.sink.set(SinkHandle::None);
                     self.sink_paused.set(false);
                     sink.end(None);
-                    return Ok(());
+                    return;
                 }
                 _ => {
                     self.signal_drained();
@@ -301,7 +301,7 @@ impl ByteStream {
                 self.sink.set(SinkHandle::None);
                 sink.end(None);
             }
-            return Ok(());
+            return;
         }
 
         if self.buffer_action.get().is_some() {
@@ -327,7 +327,7 @@ impl ByteStream {
                 });
                 self.buffer_action.set(None);
 
-                return Ok(());
+                return;
             }
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
@@ -338,7 +338,7 @@ impl ByteStream {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
                 let Some(mut action) = self.buffer_action.replace(None) else {
                     // Consumed re-entrantly during `signal_drained`.
-                    return Ok(());
+                    return;
                 };
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
@@ -349,7 +349,7 @@ impl ByteStream {
 
                     let mut blob = self.to_any_blob().unwrap();
                     action.fulfill(self.parent_const().global_this(), &mut blob);
-                    return Ok(());
+                    return;
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
@@ -364,7 +364,7 @@ impl ByteStream {
                         self.buffer.set(owned.move_to_list_managed());
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
-                        return Ok(());
+                        return;
                     }
                 }
 
@@ -381,7 +381,7 @@ impl ByteStream {
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 action.fulfill(self.parent_const().global_this(), &mut blob);
-                return Ok(());
+                return;
             } else {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(stream.slice()));
@@ -390,7 +390,7 @@ impl ByteStream {
                 drop(stream);
             }
 
-            return Ok(());
+            return;
         }
 
         let chunk = stream.slice();
@@ -469,14 +469,13 @@ impl ByteStream {
             // `&mut self` form.
             self.pending.with_mut(|p| p.run());
 
-            return Ok(());
+            return;
         }
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-        Ok(())
     }
 
     fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {

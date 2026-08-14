@@ -1368,21 +1368,21 @@ impl S3DownloadStreamWrapper {
                                 &self_.global,
                             ),
                         ),
-                    ))?;
+                    ));
                     return Ok(());
                 }
                 if has_more {
                     bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
                         // chunk.list is borrowed for the duration of on_data.
                         bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                    ))?;
+                    ));
                     return Ok(());
                 }
 
                 bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
                     // chunk.list is borrowed for the duration of on_data.
                     bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                ))?;
+                ));
                 return Ok(());
             }
         }

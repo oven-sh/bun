@@ -6821,10 +6821,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     return JSC::JSValue::encode(completions);
 }
 
-// One `object.name` step of a completion chain: ordinary property semantics (prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
+// One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
 extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue objectValue,
+    JSC::EncodedJSValue baseValue,
     const unsigned char* namePtr,
     size_t nameLen)
 {
@@ -6832,10 +6832,16 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSC::JSObject* object = JSC::JSValue::decode(objectValue).getObject();
+    JSC::JSValue base = JSC::JSValue::decode(baseValue);
     WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
-    if (!object || name.isNull())
+    if (!base || base.isUndefinedOrNull() || name.isNull())
         return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = base.toObject(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
     if (scope.exception()) [[unlikely]] {

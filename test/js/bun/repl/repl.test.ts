@@ -1219,6 +1219,18 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       );
     });
 
+    test("resolves chains through primitive values", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `process.version` is a string and `.length` a number; both get boxed
+          // the way a real property access would, ending on Number.prototype.
+          send("process.version.length.toF");
+          await waitFor(`${DIM}ixed`);
+        },
+        { env: colorEnv },
+      );
+    });
+
     test("spread dots do not turn the word into a property access", async () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
@@ -1252,6 +1264,15 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
         },
         { env: colorEnv },
       );
+    });
+
+    test("tab inside a string literal indents instead of completing", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // `JSON.pars` has exactly one completion, which Tab would otherwise splice
+        // into the string; indenting adds two spaces, so the length is 9 + 2.
+        send('("JSON.pars\t").length\n');
+        await waitFor(/\b11\b/);
+      });
     });
 
     test("completion on a Proxy with a misbehaving getPrototypeOf trap does not hang", async () => {

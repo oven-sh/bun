@@ -57,7 +57,7 @@ unsafe extern "C" {
 
     fn Bun__REPL__getProperty(
         globalObject: *const JSGlobalObject,
-        objectValue: JSValue,
+        baseValue: JSValue,
         namePtr: *const u8,
         nameLen: usize,
     ) -> JSValue;
@@ -1309,7 +1309,7 @@ impl<'a> Repl<'a> {
             if index == 0 && part == b"this" {
                 continue;
             }
-            if !identifier::is_identifier(part) || !current.is_object() {
+            if !identifier::is_identifier(part) || current.is_undefined_or_null() {
                 return JSValue::UNDEFINED;
             }
             // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `part` borrows
@@ -2585,6 +2585,10 @@ impl<'a> Repl<'a> {
         };
 
         let cursor = self.line_editor.cursor;
+        if ends_inside_string(&line[..cursor]) {
+            self.insert_tab_spaces();
+            return;
+        }
 
         // Mid-identifier (`con|sole`): completing would duplicate the suffix.
         if cursor < line.len() && is_word_byte(line[cursor]) {
@@ -2778,7 +2782,7 @@ const JS_KEYWORDS: &[&[u8]] = &[
     b"yield",
 ];
 
-/// Words inside a `'…'`, `"…"` or backtick literal are not identifiers, so hinting there is noise.
+/// Words inside a `'…'`, `"…"` or backtick literal are not identifiers, so completing them is noise.
 fn ends_inside_string(line: &[u8]) -> bool {
     let mut quote = 0u8;
     let mut escaped = false;

@@ -278,6 +278,598 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
+describe("workspace and npm dependency sharing a name", () => {
+  // A root npm dependency whose range cannot link the same-named workspace
+  // member must replace the member's implicit workspace dependency, the way
+  // a version mismatch against a versioned member already does. A versionless
+  // member used to keep both dependencies and `bun install` died with
+  // `error: Package "alpha@1.0.0" has a dependency loop` /
+  // `error: An internal error occurred (DependencyLoop)`. A versioned member
+  // resolved correctly but reloading the saved lockfile failed with
+  // `error: Duplicate package path`, so every install re-resolved and
+  // `--frozen-lockfile` failed.
+
+  test.concurrent("range that cannot match a versionless member installs from the registry", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"no-deps": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    expect(lockfile).not.toContain("no-deps@workspace:");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("wildcard range still links a versionless member", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "*" },
+        }),
+      ),
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"no-deps": ["no-deps@workspace:packages/no-deps"]`);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+    });
+
+    // whether this shape re-saves on reinstall is tracked separately; here
+    // only the content and frozen acceptance matter
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("displaced member stays reachable through workspace: and the lockfile round-trips", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    // the root node_modules/no-deps is the registry package; the member nests
+    // under beta instead of duplicating the root key
+    expect(lockfile.match(/"no-deps": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    expect(lockfile).toContain(`"beta/no-deps": ["no-deps@workspace:packages/no-deps"]`);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(
+      await file(join(packageDir, "node_modules", "beta", "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({
+      name: "no-deps",
+      version: "3.0.0",
+    });
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(second.out).toContain("(no changes)");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("displaced member converges with the isolated linker", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            linker: "isolated",
+            registry: verdaccio.registryUrl(),
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"no-deps": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    expect(lockfile).toContain(`"beta/no-deps": ["no-deps@workspace:packages/no-deps"]`);
+    expect(await file(join(packageDir, "packages", "beta", "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "3.0.0",
+    });
+
+    // the member's symlink task re-runs by design; it must not be reported
+    // as an install on a converged tree
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(second.out).toContain("(no changes)");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("aliased npm dependency colliding with a member's name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "my-alias": "npm:no-deps@1.0.0" },
+        }),
+      ),
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"my-alias": ["no-deps@1.0.0"`);
+    expect(lockfile).not.toContain("no-deps@workspace:");
+    expect(await file(join(packageDir, "node_modules", "my-alias", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("linkWorkspacePackages = false round-trips a satisfied range", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            linkWorkspacePackages: false,
+            registry: verdaccio.registryUrl(),
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      // the range satisfies the member's version, but linkWorkspacePackages
+      // is off, so the registry package must win; beta keeps the member in
+      // the lockfile so reloading it exercises the same decision
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"no-deps": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    expect(lockfile).toContain(`"beta/no-deps": ["no-deps@workspace:packages/no-deps"]`);
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("flipping linkWorkspacePackages re-resolves instead of failing", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfig = (linkWorkspacePackages: boolean) =>
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          linkWorkspacePackages,
+          registry: verdaccio.registryUrl(),
+        },
+      });
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), bunfig(false)),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"no-deps": ["no-deps@1.0.0"`);
+
+    // the lockfile embodies linkWorkspacePackages = false; flipping the
+    // config must fail a frozen install loudly and re-resolve on a plain
+    // install, not error forever with an internal DependencyLoop
+    await write(join(packageDir, "bunfig.toml"), bunfig(true));
+    const frozen = await runBunInstall(env, packageDir, {
+      frozenLockfile: true,
+      allowErrors: true,
+      expectedExitCode: 1,
+    });
+    expect(frozen.err).toContain("lockfile had changes");
+    expect(frozen.err).not.toContain("DependencyLoop");
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+      `"no-deps": ["no-deps@workspace:packages/no-deps"]`,
+    );
+    const stable = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(stable.err).not.toContain("Saved lockfile");
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+    // and back
+    await write(join(packageDir, "bunfig.toml"), bunfig(false));
+    const frozenBack = await runBunInstall(env, packageDir, {
+      frozenLockfile: true,
+      allowErrors: true,
+      expectedExitCode: 1,
+    });
+    expect(frozenBack.err).toContain("lockfile had changes");
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    const stableBack = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(stableBack.err).not.toContain("Saved lockfile");
+  });
+
+  test.concurrent("displaced member's own pinned dependency survives reload", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"beta/no-deps/a-dep": ["a-dep@1.0.1"`);
+
+    // a cold install from the lockfile must resolve the member's dependency
+    // under its nested key, not fall back to the root version
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
+    const reload = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(reload.err).not.toContain("Saved lockfile");
+
+    expect(
+      await file(join(packageDir, "packages", "no-deps", "node_modules", "a-dep", "package.json")).json(),
+    ).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+      name: "a-dep",
+      version: "1.0.2",
+    });
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  });
+
+  test.concurrent("displaced member's dependency hoisted to root stays on the root version", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // registry two-range-deps@1.0.0 depends on no-deps@^1.0.0, which nests
+    // under it as "two-range-deps/no-deps" because the root pins
+    // no-deps@2.0.0; the member's own no-deps@2.0.0 hoists to the root.
+    // Reloading must not bind the member's dependency through the npm
+    // package's "two-range-deps/no-deps" key.
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "two-range-deps": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "two-range-deps", "package.json"),
+        JSON.stringify({ name: "two-range-deps", version: "9.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "two-range-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"two-range-deps/no-deps": ["no-deps@1.`);
+    expect(lockfile).toContain(`"beta/two-range-deps": ["two-range-deps@workspace:packages/two-range-deps"]`);
+    expect(lockfile).not.toContain("beta/two-range-deps/no-deps");
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    // hoisted to the root: the member must not get its own nested copy
+    expect(await exists(join(packageDir, "packages", "two-range-deps", "node_modules", "no-deps"))).toBe(false);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("displaced member's dependency hoisted to an intermediate node binds there", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // beta pins the same a-dep version as the member, so the member's
+    // dependency hoists to beta's node ("beta/a-dep") rather than nesting
+    // under "beta/no-deps/a-dep" or hoisting to the root; the reload walk
+    // must stop at that intermediate level
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({
+          name: "beta",
+          version: "1.0.0",
+          dependencies: { "no-deps": "workspace:*", "a-dep": "1.0.1" },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"beta/a-dep": ["a-dep@1.0.1"`);
+    expect(lockfile).not.toContain("beta/no-deps/a-dep");
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "beta", "node_modules"), { recursive: true, force: true });
+    const reload = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(reload.err).not.toContain("Saved lockfile");
+
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    expect(
+      await file(join(packageDir, "packages", "beta", "node_modules", "a-dep", "package.json")).json(),
+    ).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    // hoisted to beta's node: the member must not get its own nested copy
+    expect(await exists(join(packageDir, "packages", "no-deps", "node_modules", "a-dep"))).toBe(false);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("scoped displaced member round-trips and keeps scoped walk boundaries", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // a scoped name is a single tree node: resolving the member's hoisted
+    // dependency must walk "beta/@types/is-number" straight to "beta",
+    // never probing "beta/@types/<dep>"
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "@types/is-number": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "tin", "package.json"),
+        JSON.stringify({ name: "@types/is-number", version: "9.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "@types/is-number": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"@types/is-number": ["@types/is-number@1.0.0"`);
+    expect(lockfile).toContain(`"beta/@types/is-number": ["@types/is-number@workspace:packages/tin"]`);
+    // the member's no-deps hoists to the root
+    expect(lockfile).not.toContain("beta/@types/is-number/no-deps");
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    expect(await exists(join(packageDir, "packages", "tin", "node_modules", "no-deps"))).toBe(false);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("duplicate workspace keys in a hand-edited lockfile are rejected", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(join(packageDir, "packages", "nd", "package.json"), JSON.stringify({ name: "member-a", version: "1.0.0" })),
+      // duplicate workspace path keys with an npm package owning the first
+      // member name's root packages key; the duplicate must be rejected by
+      // the parser, not trip an out-of-bounds workspace package range
+      write(
+        join(packageDir, "bun.lock"),
+        `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": { "name": "sandbox", "dependencies": { "no-deps": "1.0.0" } },
+    "packages/nd": { "name": "member-a", "version": "1.0.0" },
+    "packages/nd": { "name": "member-b", "version": "1.0.0" },
+    "packages/nd": { "name": "member-c", "version": "1.0.0" },
+  },
+  "packages": {
+    "member-a": ["member-a@1.0.0", "", {}, ""],
+  }
+}`,
+      ),
+    ]);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Duplicate workspace name: 'member-a'");
+    expect(exitCode).toBe(1);
+
+    // the same name at two different paths must also be rejected instead of
+    // silently keeping only the last path
+    await write(
+      join(packageDir, "bun.lock"),
+      `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": { "name": "sandbox", "dependencies": { "no-deps": "1.0.0" } },
+    "packages/nd": { "name": "member-a", "version": "1.0.0" },
+    "packages/nd2": { "name": "member-a", "version": "1.0.0" },
+  },
+  "packages": {
+    "member-a": ["member-a@workspace:packages/nd"],
+  }
+}`,
+    );
+    await using proc2 = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+    expect(stderr2).toContain("Duplicate workspace name: 'member-a'");
+    expect(exitCode2).toBe(1);
+  });
+});
+
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

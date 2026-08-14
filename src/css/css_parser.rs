@@ -2257,7 +2257,7 @@ pub struct ComposesEntry {
 
 pub struct PropertyUsage {
     pub bitset: PropertyBitset,
-    pub custom_properties: Box<[&'static [u8]]>, // TODO: lifetime — arena slices
+    pub custom_properties: Vec<&'static [u8]>, // TODO: lifetime — arena slices
     pub range: bun_ast::Range,
 }
 
@@ -2265,7 +2265,7 @@ impl Default for PropertyUsage {
     fn default() -> Self {
         Self {
             bitset: PropertyBitset::init_empty(),
-            custom_properties: Box::default(),
+            custom_properties: Vec::new(),
             range: bun_ast::Range::default(),
         }
     }
@@ -2277,11 +2277,7 @@ impl PropertyUsage {
     #[inline]
     pub(crate) fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
         self.bitset.set_union(used);
-        if !custom_properties.is_empty() {
-            self.custom_properties = [&*self.custom_properties, custom_properties]
-                .concat()
-                .into_boxed_slice();
-        }
+        self.custom_properties.extend_from_slice(custom_properties);
     }
 }
 

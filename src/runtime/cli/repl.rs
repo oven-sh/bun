@@ -849,9 +849,7 @@ pub(super) struct Repl<'a> {
     history: History,
     multiline_buffer: Vec<u8>,
     editor_buffer: Vec<u8>,
-    /// Ghost text shown dimmed after the cursor (the *remainder* to append,
-    /// not the full word). Empty when no suggestion is available. Only
-    /// rendered when the cursor is at end-of-line and colors are enabled.
+    /// Remainder of the current inline completion (not the full word); empty when none.
     suggestion: Vec<u8>,
 
     // State
@@ -1254,11 +1252,7 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Write the inline ghost suggestion after the typed text. Only shown
-        // when the cursor is at end-of-line so it visually continues the
-        // input. Width-fit is enforced in update_suggestion(), so anything
-        // stored here is guaranteed to render on the current row — keeping
-        // render/accept in sync.
+        // Ghost text; update_suggestion() already guarantees it fits on this row.
         if !self.suggestion.is_empty()
             && self.use_colors
             && self.line_editor.cursor == self.line_editor.buffer.len()
@@ -1293,11 +1287,8 @@ impl<'a> Repl<'a> {
     // Inline Suggestions (ghost text)
     // ========================================================================
 
-    /// Resolve a dotted identifier chain like `process.env` starting from
-    /// globalThis by walking own/prototype properties. Returns `UNDEFINED`
-    /// on any failure. Deliberately avoids the REPL evaluator so `_`/`_error`
-    /// are untouched; getters on the chain may still run (matching Node's
-    /// REPL).
+    /// Walk `a.b.c` from globalThis via property gets (not the evaluator, so `_` is
+    /// untouched). `UNDEFINED` on any failure.
     fn resolve_object_expr(&self, expr: &[u8]) -> JSValue {
         let Some(global) = self.global else {
             return JSValue::UNDEFINED;
@@ -1326,8 +1317,6 @@ impl<'a> Repl<'a> {
         current
     }
 
-    /// Recompute the inline ghost suggestion for the current editor state.
-    /// Stores only the remainder (text to append) in `self.suggestion`.
     fn update_suggestion(&mut self) {
         self.suggestion.clear();
 
@@ -1338,8 +1327,6 @@ impl<'a> Repl<'a> {
             return;
         }
 
-        // Only suggest when the cursor is at end-of-line; mid-line ghost text
-        // is confusing to render correctly.
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
         if self.line_editor.cursor != line.len() {
             return;
@@ -1365,9 +1352,8 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // SAFETY: `global` is a live opaque handle; `ctx.prefix` is valid for
-        // the duration of the call. The C++ side uses a TopExceptionScope and
-        // clears any exception before returning, so nothing escapes here.
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the prefix ptr/len
+        // pair is valid for the duration of the call.
         let completions = unsafe {
             Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
         };
@@ -1405,10 +1391,9 @@ impl<'a> Repl<'a> {
                     continue;
                 }
                 if !is_dot_accessible(name) {
-                    continue; // skip keys that can't follow `.`
+                    continue;
                 }
                 if ctx.prefix.is_empty() {
-                    // `obj.` with no prefix: just offer the first reasonable key.
                     self.suggestion.clear();
                     self.suggestion.extend_from_slice(name);
                     break;
@@ -1421,7 +1406,6 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // Fallback: suggest a JS keyword in global context.
         if self.suggestion.is_empty() && ctx.object_expr.is_empty() && !ctx.prefix.is_empty() {
             for &kw in JS_KEYWORDS {
                 if kw.len() > ctx.prefix.len() && kw.starts_with(ctx.prefix) && kw.len() < best_len
@@ -1433,13 +1417,8 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // Drop the suggestion if rendering it would wrap past the terminal
-        // width — wrapping would make refresh_line()'s `\r`+CUF cursor restore
-        // land on the wrong row. Enforcing it here (not just at render time)
-        // keeps acceptance in sync: Tab/Right/End can never apply a
-        // suggestion the user didn't see. The line's display width can differ
-        // from its byte length (multi-byte/wide chars); the suggestion itself
-        // is always ASCII so its byte length is its width.
+        // A wrapped ghost would put refresh_line()'s cursor restore on the wrong row;
+        // dropping it here (not at render) also keeps accept in sync with what's shown.
         if !self.suggestion.is_empty() {
             let line_width = strings::visible::width::exclude_ansi_colors::utf8(&line);
             if self.get_prompt_length() + line_width + self.suggestion.len()
@@ -1450,18 +1429,23 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Insert the current suggestion into the line buffer. Returns true if a
-    /// suggestion was accepted.
     fn accept_suggestion(&mut self) -> bool {
         if self.suggestion.is_empty() {
             return false;
         }
         let sugg = core::mem::take(&mut self.suggestion);
         let ok = self.line_editor.insert_slice(&sugg).is_ok();
-        // Keep the Vec's capacity for reuse.
         self.suggestion = sugg;
         self.suggestion.clear();
         ok
+    }
+
+    /// Clear the suggestion and wipe any ghost text already drawn past the cursor.
+    fn erase_suggestion(&mut self) {
+        if !self.suggestion.is_empty() {
+            self.write(Cursor::CLEAR_TO_END.as_bytes());
+            self.suggestion.clear();
+        }
     }
 
     fn write_highlighted(&self, text: &[u8]) {
@@ -2293,16 +2277,12 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::CtrlF | Key::ArrowRight => {
-                    // At end-of-line with a visible suggestion, Right accepts
-                    // it (fish/node-style). Otherwise it moves the cursor.
-                    if self.line_editor.cursor == self.line_editor.buffer.len()
-                        && self.accept_suggestion()
+                    if self.line_editor.cursor != self.line_editor.buffer.len()
+                        || !self.accept_suggestion()
                     {
-                        self.update_suggestion();
-                    } else {
                         self.line_editor.move_right();
-                        self.update_suggestion();
                     }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::AltB | Key::AltLeft => {
@@ -2403,12 +2383,7 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
-        // Erase any rendered ghost text past the cursor so the submitted
-        // line shows only what was actually typed.
-        if !self.suggestion.is_empty() {
-            self.write(Cursor::CLEAR_TO_END.as_bytes());
-        }
-        self.suggestion.clear();
+        self.erase_suggestion();
         self.print(format_args!("\n"));
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
@@ -2514,10 +2489,7 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_ctrl_c(&mut self) {
-        if !self.suggestion.is_empty() {
-            self.write(Cursor::CLEAR_TO_END.as_bytes());
-        }
-        self.suggestion.clear();
+        self.erase_suggestion();
         match self.input_mode {
             InputMode::Editor => {
                 self.print(format_args!(
@@ -2557,7 +2529,6 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_tab(&mut self) {
-        // If a ghost suggestion is showing, Tab accepts it.
         if !self.suggestion.is_empty() && self.line_editor.cursor == self.line_editor.buffer.len() {
             self.accept_suggestion();
             self.update_suggestion();
@@ -2608,18 +2579,12 @@ impl<'a> Repl<'a> {
 
         let cursor = self.line_editor.cursor;
 
-        // Don't complete when the cursor is in the middle of an identifier —
-        // replacing only the left half would duplicate the right half (e.g.
-        // `con|sole` + Tab -> `consolesole`). Do nothing rather than insert
-        // whitespace here: every other indent-fallback in this function runs
-        // with the cursor at/after a token boundary, but this branch is by
-        // definition inside one, and injecting spaces would split it.
+        // Mid-identifier (`con|sole`): completing would duplicate the suffix.
         if cursor < line.len() && is_ident_part(line[cursor]) {
             self.refresh_line();
             return;
         }
 
-        // Parse the completion context at the cursor (handles `obj.prop` chains).
         let ctx = parse_completion_context(&line, cursor);
         let word_start = ctx.prefix_start;
         let prefix = ctx.prefix;
@@ -2628,7 +2593,6 @@ impl<'a> Repl<'a> {
         if !ctx.object_expr.is_empty() {
             target = self.resolve_object_expr(ctx.object_expr);
             if target.is_undefined_or_null() {
-                // Couldn't resolve the object; just indent.
                 let _ = self.line_editor.insert(b' ');
                 let _ = self.line_editor.insert(b' ');
                 self.refresh_line();
@@ -2636,7 +2600,6 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // Get completions from the target (or global object if target is undefined).
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
         // are valid for the duration of the call.
         let completions =
@@ -2682,11 +2645,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let completion = slice.slice();
-                // Only insert if the result is a valid dot-access identifier;
-                // e.g. a sole `"foo-bar"` key would otherwise produce
-                // `obj.foo-bar` which parses as subtraction.
                 if is_dot_accessible(completion) {
-                    // Replace the prefix with the completion
                     while self.line_editor.cursor > word_start {
                         self.line_editor.backspace();
                     }
@@ -2778,9 +2737,6 @@ fn is_ident_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_' || c == b'$'
 }
 
-/// True if `name` is safe to insert after a `.` — i.e. a plain ASCII
-/// identifier. Rejects keys like `"foo-bar"` or `"a b"` whose first byte
-/// passes `is_ident_start` but which would not parse as dot-access.
 fn is_dot_accessible(name: &[u8]) -> bool {
     match name.first() {
         Some(&c) if is_ident_start(c) => name[1..].iter().all(|&c| is_ident_part(c)),
@@ -2788,8 +2744,7 @@ fn is_dot_accessible(name: &[u8]) -> bool {
     }
 }
 
-/// Common JS keywords offered as fallback suggestions in global context when
-/// no matching global property exists (e.g. `fun` -> `function`).
+/// Fallback suggestions when no global matches the prefix.
 const JS_KEYWORDS: &[&[u8]] = &[
     b"async",
     b"await",
@@ -2830,19 +2785,16 @@ const JS_KEYWORDS: &[&[u8]] = &[
     b"yield",
 ];
 
+/// For `console.lo|`: `object_expr = "console"`, `prefix = "lo"`. An empty
+/// `object_expr` means complete against globalThis.
 struct CompletionContext<'a> {
-    /// Dotted object expression before the final `.`, e.g. `b"console"` for
-    /// input `console.lo|`. Empty means complete against globalThis.
     object_expr: &'a [u8],
-    /// Trailing identifier fragment being typed, e.g. `b"lo"` for `console.lo|`.
     prefix: &'a [u8],
-    /// Byte offset in `line` where `prefix` begins.
     prefix_start: usize,
 }
 
-/// Parse backward from `cursor` to determine what is being completed.
-/// Only recognises simple `ident(.ident)*` chains; anything fancier (calls,
-/// indexing, optional chaining) falls back to completing `prefix` on global.
+/// Only recognises `ident(.ident)*` before the cursor; anything else (calls,
+/// indexing, `?.`) degrades to global completion of the bare prefix.
 fn parse_completion_context(line: &[u8], cursor: usize) -> CompletionContext<'_> {
     let mut i = cursor;
     while i > 0 && is_ident_part(line[i - 1]) {
@@ -2867,8 +2819,7 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> CompletionContext<'_>
             i -= 1;
         }
         if i == ident_end {
-            // No identifier before the dot (e.g. `(expr).foo`) — can't safely
-            // resolve, so treat as global completion of the bare prefix.
+            // e.g. `(expr).foo`
             return CompletionContext {
                 object_expr: b"",
                 prefix,

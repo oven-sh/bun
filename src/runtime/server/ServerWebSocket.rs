@@ -379,8 +379,9 @@ impl ServerWebSocket {
         // Both callers route through `on_upgrade`'s `handler.server.is_none()`
         // refusal, so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
-        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` still
-        // returns `None` on `Finalized`).
+        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` returns
+        // `None` once the wrapper is `Finalized` or the VM's script gate has
+        // closed).
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(this_value, global_object, server_js);
         }

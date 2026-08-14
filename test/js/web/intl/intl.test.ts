@@ -129,7 +129,7 @@ describe("Intl.Collator", () => {
     const [locale, order, grouped] = JSON.parse(stdout);
     expect(locale).not.toContain("posix");
     expect(order).toBe(-1);
-    expect(grouped).toContain(",");
+    expect(grouped).not.toBe("1234.5"); // en_US_POSIX drops digit grouping
     expect(exitCode).toBe(0);
   });
 

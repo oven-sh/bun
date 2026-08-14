@@ -1572,10 +1572,10 @@ describe("bun test", () => {
 
   // jest and vitest never run a test file's process.on('exit') listeners; node's test harness asserts from them.
   describe.concurrent("process.on('exit') listeners", () => {
-    async function runFile(name: string, contents: string) {
-      using dir = tempDir("bun-test-exit-listener", { [name]: contents });
+    async function runFiles(files: Record<string, string>, ...args: string[]) {
+      using dir = tempDir("bun-test-exit-listener", files);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", name],
+        cmd: [bunExe(), "test", ...args],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -1584,19 +1584,27 @@ describe("bun test", () => {
       return { stdout, stderr, exitCode };
     }
 
+    function runFile(name: string, contents: string) {
+      return runFiles({ [name]: contents }, name);
+    }
+
+    const bunTestFile = (n: number) => `
+      import { test } from "bun:test";
+      process.on("exit", () => {
+        console.log("exit listener ${n} ran");
+        process.exit(1);
+      });
+      test("test ${n}", () => {});
+    `;
+    const nodeTestFile = (n: number) => `
+      import { test } from "node:test";
+      process.on("exit", () => process.exit(1));
+      test("test ${n}", () => {});
+    `;
+
     test("are not run for a bun:test file", async () => {
-      const { stdout, stderr, exitCode } = await runFile(
-        "exit.test.ts",
-        `
-          import { test } from "bun:test";
-          process.on("exit", () => {
-            console.log("exit listener ran");
-            process.exit(1);
-          });
-          test("a passing test", () => {});
-        `,
-      );
-      expect(stdout).not.toContain("exit listener ran");
+      const { stdout, stderr, exitCode } = await runFile("exit.test.ts", bunTestFile(1));
+      expect(stdout).not.toContain("exit listener");
       expect(stderr).toContain("1 pass");
       expect(exitCode).toBe(0);
     });
@@ -1664,16 +1672,46 @@ describe("bun test", () => {
     });
 
     test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
-      const { stderr, exitCode } = await runFile(
-        "node-exit-code.test.ts",
-        `
-          import { test } from "node:test";
-          process.on("exit", () => process.exit(1));
-          test("a passing test", () => {});
-        `,
-      );
+      const { stderr, exitCode } = await runFile("node-exit-code.test.ts", nodeTestFile(1));
       expect(stderr).toContain("1 pass");
       expect(exitCode).toBe(1);
+    });
+
+    test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
+      using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "drain.test.ts"],
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("exit listener 1 ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("are not run in --parallel workers for bun:test files", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(stdout).not.toContain("exit listener");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--parallel workers exit cleanly after node:test files", async () => {
+      const { stderr } = await runFiles(
+        { "a.test.ts": nodeTestFile(1), "b.test.ts": nodeTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(stderr).not.toContain("worker crashed");
+      expect(stderr).toContain("2 pass");
     });
   });
 });

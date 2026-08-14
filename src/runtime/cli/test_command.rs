@@ -920,6 +920,11 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
+    !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3031,8 +3036,7 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Node's test harness verifies mustCall() counts from an 'exit' listener; jest and vitest never run a test file's.
-        vm.exit_handler.skip_exit_listeners = !reporter.jest.node_test_used;
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;

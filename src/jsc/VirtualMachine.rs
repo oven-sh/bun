@@ -6269,97 +6269,133 @@ impl VirtualMachine {
                     only_non_index_properties: true,
                 },
             )?;
-            let longest_name = iterator.get_longest_property_name().min(10);
-            let mut is_first_property = true;
-            while let Some(field) = iterator.next()? {
-                let value = iterator.value;
+
+            /// How the property block below shows one own enumerable property.
+            enum OwnProperty {
+                /// Already shown elsewhere (the `name: message` line, the stack
+                /// trace, the `code` line), or not printable.
+                Hidden,
+                /// Printed in full after the stack trace (`errors_to_append`).
+                AppendedError,
+                /// Printed as a ` name: value` line in the property block.
+                Inline,
+            }
+            let classify = |field: &bun_core::String, value: JSValue| -> OwnProperty {
                 if field.eql_comptime(b"message")
                     || field.eql_comptime(b"name")
                     || field.eql_comptime(b"stack")
                 {
-                    continue;
+                    return OwnProperty::Hidden;
                 }
                 if field.eql_comptime(b"code") && code.is_some() {
-                    continue;
+                    return OwnProperty::Hidden;
                 }
-
                 let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
-                        saw_cause = true;
-                    }
-                    value.protect();
-                    errors_to_append.push(value);
+                    OwnProperty::AppendedError
                 } else if kind.is_object()
                     || kind.is_array()
                     || value.is_primitive()
                     || kind.is_string_like()
                 {
-                    let prev_disable_inspect_custom = formatter.disable_inspect_custom;
-                    let prev_quote_strings = formatter.quote_strings;
-                    let prev_max_depth = formatter.max_depth;
-                    let prev_format_buffer_as_text = formatter.format_buffer_as_text;
-                    formatter.depth += 1;
-                    formatter.format_buffer_as_text = true;
-                    formatter.max_depth = 1;
-                    formatter.quote_strings = true;
-                    formatter.disable_inspect_custom = true;
-                    // Hand-rolled drop guard restores the formatter state.
-                    struct RestoreFmt<'a, 'f> {
-                        f: &'a mut crate::console_object::Formatter<'f>,
-                        d: bool,
-                        q: bool,
-                        m: u16,
-                        b: bool,
-                    }
-                    impl Drop for RestoreFmt<'_, '_> {
-                        fn drop(&mut self) {
-                            self.f.depth -= 1;
-                            self.f.max_depth = self.m;
-                            self.f.quote_strings = self.q;
-                            self.f.disable_inspect_custom = self.d;
-                            self.f.format_buffer_as_text = self.b;
+                    OwnProperty::Inline
+                } else {
+                    OwnProperty::Hidden
+                }
+            };
+
+            // Names are right-aligned to the longest name the block actually
+            // contains: the inline properties plus the `code` line that follows
+            // them. Accessors never come out of the iterator (`observable: false`).
+            let mut longest_name: usize = if code.is_some() { b"code".len() } else { 0 };
+            while let Some(field) = iterator.next()? {
+                if matches!(classify(&field, iterator.value), OwnProperty::Inline) {
+                    longest_name = longest_name.max(field.length());
+                }
+            }
+            let longest_name = longest_name.min(10);
+            iterator.reset();
+
+            let mut is_first_property = true;
+            while let Some(field) = iterator.next()? {
+                let value = iterator.value;
+                match classify(&field, value) {
+                    OwnProperty::Hidden => continue,
+                    OwnProperty::AppendedError => {
+                        if field.eql_comptime(b"cause") {
+                            saw_cause = true;
                         }
+                        value.protect();
+                        errors_to_append.push(value);
+                        continue;
                     }
-                    let restore = RestoreFmt {
-                        f: formatter,
-                        d: prev_disable_inspect_custom,
-                        q: prev_quote_strings,
-                        m: prev_max_depth,
-                        b: prev_format_buffer_as_text,
-                    };
-                    let formatter = &mut *restore.f;
+                    OwnProperty::Inline => {}
+                }
 
-                    let pad_left = longest_name.saturating_sub(field.length());
-                    is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
-                    pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+                let prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                let prev_quote_strings = formatter.quote_strings;
+                let prev_max_depth = formatter.max_depth;
+                let prev_format_buffer_as_text = formatter.format_buffer_as_text;
+                formatter.depth += 1;
+                formatter.format_buffer_as_text = true;
+                formatter.max_depth = 1;
+                formatter.quote_strings = true;
+                formatter.disable_inspect_custom = true;
+                // Hand-rolled drop guard restores the formatter state.
+                struct RestoreFmt<'a, 'f> {
+                    f: &'a mut crate::console_object::Formatter<'f>,
+                    d: bool,
+                    q: bool,
+                    m: u16,
+                    b: bool,
+                }
+                impl Drop for RestoreFmt<'_, '_> {
+                    fn drop(&mut self) {
+                        self.f.depth -= 1;
+                        self.f.max_depth = self.m;
+                        self.f.quote_strings = self.q;
+                        self.f.disable_inspect_custom = self.d;
+                        self.f.format_buffer_as_text = self.b;
+                    }
+                }
+                let restore = RestoreFmt {
+                    f: formatter,
+                    d: prev_disable_inspect_custom,
+                    q: prev_quote_strings,
+                    m: prev_max_depth,
+                    b: prev_format_buffer_as_text,
+                };
+                let formatter = &mut *restore.f;
 
-                    if allow_side_effects && global_ref.has_exception() {
+                let pad_left = longest_name.saturating_sub(field.length());
+                is_first_property = false;
+                splat_space(writer, pad_left as u64)?;
+                pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+
+                if allow_side_effects && global_ref.has_exception() {
+                    global_ref.clear_exception();
+                }
+
+                let tag = Tag::get_advanced(
+                    value,
+                    global_ref,
+                    TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
+                )?;
+                let _ = if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, value, global_ref)
+                } else {
+                    formatter.format::<false>(tag, writer, value, global_ref)
+                };
+
+                if allow_side_effects {
+                    if global_ref.has_exception() {
                         global_ref.clear_exception();
                     }
-
-                    let tag = Tag::get_advanced(
-                        value,
-                        global_ref,
-                        TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
-                    )?;
-                    let _ = if allow_ansi_color {
-                        formatter.format::<true>(tag, writer, value, global_ref)
-                    } else {
-                        formatter.format::<false>(tag, writer, value, global_ref)
-                    };
-
-                    if allow_side_effects {
-                        if global_ref.has_exception() {
-                            global_ref.clear_exception();
-                        }
-                    } else if global_ref.has_exception() || formatter.failed {
-                        return Ok(());
-                    }
-
-                    pretty_write!(writer, "<r><d>,<r>\n")?;
+                } else if global_ref.has_exception() || formatter.failed {
+                    return Ok(());
                 }
+
+                pretty_write!(writer, "<r><d>,<r>\n")?;
             }
 
             if let Some(code_str) = code {

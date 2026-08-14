@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
@@ -148,4 +148,143 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+describe("own properties of a printed error are right-aligned to the longest name that is printed", () => {
+  const message = "own property width";
+
+  // A printed error looks like: (source preview), the `name: message` line, one
+  // ` name: value` line per own property (right-aligned), a blank line, then the
+  // stack frames. Returns the property lines. Trailing commas are dropped so
+  // these tests only pin the alignment.
+  function propertyLines(output: string): string[] {
+    const lines = output.split("\n");
+    const start = lines.findIndex(line => line.endsWith(`: ${message}`));
+    if (start === -1) throw new Error(`message line not found in:\n${output}`);
+    const block: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line === "" || line.trimStart().startsWith("at ")) break;
+      block.push(line.replace(/,$/, ""));
+    }
+    return block;
+  }
+
+  function expectPropertyLines(err: Error, expected: string[]) {
+    expect(propertyLines(Bun.inspect(err))).toEqual(expected);
+    expect(propertyLines(Bun.stripANSI(Bun.inspect(err, { colors: true })))).toEqual(expected);
+  }
+
+  function define(err: Error, name: string, descriptor: PropertyDescriptor): Error {
+    Object.defineProperty(err, name, descriptor);
+    return err;
+  }
+
+  class CodedError extends Error {}
+  Object.defineProperty(CodedError.prototype, "code", { value: "E_X" });
+
+  test.each<[string, () => Error, string[]]>([
+    [
+      "two printed properties",
+      () => Object.assign(new Error(message), { id: 1, status: 500 }),
+      ["     id: 1", " status: 500"],
+    ],
+    [
+      "names longer than 10 characters do not widen the column further",
+      () => Object.assign(new Error(message), { a: 1, averyveryverylongname: 2 }),
+      ["          a: 1", " averyveryverylongname: 2"],
+    ],
+    [
+      "an Error-valued property is printed after the stack trace, not in the block",
+      () => Object.assign(new Error(message), { a: 1, someCause: new Error("inner") }),
+      [" a: 1"],
+    ],
+    [
+      "an Error-valued property with a name longer than 10 characters",
+      () => Object.assign(new Error(message), { a: 1, averyveryverylongname: new Error("inner") }),
+      [" a: 1"],
+    ],
+    [
+      "an enumerable accessor is not printed",
+      () => define(Object.assign(new Error(message), { a: 1 }), "longAccessor", { get: () => 1, enumerable: true }),
+      [" a: 1"],
+    ],
+    [
+      "an own enumerable name is shown on the message line",
+      () => Object.assign(new Error(message), { name: "MyError", id: 1 }),
+      [" id: 1"],
+    ],
+    [
+      "an own enumerable message is shown on the message line",
+      () => Object.assign(define(new Error(message), "message", { value: message, enumerable: true }), { id: 1 }),
+      [" id: 1"],
+    ],
+    [
+      "an own enumerable stack is shown as the stack trace",
+      () => {
+        const err = new Error(message);
+        return Object.assign(define(err, "stack", { value: err.stack, enumerable: true }), { id: 1 });
+      },
+      [" id: 1"],
+    ],
+    [
+      "an own string code is printed as the last line",
+      () => Object.assign(new Error(message), { id: 1, code: "E_X" }),
+      ["   id: 1", ' code: "E_X"'],
+    ],
+    [
+      "a string code inherited from the prototype is printed as the last line",
+      () => Object.assign(new CodedError(message), { id: 1 }),
+      ["   id: 1", ' code: "E_X"'],
+    ],
+    [
+      "a non-enumerable own string code is printed as the last line",
+      () => Object.assign(define(new Error(message), "code", { value: "E_X" }), { id: 1 }),
+      ["   id: 1", ' code: "E_X"'],
+    ],
+    [
+      "a string code and an Error-valued property",
+      () => Object.assign(new Error(message), { abc: 1, someCause: new Error("inner"), code: "E_X" }),
+      ["  abc: 1", ' code: "E_X"'],
+    ],
+  ])("%s", (_, makeError, expected) => {
+    expectPropertyLines(makeError(), expected);
+  });
+
+  test("an Error-valued property is still printed after the stack trace", () => {
+    const output = Bun.inspect(Object.assign(new Error(message), { a: 1, someCause: new Error("inner marker") }));
+    expect(output.indexOf("inner marker")).toBeGreaterThan(output.indexOf(" a: 1"));
+  });
+
+  test("inside a nested error, Error-valued properties are printed in the block and count toward the width", () => {
+    const inner = Object.assign(new Error("inner"), { a: 1, someCause: new Error("deep") });
+    const lines = Bun.inspect(new Error(message, { cause: inner })).split("\n");
+    const colon = (name: string) => {
+      const line = lines.find(line => line.trimStart().startsWith(`${name}:`));
+      if (line === undefined) throw new Error(`${name} line not found in:\n${lines.join("\n")}`);
+      return line.indexOf(":");
+    };
+    expect(colon("a")).toBe(colon("someCause"));
+  });
+
+  test("uncaught error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const err = new Error(${JSON.stringify(message)});
+         err.name = "MyError";
+         err.id = 7;
+         err.someCause = new Error("inner marker");
+         throw err;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(propertyLines(stderr)).toEqual([" id: 7"]);
+    expect(stderr.indexOf("inner marker")).toBeGreaterThan(stderr.indexOf(" id: 7"));
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
 });

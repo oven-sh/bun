@@ -97,18 +97,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     return JSPropertyIterator::create(vm, array.releaseData());
 }
 
-extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
-{
-    size_t longest = 0;
-    for (const auto& prop : iter->properties->propertyNameVector()) {
-        if (prop.length() > longest) {
-            longest = prop.length();
-        }
-    }
-
-    return longest;
-}
-
 static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* object, const JSC::Identifier& prop, BunString* propertyName)
 {
     auto& vm = iter->vm;

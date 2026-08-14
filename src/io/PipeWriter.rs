@@ -528,8 +528,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// On POSIX a `MovableIfWindowsFd` never transfers ownership, so callers
     /// pass the plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
     ///
-    /// On `Err` the writer does not hold `fd`: the caller still owns it and is
-    /// the one that closes it.
+    /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         self.pollable = pollable;
@@ -1050,8 +1049,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         );
     }
 
-    /// On `Err` the writer does not hold `fd`: the caller still owns it and is
-    /// the one that closes it.
+    /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {
             self.close();

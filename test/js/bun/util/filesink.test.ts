@@ -703,7 +703,11 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
     // opens themselves from blocking; the loop waits for both to have opened.
     const fifoWriter = fs.openSync(fifoPath, "r+");
     const parked = [1, 2].map(() => fs.promises.readFile(fifoPath));
-    while (fdsOf(fifoPath).length < 3) await Bun.sleep(1);
+    const parkedBy = performance.now() + 2000;
+    while (fdsOf(fifoPath).length < 3) {
+      if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened the FIFO");
+      await Bun.sleep(1);
+    }
 
     const before = fdsOf(sock);
     const first = Bun.file(sock).writer();

@@ -462,10 +462,7 @@ impl Terminal {
         {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
-                // A failed writer.start() leaves write_fd with us: close both pty
-                // fds here, closeInternal releases master/slave. The writer holds
-                // nothing, so its close() reports nothing; WRITER_DONE keeps
-                // onWriterClose a no-op either way, as the only ref is dropped below.
+                // The writer took neither its ref nor write_fd, and the reader never started.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);

@@ -241,9 +241,8 @@ impl FakeTimers {
         Ok(true)
     }
 
-    /// Fired from inside the `jest` timer-control host functions: an owner
-    /// that returns its callback's exception throws it from that call.
-    /// The fake clock is a timer drain of its own: like `All::drain_timers`, a
+    /// Fired from inside the `jest` timer-control host functions. The fake
+    /// clock is a timer drain of its own: like `All::drain_timers`, a
     /// timer whose callback threw is reported and the drain goes on; only the
     /// VM's termination stops it, thrown to the `jest` host function driving it.
     fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {

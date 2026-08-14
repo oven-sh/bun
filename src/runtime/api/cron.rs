@@ -1767,8 +1767,8 @@ impl CronJob {
         );
     }
 
-    /// The tick's callback runs here; what it throws synchronously is the
-    /// `Err` (folded by the timer drain), and the job is rescheduled either way.
+    /// The tick's callback runs here as a top-level call (what it throws
+    /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.

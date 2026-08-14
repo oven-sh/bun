@@ -2455,7 +2455,8 @@ describe("css tests", () => {
   });
 
   // The property handlers are shared by every rule in a stylesheet. A logical property in one rule
-  // must not change how a later rule's shorthand is minified.
+  // must not change how a later rule's shorthand is minified. util.ts checks this for every test in
+  // this file; these are the direct cases, plus the in-rule outputs the fix changes or must not change.
   describe("shorthand after a logical property in an earlier rule", () => {
     for (const [shorthand, logical, top] of [
       ["margin", "margin-inline-start", "margin-top"],

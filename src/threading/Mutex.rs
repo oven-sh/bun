@@ -69,9 +69,7 @@ impl Mutex {
     }
 
     /// [`unlock`](Self::unlock) for a release that lets another thread free the mutex
-    /// (`WaitGroup::finish_raw`): the releasing store is the last access to `*this`
-    /// (the wake after it goes by address, [`Futex::wake_raw`](crate::futex::wake_raw)),
-    /// where a `&self` argument would assert the storage until the call returned.
+    /// (`WaitGroup::finish_raw`): the releasing store is the last access to `*this`.
     ///
     /// # Safety
     /// `this` must be held by this thread and stay live until the lock is released.

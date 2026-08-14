@@ -58,9 +58,8 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
     wake_raw(core::ptr::from_ref(ptr), max_waiters);
 }
 
-/// [`wake`] for a word the woken side may already have freed (`Mutex::unlock_raw`).
-/// Safe: every backend keys the wake on the address and never reads the word, so a
-/// stale address is at most a spurious wakeup.
+/// [`wake`] for a word the woken side may already have freed (`Mutex::unlock_raw`): every
+/// backend keys on the address and never reads the word, so at worst this wakes spuriously.
 #[cold]
 pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     // Avoid calling into the OS if there's nothing to wake up.

@@ -211,7 +211,10 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_error(err, *close);
                     Ok(())
                 }
-                Event::NoFilename(event_type) => self.ctx().emit_null_filename(*event_type),
+                Event::NoFilename(event_type) => {
+                    self.ctx().emit_null_filename(*event_type);
+                    Ok(())
+                }
                 Event::Abort => {
                     self.ctx().emit_if_aborted();
                     Ok(())
@@ -485,7 +488,10 @@ impl FSWatchTaskWindows {
                 ctx.emit_error(err, *close);
                 Ok(())
             }
-            Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
+            Event::NoFilename(event_type) => {
+                ctx.emit_null_filename(*event_type);
+                Ok(())
+            }
             Event::Abort => {
                 ctx.emit_if_aborted();
                 Ok(())
@@ -507,7 +513,8 @@ impl FSWatchTaskWindows {
                 unreachable!()
             };
             let js = s.transfer_to_js(&ctx.global_this)?;
-            ctx.emit_with_filename::<EVENT_TYPE>(js)
+            ctx.emit_with_filename::<EVENT_TYPE>(js);
+            Ok(())
         } else {
             let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {
                 unreachable!()
@@ -896,22 +903,18 @@ impl FSWatcher {
         }
     }
 
-    pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(
-        &self,
-        file_name: JSValue,
-    ) -> JsResult<()> {
+    pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
         let Some(js_this) = self.js_this.try_get() else {
-            return Ok(());
+            return;
         };
         let Some(listener) = js::listener_get_cached(js_this) else {
-            return Ok(());
+            return;
         };
         emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
-        Ok(())
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
-    fn emit_null_filename(&self, event_type: WatchEventKind) -> JsResult<()> {
+    fn emit_null_filename(&self, event_type: WatchEventKind) {
         match event_type {
             WatchEventKind::Rename => {
                 self.emit_with_filename::<{ EventType::Rename }>(JSValue::NULL)

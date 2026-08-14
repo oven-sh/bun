@@ -5230,9 +5230,8 @@ pub(crate) fn write_file_internal(
             match archive.gzip_level() {
                 None => break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this),
                 Some(level) => {
-                    // Compress on the thread pool, then resume the write with a
-                    // byte-backed source blob. Move `destination_blob` into the
-                    // task; the empty replacement drops harmlessly here.
+                    // Gzip on the thread pool; the task takes ownership of
+                    // `destination_blob`.
                     return crate::api::archive::start_archive_compress_write_task(
                         global_this,
                         archive.store_ref().clone(),

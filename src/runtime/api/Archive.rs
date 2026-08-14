@@ -1035,14 +1035,9 @@ fn start_write_task(
 }
 
 // ============================================================================
-// Bun.write(dest, archive) with gzip
+// Bun.write(dest, archive) with gzip: compress on the thread pool, then resume
+// `write_file_with_source_destination` with a byte-backed source blob.
 // ============================================================================
-//
-// Compresses the archive's store on the thread pool, then resumes the normal
-// `write_file_with_source_destination` pipeline with a byte-backed source blob.
-// This keeps the gzip work off the JS thread (parity with `archive.bytes()` /
-// `Archive.write`) while still honoring every destination kind (local file,
-// Bun.file, S3) rather than the path-only `WriteContext`.
 
 enum CompressWriteResult {
     Pending,
@@ -1056,22 +1051,18 @@ pub struct ArchiveCompressWriteContext {
     destination: Blob,
     mkdirp_if_not_exists: Option<bool>,
     mode: Option<Mode>,
-    /// `options.extra_options` (e.g. S3 credentials). GC-protected before the
-    /// thread-pool hop and read only on the JS thread in `run_from_js`.
+    /// GC-protected until `Drop`; only read on the JS thread.
     extra_options: Option<JSValue>,
     result: CompressWriteResult,
 }
 
-// SAFETY: the only `!Send` field is `extra_options: Option<JSValue>`. It is
-// GC-protected in `start_archive_compress_write_task` before the task is
-// scheduled and is never dereferenced on the worker thread (`run` touches only
-// `store`/`level`); it is consumed on the JS thread in `run_from_js`/`Drop`.
-// `store` and `destination` are already `Send` (`StoreRef`/`Blob`).
+// SAFETY: the only `!Send` field is `extra_options: Option<JSValue>`; it is
+// GC-protected before scheduling and never touched on the worker thread
+// (`run` reads only `store`/`level`). `StoreRef` and `Blob` are `Send`.
 unsafe impl Send for ArchiveCompressWriteContext {}
 
 impl Drop for ArchiveCompressWriteContext {
     fn drop(&mut self) {
-        // `destination` (a `Blob`) derefs its store on drop.
         if let Some(v) = self.extra_options {
             v.unprotect();
         }
@@ -1097,8 +1088,6 @@ impl TaskContext for ArchiveCompressWriteContext {
             CompressWriteResult::Pending => unreachable!("run() always sets result"),
         };
 
-        // Hand the compressed bytes to the normal write pipeline as a
-        // byte-backed source blob (drops naturally; the write task clones it).
         let write_options = WriteFileOptions {
             mkdirp_if_not_exists: self.mkdirp_if_not_exists,
             extra_options: self.extra_options,
@@ -1112,8 +1101,7 @@ impl TaskContext for ArchiveCompressWriteContext {
             &write_options,
         )?;
 
-        // Forward the inner write promise's eventual state onto the promise we
-        // returned to the caller.
+        // Forward the inner write promise onto the task's promise.
         if let Some(p) = new_promise.as_any_promise() {
             Ok(
                 match p.unwrap(global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {

@@ -677,14 +677,11 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         } else if tag == S::SHORTHAND {
             let val = S::extract_shorthand(property);
 
-            // The shorthand sets all four physical sides, which overrides everything
-            // buffered here, logical longhands included (whichever side they resolve to). So
-            // unlike in the longhand arms, a category change is not a reason to flush: when
-            // logical properties are compiled, flushed inline longhands become `:lang()`
-            // rules emitted after this rule, where they would win over the shorthand. The
-            // buffered values are only still needed, as a fallback, by a target that rejects
-            // the shorthand's value, and a declaration is rejected as a whole, so one
-            // unsupported side is enough. `flush` is a no-op when nothing is buffered.
+            // The shorthand overrides everything buffered, logical longhands included, so a
+            // category change is no reason to flush here: compiled inline longhands would land
+            // in `:lang()` rules after this rule and win over the shorthand. Only a target that
+            // rejects the shorthand (one unsupported side rejects the whole declaration) still
+            // needs the buffered values, as a fallback.
             if let Some(browsers) = context.targets.browsers {
                 let rejected_by_a_target = [
                     S::shorthand_top(val),

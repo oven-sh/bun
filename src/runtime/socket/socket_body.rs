@@ -406,6 +406,30 @@ impl<const SSL: bool> Drop for ScopeExit<SSL> {
     }
 }
 
+/// Run `step` — a native operation that synchronously dispatches other socket
+/// callbacks (a close reaches `on_close` through the uSockets trampoline) —
+/// with the exception `pending` carries parked off the VM, then put it back.
+/// The nested dispatch must neither run its handlers over that exception nor
+/// have its own fold take it: it belongs to the frame unwinding with `pending`.
+/// A termination is left in place; nested entries stand down on it.
+fn with_exception_parked(
+    global: &JSGlobalObject,
+    pending: JsResult<()>,
+    step: impl FnOnce(),
+) -> JsResult<()> {
+    match pending {
+        Err(err) if !global.has_pending_termination_exception() => {
+            let exception = global.take_exception(err);
+            step();
+            Err(global.throw_value(exception))
+        }
+        other => {
+            step();
+            other
+        }
+    }
+}
+
 impl<const SSL: bool> NewSocket<SSL> {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
@@ -919,16 +943,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
-            let handled = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            let handled = handlers
+                .call_error_handler(this_value, &[this_value, err_value])
+                .map(|_| ());
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close) —
             // also when `error` itself threw.
-            if !this.socket.get().is_detached() {
-                this.socket.get().close(uws::CloseCode::Normal);
-            }
+            let handled = with_exception_parked(&global, handled, || {
+                if !this.socket.get().is_detached() {
+                    this.socket.get().close(uws::CloseCode::Normal);
+                }
+            });
             drop(scope);
-            return handled.map(|_| ());
+            return handled;
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -1545,14 +1573,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 log!("Already closed");
             }
 
-            opened = match handlers.reject_promise(err) {
+            let rejected = match handlers.reject_promise(err) {
                 Ok(true) => Ok(()),
                 Ok(false) => handlers
                     .call_error_handler(this_value, &[this_value, err])
                     .map(|_| ()),
                 Err(e) => Err(e),
             };
-            this.mark_inactive();
+            // `mark_inactive` closes the socket, which dispatches `on_close`.
+            opened = with_exception_parked(&global, rejected, || this.mark_inactive());
         }
         if !SSL
             && !global.has_exception()
@@ -1861,10 +1890,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Ok(v) => v,
                     Err(e) => {
                         drop(scope);
-                        if reject_unauthorized {
-                            this.reject_unauthorized_connection();
-                        }
-                        return Err(e);
+                        return with_exception_parked(&global, Err(e), || {
+                            if reject_unauthorized {
+                                this.reject_unauthorized_connection();
+                            }
+                        });
                     }
                 }
             };
@@ -1886,12 +1916,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             None => Ok(()),
         };
         drop(scope);
-        // Fail closed: an unauthorized connection is rejected whatever the
-        // handlers threw.
-        if reject_unauthorized {
-            this.reject_unauthorized_connection();
-        }
-        handled
+        // Fail closed: an unauthorized connection is rejected (closed, which
+        // dispatches `on_close`) whatever the handlers threw.
+        with_exception_parked(&global, handled, || {
+            if reject_unauthorized {
+                this.reject_unauthorized_connection();
+            }
+        })
     }
 
     /// Stamps the resolved client `rejectUnauthorized` policy on a fresh or
@@ -2118,12 +2149,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        // An earlier callback in this dispatch may have left a termination
-        // pending — on_open's error branch closes the socket from
-        // mark_inactive(), landing here. It is the caller's `Err`.
+        // Reached by a nested dispatch while a handler above is unwinding with
+        // its exception (a termination; anything else is parked, see
+        // `with_exception_parked`): it belongs to that frame and its fold, so
+        // this dispatch neither enters JS over it nor claims it as its `Err`.
         if handlers.global_object.has_exception() {
             drop(cleanup);
-            return Err(jsc::JsError::Thrown);
+            return Ok(());
         }
 
         // the handlers must be kept alive for the duration of the function call

@@ -722,10 +722,12 @@ impl ServerWebSocket {
 
         let vm = handler.vm();
 
-        // on_open's error branch closes the socket, landing here with the
-        // termination from its handler still pending: it is the caller's `Err`.
+        // on_open's error branch closes the socket, landing here nested with
+        // the termination from its handler still pending: that exception is
+        // on_open's and its fold's, so this dispatch neither enters JS over
+        // it nor claims it as its own `Err`.
         if handler.global_object().has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+            return Ok(());
         }
 
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC

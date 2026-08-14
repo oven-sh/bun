@@ -56,11 +56,6 @@ macro_rules! for_each_fs_uv_op {
         }
     };
 }
-/// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
-#[cfg(windows)]
-macro_rules! __fs_pat {
-    ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
-}
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)

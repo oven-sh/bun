@@ -555,6 +555,24 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
       return promise;
     });
     expect(Bun.peek(reply)).toBe("reused");
+
+    // Same, but the socket first surfaces as foreign (a reply to an outer write
+    // is parked), and only then is written by the run: adopting it must put it
+    // back in the poll set. The parked outer reply arrives with it — the shared
+    // connection is the one case where outer data is admitted, by construction.
+    const seen: string[] = [];
+    onData = d => seen.push(d);
+    conn.write("outer");
+    const both = runUntil(async () => {
+      await sleep(30); // "outer" echo is now parked
+      expect(seen).toEqual([]);
+      const { promise, resolve } = Promise.withResolvers<void>();
+      onData = d => (seen.push(d), seen.join("").includes("inner") && resolve());
+      conn.write("inner");
+      await promise;
+      return seen.join("");
+    });
+    expect(Bun.peek(both)).toBe("outerinner");
     conn.end();
   });
 });

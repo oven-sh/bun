@@ -358,15 +358,21 @@ static inline void us_internal_socket_stamp_epoch(struct us_socket_t *s) {
     s->p.bun_epoch = Bun__runEpoch();
     s->disarmed_by_run = 0;
 }
-/* `s` is being written by whatever code is running now: if that is a scoped run
- * the socket predates, the socket (and the reply on it) becomes the run's. */
-static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
-    if (loop->data.run_start_epoch && s->p.bun_epoch < loop->data.run_start_epoch) {
-        us_internal_socket_stamp_epoch(s);
-    }
-}
 void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch);
 void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop);
+void us_internal_socket_rearm_after_run(struct us_socket_t *s, struct us_loop_t *loop);
+/* `s` is being written by whatever code is running now: if that is a scoped run
+ * the socket predates, the socket (and the reply on it) becomes the run's —
+ * back into the poll set if the run had already parked it. */
+static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
+    if (loop->data.run_start_epoch && s->p.bun_epoch < loop->data.run_start_epoch) {
+        int was_disarmed = s->disarmed_by_run;
+        us_internal_socket_stamp_epoch(s);
+        if (was_disarmed) {
+            us_internal_socket_rearm_after_run(s, loop);
+        }
+    }
+}
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's

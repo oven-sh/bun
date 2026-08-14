@@ -482,23 +482,33 @@ static inline int us_internal_defer_foreign_ready_poll(struct us_poll_t *p) {
     return 1;
 }
 
+/* Undo us_internal_poll_disarm: the socket reports its (still pending)
+ * readiness on the next poll. */
+void us_internal_socket_rearm_after_run(struct us_socket_t *s, struct us_loop_t *loop) {
+    s->disarmed_by_run = 0;
+    us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
+}
+
+static inline void us_internal_socket_maybe_rearm(struct us_socket_t *s, struct us_loop_t *loop, unsigned int outer_start_epoch) {
+    if (!s->disarmed_by_run || us_socket_is_closed(s)) return;
+    /* Still foreign to an outer run that remains active: stays parked. */
+    if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) return;
+    us_internal_socket_rearm_after_run(s, loop);
+}
+
 void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch) {
     for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
         for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
-            if (!s->disarmed_by_run || us_socket_is_closed(s)) continue;
-            /* Still foreign to an outer run that remains active: stays parked. */
-            if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) continue;
-            s->disarmed_by_run = 0;
-            us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
+            us_internal_socket_maybe_rearm(s, loop, outer_start_epoch);
         }
         for (struct us_connecting_socket_t *c = g->head_connecting_sockets; c; c = c->next) {
             for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
-                if (!s->disarmed_by_run || us_socket_is_closed(s)) continue;
-                if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) continue;
-                s->disarmed_by_run = 0;
-                us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
+                us_internal_socket_maybe_rearm(s, loop, outer_start_epoch);
             }
         }
+    }
+    for (struct us_socket_t *s = loop->data.low_prio_head; s; s = s->next) {
+        us_internal_socket_maybe_rearm(s, loop, outer_start_epoch);
     }
 }
 

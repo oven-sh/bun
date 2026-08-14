@@ -1,6 +1,7 @@
 import { env } from "bun";
 import { hasNonReifiedStatic } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 test("hasNonReifiedStatic", () => {
   expect(hasNonReifiedStatic(Bun), "do not eagerly initialize the Bun object. This will make Bun much slower.").toBe(
     true,
@@ -32,4 +33,39 @@ test("await import('bun')", async () => {
     expect(BunESM[property]).toBe(Bun[property]);
   }
   expect(BunESM.default).toBe(Bun);
+});
+
+test("a lazy property whose builtin fails to load throws from the read", async () => {
+  // bun:sql's module body calls Symbol(), so clobbering it makes the require inside the
+  // $, sql, SQL and postgres builders throw. The read must throw that error and the slot
+  // must stay unreified so a later read runs the builder again.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.Symbol = NaN;
+       const results = {};
+       for (const name of ["$", "sql", "SQL", "postgres"]) {
+         const names = [];
+         for (let i = 0; i < 2; i++) {
+           try { Bun[name]; names.push("no throw"); } catch (e) { names.push(e.constructor.name); }
+         }
+         results[name] = names;
+       }
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      $: ["TypeError", "TypeError"],
+      sql: ["TypeError", "TypeError"],
+      SQL: ["TypeError", "TypeError"],
+      postgres: ["TypeError", "TypeError"],
+    }),
+  );
+  expect(exitCode).toBe(0);
 });

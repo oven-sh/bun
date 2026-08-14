@@ -1924,16 +1924,16 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     Ok(js_client)
 }
 
-fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
         Ok(p) => p,
-        Err(jsc::JsError::Thrown) => return Err(jsc::JsError::Thrown),
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
-            return Err(
-                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client")
-            );
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
+            return JSValue::ZERO;
         }
     };
 
@@ -1945,15 +1945,15 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsRe
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) => return Err(jsc::JsError::Thrown),
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
-            return Err(
-                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client")
-            );
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
+            return JSValue::ZERO;
         }
     }
 
-    Ok(as_js)
+    as_js
 }
 
 fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

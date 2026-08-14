@@ -517,6 +517,16 @@ pub(crate) fn parse_until_after<T, C>(
 
 const MAX_NESTING_DEPTH: u32 = 512;
 
+/// Stack that must still be free, on top of `StackCheck`'s own threshold,
+/// before `parse_nested_block` recurses. Everything that runs between two
+/// nested-block checks (the enclosing rule's frames, the next prelude, one
+/// declaration) has to fit in the reserve; `Property::parse` alone is a
+/// ~120 KB frame in debug/ASAN builds, so the bare 128 KB threshold is not
+/// enough there. Release frames are several times smaller, and 512 levels of
+/// the costliest nesting use under 2 MB of a 4 MB worker stack, so the reserve
+/// does not change which inputs hit `MAX_NESTING_DEPTH` in release.
+const NESTED_BLOCK_STACK_HEADROOM: usize = 256 * 1024;
+
 /// Records that the block whose content starts at `start_position` failed to
 /// parse and turned out to be unclosed: the end of input was reached without
 /// ever finding its closing token. See `ParserInput::unclosed_block_at_eof`.
@@ -564,7 +574,12 @@ fn parse_nested_block<T>(
     }
 
     parser.input.nesting_depth += 1;
-    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+    if parser.input.nesting_depth > MAX_NESTING_DEPTH
+        || !parser
+            .input
+            .stack_check
+            .is_safe_to_recurse_with_extra(NESTED_BLOCK_STACK_HEADROOM)
+    {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
         let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
@@ -3817,6 +3832,12 @@ pub struct ParserInput<'a> {
     pub(crate) tokenizer: Tokenizer<'a>,
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
+    /// `MAX_NESTING_DEPTH` alone is not a safe recursion bound: it assumes
+    /// release frame sizes on a 4 MB thread-pool stack, but debug/ASAN frames
+    /// are several times larger and the main thread's stack is whatever
+    /// `ulimit -s` says, so `parse_nested_block` also checks the stack that is
+    /// actually left (see `NESTED_BLOCK_STACK_HEADROOM`).
+    stack_check: bun_core::StackCheck,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is
     /// truncated somewhere inside that block. Everything from
@@ -3861,6 +3882,7 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            stack_check: bun_core::StackCheck::init(),
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,

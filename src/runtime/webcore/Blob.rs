@@ -3674,7 +3674,6 @@ impl BlobExt for Blob {
                     }
                 }
 
-                path_or_fd.to_thread_safe();
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(

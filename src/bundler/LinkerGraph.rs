@@ -212,9 +212,7 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
-    /// Every target of an `import()` (only populated with code splitting). Unlike
-    /// `File.entry_point_kind`, this also covers files the user passed as entry points, which
-    /// stay `UserSpecified`; a stylesheet in this set needs a JS chunk for the `import()` to load.
+    /// Every `import()` target, including files that are also user-specified entry points.
     pub(crate) dynamically_imported_files: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
@@ -986,8 +984,7 @@ pub struct File {
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
-    /// may be ".user_specified" instead of ".dynamic_import"; see
-    /// `LinkerGraph.dynamically_imported_files` for the complete set.
+    /// may be ".user_specified" instead of ".dynamic_import" (see `dynamically_imported_files`).
     pub entry_point_kind: EntryPoint::Kind,
 
     /// If "entry_point_kind" is not ".none", this is the index of the

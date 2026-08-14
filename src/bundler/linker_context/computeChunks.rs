@@ -187,8 +187,7 @@ pub(crate) fn compute_chunks(
                 };
             }
 
-            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk
-            // (whether or not the user also passed the stylesheet as an entry point).
+            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk.
             if !this
                 .graph
                 .dynamically_imported_files

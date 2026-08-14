@@ -272,11 +272,7 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
-    /// The entry point kind this chunk is named and classified by.
-    ///
-    /// A stylesheet only gets a JS chunk because it is `import()`ed (see `compute_chunks`), so
-    /// that chunk is a dynamic import chunk even when the user also passed the stylesheet as an
-    /// entry point: the entry point name and kind belong to its CSS chunk.
+    /// Kind used to name and classify the chunk; a stylesheet's JS chunk is always `DynamicImport`.
     pub(crate) fn entry_point_kind(
         &self,
         linker_graph: &LinkerGraph<'_>,

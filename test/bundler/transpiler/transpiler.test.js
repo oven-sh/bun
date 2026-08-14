@@ -2527,9 +2527,12 @@ console.log(<div {...obj} key="after" />);`),
       },
     );
 
-    // Boundary: 0x10FFFF is the maximum valid code point and must still work.
-    it("&#x10FFFF; (max valid) still transpiles", () => {
-      expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    // Boundary: 0x10FFFF is the maximum valid code point and must still decode
+    // (printed as its surrogate pair).
+    it.each(["&#x10FFFF;", "&#1114111;"])("%s (max valid) decodes to U+10FFFF", entity => {
+      expect(bun.transformSync(`export var x = <div>${entity}</div>`)).toBe(
+        `export var x = jsxDEV_7x81h0kn("div", {\n  children: "\\uDBFF\\uDFFF"\n}, undefined, false, undefined, this);\n`,
+      );
     });
   });
 

@@ -2,7 +2,7 @@
 //! instead.
 
 use crate::env;
-use crate::feature_flag;
+use crate::env_var::feature_flag;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
@@ -120,14 +120,20 @@ pub fn is_libdeflate_enabled() -> bool {
         return false;
     }
 
-    !feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get()
+    !feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE
+        .get()
+        .unwrap_or(false)
 }
 
 /// Enable the "app" option in Bun.serve. This option will likely be removed
 /// in favor of HTML loaders and configuring framework options in bunfig.toml
 pub fn bake() -> bool {
     // In canary or if an environment variable is specified.
-    env::IS_CANARY || env::IS_DEBUG || feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get()
+    env::IS_CANARY
+        || env::IS_DEBUG
+        || feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE
+            .get()
+            .unwrap_or(false)
 }
 
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.

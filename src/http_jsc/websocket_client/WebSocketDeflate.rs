@@ -2,9 +2,11 @@
 
 use core::ffi::c_int;
 
-use bun_core::feature_flag;
+use bun_core::env_var::feature_flag;
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
+
+bun_core::define_scoped_log!(log, crate::websocket_client::WebSocketClient);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -131,7 +133,10 @@ impl PerMessageDeflate {
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
-        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() {
+        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE
+            .get()
+            .unwrap_or(false)
+        {
             return false;
         }
 
@@ -147,6 +152,7 @@ impl PerMessageDeflate {
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
         if Self::can_use_libdeflate(in_buf.len()) {
+            log!("Decompressing {} bytes with libdeflate", in_buf.len());
             if let Some(decompressor) = self.rare_data.decompressor() {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);

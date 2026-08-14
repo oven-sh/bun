@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -960,4 +960,45 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+// The NO_LIBDEFLATE cases above expect the same bytes either way, so they pass
+// even when the flag is ignored. Only debug builds say which decoder ran
+// (the HTTPInternalState scoped log), so that is what this checks.
+describe.skipIf(!isDebug)("BUN_FEATURE_FLAG_NO_LIBDEFLATE selects the decoder", () => {
+  const expected = Buffer.alloc(1024, "hello libdeflate ").toString();
+  const compressed = gzipSync(expected);
+
+  it.concurrent.each([
+    ["0", ["[httpinternalstate] Decompressing N bytes with libdeflate"]],
+    ["1", ["[httpinternalstate] Decompressing N bytes"]],
+  ])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async (noLibdeflate, decoderLines) => {
+    // Content-Length and a buffered read: the whole body is in hand when it is
+    // decoded, which is the only case the libdeflate fast path is eligible for.
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(compressed, { headers: { "Content-Encoding": "gzip" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const text = await (await fetch(process.argv[1])).text();
+         if (text !== process.argv[2]) throw new Error("decoded " + text.length + " bytes, expected " + process.argv[2].length);`,
+        String(server.url),
+        expected,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate, BUN_DEBUG_HTTPInternalState: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      decoderLines: stdout
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("[httpinternalstate] Decompressing "))
+        .map(line => line.replace(/\d+ bytes/, "N bytes")),
+      stderr,
+      exitCode,
+    }).toEqual({ decoderLines, stderr: expect.not.stringContaining("error"), exitCode: 0 });
+  });
 });

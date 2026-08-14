@@ -550,11 +550,8 @@ impl<R> CssRuleList<R> {
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
                         if lay.rules.v.is_empty() {
-                            // An empty block still declares the layer, and a layer's
-                            // first declaration fixes its place in the cascade order,
-                            // so `@layer a {}` becomes `@layer a;` rather than
-                            // disappearing. An empty anonymous layer can never be
-                            // referenced again, so it has no effect.
+                            // An empty named block still fixes the layer's position in the
+                            // cascade order, so it is kept as `@layer a;`.
                             let Some(name) = lay.name.take() else {
                                 break 'arm;
                             };

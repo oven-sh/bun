@@ -162,6 +162,10 @@ test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 tmp
 codegen-for-zig-team.tar.gz
 
+# Local compile/test droppings (not part of bun itself)
+/@t@/
+/app-with-resources
+
 # Dependencies
 /vendor
 

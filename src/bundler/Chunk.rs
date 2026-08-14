@@ -288,6 +288,7 @@ impl Chunk {
         if matches!(self.content, Content::Javascript(_))
             && linker_graph.ast.items_css()[source_index].is_some()
         {
+            debug_assert!(linker_graph.dynamically_imported_files.is_set(source_index));
             return crate::entry_point::Kind::DynamicImport;
         }
         linker_graph.files.items_entry_point_kind()[source_index]

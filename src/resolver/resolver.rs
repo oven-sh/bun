@@ -4218,9 +4218,8 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// The working directory's own tsconfig, or the `--tsconfig-override` file
-    /// standing in for it. `dir_info_uncached` attaches the override to the
-    /// filesystem root only, so it reaches `dir_info` as its enclosing tsconfig.
+    /// `dir_info`'s own tsconfig, or the `--tsconfig-override` file when one is
+    /// set (`dir_info_uncached` parses it onto the root `DirInfo`, so it is inherited).
     pub fn tsconfig_for_top_level_dir(
         &self,
         dir_info: &DirInfo::DirInfo,

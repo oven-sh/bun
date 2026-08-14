@@ -5945,8 +5945,7 @@ pub mod bv2_impl {
         }
     }
 
-    /// The record `leaves_sqlite_import_to_runtime` approved prints as the import as
-    /// written plus `type: "sqlite"`, which is also what `with { type: "sqlite" }` produces.
+    /// Prints like `with { type: "sqlite" }` does.
     fn mark_sqlite_import_external(import_record: &mut ImportRecord) {
         import_record.loader = Some(Loader::Sqlite);
         import_record
@@ -5955,9 +5954,8 @@ pub mod bv2_impl {
     }
 
     impl BundleV2<'_> {
-        /// The sqlite loader opens the database at runtime, and bundling the file would
-        /// print the build machine's path. An onLoad plugin for the file still gets it,
-        /// and other targets still get the parse task's error.
+        /// The sqlite loader opens the database at runtime; bundling the file could only
+        /// print the build machine's path. An onLoad plugin for the file takes precedence.
         fn leaves_sqlite_import_to_runtime(
             &self,
             loader: Loader,

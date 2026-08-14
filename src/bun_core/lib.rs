@@ -853,10 +853,15 @@ macro_rules! assert_not_freeze {
             ::core::assert!(
                 !<$crate::__IsFreeze<$Child>>::IS_FREEZE,
                 concat!(
-                    "`", stringify!($Child), "` is Freeze, so `&self` is passed `noalias readonly` ",
-                    "and writes to `", stringify!($Parent), "` through a pointer derived from it ",
+                    "`",
+                    stringify!($Child),
+                    "` is Freeze, so `&self` is passed `noalias readonly` ",
+                    "and writes to `",
+                    stringify!($Parent),
+                    "` through a pointer derived from it ",
                     "would be miscompiled. Put the methods that need the parent on `&",
-                    stringify!($Parent), "` instead, or derive the pointer from `&mut self`."
+                    stringify!($Parent),
+                    "` instead, or derive the pointer from `&mut self`."
                 ),
             );
         };

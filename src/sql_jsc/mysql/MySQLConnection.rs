@@ -170,15 +170,27 @@ impl MySQLConnection {
 
     pub(crate) fn can_pipeline(&mut self) -> bool {
         let js_connection = self.js_connection_ref();
-        js_connection.connection.get().queue.can_pipeline(js_connection)
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_pipeline(js_connection)
     }
     pub(crate) fn can_prepare_query(&mut self) -> bool {
         let js_connection = self.js_connection_ref();
-        js_connection.connection.get().queue.can_prepare_query(js_connection)
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_prepare_query(js_connection)
     }
     pub(crate) fn can_execute_query(&mut self) -> bool {
         let js_connection = self.js_connection_ref();
-        js_connection.connection.get().queue.can_execute_query(js_connection)
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_execute_query(js_connection)
     }
 
     #[inline]

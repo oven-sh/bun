@@ -821,7 +821,11 @@ mod container_of_tests {
         /// Parent method that reaches back into the child it was called from.
         fn bump_shared_child(&self) {
             // SAFETY: single-threaded test; no `&mut ByShared` is live.
-            unsafe { (*self.by_shared.get()).hits.set((*self.by_shared.get()).hits.get() + 1) };
+            unsafe {
+                (*self.by_shared.get())
+                    .hits
+                    .set((*self.by_shared.get()).hits.get() + 1)
+            };
             self.count.set(self.count.get() + 1);
         }
     }
@@ -866,7 +870,10 @@ mod container_of_tests {
     fn mut_receiver_under_parent_borrow() {
         fn drive(parent: &mut Parent) {
             parent.by_mut.touch();
-            assert_eq!((parent.count.get(), parent.plain, parent.by_mut.hits), (10, 20, 2));
+            assert_eq!(
+                (parent.count.get(), parent.plain, parent.by_mut.hits),
+                (10, 20, 2)
+            );
         }
         let p = Parent::boxed();
         // SAFETY: `p` is live and uniquely owned here.

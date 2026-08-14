@@ -1,6 +1,7 @@
 #include "root.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "headers-handwritten.h"
+#include "NodeVMScriptFetcher.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -93,6 +94,11 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
 
     default:
         break;
+    }
+
+    if (auto* provider = code->source().provider()) {
+        if (unsigned wrapperColumns = NodeVMScriptFetcher::wrapperColumnsOnLine(*provider, pos.line_zero_based))
+            pos.column_zero_based = static_cast<int32_t>(std::max<int64_t>(static_cast<int64_t>(pos.column_zero_based) - wrapperColumns, 0));
     }
 
     return pos;

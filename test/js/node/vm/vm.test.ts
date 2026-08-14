@@ -340,29 +340,92 @@ describe("vm", () => {
       }
     });
 
-    test("columnOffset shifts body line 1 only", () => {
+    test("body line 1 reports the body's own columns, plus columnOffset", () => {
       const filename = "cf-columns.js";
       const statement = 'throw new Error("column")';
       // The column JSC assigns to this statement when it starts a line that no
-      // offset applies to.
+      // wrapper or offset touches.
       const { column } = thrownPosition(filename, compileFunction("\n" + statement, [], { filename }));
-      // Body line 1 shares its line with the `(function () {` wrapper, so its
-      // columns include that text; a columnOffset at least that long is
-      // applied exactly, as in Node.
-      expect(thrownPosition(filename, compileFunction(statement, [], { filename, columnOffset: 100 }))).toEqual({
-        line: 1,
-        column: column + 100,
+      const results = {
+        line1: thrownPosition(filename, compileFunction(statement, [], { filename })),
+        line1WithParams: thrownPosition(filename, () => compileFunction(statement, ["a", "b"], { filename })()),
+        // Node adds columnOffset on the first line only, whatever its size.
+        line1Offset3: thrownPosition(filename, compileFunction(statement, [], { filename, columnOffset: 3 })),
+        line1Offset100: thrownPosition(filename, compileFunction(statement, [], { filename, columnOffset: 100 })),
+        line1WithParamsOffset100: thrownPosition(filename, () =>
+          compileFunction(statement, ["a", "b"], { filename, columnOffset: 100 })(),
+        ),
+        line2Offset100: thrownPosition(
+          filename,
+          compileFunction("\n" + statement, [], { filename, columnOffset: 100 }),
+        ),
+        nestedArrowOnLine1: thrownPosition(
+          filename,
+          compileFunction(`return () => { ${statement} };`, [], { filename })(),
+        ),
+        nestedArrowOnLine2: thrownPosition(
+          filename,
+          compileFunction(`\nreturn () => { ${statement} };`, [], { filename })(),
+        ),
+      };
+      expect(results).toEqual({
+        line1: { line: 1, column },
+        line1WithParams: { line: 1, column },
+        line1Offset3: { line: 1, column: column + 3 },
+        line1Offset100: { line: 1, column: column + 100 },
+        line1WithParamsOffset100: { line: 1, column: column + 100 },
+        line2Offset100: { line: 2, column },
+        nestedArrowOnLine1: { line: 1, column: results.nestedArrowOnLine2.column },
+        nestedArrowOnLine2: { line: 2, column: results.nestedArrowOnLine2.column },
       });
-      expect(
-        thrownPosition(filename, () => compileFunction(statement, ["a", "b"], { filename, columnOffset: 100 })()),
-      ).toEqual({ line: 1, column: column + 100 });
-      // Later lines are never shifted.
-      expect(thrownPosition(filename, compileFunction("\n" + statement, [], { filename, columnOffset: 100 }))).toEqual({
-        line: 2,
-        column,
-      });
-      // Without a columnOffset, line 1 still reports line 1.
-      expect(thrownPosition(filename, compileFunction(statement, [], { filename })).line).toBe(1);
+    });
+
+    test("Error.prepareStackTrace call sites report the same columns on body line 1", () => {
+      const previous = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_, callSites) => callSites.map(site => [site.getLineNumber(), site.getColumnNumber()]);
+      try {
+        const body = "return new Error('x').stack[0];";
+        const [, column] = compileFunction("\n" + body, [], { filename: "cf-callsite-columns.js" })();
+        expect({
+          line1: compileFunction(body, [], { filename: "cf-callsite-columns.js" })(),
+          line1WithParams: compileFunction(body, ["a"], { filename: "cf-callsite-columns.js" })(),
+          line1Offset5: compileFunction(body, [], { filename: "cf-callsite-columns.js", columnOffset: 5 })(),
+        }).toEqual({
+          line1: [1, column],
+          line1WithParams: [1, column],
+          line1Offset5: [1, column + 5],
+        });
+      } finally {
+        Error.prepareStackTrace = previous;
+      }
+    });
+
+    test.concurrent("uncaught error output shows the body line without the wrapper", async () => {
+      const run = async (code: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", code],
+          env: bunEnv,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(exitCode).toBe(1);
+        // The source excerpt: line-numbered source lines followed by the caret line.
+        return stderr.split("\n").filter(line => /^\s*\d+ \| /.test(line) || /^\s*\^$/.test(line));
+      };
+      const body = JSON.stringify('let ok = 1; throw new Error("boom")');
+      const [fromScript, fromFunction, fromOffsetFunction] = await Promise.all([
+        // Reference: the same text run as a script, which has no wrapper.
+        run(
+          `new (require("node:vm").Script)(${body}, { filename: "/virtual/ref.js" }).runInThisContext({ displayErrors: false })`,
+        ),
+        run(`require("node:vm").compileFunction(${body}, ["exports", "require"], { filename: "/virtual/cf.js" })()`),
+        run(`require("node:vm").compileFunction(${body}, [], { filename: "/virtual/cf.js", lineOffset: 10 })()`),
+      ]);
+      expect(fromScript).toEqual([`1 | ${JSON.parse(body)}`, expect.stringMatching(/^ +\^$/)]);
+      expect(fromFunction).toEqual(fromScript);
+      // A wider line number indents the caret one more column.
+      expect(fromOffsetFunction).toEqual([`11 | ${JSON.parse(body)}`, " " + fromScript[1]]);
     });
 
     test("runtime arrow header shows the body line when called from a vm script", () => {

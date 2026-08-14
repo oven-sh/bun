@@ -188,14 +188,17 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // Line 1's columns already include the wrapper, so only the excess of columnOffset over it is applied.
+    // JSC counts the wrapper in line 1's columns and cannot start a source at a negative column: the part of
+    // columnOffset beyond the wrapper is applied here, the rest is taken off again when positions are reported.
     int columnOffset = position.m_column.zeroBasedInt();
-    TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0));
+    int appliedColumnOffset = columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0;
+    unsigned wrapperColumns = static_cast<unsigned>(static_cast<int64_t>(wrapperPrefixLength) + appliedColumnOffset - columnOffset);
+    TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(appliedColumnOffset));
 
     Ref<JSC::SourceProvider> provider = JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program);
 
     if (auto* fetcher = sourceOrigin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
-        static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapper(provider.get(), static_cast<unsigned>(wrapperPrefixLength));
+        static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapper(provider.get(), static_cast<unsigned>(wrapperPrefixLength), wrapperColumns);
 
     SourceCode sourceCode(WTF::move(provider), wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
 
@@ -576,9 +579,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                unsigned wrapperPrefixLength = 0;
-                if (auto* fetcher = provider->sourceOrigin().fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
-                    wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength(*provider);
+                unsigned wrapperPrefixLength = NodeVMScriptFetcher::wrapperTextLength(*provider);
 
                 int64_t startLineZeroBased = provider->startPosition().m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - startLineZeroBased;

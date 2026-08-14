@@ -312,6 +312,10 @@ unset -v artifact seen_artifacts
 success=0
 gnupghome=""
 gpg_socket_dir=""
+# Candidate base dirs for the gpg socket redirect, shared by the
+# creation loop in the signing block and the leaked-dir reap in
+# cleanup() so the two can never drift apart.
+gpg_socket_bases=("${TMPDIR:-}" "${HOME:-}" /tmp)
 scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
@@ -399,16 +403,22 @@ cleanup() {
   fi
   # The redirected socket dir (see the signing block) holds only unix
   # sockets, never key material; remove it after the agent is dead.
-  # Then best-effort reap siblings leaked by SIGKILL'd prior runs in
-  # the same base dir, since a kill skips this trap the same way it
-  # skips the scratch-dir one. Age-gated to an hour so a concurrently
-  # running sibling's live socket dir is never touched: a signing run
-  # lasts seconds, so any hour-old dir is garbage. `-mmin` is
-  # supported by GNU, BSD/macOS, and busybox find.
   if [ -n "${gpg_socket_dir}" ]; then
     rm -rf "${gpg_socket_dir}" || true
-    find "${gpg_socket_dir%/*}" -maxdepth 1 -name '.bun-sign-gpg.*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
   fi
+  # Then best-effort reap dirs leaked by SIGKILL'd prior runs, since a
+  # kill skips this trap the same way it skips the scratch-dir one.
+  # Every creation candidate is swept — a prior run may have resolved
+  # a different base than this one did. Age-gated to an hour so a
+  # concurrently running sibling's live socket dir is never touched:
+  # a signing run lasts seconds, so any hour-old dir is garbage.
+  # `-mmin` is supported by GNU, BSD/macOS, and busybox find.
+  local _sock_base
+  for _sock_base in "${gpg_socket_bases[@]}"; do
+    if [ -n "${_sock_base}" ] && [ -d "${_sock_base}" ]; then
+      find "${_sock_base}" -maxdepth 1 -name '.bun-sign-gpg.*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+    fi
+  done
   if [ "${restore_failed}" -eq 1 ]; then
     # Preserve scratch_dir as a recovery surface. The .bak files sit
     # inside it; an operator with write access to ${dir} can manually
@@ -797,7 +807,7 @@ chmod 700 "${gnupghome}"
 # age-gated reap of hour-old sibling dirs — old enough that no live
 # run can be touched, frequent enough that strays never accumulate.
 gpg_socket_dir=""
-for _sock_base in "${TMPDIR:-}" "${HOME:-}" /tmp; do
+for _sock_base in "${gpg_socket_bases[@]}"; do
   if [ -z "${_sock_base}" ] || ! [ -d "${_sock_base}" ]; then
     continue
   fi

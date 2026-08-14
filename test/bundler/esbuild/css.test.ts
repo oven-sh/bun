@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect } from "bun:test";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -396,14 +396,16 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
+    // The errors are reported on the `composes` declarations in
+    // styles.module.css; the message names the file that was searched.
     bundleErrors: {
       "/styles.module.css": [
+        'The name "z" never appears in "file.module.css"',
+        'The name "x" never appears in "file.css"',
         // TODO: renable when we support :local and :global
         // 'Cannot use global name "y" with "composes"',
         // 'Cannot use global name "x" with "composes"',
       ],
-      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
-      "/file.css": ['The name "x" never appears in "file.css"'],
     },
     bundleWarnings: {
       "/styles.module.css": [
@@ -411,6 +413,76 @@ describe("bundler", () => {
         // 'The global name "y" is defined in file.module.css. Use the ":local" selector to change "y" into a local name.',
         // 'The global name "x" is defined in file.css. Use the "local-css" loader for "file.css" to enable local names.',
       ],
+    },
+  });
+
+  // The location of a "never appears" error is the `composes` declaration that
+  // asked for the name, whether the name was looked up in another file or in
+  // the same one. The cross-file error used to be attached to the other file,
+  // with an offset that only made sense in the composing file.
+  itBundled("css/ImportCSSFromJSComposesFromMissingImportLocation", {
+    files: {
+      "/entry.js": `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/styles.module.css": [
+        ".base {",
+        "  color: red;",
+        "}",
+        ".foo {",
+        '  composes: missing alsoMissing from "./other.module.css";',
+        "}",
+        ".bar {",
+        "  composes: missingHere;",
+        "}",
+      ].join("\n"),
+      "/other.module.css": ".x { color: blue }",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    backend: "api",
+    bundleErrors: {
+      "/styles.module.css": [
+        'The name "missing" never appears in "other.module.css"',
+        'The name "alsoMissing" never appears in "other.module.css"',
+        'The name "missingHere" never appears in "styles.module.css"',
+      ],
+    },
+    onAfterApiBundle(build) {
+      expect(build.success).toBe(false);
+      const errors = build.logs
+        .map(log => ({
+          message: log.message.slice(0, log.message.indexOf(" as a CSS modules")),
+          file: basename(log.position!.file),
+          line: log.position!.line,
+          column: log.position!.column,
+          lineText: log.position!.lineText,
+        }))
+        .sort((a, b) => a.line - b.line || a.message.localeCompare(b.message));
+      expect(errors).toEqual([
+        {
+          message: 'The name "alsoMissing" never appears in "other.module.css"',
+          file: "styles.module.css",
+          line: 5,
+          column: 12,
+          lineText: '  composes: missing alsoMissing from "./other.module.css";',
+        },
+        {
+          message: 'The name "missing" never appears in "other.module.css"',
+          file: "styles.module.css",
+          line: 5,
+          column: 12,
+          lineText: '  composes: missing alsoMissing from "./other.module.css";',
+        },
+        {
+          message: 'The name "missingHere" never appears in "styles.module.css"',
+          file: "styles.module.css",
+          line: 8,
+          column: 12,
+          lineText: "  composes: missingHere;",
+        },
+      ]);
     },
   });
 
@@ -654,11 +726,9 @@ describe("bundler", () => {
       },
       entryPoints: ["/entry.js"],
       outdir: "/out",
-      bundleErrors: testCase.expectedError
-        ? testCase.name === "ImportedNonClass"
-          ? { "/other.module.css": [testCase.expectedError] }
-          : { "/styles.module.css": [testCase.expectedError] }
-        : undefined,
+      // Every error, including the one for a name composed from other.module.css,
+      // is reported on the `composes` declaration in styles.module.css.
+      bundleErrors: testCase.expectedError ? { "/styles.module.css": [testCase.expectedError] } : undefined,
       bundleWarnings: testCase.expectedWarning ? { "/styles.module.css": [testCase.expectedWarning] } : undefined,
       onAfterBundle(api) {
         // Check that the output files were generated correctly

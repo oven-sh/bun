@@ -6,10 +6,10 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
+  isAndroid,
   isBroken,
   isDebug,
   isLinux,
-  isMacOS,
   isPosix,
   isWindows,
   shellExe,
@@ -609,8 +609,10 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+// The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
+// kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
+// loop has no wakeup for processes appended after it starts.
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({

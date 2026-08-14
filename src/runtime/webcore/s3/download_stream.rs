@@ -278,28 +278,31 @@ impl S3HttpDownloadStreamingTask {
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
         let is_done = !result.has_more;
-        // The final callback is where the HTTP thread hands the request back
-        // (`embedded_work_finished` below, after `this` may have been freed).
-        // SAFETY: `this` is live for the duration of the request.
-        let done_handle = is_done.then(|| unsafe { (*this).loop_handle.clone() });
+        // On the final callback `on_response` frees `*this` as soon as it can observe the final
+        // state: once the task posted below is queued or, if one is already queued, once
+        // `process_http_callback` unlocks. The post and the hand-back therefore go through this
+        // copy: a call through the field would hold a `&` into the allocation while the JS thread
+        // frees it (as `release_at_shutdown` and `S3HttpSimpleTask::http_callback`).
+        // SAFETY: `this` is live; both of those points come later in this function.
+        let handle = unsafe { (*this).loop_handle.clone() };
         // SAFETY: as above; the HTTP thread is the only one touching it here.
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
-            // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
-            // this heap request and the queue takes ownership of its `next` link. The VM waits
-            // for its S3 requests (embedded work) before closing its handle: always queued.
-            unsafe {
-                let task = core::ptr::NonNull::from(
+            // SAFETY: `process_http_callback` returned true, so no task is queued and nothing
+            // can free `*this` before the post below; `task` is the inline `concurrent_task`
+            // field of this heap request and the queue takes ownership of its `next` link.
+            let task = unsafe {
+                core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                let bun_jsc::vm_handle::Posted::Queued = (*this).loop_handle.post_task(task) else {
-                    unreachable!(
-                        "VM handle closed with an S3 download outstanding on the HTTP thread"
-                    );
-                };
-            }
+                )
+            };
+            // The VM waits for its S3 requests (embedded work) before closing its handle:
+            // always queued.
+            let bun_jsc::vm_handle::Posted::Queued = handle.post_task(task) else {
+                unreachable!("VM handle closed with an S3 download outstanding on the HTTP thread");
+            };
         }
-        if let Some(handle) = done_handle {
+        if is_done {
             handle.embedded_work_finished();
         }
     }

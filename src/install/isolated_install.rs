@@ -2632,6 +2632,12 @@ pub(crate) fn install_isolated_packages(
             }
 
             debug_assert!(done);
+
+            // The summary line prints `success`; the tree printer lists the bitset.
+            assert_eq!(
+                installer.summary.success as usize,
+                installer.installed.count()
+            );
         }
 
         let mut summary = core::mem::take(&mut installer.summary);

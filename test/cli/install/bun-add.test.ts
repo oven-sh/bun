@@ -1130,7 +1130,7 @@ it("should add dependency alongside workspaces", async () => {
     "installed baz@0.0.3 with binaries:",
     " - baz-run",
     "",
-    "2 packages installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -2156,7 +2156,7 @@ it("should add dependencies to workspaces directly", async () => {
     "",
     `installed foo@${relative(package_dir, add_dir).replace(/\\/g, "/")}`,
     "",
-    "2 packages installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(package_dir))).toEqual([

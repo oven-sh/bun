@@ -524,23 +524,19 @@ impl<'a> Installer<'a> {
 
         match real_state {
             CompleteState::Success => {
-                self.summary.success += 1;
+                // A package may have several store entries (peer variants); count it once.
+                let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
+                let is_duplicate = self.installed.is_set(pkg_id as usize);
+                self.summary.success += (!is_duplicate) as u32;
+                self.installed.set(pkg_id as usize);
             }
             CompleteState::Skipped => {
                 self.summary.skipped += 1;
-                return;
             }
             CompleteState::Fail => {
                 self.summary.fail += 1;
-                return;
             }
         }
-
-        let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
-
-        let is_duplicate = self.installed.is_set(pkg_id as usize);
-        self.summary.success += (!is_duplicate) as u32;
-        self.installed.set(pkg_id as usize);
     }
 
     // This function runs only on the main thread. The installer tasks threads

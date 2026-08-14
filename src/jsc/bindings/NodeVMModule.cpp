@@ -200,8 +200,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     {
         NodeVMRunTermination termination(vm, timeout ? std::optional<double>(timeout) : std::nullopt, breakOnSigint ? this : nullptr);
         std::optional<SigintWatcher::GlobalObjectHolder> sigint;
-        if (breakOnSigint)
-            sigint.emplace(SigintWatcher::hold(nodeVmGlobalObject, this));
+        if (breakOnSigint) {
+            // The realm being evaluated (the context's, else the caller's): its VM is what SIGINT
+            // must interrupt, also for a module created without a context.
+            sigint.emplace(SigintWatcher::hold(globalObject, this));
+        }
         run();
         drainAfterEvaluate();
         // Evaluation (or the afterEvaluate drain) may leave an exception pending. Observe it so the

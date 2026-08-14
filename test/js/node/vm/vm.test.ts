@@ -1640,7 +1640,7 @@ test("a module whose evaluation times out is errored", async () => {
     const vm = require("node:vm");
     const m = new vm.SourceTextModule("for (;;) {}", { context: vm.createContext({}) });
     await m.link(() => { throw new Error("unreachable"); });
-    const first = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
+    const first = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code + "|" + e.message);
     // A second evaluate() re-throws the recorded error rather than complaining about the status.
     const second = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
     console.log(first, m.status, second);
@@ -1648,6 +1648,6 @@ test("a module whose evaluation times out is errored", async () => {
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT errored ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT|Script execution timed out after 20ms errored ERR_SCRIPT_EXECUTION_TIMEOUT\n");
   expect(exitCode).toBe(0);
 }, 30_000);

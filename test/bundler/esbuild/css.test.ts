@@ -1275,6 +1275,89 @@ b {
     },
   });
 
+  // `(property: value)` conditions are printed from their parsed form, both in
+  // @supports rules and in the @supports wrapper generated for a conditional
+  // @import, so they pick up the output's formatting. Exact comparisons on
+  // purpose: the difference is whitespace and grouping.
+  const atSupportsDeclarationFiles = {
+    "/entry.css": /* css */ `
+      @import "./dep.css" supports((-webkit-mask: none) or (mask: none));
+      @supports (display:grid) {
+        a { color: red }
+      }
+      @supports (background:url(ignored.png)) and (--x:1) {
+        b { color: red }
+      }
+    `,
+    "/dep.css": /* css */ `c { color: red }`,
+  };
+
+  itBundled("css/AtSupportsDeclarationConditions", {
+    files: atSupportsDeclarationFiles,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(/* css */ `/* dep.css */
+@supports ((-webkit-mask: none) or (mask: none)) {
+  c {
+    color: red;
+  }
+}
+
+/* entry.css */
+@supports (display: grid) {
+  a {
+    color: red;
+  }
+}
+
+@supports (background: url(ignored.png)) and (--x: 1) {
+  b {
+    color: red;
+  }
+}
+`);
+    },
+  });
+
+  itBundled("css/AtSupportsDeclarationConditionsMinified", {
+    files: atSupportsDeclarationFiles,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const expected =
+        "@supports ((-webkit-mask:none) or (mask:none)){c{color:red}}" +
+        "@supports (display:grid){a{color:red}}" +
+        "@supports (background:url(ignored.png)) and (--x:1){b{color:red}}\n";
+      api.expectFile("/out.css").toBe(expected);
+    },
+  });
+
+  // Within one file, consecutive @supports rules with the same condition are
+  // merged into the first one; the later ones used to be dropped. Rules from
+  // different files are minified separately and stay separate.
+  itBundled("css/AtSupportsSameConditionRulesAreMerged", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./dep.css";
+        @supports (display: grid) { a { color: red } }
+        @supports (display:grid) { b { color: red } }
+        @supports (--a: 1) { c { color: red } }
+        @supports (--b: 1) { d { color: red } }
+      `,
+      "/dep.css": /* css */ `@supports (display: grid) { e { color: red } }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const expected =
+        "@supports (display:grid){e{color:red}}" +
+        "@supports (display:grid){a,b{color:red}}" +
+        "@supports (--a:1){c{color:red}}" +
+        "@supports (--b:1){d{color:red}}\n";
+      api.expectFile("/out.css").toBe(expected);
+    },
+  });
+
   itBundled("css/PackageURLsInCSS", {
     files: {
       "/entry.css": /* css */ `

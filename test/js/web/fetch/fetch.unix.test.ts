@@ -1,5 +1,5 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
@@ -248,9 +248,9 @@ it("handle redirect to non-unix", async () => {
 // Following a redirect hands a reusable connection to the keep-alive pool,
 // keyed by the request URL's host and port. A unix-socket connection is not
 // reusable that way: the request URL below names the TCP server, so pooling
-// the unix connection would serve the TCP hop (and any later fetch of that
-// host:port) from the unix server.
-it("does not pool the unix-socket connection whose redirect is being followed", async () => {
+// either unix connection (the one that carried the 3xx or the one that served
+// the hop) would make the plain fetch of that host:port talk to the unix server.
+it("does not pool the unix-socket connections of a followed redirect", async () => {
   startServer({
     fetch(req) {
       return new Response(`tcp ${new URL(req.url).pathname}`);
@@ -268,8 +268,145 @@ it("does not pool the unix-socket connection whose redirect is being followed", 
 
   const results: string[] = [];
   for (let i = 0; i < 5; i++) {
-    const response = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
-    results.push(`${response.status} ${response.redirected} ${await response.text()}`);
+    const redirected = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
+    const direct = await fetch(`http://127.0.0.1:${server.port}/world`);
+    results.push(`${redirected.status} ${redirected.redirected} ${await redirected.text()} | ${await direct.text()}`);
   }
-  expect(results).toEqual(Array(5).fill("200 true tcp /world"));
+  expect(results).toEqual(Array(5).fill("200 true unix /world | tcp /world"));
+});
+
+// With `unix`, the URL's authority only fills in the Host header and is what a
+// relative Location resolves against. A redirect that stays on that authority
+// is still addressed to the unix server, so it is followed over the socket. To
+// make a hop that leaves the socket visible (instead of failing to connect),
+// every URL below names a live TCP listener.
+describe("redirects over a unix socket", () => {
+  let unixSeen: string[], tcpSeen: string[];
+  let path: string, origin: string;
+
+  beforeEach(() => {
+    unixSeen = [];
+    tcpSeen = [];
+    startServer({
+      fetch(req) {
+        tcpSeen.push(`${req.method} ${new URL(req.url).pathname} authorization=${req.headers.get("authorization")}`);
+        return new Response("tcp");
+      },
+    });
+    origin = `http://127.0.0.1:${server.port}`;
+    path = startServerUnix({
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        unixSeen.push(`${req.method} ${pathname} authorization=${req.headers.get("authorization")}`);
+        switch (pathname) {
+          case "/relative":
+            return new Response(null, { status: 302, headers: { Location: "/done" } });
+          case "/absolute":
+            return new Response(null, { status: 302, headers: { Location: `${origin}/done` } });
+          case "/chain":
+            return new Response(null, { status: 302, headers: { Location: "/relative" } });
+          case "/resend":
+            return new Response(null, { status: 307, headers: { Location: "/echo" } });
+          case "/leave":
+            return new Response(null, { status: 302, headers: { Location: `${server.url.origin}/done` } });
+          case "/echo":
+            return new Response(`unix echo ${await req.text()}`);
+        }
+        return new Response(`unix ${pathname}`);
+      },
+    });
+  });
+
+  const headers = { Authorization: "Bearer daemon-token" };
+
+  async function summarize(response: Response) {
+    return {
+      status: response.status,
+      redirected: response.redirected,
+      url: response.url,
+      body: await response.text(),
+      unixSeen,
+      tcpSeen,
+    };
+  }
+
+  it("follows a relative Location over the socket", async () => {
+    const response = await fetch(`${origin}/relative`, { unix: path, headers });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: `${origin}/done`,
+      body: "unix /done",
+      unixSeen: ["GET /relative authorization=Bearer daemon-token", "GET /done authorization=Bearer daemon-token"],
+      tcpSeen: [],
+    });
+  });
+
+  it("follows an absolute Location on the same authority over the socket", async () => {
+    const response = await fetch(`${origin}/absolute`, { unix: path, headers });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: `${origin}/done`,
+      body: "unix /done",
+      unixSeen: ["GET /absolute authorization=Bearer daemon-token", "GET /done authorization=Bearer daemon-token"],
+      tcpSeen: [],
+    });
+  });
+
+  it("stays on the socket across several hops", async () => {
+    const response = await fetch(`${origin}/chain`, { unix: path, headers });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: `${origin}/done`,
+      body: "unix /done",
+      unixSeen: [
+        "GET /chain authorization=Bearer daemon-token",
+        "GET /relative authorization=Bearer daemon-token",
+        "GET /done authorization=Bearer daemon-token",
+      ],
+      tcpSeen: [],
+    });
+  });
+
+  it("resends the body of a 307 over the socket", async () => {
+    const response = await fetch(`${origin}/resend`, { unix: path, headers, method: "POST", body: "payload" });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: `${origin}/echo`,
+      body: "unix echo payload",
+      unixSeen: ["POST /resend authorization=Bearer daemon-token", "POST /echo authorization=Bearer daemon-token"],
+      tcpSeen: [],
+    });
+  });
+
+  it("works with the usual placeholder host in the URL", async () => {
+    const response = await fetch("http://localhost/relative", { unix: path, headers });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: "http://localhost/done",
+      body: "unix /done",
+      unixSeen: ["GET /relative authorization=Bearer daemon-token", "GET /done authorization=Bearer daemon-token"],
+      tcpSeen: [],
+    });
+  });
+
+  // A Location on another authority names a different server (see "handle
+  // redirect to non-unix" above): that hop leaves the socket and, like any
+  // cross-origin redirect, goes out without the credentials.
+  it("a Location on another authority leaves the socket without the credentials", async () => {
+    expect(server.url.origin).not.toBe(origin);
+    const response = await fetch(`${origin}/leave`, { unix: path, headers });
+    expect(await summarize(response)).toEqual({
+      status: 200,
+      redirected: true,
+      url: `${server.url.origin}/done`,
+      body: "tcp",
+      unixSeen: ["GET /leave authorization=Bearer daemon-token"],
+      tcpSeen: ["GET /done authorization=null"],
+    });
+  });
 });

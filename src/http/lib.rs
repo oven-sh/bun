@@ -2591,15 +2591,6 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
-        let keep_alive_possible = self.is_keep_alive_possible();
-        // There is no struct copy-back
-        // (`sync_progress_from` skips owned fields) and the original retains
-        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
-        // clone was created via `ptr::read`). Dropping it here would
-        // double-free when the original later runs `clear_data()`. Forget the
-        // clone's view; the original is the sole owner.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2628,7 +2619,7 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if keep_alive_possible
+        } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
             // A direct TLS socket verified against a Host-header override
@@ -2660,12 +2651,7 @@ impl<'a> HTTPClient<'a> {
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
 
-        // Deferred until after the pool/close decision above — see
-        // `InternalStateFlags::clear_hostname_on_redirect`.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
+        self.leave_origin_for_cross_origin_redirect();
 
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
@@ -2682,6 +2668,24 @@ impl<'a> HTTPClient<'a> {
         self.reevaluate_proxy_for_redirect();
 
         self.start(HTTPRequestBody::Bytes(request_body));
+    }
+
+    /// A same-origin hop is still addressed to the server the request was
+    /// sent to, so it keeps the Host override and, with `fetch(url, {unix})`,
+    /// is dialed over the same unix socket (the URL's authority is only a
+    /// placeholder there, and the `Location` resolved against it). A
+    /// cross-origin hop names another server: SNI / Host / certificate
+    /// verification come from the new URL, and the hop dials that URL's
+    /// authority instead of the unix socket.
+    fn leave_origin_for_cross_origin_redirect(&mut self) {
+        if !self.state.flags.redirect_is_cross_origin {
+            return;
+        }
+        self.hostname = None;
+        // Forgotten, not dropped: the HTTP-thread clone was created by a
+        // bitwise `ptr::read` of the JS-thread original, which still owns
+        // this allocation and frees it in `AsyncHTTP::clear_data()`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -4306,22 +4310,11 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
-        // See `do_redirect`: the cross-origin redirect must drop the
-        // per-request Host override before the follow-up connection derives
-        // its SNI / certificate-verification hostname. The h2/h3 path never
-        // reaches `do_redirect`'s consume-and-clear, so mirror it here before
-        // `state.reset()` discards the flag.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
+        // Before `state.reset()` discards the flag.
+        self.leave_origin_for_cross_origin_redirect();
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
-        // See `do_redirect`: the HTTP-thread clone shares this allocation
-        // with the JS-thread original (created via `ptr::read`); dropping it
-        // here double-frees once the original runs `clear_data()`.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {
@@ -5211,12 +5204,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
 
-                // Cross-origin redirect: re-derive SNI / cert
-                // verification / Host from the redirect target. See
-                // `InternalStateFlags::clear_hostname_on_redirect`.
-                if !is_same_origin {
-                    self.state.flags.clear_hostname_on_redirect = true;
-                }
+                // Acted on in `do_redirect`, see
+                // `HTTPClient::leave_origin_for_cross_origin_redirect`.
+                self.state.flags.redirect_is_cross_origin = !is_same_origin;
 
                 // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
                 // If request's current URL's origin is not same origin with

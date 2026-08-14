@@ -68,7 +68,7 @@ pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[
 /// becomes `\\x`).
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     debug_assert!(!buf.is_empty());
-    let (start, to_copy) = if utf16.starts_with(&bun_core::w!("\\\\?\\UNC\\")[..]) {
+    let (start, to_copy) = if utf16.starts_with(bun_core::w!("\\\\?\\UNC\\")) {
         buf[..2].copy_from_slice(b"\\\\");
         (2, &utf16[8..])
     } else {

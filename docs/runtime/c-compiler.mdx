@@ -61,17 +61,18 @@ What is the answer to the universe? 42
 | i8         | `int8_t`       | `int8_t`                    |
 | i16        | `int16_t`      | `int16_t`                   |
 | i32        | `int32_t`      | `int32_t`, `int`            |
-| i64        | `int64_t`      | `int64_t`                   |
+| i64        | `int64_t`      | `int64_t`, `isize`          |
 | i64_fast   | `int64_t`      |                             |
 | u8         | `uint8_t`      | `uint8_t`                   |
 | u16        | `uint16_t`     | `uint16_t`                  |
 | u32        | `uint32_t`     | `uint32_t`                  |
-| u64        | `uint64_t`     | `uint64_t`                  |
+| u64        | `uint64_t`     | `uint64_t`, `usize`         |
 | u64_fast   | `uint64_t`     |                             |
 | f32        | `float`        | `float`                     |
 | f64        | `double`       | `double`                    |
 | bool       | `bool`         |                             |
 | char       | `char`         |                             |
+| void       | `void`         | `returns` only              |
 | napi_env   | `napi_env`     |                             |
 | napi_value | `napi_value`   |                             |
 
@@ -197,6 +198,25 @@ cc({
   source: "hello.c",
   define: {
     NDEBUG: "1",
+  },
+});
+```
+
+#### `include: string | string[]`
+
+`include` is an optional list of directories to search for headers, equivalent to `-I` in gcc/clang. Relative paths are resolved from the current working directory.
+
+```ts
+type Include = string | string[];
+
+cc({
+  source: "hello.c",
+  include: ["./vendor/include"],
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
   },
 });
 ```

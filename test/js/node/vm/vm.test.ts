@@ -408,10 +408,13 @@ describe("vm", () => {
           stderr: "pipe",
           stdout: "pipe",
         });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(exitCode).toBe(1);
-        // The source excerpt: line-numbered source lines followed by the caret line.
-        return stderr.split("\n").filter(line => /^\s*\d+ \| /.test(line) || /^\s*\^$/.test(line));
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          // The source excerpt: line-numbered source lines followed by the caret line.
+          excerpt: stderr.split("\n").filter(line => /^\s*\d+ \| /.test(line) || /^\s*\^$/.test(line)),
+          stdout,
+          exitCode,
+        };
       };
       const body = JSON.stringify('let ok = 1; throw new Error("boom")');
       const [fromScript, fromFunction, fromOffsetFunction] = await Promise.all([
@@ -422,10 +425,18 @@ describe("vm", () => {
         run(`require("node:vm").compileFunction(${body}, ["exports", "require"], { filename: "/virtual/cf.js" })()`),
         run(`require("node:vm").compileFunction(${body}, [], { filename: "/virtual/cf.js", lineOffset: 10 })()`),
       ]);
-      expect(fromScript).toEqual([`1 | ${JSON.parse(body)}`, expect.stringMatching(/^ +\^$/)]);
+      expect(fromScript).toEqual({
+        excerpt: [`1 | ${JSON.parse(body)}`, expect.stringMatching(/^ +\^$/)],
+        stdout: "",
+        exitCode: 1,
+      });
       expect(fromFunction).toEqual(fromScript);
       // A wider line number indents the caret one more column.
-      expect(fromOffsetFunction).toEqual([`11 | ${JSON.parse(body)}`, " " + fromScript[1]]);
+      expect(fromOffsetFunction).toEqual({
+        excerpt: [`11 | ${JSON.parse(body)}`, " " + fromScript.excerpt[1]],
+        stdout: "",
+        exitCode: 1,
+      });
     });
 
     test("runtime arrow header shows the body line when called from a vm script", () => {

@@ -534,8 +534,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
-        // An ill-formed sequence decodes as one U+FFFD one byte wide, so a line
-        // terminator right after a bad lead byte still reaches the match below.
+        // An ill-formed sequence is one U+FFFD one byte wide, so a '\n' after it is not skipped.
         let iter = strings::CodepointIterator::init(slice);
         while i < n {
             let mut cursor = strings::Cursor {

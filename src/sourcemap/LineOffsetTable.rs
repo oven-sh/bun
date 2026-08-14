@@ -186,8 +186,7 @@ impl LineOffsetTable {
         // Hoist the base pointer so per-iteration offset math is a single sub + truncate.
         let base = contents.as_ptr() as usize;
 
-        // Same decoder as the generated-side walk in `Chunk.rs`: an ill-formed sequence
-        // is one U+FFFD one byte wide, so a line terminator right after it is not skipped.
+        // Same decoder as `Chunk.rs`: an ill-formed sequence is one U+FFFD one byte wide.
         let iter = strings::CodepointIterator::init(contents);
         let mut remaining = contents;
         while !remaining.is_empty() {

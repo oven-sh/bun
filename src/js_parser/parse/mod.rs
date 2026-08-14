@@ -828,7 +828,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+            if p.lexer.token == T::TIdentifier
+                && !p.lexer.has_newline_before
+                && !(opts.is_for_loop_init && p.is_using_for_of_variable())
+            {
                 if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
@@ -888,12 +891,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             let raw2 = p.lexer.raw();
-            let mut value = if p.lexer.token == T::TIdentifier && raw2 == b"using" {
+            let mut value = if p.lexer.token == T::TIdentifier
+                && raw2 == b"using"
+                && !p.lexer.has_newline_before
+            {
                 'value: {
                     // const using_loc = p.saveExprCommentsHere();
                     let using_range = p.lexer.range();
                     p.lexer.next()?;
-                    if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+                    if p.lexer.token == T::TIdentifier
+                        && !p.lexer.has_newline_before
+                        && !(opts.is_for_loop_init && p.is_using_for_of_variable())
+                    {
                         // It's an "await using" declaration if we get here
                         if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
@@ -1572,6 +1581,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn check_for_arrow_after_the_current_token(&mut self) -> bool {
         self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
+    }
+
+    /// With the lexer on the token after `using` in a for-loop head: `for (using of y)`
+    /// loops over a variable named `using`, while `for (using of = x;;)` declares `of`.
+    fn is_using_for_of_variable(&mut self) -> bool {
+        self.lexer.is_contextual_keyword(b"of")
+            && !self.next_token_matches(|p| p.lexer.token == T::TEquals)
     }
 
     /// This parses an expression. This assumes we've already parsed the "async"

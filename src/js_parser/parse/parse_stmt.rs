@@ -672,6 +672,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Detect for-in loops
             if p.lexer.token == T::TIn {
+                if let Some(init_stmt) = &init_ {
+                    if let js_ast::StmtData::SLocal(local) = &init_stmt.data {
+                        match local.kind {
+                            js_ast::s::Kind::KUsing => p.log().add_error(
+                                Some(p.source),
+                                init_loc,
+                                b"Cannot use a \"using\" declaration in a for-in loop",
+                            ),
+                            js_ast::s::Kind::KAwaitUsing => p.log().add_error(
+                                Some(p.source),
+                                init_loc,
+                                b"Cannot use an \"await using\" declaration in a for-in loop",
+                            ),
+                            _ => {}
+                        }
+                    }
+                }
                 p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
@@ -688,12 +705,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             }
 
-            // Only require "const" statement initializers when we know we're a normal for loop
+            // Only require "const" and "using" statement initializers when we know we're a
+            // normal for loop
             if let Some(init_stmt) = &init_ {
                 match &init_stmt.data {
                     js_ast::StmtData::SLocal(local) => {
-                        if local.kind == js_ast::s::Kind::KConst {
-                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
+                        if local.kind == js_ast::s::Kind::KConst || local.kind.is_using() {
+                            p.require_initializers(local.kind, decls_ptr.slice())?;
                         }
                     }
                     _ => {}

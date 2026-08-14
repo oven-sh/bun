@@ -5198,10 +5198,12 @@ describe("export of a block-scoped function declaration", () => {
   });
 });
 
-// A `using` / `await using` declaration placed directly in a `case` / `default`
-// clause is a SyntaxError (V8, JSC and tsc all reject it); it has to be wrapped
-// in a block. The parser reports it the same way for every loader and target.
-describe("using declarations in switch statements", () => {
+// Where `using` / `await using` declarations may appear. Every verdict below matches
+// node 26 and JSC: directly in a `case` / `default` clause (must be wrapped in a block),
+// as the head of a for-in loop, without an initializer in a C-style for loop, and with
+// a newline between `await` and `using` are all SyntaxErrors, while `for (using of y)`
+// loops over a variable named `using`.
+describe("using declaration placement", () => {
   const usingError = {
     message: '"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block',
     length: "using".length,
@@ -5224,7 +5226,86 @@ describe("using declarations in switch statements", () => {
     return [];
   }
 
+  // The printed output when `code` is accepted, otherwise the first error reported.
+  // target "bun" keeps `using` as written, so the output shows how the input was parsed.
+  function verdict(code, loader) {
+    try {
+      return new Bun.Transpiler({ loader, target: "bun" }).transformSync(code);
+    } catch (e) {
+      return (e instanceof AggregateError ? e.errors[0] : e).message;
+    }
+  }
+
   describe.each(["js", "ts"])("loader %s", loader => {
+    it("for loop heads", () => {
+      const verdicts = {};
+      for (const code of [
+        "for (using x in y);",
+        "for (await using x in y);",
+        "for (using x;;);",
+        "for (await using x;;);",
+        "for (using of of y);",
+        "for (await using of y);",
+        "for (using\nx of y);",
+        "for (using x = y;;);",
+        "for (await using x = y;;);",
+        "for (using of = x;;);",
+        "for (await using of = x;;);",
+        "for (using of y);",
+        "for await (using of y);",
+        "for (using x of y);",
+        "for (await using x of y);",
+        "for await (using x of y);",
+        "for await (await using x of y);",
+      ]) {
+        verdicts[code] = verdict(code, loader);
+      }
+      expect(verdicts).toEqual({
+        "for (using x in y);": 'Cannot use a "using" declaration in a for-in loop',
+        "for (await using x in y);": 'Cannot use an "await using" declaration in a for-in loop',
+        "for (using x;;);": 'The declaration "x" must be initialized',
+        "for (await using x;;);": 'The declaration "x" must be initialized',
+        "for (using of of y);": 'Expected ")" but found "y"',
+        "for (await using of y);": "Invalid assignment target",
+        "for (using\nx of y);": 'Expected ";" but found "x"',
+        "for (using x = y;;);": "for (using x = y;; )\n  ;\n",
+        "for (await using x = y;;);": "for (await using x = y;; )\n  ;\n",
+        "for (using of = x;;);": "for (using of = x;; )\n  ;\n",
+        "for (await using of = x;;);": "for (await using of = x;; )\n  ;\n",
+        "for (using of y);": "for (using of y)\n  ;\n",
+        "for await (using of y);": "for await (using of y)\n  ;\n",
+        "for (using x of y);": "for (using x of y)\n  ;\n",
+        "for (await using x of y);": "for (await using x of y)\n  ;\n",
+        "for await (using x of y);": "for await (using x of y)\n  ;\n",
+        "for await (await using x of y);": "for await (await using x of y)\n  ;\n",
+      });
+    });
+
+    it("`using` as a binding name is only special in a for-of head", () => {
+      expect(verdict("using of = x;", loader)).toBe("using of = x;\n");
+      expect(verdict("await using of = x;", loader)).toBe("await using of = x;\n");
+    });
+
+    it("a newline between `await` and `using` makes it an await expression", () => {
+      const verdicts = {};
+      for (const code of [
+        "await\nusing a = b;",
+        "async function f() { await\nusing a = b; }",
+        "for (await\nusing a of b);",
+        "await\nusing;",
+        "await\nusing\na = b;",
+      ]) {
+        verdicts[code] = verdict(code, loader);
+      }
+      expect(verdicts).toEqual({
+        "await\nusing a = b;": 'Expected ";" but found "a"',
+        "async function f() { await\nusing a = b; }": 'Expected ";" but found "a"',
+        "for (await\nusing a of b);": 'Expected ";" but found "a"',
+        "await\nusing;": "await using;\n",
+        "await\nusing\na = b;": "await using;\na = b;\n",
+      });
+    });
+
     it("rejects `using` directly in a case or default clause", () => {
       expect(parseErrors("switch (x) { case 0: using a = b; }", { loader })).toEqual([usingError]);
       expect(parseErrors("switch (x) { default: using a = b; }", { loader })).toEqual([usingError]);
@@ -5302,7 +5383,33 @@ describe("using declarations in switch statements", () => {
     expect(new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(code)).toContain("using a = b;");
   });
 
-  it.concurrent("is reported as a syntax error when running the file", async () => {
+  it("lowering sibling blocks in one scope generates distinct temporaries", () => {
+    // The lowering hoists its error temporaries to the enclosing scope as `var`, so the
+    // two blocks must not reuse names. The method bodies in the initializers matter: the
+    // temporary counter used to be reset whenever a function body was visited.
+    const out = new Bun.Transpiler({ loader: "js", target: "browser" }).transformSync(
+      "switch (v()) {\n case 0: { using x = { [s]() {} }; }\n default: { using y = { [t]() {} }; }\n }",
+    );
+    const [first, second] = out.split("default:").map(part => new Set(part.match(/__bun_temp_ref_\d+\$/g)));
+    expect(first.size).toBeGreaterThan(0);
+    expect(second.size).toBe(first.size);
+    expect(first.isDisjointFrom(second)).toBe(true);
+  });
+
+  it.concurrent("`for (using of y)` loops over the variable named using", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "let using; for (using of [1, 2]) console.log(using);"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n2\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a declaration in a clause is reported as a syntax error when running the file", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "switch (1) {\n  case 1:\n    using a = null;\n}\nconsole.log('ran');"],
       env: bunEnv,

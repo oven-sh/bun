@@ -51,7 +51,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: `using` directly in a switch case clause is now a parse error.
+/// Version 26: `using` declarations in switch clauses and for-in / uninitialized for
+/// heads are parse errors; `for (using of y)` parses as a loop over `using`.
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -1669,11 +1669,11 @@ for (const [key, blob] of build.outputs) {
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {
               expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
-              for (let i = 0; i < parsed.sources; i++) {
+              const map_dir = path.dirname(path.join(outdir!, file));
+              for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
-                const sourcemap_content = parsed.sourceContent[i];
-                const actual_content = readFileSync(path.resolve(path.join(outdir!, file), source), "utf-8");
-                expect(sourcemap_content).toBe(actual_content);
+                const actual_content = readFileSync(path.resolve(map_dir, source), "utf-8");
+                expect(parsed.sourcesContent[i], `${file}: sourcesContent of ${source}`).toBe(actual_content);
               }
 
               const generated_lines = (await Bun.file(path.join(outdir!, file.replace(".map", ""))).text()).split("\n");

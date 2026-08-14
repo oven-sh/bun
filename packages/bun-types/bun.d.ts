@@ -7735,6 +7735,97 @@ declare module "bun" {
   ): SyncSubprocess<Out, Err>;
 
   /**
+   * Spawn a new process and wait for it to exit, returning a promise that
+   * resolves with the same result shape as {@link Bun.spawnSync}: buffered
+   * `stdout` and `stderr` as `Buffer`, `exitCode`, `success`, `signalCode`,
+   * `resourceUsage`, and `pid`.
+   *
+   * Unlike {@link Bun.spawnSync}, this does not block the event loop. Unlike
+   * {@link Bun.spawn}, the result contains buffered `Buffer` objects instead
+   * of `ReadableStream`.
+   *
+   * Like {@link Bun.spawnSync}, `stdout` and `stderr` default to `"pipe"` and
+   * the `timeout` and `maxBuffer` options are supported.
+   *
+   * @category Process Management
+   *
+   * ```js
+   * const { stdout } = await Bun.spawnAndWait({
+   *   cmd: ["echo", "hello"],
+   * });
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   */
+  function spawnAndWait<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "pipe",
+  >(
+    options: SpawnOptions.SpawnSyncOptions<In, Out, Err> & {
+      /**
+       * The command to run
+       *
+       * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const result = await Bun.spawnAndWait({ cmd: ["echo", "hello"] });
+       * ```
+       */
+      cmd: string[];
+
+      onExit?: never;
+    },
+  ): Promise<SyncSubprocess<Out, Err>>;
+
+  /**
+   * Spawn a new process and wait for it to exit, returning a promise that
+   * resolves with the same result shape as {@link Bun.spawnSync}: buffered
+   * `stdout` and `stderr` as `Buffer`, `exitCode`, `success`, `signalCode`,
+   * `resourceUsage`, and `pid`.
+   *
+   * Unlike {@link Bun.spawnSync}, this does not block the event loop. Unlike
+   * {@link Bun.spawn}, the result contains buffered `Buffer` objects instead
+   * of `ReadableStream`.
+   *
+   * Like {@link Bun.spawnSync}, `stdout` and `stderr` default to `"pipe"` and
+   * the `timeout` and `maxBuffer` options are supported.
+   *
+   * @category Process Management
+   *
+   * ```js
+   * const { stdout } = await Bun.spawnAndWait(["echo", "hello"]);
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   */
+  function spawnAndWait<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "pipe",
+  >(
+    /**
+     * The command to run
+     *
+     * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.spawnAndWait(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
+  ): Promise<SyncSubprocess<Out, Err>>;
+
+  /**
    * Controller object passed to the `scheduled()` handler when a cron job fires.
    *
    * Compatible with [Cloudflare Workers' ScheduledController](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).

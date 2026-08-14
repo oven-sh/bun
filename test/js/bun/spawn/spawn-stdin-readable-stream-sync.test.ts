@@ -18,6 +18,6 @@ describe("spawnSync with ReadableStream stdin", () => {
         stdin: stream,
         stdout: "pipe",
       }),
-    ).toThrowErrorMatchingInlineSnapshot(`"'stdin' ReadableStream cannot be used in sync mode"`);
+    ).toThrowErrorMatchingInlineSnapshot(`"'stdin' ReadableStream is only supported with Bun.spawn"`);
   });
 });

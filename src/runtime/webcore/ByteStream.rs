@@ -690,11 +690,24 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
-            self.signal_drained();
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
+        if self.buffer.get().is_empty() {
+            return Vec::<u8>::default();
         }
-        Vec::<u8>::default()
+        // Empty first so a producer.on_ready that checks `buffer.len()` sees it
+        // drained. RewriterPipe is the one producer whose on_ready feeds
+        // synchronously; when a sink is installed the native-sink wiring caller
+        // writes `drained` to it afterward, so waking the rewriter here would
+        // let it reach the sink first. Async producers only schedule work.
+        let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
+        let sync_behind_sink = self.sink.get().is_some()
+            && matches!(
+                self.parent_const().producer.get(),
+                streams::SourceHandle::HTMLRewriter(_)
+            );
+        if !sync_behind_sink {
+            self.signal_drained();
+        }
+        drained
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].

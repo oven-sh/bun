@@ -675,7 +675,8 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 
 impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
-    /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
+    /// optionally auto-configuring JSX / decorator options from the working
+    /// directory's `tsconfig.json` (or the `--tsconfig-override` file).
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
         // `Linker::init` dropped its `arena` arg (linker.rs:172
         // — global mimalloc). `crate::linker::Linker` stores raw pointers
@@ -701,7 +702,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_for_top_level_dir(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -762,7 +763,7 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_for_top_level_dir(&dir_info) {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 

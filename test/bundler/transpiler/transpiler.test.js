@@ -3074,9 +3074,13 @@ console.log(resolve.length)
 
       // Non-identifier values used to be looked up as if they were a symbol
       // name, printing the value's source text as the assignment target.
-      const constants = new Bun.Transpiler({ define: { STR: JSON.stringify("abc"), NUM: "1" } });
-      expect(constants.transformSync(`STR = 1; NUM = 1; console.log(STR, NUM);`, "js")).toBe(
-        `STR = 1;\nNUM = 1;\nconsole.log("abc", 1);\n`,
+      // Object values are inlined at every read (esbuild hoists them into a
+      // variable instead), so in an assignment target they count as constants too.
+      const constants = new Bun.Transpiler({
+        define: { STR: JSON.stringify("abc"), NUM: "1", OBJ: JSON.stringify({ a: 1 }) },
+      });
+      expect(constants.transformSync(`STR = 1; NUM = 1; OBJ = 1; console.log(STR, NUM, OBJ);`, "js")).toBe(
+        `STR = 1;\nNUM = 1;\nOBJ = 1;\nconsole.log("abc", 1, { a: 1 });\n`,
       );
     });
 

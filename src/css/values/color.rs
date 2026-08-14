@@ -2010,8 +2010,7 @@ impl ComponentParser {
         }
     }
 
-    /// A channel stored as a unit value: a `<percentage>`, or in the relative
-    /// color syntax also a `<number>` out of `percent_basis`.
+    /// A unit value: a `<percentage>`, or in relative syntax a `<number>` out of `percent_basis`.
     fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
@@ -2100,11 +2099,9 @@ impl NumberOrPercentage {
 pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
     pub(crate) components: (f32, f32, f32, f32),
-    /// What `100%` of each channel is in the function being parsed (255 in
-    /// `rgb()`, 1 in `color(srgb ...)`, for the same `SRGB` components). The
-    /// structs store unit values and a keyword is a `<number>` in the function's
-    /// range, so a keyword is `component * percent_basis`.
-    /// https://drafts.csswg.org/css-color-5/#relative-colors
+    /// What `100%` of each channel is in the function being parsed: 255 in `rgb()`
+    /// but 1 in `color(srgb ...)` for the same unit-value `components`. A keyword
+    /// is the `<number>` `component * percent_basis`.
     pub(crate) percent_basis: (f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
 }
@@ -2171,9 +2168,8 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    /// Second pass for what `parse_number` could not fold: a math function with
-    /// a percentage in it, or `min(r, g)` (`reduce_args` only compares values).
-    /// A keyword is its channel as a percentage of its basis here.
+    /// Second pass for what `parse_number` could not fold: math functions with a
+    /// percentage in them, and `min(r, g)`, since `reduce_args` only compares values.
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         match Calc::<Percentage>::parse_with(input, this, |ctx, ident| {
             let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;

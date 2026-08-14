@@ -928,3 +928,82 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Run in a child: a regression here segfaults the process instead of throwing.
+describe("property lookup throws while formatting an object", () => {
+  it.concurrent("Proxy traps in the prototype chain", async () => {
+    const fixture = `
+      {
+        // Only "a" throws, so the walk has to carry on past it without the
+        // exception still pending when "b" and "c" are looked up.
+        const proto = new Proxy(
+          { a: 1, b: 2, c: 3 },
+          {
+            get(target, key, receiver) {
+              if (key === "a") throw new Error("get trap");
+              return Reflect.get(target, key, receiver);
+            },
+          },
+        );
+        console.log(Bun.inspect(Object.create(proto)));
+      }
+      {
+        const proto = new Proxy(
+          { a: 1 },
+          {
+            getPrototypeOf() {
+              throw new Error("getPrototypeOf trap");
+            },
+          },
+        );
+        const obj = Object.create(proto);
+        obj.x = 1;
+        console.log(Bun.inspect(obj));
+        console.log(obj);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        b: 2,
+        c: 3,
+      }
+      {
+        x: 1,
+        a: 1,
+      }
+      {
+        x: 1,
+        a: 1,
+      }
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("lazy property of the Bun object", async () => {
+    // Bun.redis builds the default client the first time it is read, and an
+    // invalid REDIS_URL makes that throw. Only that property may be left out;
+    // the properties visited after it must still be printed.
+    const fixture = `
+      const keys = Object.keys(Bun);
+      const out = Bun.inspect(Bun);
+      console.log(JSON.stringify(keys.filter(key => !out.includes("\\n  " + key + ":"))));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, REDIS_URL: "http://not-a-redis-url" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe('["redis"]\n');
+    expect(exitCode).toBe(0);
+  });
+});

@@ -1,10 +1,11 @@
 // Spawned by fetch-leak.test.ts ("Sending <type> does not leak"):
 //   fetch-leak-test-fixture-5.js <server url> <body size in bytes> <body type> <request count>
-// POSTs the requests in batches, waits for each batch's Response objects and
-// fetch() promises to be collected, and prints one JSON line for the parent to
-// assert on. RSS growth is measured from after the first batch so one-time
-// allocations (JIT, allocator warm-up, the cached body) are not counted.
-import { heapStats } from "bun:jsc";
+// POSTs the requests in batches, checks after every batch that its Response
+// objects and fetch() promises were collected, and prints one JSON line with the
+// RSS growth, whose threshold the parent owns. The growth is measured from after
+// the first batch so one-time allocations (JIT, allocator warm-up, the cached
+// body) are not counted.
+import { expectCollected, maxResponsesAlive } from "./fetch-leak-test-helpers.js";
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
@@ -19,16 +20,12 @@ if (!Number.isSafeInteger(BODY_SIZE) || !Number.isSafeInteger(REQUESTS) || REQUE
   console.error("body size must be an integer and the request count a multiple of", batch, process.argv);
   process.exit(1);
 }
-// Everything a batch allocated is garbage once the batch has settled, but the
-// most recent batch or two can still be pinned by the native side when a GC
-// runs (see collectBatch), so only counts that stay above a couple of batches'
-// worth are a leak.
-const maxResponses = batch * 2 + batch / 2;
 // JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
 // module map (fetch/module/load per registry entry) for the life of the
-// process. These are constant across batches, so account for them separately
-// from the per-batch leak threshold.
-const maxPromises = maxResponses + 10;
+// process, so the promise count that a collected batch settles at is measured
+// after the first batch instead of being hard-coded; a leaked promise per
+// request then adds a whole batch on top of it.
+const promiseSlack = batch / 2;
 
 function getFormData() {
   const formData = new FormData();
@@ -90,8 +87,10 @@ function getBody() {
     case "stream":
       body = new ReadableStream({
         async pull(c) {
-          // Hand the chunk over after the request has started so the body is
-          // streamed into an in-flight request rather than buffered up front.
+          // Hand the chunk over a little after the request has started so the
+          // body is streamed into an in-flight request rather than buffered up
+          // front. (The server reads the body before answering, so no pull is
+          // still pending once the responses are in.)
           await Bun.sleep(10);
           c.enqueue((cachedBody ??= getBuffer()));
           c.close();
@@ -117,49 +116,23 @@ async function sendBatch() {
   }
 }
 
-// A settled fetch() still has its Response and promise pinned until the native
-// side lets go of them on a later event-loop turn, so poll for the counts to
-// drop rather than sleeping a fixed amount. A real leak never drops below the
-// limits, so the poll is bounded and the last counts seen are reported.
-async function collectBatch() {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    Bun.gc(true);
-    const counts = heapStats().objectTypeCounts;
-    const responses = counts.Response ?? 0;
-    const promises = counts.Promise ?? 0;
-    if ((responses <= maxResponses && promises <= maxPromises) || Date.now() >= deadline) {
-      return { responses, promises };
-    }
-    await new Promise(resolve => setImmediate(resolve));
-  }
-}
+// The first batch provides the settled promise count and the RSS baseline.
+await sendBatch();
+let alive = await expectCollected({ Response: maxResponsesAlive, Promise: Infinity }, `the first ${requests} requests`);
+const limits = { Response: maxResponsesAlive, Promise: alive.Promise + promiseSlack };
+const baseline = rss();
 
-let peakResponses = 0;
-let peakPromises = 0;
-let baseline = 0;
 while (requests < REQUESTS) {
   await sendBatch();
-  const { responses, promises } = await collectBatch();
-  peakResponses = Math.max(peakResponses, responses);
-  peakPromises = Math.max(peakPromises, promises);
-  // Once a batch has failed to be collected every later one would only wait out
-  // the deadline again.
-  if (responses > maxResponses || promises > maxPromises) break;
-  if (requests === batch) baseline = rss();
+  alive = await expectCollected(limits, `${requests} requests`);
 }
 
 console.log(
   JSON.stringify({
     type,
     requests,
-    peakResponses,
-    peakPromises,
+    responsesAlive: alive.Response,
+    promisesAlive: alive.Promise,
     rssGrowthMB: Math.round(((rss() - baseline) / 1024 / 1024) * 10) / 10,
   }),
 );
-if (peakResponses > maxResponses || peakPromises > maxPromises) {
-  throw new Error(
-    `${peakResponses} Response and ${peakPromises} Promise objects survived GC after ${requests} requests (limits ${maxResponses} and ${maxPromises})`,
-  );
-}

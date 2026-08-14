@@ -21,9 +21,9 @@ const rssEnv = {
 };
 
 // Every test here spawns one child that talks to a server in this process and
-// measures its own memory, so the group runs concurrently. (The in-process
-// "do not leak" test below is what keeps this group and the "Sending" group
-// from running at the same time.)
+// measures its own memory, so the group runs concurrently. The children check
+// their own Response (and promise) counts, see fetch-leak-test-helpers.js; the
+// tests own the RSS bounds.
 describe.concurrent("fetch doesn't leak", () => {
   // A debug+ASAN build takes 2-4 s per child with the whole group running at
   // once (release: under 1 s).
@@ -60,9 +60,9 @@ describe.concurrent("fetch doesn't leak", () => {
     timeout,
   );
 
-  // Response bodies (buffered through the ReadableStream fast path) and the
-  // Response objects themselves, over plain TCP, TLS, and TLS with per-request
-  // tls options, with and without Content-Encoding.
+  // Buffered response bodies and the Response objects themselves, over plain
+  // TCP, TLS, and TLS with per-request tls options, with and without
+  // Content-Encoding.
   //
   // The child reports its RSS growth in units of one body. Leaking a body per
   // request comes out at about COUNT; a clean run is left with a few MB of
@@ -190,30 +190,29 @@ describe.concurrent.each(["FormData", "Blob", "Buffer", "String", "URLSearchPara
     // of its own); the limit sits about 3x below the leak and leaves the rest of
     // the distance as headroom for allocator behaviour on the other platforms.
     const MAX_RSS_GROWTH_MB = 96;
-    // URL-encoding the 2 MB body takes a debug build about 0.25 s per request
-    // (release: about 2 s for the whole run).
-    const timeout = 90_000;
+    // URL-encoding the 2 MB body takes a debug build about 0.25 s per request,
+    // i.e. the URLSearchParams child needs 40-50 s there (release: 2-3 s).
+    const timeout = 120_000;
 
     test(
       "does not leak",
       async () => {
-        // Tally how each request framed its body: this proves every request
-        // carried the full body (a body type that serialized to nothing would
-        // pass the RSS check trivially) without reading the bodies, which the
-        // server deliberately ignores.
-        const received: Record<string, number> = {};
+        // The server reads every body before answering, both to prove that each
+        // request really uploaded the whole body (a type that serialized to
+        // nothing would pass the RSS check trivially) and so that no body is
+        // still being produced when the child counts what the responses left
+        // behind. (Answering while the body is still uploading is what the
+        // "server ignores the body" test further down covers.)
+        let bodies = 0;
+        let shortestBody = Infinity;
         using server = Bun.serve({
           port: 0,
           idleTimeout: 0,
-          fetch(req) {
-            const contentLength = req.headers.get("content-length");
-            const framing =
-              contentLength === null
-                ? `transfer-encoding: ${req.headers.get("transfer-encoding")}`
-                : Number(contentLength) >= BODY_SIZE
-                  ? "content-length >= BODY_SIZE"
-                  : `content-length: ${contentLength}`;
-            received[framing] = (received[framing] ?? 0) + 1;
+          async fetch(req) {
+            let byteLength = 0;
+            for await (const chunk of req.body!) byteLength += chunk.byteLength;
+            bodies++;
+            shortestBody = Math.min(shortestBody, byteLength);
             return new Response();
           },
         });
@@ -236,12 +235,11 @@ describe.concurrent.each(["FormData", "Blob", "Buffer", "String", "URLSearchPara
         console.log(stdout.trim());
 
         expect(stderr).toBe("");
-        const { rssGrowthMB, peakResponses, peakPromises, ...report } = JSON.parse(stdout);
+        const { rssGrowthMB, responsesAlive, promisesAlive, ...report } = JSON.parse(stdout);
         expect(report).toEqual({ type, requests: REQUESTS });
-        expect(received).toEqual({
-          [type === "stream" || type === "iterator" ? "transfer-encoding: chunked" : "content-length >= BODY_SIZE"]:
-            REQUESTS,
-        });
+        expect(bodies).toBe(REQUESTS);
+        // FormData and URLSearchParams add their framing on top of the payload.
+        expect(shortestBody).toBeGreaterThanOrEqual(BODY_SIZE);
         expect(rssGrowthMB).toBeLessThan(MAX_RSS_GROWTH_MB);
         expect(exitCode).toBe(0);
       },

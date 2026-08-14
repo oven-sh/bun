@@ -1,11 +1,11 @@
 // Spawned by fetch-leak.test.ts ("fetch doesn't leak > ... > fixture #2"). Fetches
-// SERVER COUNT times, buffering every body through the ReadableStream fast
-// path, and prints one JSON line with how many bodies' worth of RSS the process
-// grew by. The parent owns the thresholds.
+// SERVER COUNT times, buffering every body, checks that the Response objects
+// were collected, and prints one JSON line with how many bodies' worth of RSS
+// the process grew by; the parent owns that threshold.
 //
 // env: SERVER (url), COUNT (measured requests), NAME ("tcp" | "tls" |
 // "tls-with-client"; the last one passes per-request tls options to fetch()).
-import { heapStats } from "bun:jsc";
+import { expectCollected, maxResponsesAlive } from "./fetch-leak-test-helpers.js";
 
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
@@ -41,29 +41,16 @@ async function request() {
   requests++;
 }
 
-// Every Response is garbage once request() returns, bar the most recent ones,
-// which the native side lets go of on a later event-loop turn: poll for that
-// instead of sleeping. A leak never gets under the limit, so the poll is bounded
-// and the count is reported instead.
-const maxResponsesAlive = 5;
-async function collectResponses() {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    Bun.gc(true);
-    const alive = heapStats().objectTypeCounts.Response ?? 0;
-    if (alive <= maxResponsesAlive || Date.now() >= deadline) return alive;
-    await new Promise(resolve => setImmediate(resolve));
-  }
-}
+const collected = () => expectCollected({ Response: maxResponsesAlive }, `${requests} buffered fetches`);
 
 // Warm up so the connection pool, decompressor state and allocator are at
 // steady state before the baseline is taken.
 for (let i = 0; i < COUNT / 10; i++) await request();
-await collectResponses();
+await collected();
 const baseline = rss();
 
 for (let i = 0; i < COUNT; i++) await request();
-const responsesAlive = await collectResponses();
+const { Response: responsesAlive } = await collected();
 
 const growth = rss() - baseline;
 console.log(
@@ -77,6 +64,3 @@ console.log(
     bodiesRetained: Math.round((growth / bodySize) * 10) / 10,
   }),
 );
-if (responsesAlive > maxResponsesAlive) {
-  throw new Error(`${responsesAlive} Response objects are still alive after ${requests} buffered fetches`);
-}

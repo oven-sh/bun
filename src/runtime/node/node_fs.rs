@@ -1502,15 +1502,13 @@ mod _async_tasks {
             bun_event_loop::task_tag::AsyncCpTask
         };
         /// A finished fs.cp whose completion will not run: destroy releases
-        /// its promise handle, protected arguments and keep-alive. The shell's
-        /// variant is also the completion of the `ShellCpTask` that handed it
-        /// the copy (`run_from_js_thread` → `cp_on_finish`), so that task is
-        /// released unrun here too; nothing else frees it.
+        /// its promise handle, protected arguments and keep-alive. For the
+        /// shell this completion is also what frees the `ShellCpTask`
+        /// (`cp_on_finish`), so that is released unrun here as well.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count
-            // at zero, so nothing on the pool still reads this task or the
-            // shell task it points at. The shell task is released after this
-            // one: `args` borrows its absolute paths.
+            // at zero, so the pool is done with both tasks. `args` borrows the
+            // shell task's paths, hence the order.
             unsafe {
                 let shelltask = (*this).shelltask;
                 Self::destroy(this);

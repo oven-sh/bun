@@ -276,7 +276,7 @@ visitor.reportExtraMemoryVisited(thisObject->wrapped().byteSize());
 - If the size changes over time, report the delta on growth (`reportExtraMemoryAllocated(cell, newSize - oldSize)`) and report the current size in `visitChildren`.
 - `deprecatedReportExtraMemory` exists for callers that can't satisfy the visit-side half — avoid it.
 
-In `.classes.ts`, `estimatedSize: true` generates the `reportExtraMemoryVisited` side; you implement `estimated_size()` in Rust. You still call `reportExtraMemoryAllocated` (or the binding's helper) at allocation time.
+In `.classes.ts`, `estimatedSize: true` generates both halves from one Rust method: the generated constructor and `${T}__create` pass `estimated_size()` to `reportExtraMemoryAllocated`, and `visitChildren` re-reports it as visited. Wrappers created by hand-written C++ (e.g. `JSDOMFile`) must do the allocation half themselves. If the object may merely take a reference to memory another wrapper already reported (a `Blob` sharing its store with the blob it was sliced from), add `newlyAllocatedSize: true` and implement `newly_allocated_size()`: the creation sites report that instead, while visits keep re-reporting `estimated_size()`. Otherwise every view reports the whole payload as a fresh allocation and JSC collects after every few views.
 
 ## `HeapAnalyzer` — heap snapshots and labelling
 

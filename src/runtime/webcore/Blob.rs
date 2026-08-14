@@ -387,6 +387,7 @@ pub trait BlobExt {
         Self: Sized;
     fn calculate_estimated_byte_size(&self);
     fn estimated_size(&self) -> usize;
+    fn newly_allocated_size(&self) -> usize;
     fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
@@ -3521,34 +3522,22 @@ impl BlobExt for Blob {
     // is_detached: defined once above; duplicate removed to fix E0034.
 
     fn calculate_estimated_byte_size(&self) {
-        // in-memory size. not the size on disk.
-        let mut size: usize = core::mem::size_of::<Blob>();
-
-        if let Some(store) = self.store.get() {
-            size += core::mem::size_of::<Store>();
-            match &store.data {
-                store::Data::Bytes(bytes) => {
-                    size += bytes.stored_name.len();
-                    size += if self.size.get() != MAX_SIZE {
-                        self.size.get() as usize
-                    } else {
-                        bytes.len() as usize
-                    };
-                }
-                store::Data::File(file) => size += file.pathlike.estimated_size(),
-                store::Data::S3(s3) => size += s3.estimated_size(),
-            }
-        }
-
-        let ct = self.content_type.get();
-        self.reported_estimated_size.set(
-            size + (ct.as_slice().len() * (ct.is_owned() as usize))
-                + self.name.get().byte_slice().len(),
-        );
+        self.reported_estimated_size
+            .set(estimate_in_memory_size(self, true));
     }
 
     fn estimated_size(&self) -> usize {
         self.reported_estimated_size.get()
+    }
+
+    /// `Blob__newlyAllocatedSize`: what the JS wrapper being created for this
+    /// Blob reports as freshly allocated. A store that other Blobs also hold
+    /// (`slice()`, `dupe()`, `new Blob([blob])`, a FormData entry) is already
+    /// accounted for through them; reporting it again for every view made JSC
+    /// schedule a collection every few views of a large blob. Each view still
+    /// re-reports its window as retained memory on every GC via `estimated_size`.
+    fn newly_allocated_size(&self) -> usize {
+        estimate_in_memory_size(self, self.store().is_none_or(|store| store.has_one_ref()))
     }
 
     fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -3698,6 +3687,33 @@ impl BlobExt for Blob {
             strings::AsciiStatus::NonAscii => Some(false),
         }
     }
+}
+
+/// In-memory footprint, not the size on disk. `include_store` adds the
+/// refcounted `Store` and what it owns (for bytes, this blob's window of them).
+fn estimate_in_memory_size(blob: &Blob, include_store: bool) -> usize {
+    let mut size: usize = core::mem::size_of::<Blob>();
+
+    if include_store {
+        if let Some(store) = blob.store() {
+            size += core::mem::size_of::<Store>();
+            match &store.data {
+                store::Data::Bytes(bytes) => {
+                    size += bytes.stored_name.len();
+                    size += if blob.size.get() != MAX_SIZE {
+                        blob.size.get() as usize
+                    } else {
+                        bytes.len() as usize
+                    };
+                }
+                store::Data::File(file) => size += file.pathlike.estimated_size(),
+                store::Data::S3(s3) => size += s3.estimated_size(),
+            }
+        }
+    }
+
+    let ct = blob.content_type.get();
+    size + (ct.as_slice().len() * (ct.is_owned() as usize)) + blob.name.get().byte_slice().len()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

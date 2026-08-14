@@ -1813,9 +1813,10 @@ pub(super) enum AsyncWorkStatus {
 pub(crate) struct napi_async_work {
     pub task: WorkPoolTask,
     pub(crate) concurrent_task: ConcurrentTask,
-    // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    /// How the pool thread delivers completion / cancellation to the VM.
-    pub(crate) loop_handle: bun_jsc::LoopHandle,
+    /// Held while the work is out on the pool (`schedule` until it is posted
+    /// back): how the pool thread delivers completion / cancellation, and what
+    /// makes the VM wait for it.
+    pub(crate) ticket: Option<bun_jsc::Ticket>,
     /// JS thread only.
     pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
@@ -1848,7 +1849,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            loop_handle: global.bun_vm().loop_handle(),
+            ticket: None,
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1873,9 +1874,9 @@ impl napi_async_work {
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         // The work object belongs to the addon and `execute` receives this
-        // env: counted, so the VM waits for it (Node likewise settles its
-        // threadpool requests before an environment is freed).
-        self.loop_handle.embedded_work_scheduled();
+        // env, so the VM waits for it (Node likewise settles its threadpool
+        // requests before an environment is freed).
+        self.ticket = Some(self.global.bun_vm().ticket());
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1887,12 +1888,14 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
-        let handle = self.loop_handle.clone();
+        // Moved out: the JS thread may free `self` the moment it is posted back.
+        let ticket = self
+            .ticket
+            .take()
+            .expect("scheduled napi async work holds a ticket");
         // A VM that is already stopping cancels work it has not started, as
-        // Node's environment cleanup does (uv_cancel); otherwise `execute` runs
-        // with the VM held open.
-        let vm = handle.borrow_if_running();
-        let started = vm.is_some()
+        // Node's environment cleanup does (uv_cancel).
+        let started = ticket.script_allowed()
             && match self.status.compare_exchange(
                 AsyncWorkStatus::Pending as u32,
                 AsyncWorkStatus::Started as u32,
@@ -1909,25 +1912,20 @@ impl napi_async_work {
         } else {
             let _ = self.cancel();
         }
-        drop(vm);
-        self.post_to_js_thread(self_ptr);
-        // `self` may already be freed by the JS thread; the handle is ours.
-        handle.embedded_work_finished();
+        self.post_to_js_thread(self_ptr, &ticket);
     }
 
     /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
     /// live inline field of this heap work; the queue takes ownership of its
-    /// `next` link. Counted work, so the VM has not closed its handle; a VM
-    /// tearing down runs `complete` from its queue release (status cancelled
-    /// if `execute` never ran), as Node does at environment cleanup.
-    fn post_to_js_thread(&mut self, self_ptr: *mut Self) {
+    /// `next` link. A VM tearing down runs `complete` from its queue release
+    /// (status cancelled if `execute` never ran), as Node does at environment
+    /// cleanup.
+    fn post_to_js_thread(&mut self, self_ptr: *mut Self, ticket: &bun_jsc::Ticket) {
         let ct = core::ptr::NonNull::from(
             self.concurrent_task
                 .from(self_ptr, AutoDeinit::ManualDeinit),
         );
-        let bun_jsc::vm_handle::Posted::Queued = self.loop_handle.post_task(ct) else {
-            unreachable!("VM handle closed with napi async work outstanding");
-        };
+        ticket.post(ct);
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -2466,8 +2464,11 @@ pub(crate) struct ThreadSafeFunction {
     /// JS-thread uses; `None` once the env has been torn down.
     pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
     /// How addon threads (`napi_call_threadsafe_function`) schedule a
-    /// dispatch on the VM.
-    pub(crate) loop_handle: bun_jsc::LoopHandle,
+    /// dispatch on the VM. Weak: addon threads hold this function for as long
+    /// as they like (Node: calls after env cleanup get `napi_closing`), so it
+    /// cannot be something the VM waits for.
+    pub(crate) handle: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2870,8 +2871,10 @@ impl ThreadSafeFunction {
                     return;
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
-                    // VM torn down before the env cleanup hook ran here: no
+                if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                    self.handle.post(self.loop_kind, ct)
+                {
+                    // VM closed before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
                     // teardown path. Free the task and fall back to Idle.
                     // SAFETY: refused ⇒ we own the task box.
@@ -3162,7 +3165,8 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
-        loop_handle: vm.loop_handle(),
+        handle: vm.handle(),
+        loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,

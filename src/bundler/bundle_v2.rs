@@ -1531,7 +1531,7 @@ pub mod bv2_impl {
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
-                // From Bun.build — the completion posts it to its VM (`loop_handle.post_task` via the vtable).
+                // From Bun.build — the completion posts it to its VM (through its ticket, via the vtable).
                 completion.enqueue_task_concurrent(task);
                 return;
             }

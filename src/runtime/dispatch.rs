@@ -375,9 +375,8 @@ mod run_impls {
     impl Taskable for AnyJob {
         const TAG: bun_event_loop::TaskTag = task_tag::AnyTaskJob;
         unsafe fn release_unrun(this: *mut Self) {
-            let js = VirtualMachine::get().global().js_thread();
             // SAFETY: forwarded caller contract; every payload is a `Job<C>`.
-            unsafe { bun_jsc::job::release_unrun_erased(this.cast(), &js) }
+            unsafe { bun_jsc::job::release_unrun_erased(this.cast()) }
         }
     }
     impl RunTask for AnyJob {

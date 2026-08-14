@@ -54,6 +54,9 @@ pub use store::{Store, StoreRef};
 
 #[path = "blob/copy_file.rs"]
 pub mod copy_file;
+#[cfg(not(windows))]
+#[path = "blob/io_parking.rs"]
+pub(crate) mod io_parking;
 #[path = "blob/read_file.rs"]
 pub mod read_file;
 #[path = "blob/write_file.rs"]
@@ -7001,6 +7004,9 @@ pub trait FileOpener: Sized {
         self.get_fd_by_opening(callback);
     }
 }
+
+#[cfg(not(windows))]
+pub(crate) use io_parking::IoParking;
 
 // TODO: move to bun_sys?
 pub trait FileCloser: Sized {

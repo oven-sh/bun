@@ -46,10 +46,14 @@ pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     /// JS-thread uses only.
     ctx: *mut VirtualMachine,
-    /// How the watcher thread delivers event batches to the VM (POSIX; on
-    /// Windows libuv delivers fs events on the JS thread).
+    /// How the (process-wide) watcher thread delivers event batches to the
+    /// VM while this watcher is attached (POSIX; on Windows libuv delivers fs
+    /// events on the JS thread). Weak: `detach()` — close, the VM's stop
+    /// phase, or finalize — is what ends the thread's access to `self`.
     #[cfg(not(windows))]
-    loop_handle: bun_jsc::LoopHandle,
+    handle: bun_jsc::VmHandle,
+    #[cfg(not(windows))]
+    loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
     mutex: Mutex,
@@ -103,7 +107,7 @@ impl FSWatcher {
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted {
-        self.loop_handle.post_task(task)
+        self.handle.post(self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -1165,7 +1169,9 @@ impl FSWatcher {
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
             #[cfg(not(windows))]
-            loop_handle: vm_ref.loop_handle(),
+            handle: vm_ref.handle(),
+            #[cfg(not(windows))]
+            loop_kind: vm_ref.current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

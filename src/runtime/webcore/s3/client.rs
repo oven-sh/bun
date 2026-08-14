@@ -299,7 +299,7 @@ pub(crate) fn list_objects(
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
-        loop_handle: VirtualMachine::get().loop_handle(),
+        http_ticket: None,
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
@@ -370,8 +370,8 @@ pub(crate) fn list_objects(
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (embedded work).
-    task.loop_handle.embedded_work_scheduled();
+    // teardown (registry) and waits for it (the ticket).
+    task.http_ticket = Some(VirtualMachine::get().ticket());
     crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
         .register();
     bun_http::HTTPThread::schedule(batch);
@@ -1239,8 +1239,7 @@ fn download_stream(
                 .expect("callers always pass a non-null Box-allocated context"),
             callback,
             headers,
-            // `VirtualMachine::get()` returns the live per-thread VM singleton.
-            loop_handle: VirtualMachine::get().loop_handle(),
+            http_ticket: None,
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             signals: Default::default(),
@@ -1319,8 +1318,8 @@ fn download_stream(
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (embedded work).
-    task.loop_handle.embedded_work_scheduled();
+    // teardown (registry) and waits for it (the ticket).
+    task.http_ticket = Some(VirtualMachine::get().ticket());
     crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
         .register();
     bun_http::HTTPThread::schedule(batch);

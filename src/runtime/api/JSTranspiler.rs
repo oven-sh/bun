@@ -677,12 +677,8 @@ pub(crate) struct TransformJs {
 impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
-    fn run(
-        this: &mut Self,
-        vm: &jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
-        TransformTask::run(this, vm);
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        TransformTask::run(this, done.ticket());
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
@@ -744,13 +740,13 @@ impl TransformTask {
         value
     }
 
-    fn run(&mut self, vm: &jsc::vm_handle::Borrow) {
+    fn run(&mut self, vm: &jsc::Ticket) {
         let name = self.loader.stdin_name();
         let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
         self.transpiler.linker.resolver = resolver_ptr;
-        // SAFETY: the wrapper's config, alive under the borrow (see `schedule`).
+        // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
-            self.tsconfig.map(|p| &*unsafe { p.under_borrow(vm) });
+            self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
 
         let arena = Arena::new();
 

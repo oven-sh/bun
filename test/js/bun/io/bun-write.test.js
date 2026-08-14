@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { randomBytes } from "crypto";
 import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
@@ -7,10 +8,12 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -535,6 +538,189 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // A Bun.write() into a FIFO fills the pipe buffer and then waits for the
+  // reader. The payload is past the synchronous fast path's 256 KiB limit and
+  // many pipe buffers long, so the write waits several times however quickly
+  // the pipe is drained. The destination is the FIFO's write end as an fd: a
+  // path destination is opened (and, by the fast path, closed) by Bun.write()
+  // itself, which is a different set of problems (#36025).
+  describe.skipIf(isWindows)("Bun.write() into a FIFO that is full", () => {
+    const payload = randomBytes(1024 * 1024);
+
+    // Both ends of a fresh FIFO, read end first (opening the write end fails
+    // with ENXIO until a reader exists). Neither end blocks, so the test can
+    // probe the pipe from either side.
+    function openFifo(dir) {
+      const fifo = join(String(dir), "out.fifo");
+      mkfifo(fifo);
+      return {
+        reader: fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK),
+        writer: fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK),
+        closeReader() {
+          if (this.reader === -1) return;
+          fs.closeSync(this.reader);
+          this.reader = -1;
+        },
+        [Symbol.dispose]() {
+          this.closeReader();
+          fs.closeSync(this.writer);
+        },
+      };
+    }
+
+    function startWrite(writer) {
+      const dest = Bun.file(writer);
+      // fstat()s the fd: Bun.write() only waits on a destination it knows is not a regular file.
+      dest.size;
+      return Bun.write(dest, payload).then(
+        written => ({ written }),
+        err => ({ code: err.code, syscall: err.syscall }),
+      );
+    }
+
+    it("completes once the reader drains the pipe", async () => {
+      using dir = tempDir("bun-write-fifo-drain", {});
+      using fifo = openFifo(dir);
+      const settled = startWrite(fifo.writer);
+      let outcome;
+      settled.then(result => (outcome = result));
+
+      const chunks = [];
+      let received = 0;
+      const buffer = Buffer.alloc(64 * 1024);
+      while (received < payload.length) {
+        let n;
+        try {
+          n = fs.readSync(fifo.reader, buffer);
+        } catch (err) {
+          if (err.code !== "EAGAIN") throw err;
+          // An empty pipe after the write has settled is all we are getting.
+          if (outcome) break;
+          await Bun.sleep(1);
+          continue;
+        }
+        if (n === 0) throw new Error(`EOF after ${received} bytes, but the write end is still open`);
+        chunks.push(Buffer.from(buffer.subarray(0, n)));
+        received += n;
+      }
+
+      expect({ ...(await settled), received, intact: Buffer.concat(chunks).equals(payload) }).toEqual({
+        written: payload.length,
+        received: payload.length,
+        intact: true,
+      });
+    });
+
+    // Used to reject with a made-up "Unknown Error" (errno 0, syscall
+    // "epoll_ctl") on Linux and to never settle on macOS, where a named pipe's
+    // kqueue write filter only fires when the pipe gains free space, which a
+    // full pipe nobody reads from never does.
+    it("rejects with EPIPE when the last reader closes while it is waiting", async () => {
+      using dir = tempDir("bun-write-fifo-epipe", {});
+      using fifo = openFifo(dir);
+      const settled = startWrite(fifo.writer);
+
+      // Once a write of our own is refused, the pipe is full: Bun.write() has
+      // written as much as fits and is waiting for the reader.
+      for (;;) {
+        try {
+          fs.writeSync(fifo.writer, "x");
+        } catch (err) {
+          if (err.code !== "EAGAIN") throw err;
+          break;
+        }
+        await Bun.sleep(1);
+      }
+      fifo.closeReader();
+
+      expect(await settled).toEqual({ code: "EPIPE", syscall: "write" });
+    });
+
+    // On macOS the wait above is done differently for a FIFO than for a
+    // pipe(2) pipe, whose kqueue filter does see its reader go away, and
+    // Bun.write() tells them apart by fstat: both are FIFOs to it, but only a
+    // pipe(2) pipe reports st_dev 0 (bun_sys::is_named_pipe). The pipe(2) pipe
+    // comes from a shell pipeline; Bun.spawn()'s own stdio pipes are socket
+    // pairs. Linux does not make the distinction (pipes have a device number
+    // there too), which is why the classification is macOS only.
+    it("tells a FIFO from a pipe(2) pipe by st_dev", async () => {
+      using dir = tempDir("bun-write-fifo-st-dev", {});
+      using fifo = openFifo(dir);
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e "$SCRIPT" | cat`],
+        env: {
+          ...bunEnv,
+          BUN: bunExe(),
+          SCRIPT: `const stat = require("fs").fstatSync(1); console.log(JSON.stringify({ isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }));`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stat = fs.fstatSync(fifo.writer);
+
+      expect({ pipe: stdout, fifo: { isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }, stderr }).toEqual({
+        pipe: JSON.stringify({ isFIFO: true, hasDevice: !isMacOS }) + "\n",
+        fifo: { isFIFO: true, hasDevice: true },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // On macOS the waiting happens on the pool thread running the write, and a
+    // Bun.write() starts out on that thread inside a borrow of its VM that the
+    // VM's teardown waits for. The write loop has to get out of that borrow
+    // before it first waits, or terminating a worker whose write is waiting for
+    // a reader that never reads would wait for that reader too: here the worker
+    // must be gone while the pipe is still full. (Linux parks the write on the
+    // io thread and passes either way.)
+    it("does not make a terminated worker's teardown wait for the reader", async () => {
+      using dir = tempDir("bun-write-fifo-worker", {});
+      const fifoPath = join(String(dir), "out.fifo");
+      mkfifo(fifoPath);
+      const host = `
+        const fs = require("node:fs");
+        const { Worker } = require("node:worker_threads");
+        const reader = fs.openSync(process.env.FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const writer = fs.openSync(process.env.FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const worker = new Worker(
+          \`const dest = Bun.file(\${writer});
+           dest.size;
+           Bun.write(dest, Buffer.alloc(1024 * 1024));
+           require("node:worker_threads").parentPort.postMessage("writing");\`,
+          { eval: true },
+        );
+        worker.once("message", function probe() {
+          // Our own byte being refused means the worker's write has filled the
+          // pipe and is waiting.
+          try {
+            fs.writeSync(writer, "x");
+          } catch (err) {
+            if (err.code !== "EAGAIN") throw err;
+            worker.terminate();
+            return;
+          }
+          setTimeout(probe, 1);
+        });
+        worker.on("exit", () => {
+          console.log("worker exited while the pipe was full");
+          fs.closeSync(reader);
+          fs.closeSync(writer);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", host],
+        env: { ...bunEnv, FIFO: fifoPath },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({ stdout: "worker exited while the pipe was full\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("Bun.file(0) survives GC", async () => {

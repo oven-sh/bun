@@ -1411,6 +1411,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    #[cfg(target_os = "macos")]
+    pub(crate) const select: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1418,7 +1420,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1528,6 +1530,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "select",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1708,6 +1711,16 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // `_DARWIN_UNLIMITED_SELECT`: no FD_SETSIZE check, and each set is
+        // ceil(nfds / 32) 32-bit words rather than a `libc::fd_set`.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -7626,6 +7639,53 @@ pub fn kevent(
             E::SUCCESS => return Ok(rc as usize),
             E::EINTR => continue,
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
+/// A FIFO vnode, which needs [`block_until_writable`], as opposed to a
+/// `pipe(2)` pipe, which is also `S_IFIFO` but gets `st_dev` 0 from XNU's
+/// `pipe_stat`. A false positive only moves a wait onto the calling thread;
+/// a false negative would hang.
+#[cfg(target_os = "macos")]
+pub fn is_named_pipe(stat: &Stat) -> bool {
+    S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
+}
+
+/// `select(2)` until a `write(2)` to `fd` would not block, including because
+/// the reader is gone (the write then fails with EPIPE). Retries on EINTR.
+///
+/// Needed for FIFO vnodes on macOS: their kqueue `EVFILT_WRITE` filter (and
+/// `poll(2)`, which is built on it) is XNU's vnode filter, which only fires
+/// on free space (`vnode_writable_space_count`) and is never posted to when
+/// the last reader closes, so a full pipe whose reader left never wakes it.
+/// `select(2)` goes through `fifo_select` to the FIFO's socket, whose
+/// writability includes the `SS_CANTSENDMORE` that the close sets.
+#[cfg(target_os = "macos")]
+pub fn block_until_writable(fd: Fd) -> Maybe<()> {
+    debug_assert!(fd.is_valid());
+    let index = fd.native() as usize;
+    let word = index / 32;
+    let mut write_set = vec![0u32; word + 1];
+    loop {
+        write_set.fill(0);
+        write_set[word] = 1 << (index % 32);
+        // SAFETY: `write_set` holds the ceil(nfds / 32) words the kernel reads
+        // and writes back for `nfds = fd + 1`; the read and error sets and the
+        // timeout (wait indefinitely) may be null.
+        let rc = unsafe {
+            nocancel::select(
+                fd.native() + 1,
+                core::ptr::null_mut(),
+                write_set.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        match get_errno(rc) {
+            E::SUCCESS => return Ok(()),
+            E::EINTR => continue,
+            e => return Err(Error::from_code(e, Tag::select).with_fd(fd)),
         }
     }
 }

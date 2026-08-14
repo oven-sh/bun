@@ -91,6 +91,10 @@ pub struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// `bun_sys::is_named_pipe`: waits in `block_until_writable` on the pool
+    /// thread instead of on the io thread.
+    #[cfg(target_os = "macos")]
+    pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
 }
@@ -229,6 +233,33 @@ impl WriteFile {
         }
     }
 
+    /// Inline `wait_for_writable` for a named pipe; the caller retries the
+    /// write. `false`: the wait failed and the error is recorded.
+    #[cfg(target_os = "macos")]
+    fn block_until_writable(&mut self) -> bool {
+        bun_output::scoped_log!(WriteFile, "WriteFile.blockUntilWritable()");
+        match bun_sys::block_until_writable(self.opened_fd) {
+            Ok(()) => true,
+            Err(err) => {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                false
+            }
+        }
+    }
+
+    /// Not for a named pipe: `poll(2)` is as blind as kqueue to its reader
+    /// being gone (`bun_sys::block_until_writable`) and would say "not
+    /// writable" forever, whereas the `write(2)` itself fails with EPIPE.
+    #[cfg(not(windows))]
+    fn polls_before_writing(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.is_named_pipe {
+            return false;
+        }
+        self.could_block
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn create_with_ctx(
         file_blob: Blob,
@@ -255,6 +286,8 @@ impl WriteFile {
             on_complete_callback,
             total_written: 0,
             could_block: false,
+            #[cfg(target_os = "macos")]
+            is_named_pipe: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
@@ -291,15 +324,15 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
+            // We do not use pwrite() because the file may not be
+            // seekable (such as stdout)
+            //
+            // On macOS, it is an error to use pwrite() on a
+            // non-seekable file.
+            let result: bun_sys::Result<usize> =
+                sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
+
             match &result {
                 bun_sys::Result::Ok(res) => {
                     *wrote = *res;
@@ -311,6 +344,13 @@ impl WriteFile {
                             // regular files cannot use epoll.
                             // this is fine on kqueue, but not on epoll.
                             continue;
+                        }
+                        #[cfg(target_os = "macos")]
+                        if self.is_named_pipe {
+                            if self.block_until_writable() {
+                                continue;
+                            }
+                            return false;
                         }
                         self.wait_for_writable();
                         return false;
@@ -430,6 +470,19 @@ impl WriteFile {
             false
         };
 
+        #[cfg(target_os = "macos")]
+        if self.could_block {
+            match sys::fstat(fd) {
+                Ok(stat) => self.is_named_pipe = bun_sys::is_named_pipe(&stat),
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    self.on_finish();
+                    return;
+                }
+            }
+        }
+
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
         // with splice, sendfile, and the other cases.
@@ -447,7 +500,8 @@ impl WriteFile {
         //     }
         // }
 
-        if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
+        if self.polls_before_writing() && bun_core::is_writable(fd) == bun_core::Pollable::NotReady
+        {
             self.wait_for_writable();
             return;
         }
@@ -467,6 +521,19 @@ impl WriteFile {
                     i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
+        }
+
+        #[cfg(target_os = "macos")]
+        if self.is_named_pipe {
+            // Not inline: `Job::run_on_pool` holds a VM borrow around this call
+            // that teardown waits for, and this loop blocks; run it as a plain
+            // pool task, as after an io-thread wake-up.
+            self.task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut self.task);
+            return;
         }
 
         self.do_write_loop();
@@ -522,7 +589,7 @@ impl WriteFile {
                 }
 
                 // Do not immediately attempt to write again if it's not a regular file.
-                if self.could_block
+                if self.polls_before_writing()
                     && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
                 {
                     self.wait_for_writable();

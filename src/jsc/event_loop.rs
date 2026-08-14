@@ -772,7 +772,11 @@ impl EventLoop {
         if let Some(global) = self.global {
             // SAFETY: set at VM init; live for the loop's lifetime.
             let global = unsafe { global.as_ref() };
-            if global.has_exception() {
+            // Not the stopped worker's own TerminationException, which stays
+            // pending throughout teardown and is nothing to report — and a
+            // refusal can come from a finalizer inside the VM's last sweep,
+            // where taking and inspecting it would touch a cell mid-sweep.
+            if global.has_exception() && !global.has_pending_termination_exception() {
                 let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
             }
         }

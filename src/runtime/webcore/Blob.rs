@@ -5205,10 +5205,6 @@ pub(crate) fn write_file_internal(
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
-        //
-        // Consumed bodies are rejected before dispatch: `use_()` on a `Used` body
-        // yields an empty blob (the write would truncate the destination), and a
-        // drained stream would wait in the Locked arm for a producer that is gone.
         if let Some(response) = data.as_class_ref::<Response>() {
             response.throw_if_body_unusable(global_this)?;
             let bv = std::ptr::from_mut(response.get_body_value());

@@ -1891,8 +1891,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
     }
 
-    /// Throw a `TypeError` when "this is unusable": the body is non-null and its
-    /// stream is disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`
+    /// when "this is unusable", i.e. the body is non-null and its stream is
+    /// disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
     fn throw_if_body_unusable(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         let unusable =
             self.body_stream_check(global_object, |s, g| s.is_disturbed(g) || s.is_locked(g));

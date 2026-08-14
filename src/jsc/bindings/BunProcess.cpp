@@ -481,18 +481,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     [[maybe_unused]] bool fromEmbedded = false;
-    // NAPI link-slot addons are loaded from memory rather than via a
-    // filesystem path. On macOS the handle is an `NSModule` (from
-    // `NSLinkModule`), which needs `NSLookupSymbolInModule` in place of
-    // `dlsym`; on Linux it's an ordinary `dlopen()` handle sourced from a
-    // memfd. `slotHandle` short-circuits the path-based `dlopen()` below.
+    // Set when the addon came from a link slot (see napi_link.rs); it is
+    // already loaded, so the dlopen() below is skipped.
     void* slotHandle = nullptr;
     bool slotIsNSModule = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         auto pathUtf8 = filename.utf8();
         if (!Bun__tryLoadNapiLinkSlot(pathUtf8.data(), pathUtf8.length(), &slotHandle, &slotIsNSModule)) {
-            // Not a link slot — fall through to the module-graph extractor
-            // for bundler-embedded addons.
             BunString bunStr = Bun::toString(filename);
             BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
             if (resolved.tag != BunStringTag::Dead) {
@@ -502,9 +497,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 fromEmbedded = true;
             }
         } else if (!slotHandle) {
-            // Path matched a slot but the in-memory load failed (e.g. the
-            // embedded image isn't a valid Mach-O bundle). Surface that as a
-            // dlopen error rather than trying to find it on disk.
             return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 makeString("failed to load linked native addon '"_s, filename, "' from embedded image"_s));
         } else {
@@ -723,10 +715,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return JSValue::encode(jsUndefined());
     }
 
-    // Symbol lookup that routes NSModule handles (from in-memory NAPI link
-    // slots on macOS) through `NSLookupSymbolInModule` instead of `dlsym`.
-    // Every other handle — including Linux memfd-backed link slots — is a
-    // plain dlopen/LoadLibrary handle.
     const auto lookupSymbol = [&](const char* name) -> void* {
 #if OS(DARWIN)
         if (slotIsNSModule) return Bun__darwinLookupSymbolInModule(handle, name);
@@ -746,9 +734,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(lookupSymbol("node_api_module_get_api_version_v1"));
 
     if (!napi_register_module_v1) {
-        // Link-slot handles are memoised per process and native addons
-        // can't be unloaded, so leave those in place; closing them would
-        // also strand the cached entry in loaded_handles[].
+        // Slot handles are cached in napi_link.rs and must stay valid.
         if (!slotHandle) {
 #if OS(WINDOWS)
             FreeLibrary(handle);

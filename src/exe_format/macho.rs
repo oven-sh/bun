@@ -91,11 +91,6 @@ impl MachoFile {
         }))
     }
 
-    /// Locate a `(segname, sectname)` pair and return its file offset and
-    /// on-disk size. Unlike `write_section`, this does not assume the
-    /// `__BUN,__bun` layout and does not mutate anything — it's the hook for
-    /// external patchers (e.g. the NAPI link slot table lives in
-    /// `__DATA,__bun_napi_lnk` and is overwritten in place).
     pub fn find_section(&self, segname: &[u8], sectname: &[u8]) -> Option<SectionLocation> {
         let base_addr = self.data.as_ptr() as usize;
         let mut iter = self.iterator();
@@ -133,19 +128,14 @@ impl MachoFile {
         None
     }
 
-    /// Borrow the on-disk bytes of a section previously returned by
-    /// `find_section`. Returns `None` if the location (which came from
-    /// untrusted load commands) does not fit inside the file.
+    /// `None` if the (untrusted) location does not fit inside the file.
     pub fn section_bytes(&self, loc: SectionLocation) -> Option<&[u8]> {
         let start = usize::try_from(loc.file_offset).ok()?;
         let len = usize::try_from(loc.size).ok()?;
         self.data.get(start..start.checked_add(len)?)
     }
 
-    /// Mutable counterpart of `section_bytes`, for in-place patching of
-    /// fixed-size tables (no load-command offsets change). Callers must
-    /// re-`find_section` after any `write_section*` call since the backing
-    /// buffer may have been reallocated and later sections shifted.
+    /// A `SectionLocation` is stale after any `write_section*` call.
     pub fn section_bytes_mut(&mut self, loc: SectionLocation) -> Option<&mut [u8]> {
         let start = usize::try_from(loc.file_offset).ok()?;
         let len = usize::try_from(loc.size).ok()?;
@@ -156,12 +146,9 @@ impl MachoFile {
         self.write_section_with_header(data, data.len() as u64)
     }
 
-    /// Same as `write_section` but the `u64` size header written at the
-    /// section's first 8 bytes is `header_value` instead of `data.len()`. The
-    /// NAPI link-slot appender uses this to keep the header pointing at the
-    /// module-graph payload length (so `StandaloneModuleGraph.fromExecutable`
-    /// still finds its trailer) while tucking addon images past it in the
-    /// same section.
+    /// `header_value` is what the runtime reads back as the payload length;
+    /// it may be shorter than `data` when trailing bytes (linked addons) are
+    /// not part of the module graph.
     pub fn write_section_with_header(
         &mut self,
         data: &[u8],

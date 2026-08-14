@@ -842,6 +842,27 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
     return false;
 }
 
+NodeVMGlobalObject* makeContext(JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& contextOptions, JSValue importer)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
+    auto* context = NodeVMGlobalObject::create(vm, zigGlobalObject->NodeVMGlobalObjectStructure(), contextOptions, importer);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    context->setContextifiedObject(sandbox);
+    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, context);
+
+    if (contextOptions.notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, context);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        context->setSpecialSandbox(specialSandbox);
+    }
+
+    return context;
+}
+
 bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol()) {
@@ -1685,24 +1706,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return JSValue::encode(sandbox);
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
-
+    auto* targetContext = makeContext(globalObject, sandbox, contextOptions, importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
         return JSValue::encode(targetContext->specialSandbox());
     }
 

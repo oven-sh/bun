@@ -111,8 +111,25 @@ function runInNewContext(code, context, options) {
   if (typeof options === "string") {
     options = { filename: options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
+}
+
+// Node's getContextOptions(): runInNewContext() takes the context options under
+// context-prefixed names, createContext() under the plain ones. The context
+// created from these is the one Script#runInNewContext() then runs in.
+function getContextOptions(options) {
+  if (!$isObject(options)) {
+    return undefined;
+  }
+  const { contextCodeGeneration, microtaskMode } = options;
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+  }
+  return { codeGeneration: contextCodeGeneration, microtaskMode };
 }
 
 function createScript(code, options) {

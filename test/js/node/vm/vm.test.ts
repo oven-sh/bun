@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1017,20 +1018,22 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration; Script#runInNewContext and
+    // vm.runInNewContext (which maps contextCodeGeneration into its own
+    // createContext call) take contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
-    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
-    const contextKeys = (...codeGenerationKeyNames: string[]) => [
+    const contextKeys = (codeGenerationKey: string) => [
       "name",
       "origin",
-      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+      codeGenerationKey,
+      `${codeGenerationKey}.strings`,
+      `${codeGenerationKey}.wasm`,
       "importModuleDynamically",
       "microtaskMode",
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1073,6 +1076,156 @@ describe("context options with throwing getters", () => {
         .join("\n") + "\nsurvived\n";
     expect(stderr).toBe("");
     expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("runInNewContext() on a sandbox that is already a context", () => {
+  // Node's runInNewContext() is createContext() + runInContext(), and
+  // createContext() returns an object that is already a context as-is, so
+  // every run against one sandbox shares a single realm.
+
+  test("vm.runInNewContext() reuses the realm it created for the sandbox", () => {
+    const sandbox = {};
+    const ObjectCtor = runInNewContext("Object", sandbox);
+    expect(ObjectCtor).not.toBe(Object);
+    expect(runInNewContext("Object", sandbox)).toBe(ObjectCtor);
+    expect(runInContext("Object", sandbox)).toBe(ObjectCtor);
+    expect(new Script("Object").runInNewContext(sandbox)).toBe(ObjectCtor);
+    expect(new Script("Object").runInContext(sandbox)).toBe(ObjectCtor);
+  });
+
+  test("vm.runInNewContext() and Script#runInNewContext() reuse a context from createContext()", () => {
+    const context = createContext({});
+    const ObjectCtor = runInContext("Object", context);
+    expect(runInNewContext("Object", context)).toBe(ObjectCtor);
+    expect(new Script("Object").runInNewContext(context)).toBe(ObjectCtor);
+  });
+
+  test("top-level let/const/class declarations persist across runs on the same sandbox", () => {
+    const sandbox = {};
+    runInNewContext("var v = 1; let l = 2; const c = 3; class K {}", sandbox);
+    // var becomes a sandbox property; the lexical bindings live in the realm.
+    expect(sandbox).toEqual({ v: 1 });
+    expect(runInNewContext("[v, l, c, typeof K].join()", sandbox)).toBe("1,2,3,function");
+    expect(runInContext("[v, l, c, typeof K].join()", sandbox)).toBe("1,2,3,function");
+    expect(new Script("[v, l, c, typeof K].join()").runInNewContext(sandbox)).toBe("1,2,3,function");
+    // Same realm, so redeclaring is a SyntaxError (raised in that realm) like in Node.
+    expect(() => runInNewContext("let l = 4", sandbox)).toThrow(runInContext("SyntaxError", sandbox));
+  });
+
+  test("values made by vm.runInNewContext() are instances of the sandbox's own intrinsics", () => {
+    const sandbox = {};
+    const error = runInNewContext("new Error('boom')", sandbox);
+    expect(error).not.toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(runInContext("Error", sandbox));
+    expect(error).toBeInstanceOf(runInNewContext("Error", sandbox));
+  });
+
+  test("Script#runInNewContext() contextifies a plain object once", () => {
+    const sandbox = {};
+    expect(isContext(sandbox)).toBe(false);
+    const ObjectCtor = new Script("Object").runInNewContext(sandbox);
+    expect(isContext(sandbox)).toBe(true);
+    expect(new Script("Object").runInNewContext(sandbox)).toBe(ObjectCtor);
+    expect(runInContext("Object", sandbox)).toBe(ObjectCtor);
+  });
+
+  test("context options given when Script#runInNewContext() creates the context stick to it", () => {
+    const sandbox = {};
+    new Script("1").runInNewContext(sandbox, { contextCodeGeneration: { strings: false } });
+    const EvalErrorCtor = runInContext("EvalError", sandbox);
+    expect(() => runInContext("eval('1')", sandbox)).toThrow(EvalErrorCtor);
+    expect(() => new Script("eval('1')").runInNewContext(sandbox)).toThrow(EvalErrorCtor);
+  });
+
+  test("context options given when vm.runInNewContext() creates the context stick to it", () => {
+    const sandbox = {};
+    let thrown: unknown;
+    try {
+      runInNewContext("eval('1')", sandbox, { contextCodeGeneration: { strings: false } });
+    } catch (e) {
+      thrown = e;
+    }
+    const EvalErrorCtor = runInContext("EvalError", sandbox);
+    expect(thrown).toBeInstanceOf(EvalErrorCtor);
+    expect(() => runInContext("eval('1')", sandbox)).toThrow(EvalErrorCtor);
+
+    const queued: Record<string, unknown> = {};
+    runInNewContext("Promise.resolve().then(() => { settled = true; })", queued, { microtaskMode: "afterEvaluate" });
+    expect(queued.settled).toBe(true);
+  });
+
+  test("context options are ignored for an existing context, like createContext()", () => {
+    const context = createContext({});
+    const options = { contextCodeGeneration: { strings: false, wasm: false } };
+    expect(runInNewContext("eval('1 + 1')", context, options)).toBe(2);
+    expect(new Script("eval('2 + 2')").runInNewContext(context, options)).toBe(4);
+  });
+
+  test("context options are still validated for an existing context", () => {
+    const context = createContext({});
+    const messages: string[] = [];
+    for (const fn of [
+      () => runInNewContext("1", context, { contextCodeGeneration: 1 }),
+      () => runInNewContext("1", context, { contextCodeGeneration: { wasm: 1 } }),
+      () => runInNewContext("1", {}, { contextCodeGeneration: { strings: "no" } }),
+      () => new Script("1").runInNewContext(context, { contextCodeGeneration: { strings: "no" } }),
+    ]) {
+      try {
+        fn();
+        messages.push("did not throw");
+      } catch (e: any) {
+        messages.push(`${e.code}: ${e.message}`);
+      }
+    }
+    expect(messages).toEqual([
+      'ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration" property must be of type object. Received type number (1)',
+      'ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.wasm" property must be of type boolean. Received type number (1)',
+      `ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.strings" property must be of type boolean. Received type string ('no')`,
+      `ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.strings" property must be of type boolean. Received type string ('no')`,
+    ]);
+  });
+
+  test("every distinct or omitted sandbox still gets its own realm", () => {
+    expect(runInNewContext("Object", {})).not.toBe(runInNewContext("Object", {}));
+    expect(runInNewContext("Object")).not.toBe(runInNewContext("Object"));
+    const script = new Script("Object");
+    expect(script.runInNewContext({})).not.toBe(script.runInNewContext({}));
+    expect(script.runInNewContext()).not.toBe(script.runInNewContext());
+    expect(runInNewContext("Object", constants.DONT_CONTEXTIFY)).not.toBe(
+      runInNewContext("Object", constants.DONT_CONTEXTIFY),
+    );
+  });
+
+  test("a context's own globalThis runs in that context without recursing into itself", () => {
+    const sandbox: Record<string, unknown> = {};
+    const contextGlobal = runInNewContext("globalThis", sandbox);
+    const ObjectCtor = runInContext("Object", sandbox);
+    expect(new Script("Object").runInNewContext(contextGlobal)).toBe(ObjectCtor);
+    expect(runInNewContext("Object", contextGlobal)).toBe(ObjectCtor);
+    runInNewContext("var viaGlobal = 1", contextGlobal);
+    expect(sandbox.viaGlobal).toBe(1);
+  });
+
+  test.concurrent("measureMemory() still lists a context created by vm.runInNewContext()", async () => {
+    const code = `
+      const vm = require("node:vm");
+      const count = async () => (await vm.measureMemory({ mode: "detailed" })).other.length;
+      const before = await count();
+      const sandbox = {};
+      vm.runInNewContext("1", sandbox);
+      const after = await count();
+      console.log(before, after, vm.isContext(sandbox));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("ExperimentalWarning");
+    expect(stdout).toBe("0 1 true\n");
     expect(exitCode).toBe(0);
   });
 });
@@ -1133,6 +1286,17 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+
+  test("runInNewContext() on a DONT_CONTEXTIFY context runs in that context", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const ObjectCtor = runInContext("Object", ctx);
+    expect(runInNewContext("Object", ctx)).toBe(ObjectCtor);
+    expect(new Script("Object").runInNewContext(ctx)).toBe(ObjectCtor);
+
+    runInNewContext("let viaVm = 1", ctx);
+    new Script("let viaScript = 2").runInNewContext(ctx);
+    expect(runInContext("[viaVm, viaScript].join()", ctx)).toBe("1,2");
   });
 });
 

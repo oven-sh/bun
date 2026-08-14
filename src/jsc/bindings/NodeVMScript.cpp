@@ -638,30 +638,29 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    JSValue contextOptionsArg = callFrame->argument(1);
+    JSValue optionsArg = callFrame->argument(1);
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
+    // Node validates the context options even when the sandbox turns out to be
+    // a context already (lib/vm.js getContextOptions runs before createContext).
+    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "contextCodeGeneration", &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    contextOptions.notContextified = notContextified;
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
+    // Like Node's createContext(), a sandbox that is already a context (or a
+    // context's global) keeps its realm: top-level let/const/class bindings and
+    // intrinsics must be shared with every other run against the same sandbox.
+    JSObject* sandbox = asObject(contextObjectValue);
+    NodeVMGlobalObject* context = getGlobalObjectFromContext(globalObject, sandbox, false);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
+    if (!context) {
+        contextOptions.notContextified = notContextified;
+        context = makeContext(globalObject, sandbox, contextOptions, importer);
         RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));
     }
 
-    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));
+    JSObject* contextifiedObject = context->isNotContextified() ? context->specialSandbox() : context->contextifiedObject();
+    RELEASE_AND_RETURN(scope, runInContext(context, script, contextifiedObject, optionsArg));
 }
 
 class NodeVMScriptPrototype final : public JSC::JSNonFinalObject {

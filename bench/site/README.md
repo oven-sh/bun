@@ -79,9 +79,10 @@ npm with `--prefer-offline --no-audit --no-fund`. Six scenarios x RUNS each, wal
   idle. Client and server run on the same machine.
 - `RUNS=3`; every repetition is recorded and the published number is the median repetition, labelled with the versions
   from `versions.txt`.
-- Versions pinned in `setup-toolchains.sh` / `setup-repos.sh`: Node v26.7.0, Deno 2.9.5, pnpm 11.21.0, yarn 1.22.22,
-  npm 12.0.2, Bun 1.3.14 as the release row, rolldown/benchmarks at `257a5850` (esbuild 0.28.2, rolldown 1.2.3,
-  rspack 2.1.8, rsbuild 2.1.10, rollup 4.62.4, vite 8.2.1), Express 5.2.1, ws 8.13.0, postgres.js 3.4.9,
-  PostgreSQL 18.3, bombardier, hyperfine 1.19.0.
+- Versions pinned in `setup-toolchains.sh` / `setup-repos.sh` / the `bench/*/package.json` files: Node v26.7.0,
+  Deno 2.9.5, pnpm 11.21.0, yarn 1.22.22, npm 12.0.2, Bun 1.3.14 as the release row, rolldown/benchmarks at `257a5850`
+  with its bundlers bumped to npm `latest` as of 2026-08-14 (esbuild 0.28.2, rolldown 1.2.4, rspack 2.1.10,
+  rsbuild 2.1.13, rollup 4.62.4, vite 8.2.1), Express 5.2.1, ws 8.21.3 (bufferutil 4.1.0, utf-8-validate 6.0.6),
+  postgres.js 3.4.9, PostgreSQL 18.3, bombardier, hyperfine 1.19.0.
 - The Bun under test is a release or canary build from GitHub releases (PR builds are produced without the symbol
   order file, so only release/canary artifacts are comparable to the release row).

@@ -1000,20 +1000,32 @@ impl Listener {
         JSValue::js_number(*port as f64)
     }
 
+    /// The listening socket's descriptor, or `None` once closed (or for a
+    /// named pipe, which has none). IPC ships this for a `net.Server` handle.
+    pub(crate) fn native_fd(&self) -> Option<Fd> {
+        let ListenerType::Uws(uws_listener) = self.listener.get() else {
+            return None;
+        };
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        Some(
+            bun_opaque::opaque_deref_mut(uws_listener)
+                .socket::<false>()
+                .fd(),
+        )
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        match this.listener.get() {
-            ListenerType::Uws(uws_listener) => {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
+        match this.native_fd() {
+            Some(fd) => {
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
                 // stdio. The sys_jsc helper branches on kind
                 // (system→u64, uv→i32, posix→i32).
                 use bun_sys_jsc::FdJsc as _;
-                socket.fd().to_js_without_making_lib_uv_owned()
+                fd.to_js_without_making_lib_uv_owned()
             }
-            _ => JSValue::js_number(-1.0),
+            None => JSValue::js_number(-1.0),
         }
     }
 

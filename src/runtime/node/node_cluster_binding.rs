@@ -124,14 +124,14 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             ) else {
                 return Ok(JSValue::NULL);
             };
-            let mut h = crate::ipc::Handle::init(native_fd, handle);
+            let mut h = crate::ipc::Handle::raw(native_fd);
             h.win_export_hex = Some(hex);
             h.peer_pid = peer_pid;
             native_handle = Some(h);
         }
         #[cfg(not(windows))]
         {
-            native_handle = match crate::ipc::Handle::init_dup(native_fd, handle, false) {
+            native_handle = match crate::ipc::Handle::dup_raw(native_fd) {
                 Ok(h) => Some(h),
                 Err(_) => return Ok(JSValue::NULL),
             };

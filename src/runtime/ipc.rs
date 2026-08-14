@@ -664,10 +664,7 @@ pub(crate) fn get_nack_packet(mode: Mode) -> &'static [u8] {
 pub type Socket = bun_uws::SocketHandler<false>;
 
 pub struct Handle {
-    pub fd: Fd,
-    pub js: Protected,
-    pub close_on_complete: bool,
-    pub owns_fd: bool,
+    source: HandleSource,
     pub cluster_seq: Option<i32>,
     #[cfg(windows)]
     pub win_export_hex: Option<Box<[u8]>>,
@@ -675,56 +672,111 @@ pub struct Handle {
     pub peer_pid: u32,
 }
 
+enum HandleSource {
+    /// A cluster handle. The cluster layer hands over a bare descriptor number
+    /// that it may close (and the kernel reuse) while the message is still
+    /// queued, so the descriptor is pinned at send time: on POSIX this is a
+    /// dup(2) owned here, on Windows the message carries the export made at
+    /// send time and the number is only needed to export again on a NACK retry.
+    Raw(Fd),
+    /// The native object behind the `net.Server` / `net.Socket` /
+    /// `dgram.Socket` passed to `send()`. It keeps its descriptor open, so the
+    /// descriptor is read from it when the message reaches the wire, as node
+    /// does: queued messages cost the sender no descriptors, and an object
+    /// closed while queued is never shipped as a recycled number. In that case
+    /// `without_handle`, the message serialized without the NODE_HANDLE
+    /// envelope, is written instead (node delivers the same thing).
+    Native {
+        js: Protected,
+        close_on_complete: bool,
+        without_handle: StreamBuffer,
+    },
+}
+
+/// What goes out with the first byte of a handle message.
+pub(crate) enum HandleWire {
+    Fd(Fd),
+    /// The handle is gone; these bytes replace the message, which then goes
+    /// out (and completes) like a message that never had a handle.
+    WithoutHandle(StreamBuffer),
+}
+
 impl Handle {
-    pub fn init(fd: Fd, js: JSValue) -> Self {
-        Self {
-            fd,
-            js: js.protected(),
-            close_on_complete: false,
-            owns_fd: false,
-            cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
-        }
-    }
-
-    pub fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
-        Self {
-            fd,
-            js: js.protected(),
-            close_on_complete: true,
-            owns_fd: false,
-            cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
-        }
-    }
-
-    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Result<Self, bun_sys::Error> {
-        let wire_fd = bun_sys::dup(fd)?;
-        Ok(Self {
-            fd: wire_fd,
+    pub fn native(js: JSValue, close_on_complete: bool, without_handle: StreamBuffer) -> Self {
+        Self::new(HandleSource::Native {
             js: js.protected(),
             close_on_complete,
-            owns_fd: true,
+            without_handle,
+        })
+    }
+
+    #[cfg(not(windows))]
+    pub fn dup_raw(fd: Fd) -> Result<Self, bun_sys::Error> {
+        Ok(Self::new(HandleSource::Raw(bun_sys::dup(fd)?)))
+    }
+
+    #[cfg(windows)]
+    pub fn raw(fd: Fd) -> Self {
+        Self::new(HandleSource::Raw(fd))
+    }
+
+    fn new(source: HandleSource) -> Self {
+        Self {
+            source,
             cluster_seq: None,
             #[cfg(windows)]
             win_export_hex: None,
             #[cfg(windows)]
             peer_pid: 0,
-        })
+        }
+    }
+
+    pub(crate) fn take_for_wire(&mut self) -> HandleWire {
+        match &mut self.source {
+            HandleSource::Raw(fd) => HandleWire::Fd(*fd),
+            HandleSource::Native {
+                js, without_handle, ..
+            } => match crate::ipc_host::native_handle_fd(js.value()) {
+                Some(fd) => HandleWire::Fd(fd),
+                None => HandleWire::WithoutHandle(core::mem::take(without_handle)),
+            },
+        }
+    }
+
+    /// The descriptor to export again for a retry; `None` once a native object
+    /// has been closed (the retry then goes out without the handle).
+    #[cfg(windows)]
+    fn current_fd(&self) -> Option<Fd> {
+        match &self.source {
+            HandleSource::Raw(fd) => Some(*fd),
+            HandleSource::Native { js, .. } => crate::ipc_host::native_handle_fd(js.value()),
+        }
+    }
+
+    /// node's postSend: the sender's copy of a `net.Socket` sent without
+    /// `keepOpen` is closed once the message is done with.
+    fn close_detached_socket(&self, global: &JSGlobalObject) {
+        let HandleSource::Native {
+            js,
+            close_on_complete: true,
+            ..
+        } = &self.source
+        else {
+            return;
+        };
+        let js = js.value();
+        if js.is_object() {
+            let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+        }
     }
 }
 
+#[cfg(not(windows))]
 impl Drop for Handle {
     fn drop(&mut self) {
-        if self.owns_fd {
-            // Owned dup/received descriptors may legitimately be 0-2 (stdio closed); close them regardless.
-            let _ = self.fd.close_allowing_standard_io(None);
+        if let HandleSource::Raw(fd) = &self.source {
+            // The dup may legitimately have landed on 0-2 (stdio closed); close it regardless.
+            let _ = fd.close_allowing_standard_io(None);
         }
     }
 }
@@ -810,12 +862,7 @@ impl SendHandle {
     /// Call the callback and deinit
     pub(crate) fn complete(mut self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
-            if handle.close_on_complete {
-                let js = handle.js.value();
-                if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
-                }
-            }
+            handle.close_detached_socket(global);
         }
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
@@ -823,12 +870,7 @@ impl SendHandle {
 
     pub fn abort_unsent(self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
-            if handle.close_on_complete {
-                let js = handle.js.value();
-                if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
-                }
-            }
+            handle.close_detached_socket(global);
         }
     }
 }
@@ -1378,9 +1420,9 @@ impl SendQueue {
                             let handle = item.handle.as_mut().unwrap();
                             if handle.peer_pid != 0 {
                                 if let Some(old_hex) = handle.win_export_hex.take() {
-                                    if let Some(new_hex) =
-                                        windows_export_socket_hex(handle.fd, handle.peer_pid)
-                                    {
+                                    if let Some(new_hex) = handle.current_fd().and_then(|fd| {
+                                        windows_export_socket_hex(fd, handle.peer_pid)
+                                    }) {
                                         if let Some(pos) =
                                             bun_core::memmem(&item.data.list, &old_hex)
                                         {
@@ -1494,7 +1536,7 @@ impl SendQueue {
         }
         let waiting_for_ack = self.waiting_for_ack.get().is_some();
         let next = self.queue.with_mut(|queue| {
-            let Some(first) = queue.first() else {
+            let Some(first) = queue.first_mut() else {
                 return Next::Nothing; // nothing to send
             };
             if waiting_for_ack && !first.is_ack_nack() {
@@ -1506,16 +1548,28 @@ impl SendQueue {
                 // the last message isn't fully sent yet, we're waiting for a writable event
                 return Next::Nothing;
             }
+            // The descriptor rides along with the first byte of the message (a partial write has sent it).
+            let wire = if first.data.cursor == 0 {
+                first.handle.as_mut().map(Handle::take_for_wire)
+            } else {
+                None
+            };
+            let fd = match wire {
+                None => None,
+                Some(HandleWire::Fd(fd)) => Some(fd),
+                Some(HandleWire::WithoutHandle(data)) => {
+                    log!("handle closed while queued; sending the message without it");
+                    first.data = data;
+                    first.handle = None;
+                    None
+                }
+            };
             let to_send_len = first.data.list.len() - first.data.cursor;
             if to_send_len == 0 {
                 // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
                 return Next::EmptyItem(queue.remove(0));
             }
-            Next::Send(if first.data.cursor == 0 {
-                first.handle.as_ref().map(|h| h.fd)
-            } else {
-                None
-            })
+            Next::Send(fd)
         });
         match next {
             Next::Nothing => {

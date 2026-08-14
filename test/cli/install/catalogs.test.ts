@@ -251,8 +251,8 @@ describe("basic", () => {
 
     expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
     const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as any;
-    expect(lock.workspaces["packages/pkg1"].dependencies).toEqual({ "no-deps": "catalog:b" });
-    expect(Object.keys(lock.packages)).toEqual(["no-deps", "pkg1"]);
+    expect(lock.workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "catalog:b" });
+    expect(Object.keys(lock.packages)).toStrictEqual(["no-deps", "pkg1"]);
     expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
 
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
@@ -936,7 +936,7 @@ describe("peer dependencies", () => {
   test.concurrent("default catalog peer dedupes onto the satisfying ancestor", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(dedupedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
@@ -947,7 +947,7 @@ describe("peer dependencies", () => {
       linker: "hoisted",
     });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(dedupedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
@@ -959,7 +959,7 @@ describe("peer dependencies", () => {
       linker: "hoisted",
     });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(dedupedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
@@ -973,7 +973,7 @@ describe("peer dependencies", () => {
       linker: "hoisted",
     });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(["@scoped/has-bin-entry", "app", "lib"]);
+    expect(await packageKeys(dir)).toStrictEqual(["@scoped/has-bin-entry", "app", "lib"]);
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "@scoped"))).toBeFalse();
   });
 
@@ -1001,8 +1001,8 @@ describe("peer dependencies", () => {
         const [fromCatalog, fromInline] = await Promise.all([record(catalogDir, linker), record(inlineDir, linker)]);
 
         const expectedKeys = outcome === "dedupes" ? dedupedKeys : nestedKeys;
-        expect(fromInline.keys).toEqual(expectedKeys);
-        expect(fromInline.keysAfterReload).toEqual(expectedKeys);
+        expect(fromInline.keys).toStrictEqual(expectedKeys);
+        expect(fromInline.keysAfterReload).toStrictEqual(expectedKeys);
         expect(fromInline.reloadSavedLockfile).toBeFalse();
         if (linker === "isolated") {
           expect(fromInline.fresh).toEndWith(isolatedNoDeps2);
@@ -1013,7 +1013,7 @@ describe("peer dependencies", () => {
           expect(fromInline.reload).toBe(expectedLayout);
         }
 
-        expect(fromCatalog).toEqual(fromInline);
+        expect(fromCatalog).toStrictEqual(fromInline);
       });
     });
   });
@@ -1025,10 +1025,10 @@ describe("peer dependencies", () => {
         makeRepo({ peerSpec: "*", linker }),
       ]);
       const [fromCatalog, fromInline] = await Promise.all([record(catalogDir, linker), record(inlineDir, linker)]);
-      expect(fromInline.keys).toEqual(dedupedKeys);
-      expect(fromInline.keysAfterReload).toEqual(dedupedKeys);
+      expect(fromInline.keys).toStrictEqual(dedupedKeys);
+      expect(fromInline.keysAfterReload).toStrictEqual(dedupedKeys);
       expect(fromInline.reloadSavedLockfile).toBeFalse();
-      expect(fromCatalog).toEqual(fromInline);
+      expect(fromCatalog).toStrictEqual(fromInline);
     });
 
     test.concurrent("aliased catalog entry peer matches the inline alias", async () => {
@@ -1037,9 +1037,9 @@ describe("peer dependencies", () => {
         makeRepo({ peerSpec: "npm:no-deps@>=1.0.0", linker }),
       ]);
       const [fromCatalog, fromInline] = await Promise.all([record(catalogDir, linker), record(inlineDir, linker)]);
-      expect(fromInline.keysAfterReload).toEqual(fromInline.keys);
+      expect(fromInline.keysAfterReload).toStrictEqual(fromInline.keys);
       expect(fromInline.reloadSavedLockfile).toBeFalse();
-      expect(fromCatalog).toEqual(fromInline);
+      expect(fromCatalog).toStrictEqual(fromInline);
     });
 
     test.concurrent("optional catalog peer matches the inline optional peer on reload", async () => {
@@ -1048,10 +1048,10 @@ describe("peer dependencies", () => {
         makeRepo({ peerSpec: ">=1.0.0", optionalPeer: true, linker }),
       ]);
       const [fromCatalog, fromInline] = await Promise.all([record(catalogDir, linker), record(inlineDir, linker)]);
-      expect(fromInline.keys).toEqual(dedupedKeys);
-      expect(fromInline.keysAfterReload).toEqual(dedupedKeys);
+      expect(fromInline.keys).toStrictEqual(dedupedKeys);
+      expect(fromInline.keysAfterReload).toStrictEqual(dedupedKeys);
       expect(fromInline.reloadSavedLockfile).toBeFalse();
-      expect(fromCatalog).toEqual(fromInline);
+      expect(fromCatalog).toStrictEqual(fromInline);
     });
 
     // pnpm: deps-installer/test/catalogs.ts "importer with different peers uses correct peer"
@@ -1072,10 +1072,10 @@ describe("peer dependencies", () => {
           twoConsumers(">=1.0.0"),
         ]);
         const [fromCatalog, fromInline] = await Promise.all([record(catalogDir, linker), record(inlineDir, linker)]);
-        expect(fromInline.keys).toEqual(["app", "app2", "app2/no-deps", "lib", "no-deps"]);
-        expect(fromInline.keysAfterReload).toEqual(fromInline.keys);
+        expect(fromInline.keys).toStrictEqual(["app", "app2", "app2/no-deps", "lib", "no-deps"]);
+        expect(fromInline.keysAfterReload).toStrictEqual(fromInline.keys);
         expect(fromInline.reloadSavedLockfile).toBeFalse();
-        expect(fromCatalog).toEqual(fromInline);
+        expect(fromCatalog).toStrictEqual(fromInline);
       },
     );
 
@@ -1100,18 +1100,18 @@ describe("peer dependencies", () => {
   test.concurrent("changing the catalog range of a peer re-hoists on the next install (both directions)", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(dedupedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
 
     await rewriteRootPackageJson(dir, { catalog: { "no-deps": "^2.0.0" } });
     let { err } = await install(dir, "hoisted");
     expect(err).toContain("Saved lockfile");
-    expect(await packageKeys(dir)).toEqual(nestedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(nestedKeys);
     expect(await layout(dir)).toBe("nested:2.0.0");
 
     await rewriteRootPackageJson(dir, { catalog: { "no-deps": ">=1.0.0" } });
     ({ err } = await install(dir, "hoisted"));
     expect(err).toContain("Saved lockfile");
-    expect(await packageKeys(dir)).toEqual(dedupedKeys);
+    expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
   });
 
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"
@@ -1141,7 +1141,7 @@ describe("peer dependencies", () => {
     await rmNodeModules(dir);
     await install(dir, "hoisted");
     expect(await layout(dir)).toBe("<hoisted>");
-    expect(await Bun.file(join(dir, "bun.lockb")).bytes()).toEqual(lockb);
+    expect(await Bun.file(join(dir, "bun.lockb")).bytes()).toStrictEqual(lockb);
   });
 
   // pnpm applies overrides before catalogs, keyed by the peer's own name, even when the catalog entry aliases another package.
@@ -1160,7 +1160,7 @@ describe("peer dependencies", () => {
       const result = await record(dir, "isolated");
       expect(result.fresh).toEndWith(isolatedNoDeps("1.0.0"));
       const keys = ["a-dep", "app", "lib", "no-deps", "one-fixed-dep"];
-      expect(result).toEqual({
+      expect(result).toStrictEqual({
         keys,
         fresh: result.fresh,
         keysAfterReload: keys,
@@ -1182,7 +1182,7 @@ describe("peer dependencies", () => {
   ] as const)("peer %s resolves through the entry named by its spec (%o)", (peerSpec, catalogFields) => {
     test.concurrent("fresh and reload", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, linker: "hoisted" });
-      expect(await record(dir, "hoisted")).toEqual({
+      expect(await record(dir, "hoisted")).toStrictEqual({
         keys: nestedKeys,
         fresh: "nested:2.0.0",
         keysAfterReload: nestedKeys,
@@ -1201,7 +1201,7 @@ describe("peer dependencies", () => {
   ] as const)("peer %s with no usable catalog entry (%o)", (peerSpec, catalogFields) => {
     test.concurrent("installs without a nested copy and is stable on reload", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, linker: "hoisted" });
-      expect(await record(dir, "hoisted")).toEqual({
+      expect(await record(dir, "hoisted")).toStrictEqual({
         keys: dedupedKeys,
         fresh: "<hoisted>",
         keysAfterReload: dedupedKeys,
@@ -1228,7 +1228,7 @@ describe("peer dependencies", () => {
       const keys = ["app", "leaf", "lib", "lib/leaf", "needs-leaf-2", "needs-leaf-2/leaf", "wants-leaf-peer"];
 
       await install(dir, linker);
-      expect(await packageKeys(dir)).toEqual(keys);
+      expect(await packageKeys(dir)).toStrictEqual(keys);
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
       expect(lockfile).toContain('"peerDependencies": { "leaf": "catalog:" }');
 
@@ -1236,7 +1236,7 @@ describe("peer dependencies", () => {
       const frozen = await install(dir, linker, "--frozen-lockfile");
       expect(frozen.err).not.toContain("lockfile had changes");
       expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
-      expect(await packageKeys(dir)).toEqual(keys);
+      expect(await packageKeys(dir)).toStrictEqual(keys);
     });
 
     // pnpm: resolving-deps-resolver walk.rs resolves_children_through_catalogs — only importers substitute catalogs.
@@ -1252,8 +1252,8 @@ describe("peer dependencies", () => {
           registry: catalogRegistry.url.href,
         });
         const result = await record(dir, linker);
-        expect(result.keys).toEqual(registryPeerKeys);
-        expect(result.keysAfterReload).toEqual(registryPeerKeys);
+        expect(result.keys).toStrictEqual(registryPeerKeys);
+        expect(result.keysAfterReload).toStrictEqual(registryPeerKeys);
         expect(result.reloadSavedLockfile).toBeFalse();
         expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
         if (linker === "isolated") {
@@ -1277,8 +1277,8 @@ describe("peer dependencies", () => {
       });
       const result = await record(dir, linker);
       const keys = ["app", "lib", "no-deps", "peer-deps-fixed"];
-      expect(result.keys).toEqual(keys);
-      expect(result.keysAfterReload).toEqual(keys);
+      expect(result.keys).toStrictEqual(keys);
+      expect(result.keysAfterReload).toStrictEqual(keys);
       expect(result.reloadSavedLockfile).toBeFalse();
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
       expect(lockfile).not.toContain("no-deps@2.0.0");
@@ -1299,8 +1299,8 @@ describe("peer dependencies", () => {
     });
     const keys = ["app", "catalog-peer", "lib"];
     const result = await record(dir, "hoisted");
-    expect(result.keys).toEqual(keys);
-    expect(result.keysAfterReload).toEqual(keys);
+    expect(result.keys).toStrictEqual(keys);
+    expect(result.keysAfterReload).toStrictEqual(keys);
     expect(result.reloadSavedLockfile).toBeFalse();
     expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@");
     expect(existsSync(join(dir, "node_modules", "no-deps"))).toBeFalse();
@@ -1316,8 +1316,8 @@ describe("peer dependencies", () => {
       registry: catalogRegistry.url.href,
     });
     const result = await record(dir, "hoisted");
-    expect(result.keys).toEqual(registryPeerKeys);
-    expect(result.keysAfterReload).toEqual(registryPeerKeys);
+    expect(result.keys).toStrictEqual(registryPeerKeys);
+    expect(result.keysAfterReload).toStrictEqual(registryPeerKeys);
     expect(result.reloadSavedLockfile).toBeFalse();
     expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
     expect(existsSync(join(dir, "node_modules", "catalog-peer", "node_modules"))).toBeFalse();
@@ -1333,11 +1333,11 @@ describe("peer dependencies", () => {
       registry: catalogRegistry.url.href,
     });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(registryPeerKeys);
+    expect(await packageKeys(dir)).toStrictEqual(registryPeerKeys);
 
     await rewriteRootPackageJson(dir, { rootDependencies: {}, catalog: { "no-deps": "^2.0.0" } });
     await install(dir, "hoisted");
-    expect(await packageKeys(dir)).toEqual(registryPeerKeys);
+    expect(await packageKeys(dir)).toStrictEqual(registryPeerKeys);
     expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
 
     const { err } = await install(dir, "hoisted");
@@ -1367,7 +1367,7 @@ describe("peer dependencies", () => {
     const expectNoNestedCopy = async () => {
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
       expect(lockfile).not.toContain("no-deps@2.0.0");
-      expect((await packageKeys(dir)).filter(key => key.endsWith("vendored/no-deps"))).toEqual([]);
+      expect((await packageKeys(dir)).filter(key => key.endsWith("vendored/no-deps"))).toStrictEqual([]);
     };
 
     await install(dir, "hoisted");
@@ -1390,7 +1390,7 @@ describe("peer dependencies", () => {
         const dir = await makeRepo({ ...catalogFields, overrides: { "no-deps": override }, peerSpec, linker });
         const result = await record(dir, linker);
         const keys = ["app", "lib", "no-deps", "one-fixed-dep"];
-        expect(result).toEqual({
+        expect(result).toStrictEqual({
           keys,
           fresh: linker === "isolated" ? expect.stringContaining(isolatedNoDeps("1.0.0")) : "<hoisted>",
           keysAfterReload: keys,
@@ -1421,7 +1421,7 @@ describe("peer dependencies", () => {
       const packageJson = tarball.entries.find(
         (entry: { pathname: string }) => entry.pathname === "package/package.json",
       );
-      expect(JSON.parse(packageJson.contents)).toEqual({
+      expect(JSON.parse(packageJson.contents)).toStrictEqual({
         name: "lib",
         version: "1.2.3",
         peerDependencies: { "no-deps": ">=1.0.0" },

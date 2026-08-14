@@ -901,7 +901,7 @@ snapshots:
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
     expect(text).toContain('"no-deps": "2.0.0"');
-    expect((await file(join(dir, "package.json")).json()).overrides).toEqual({ "one-dep>no-deps": "2.0.0" });
+    expect((await file(join(dir, "package.json")).json()).overrides).toStrictEqual({ "one-dep>no-deps": "2.0.0" });
     await installOk(dir, "--frozen-lockfile");
     expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
   });
@@ -919,7 +919,7 @@ snapshots:
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
     expect(text).toContain('"no-deps@1": "2.0.0"');
-    expect((await file(join(dir, "package.json")).json()).overrides).toEqual(pnpmOverrides);
+    expect((await file(join(dir, "package.json")).json()).overrides).toStrictEqual(pnpmOverrides);
     await installOk(dir, "--frozen-lockfile");
     expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
   });
@@ -938,7 +938,7 @@ snapshots:
     expect(text).toContain('"lockfileVersion": 3');
     expect(text).toContain('"no-deps@1": {');
     expect(text).toContain('".": "2.0.0"');
-    expect((await file(join(dir, "package.json")).json()).overrides).toEqual(pnpmOverrides);
+    expect((await file(join(dir, "package.json")).json()).overrides).toStrictEqual(pnpmOverrides);
     await installOk(dir, "--frozen-lockfile");
     expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
   });

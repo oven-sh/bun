@@ -247,7 +247,7 @@ describe("bun pm licenses", () => {
       ├── no-deps@1.0.1
       └── one-dep@1.0.0"
     `);
-    expect(stdout.split("\n").filter(line => line.endsWith(" (dev)"))).toEqual(["├── a-dep@1.0.1 (dev)"]);
+    expect(stdout.split("\n").filter(line => line.endsWith(" (dev)"))).toStrictEqual(["├── a-dep@1.0.1 (dev)"]);
     expect(stdout).not.toContain(hoistedDir);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -257,7 +257,7 @@ describe("bun pm licenses", () => {
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--json");
     expect(stderr).toBe("");
     const parsed = JSON.parse(stdout);
-    expect(parsed).toEqual({
+    expect(parsed).toStrictEqual({
       MIT: [
         { ...fullJson.MIT[0], paths: [nm(hoistedDir, "path-parse")] },
         { ...fullJson.MIT[1], paths: [nm(hoistedDir, "resolve")] },
@@ -271,14 +271,14 @@ describe("bun pm licenses", () => {
         { ...u("one-dep", "1.0.0"), paths: [nm(hoistedDir, "one-dep")] },
       ],
     });
-    expect(Object.keys(parsed.MIT[0]).slice(0, 4)).toEqual(["name", "versions", "paths", "license"]);
-    expect(stripPaths(structuredClone(parsed))).toEqual(fullJson);
-    expect(Object.keys(parsed)).toEqual(["MIT", "Unknown"]);
+    expect(Object.keys(parsed.MIT[0]).slice(0, 4)).toStrictEqual(["name", "versions", "paths", "license"]);
+    expect(stripPaths(structuredClone(parsed))).toStrictEqual(fullJson);
+    expect(Object.keys(parsed)).toStrictEqual(["MIT", "Unknown"]);
     expect(parsed.MIT[0].description).toBe(pathParseDescription);
     expect(parsed.MIT[1]).not.toHaveProperty("homepage");
     expect(parsed.Unknown[0]).not.toHaveProperty("description");
     for (const [key, entries] of Object.entries(parsed as Record<string, LicenseEntry[]>)) {
-      expect(entries.map(entry => entry.license)).toEqual(entries.map(() => key));
+      expect(entries.map(entry => entry.license)).toStrictEqual(entries.map(() => key));
     }
     expect(stdout).not.toContain("(dev)");
     expect(stdout).not.toContain('"dev"');
@@ -292,14 +292,14 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "no-deps", { licenses: { type: "ISC" } });
 
     const parsed = await licensesJson(dir);
-    expect(Object.keys(parsed)).toEqual(["(MIT OR Apache-2.0)", "BSD-3-Clause", "ISC", "MIT", "Unknown"]);
-    expect(parsed["ISC"]).toEqual([{ name: "no-deps", versions: ["1.0.0"], license: "ISC" }]);
-    expect(parsed["Unknown"]).toEqual([u("no-deps", "1.0.1")]);
-    expect(parsed["(MIT OR Apache-2.0)"]).toEqual([
+    expect(Object.keys(parsed)).toStrictEqual(["(MIT OR Apache-2.0)", "BSD-3-Clause", "ISC", "MIT", "Unknown"]);
+    expect(parsed["ISC"]).toStrictEqual([{ name: "no-deps", versions: ["1.0.0"], license: "ISC" }]);
+    expect(parsed["Unknown"]).toStrictEqual([u("no-deps", "1.0.1")]);
+    expect(parsed["(MIT OR Apache-2.0)"]).toStrictEqual([
       { name: "one-dep", versions: ["1.0.0"], license: "(MIT OR Apache-2.0)" },
     ]);
-    expect(parsed["BSD-3-Clause"]).toEqual([{ name: "a-dep", versions: ["1.0.1"], license: "BSD-3-Clause" }]);
-    expect(parsed["MIT"].map(entry => entry.name)).toEqual(["path-parse", "resolve"]);
+    expect(parsed["BSD-3-Clause"]).toStrictEqual([{ name: "a-dep", versions: ["1.0.1"], license: "BSD-3-Clause" }]);
+    expect(parsed["MIT"].map(entry => entry.name)).toStrictEqual(["path-parse", "resolve"]);
   });
 
   // pnpm license-resolver/test/parseLicenseFromManifest.test.ts, replayed against installed manifests.
@@ -311,12 +311,12 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { license: { name: "0BSD" } });
 
     const parsed = await licensesJson(dir);
-    expect(parsed["(MIT OR Apache-2.0)"]).toEqual([
+    expect(parsed["(MIT OR Apache-2.0)"]).toStrictEqual([
       { name: "a-dep", versions: ["1.0.1"], license: "(MIT OR Apache-2.0)" },
     ]);
-    expect(parsed["ISC"]).toEqual([{ name: "one-dep", versions: ["1.0.0"], license: "ISC" }]);
-    expect(parsed["BSD-2-Clause"]).toEqual([{ name: "no-deps", versions: ["1.0.0"], license: "BSD-2-Clause" }]);
-    expect(parsed["0BSD"]).toEqual([{ name: "no-deps", versions: ["1.0.1"], license: "0BSD" }]);
+    expect(parsed["ISC"]).toStrictEqual([{ name: "one-dep", versions: ["1.0.0"], license: "ISC" }]);
+    expect(parsed["BSD-2-Clause"]).toStrictEqual([{ name: "no-deps", versions: ["1.0.0"], license: "BSD-2-Clause" }]);
+    expect(parsed["0BSD"]).toStrictEqual([{ name: "no-deps", versions: ["1.0.1"], license: "0BSD" }]);
     expect(parsed).not.toHaveProperty("Unknown");
   });
 
@@ -326,8 +326,8 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "one-dep", { license: "Apache-2.0", licenses: [{ type: "MIT" }] });
 
     const parsed = await licensesJson(dir);
-    expect(parsed["MIT"].map(entry => entry.name)).toEqual(["a-dep", "path-parse", "resolve"]);
-    expect(parsed["Apache-2.0"]).toEqual([{ name: "one-dep", versions: ["1.0.0"], license: "Apache-2.0" }]);
+    expect(parsed["MIT"].map(entry => entry.name)).toStrictEqual(["a-dep", "path-parse", "resolve"]);
+    expect(parsed["Apache-2.0"]).toStrictEqual([{ name: "one-dep", versions: ["1.0.0"], license: "Apache-2.0" }]);
   });
 
   test.concurrent("non-string license shapes are Unknown; entries with non-string type are skipped", async () => {
@@ -338,7 +338,7 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "resolve", { license: undefined, licenses: [{ type: 42 }, { type: "MIT" }] });
 
     const parsed = await licensesJson(dir);
-    expect(parsed).toEqual({
+    expect(parsed).toStrictEqual({
       MIT: [
         fullJson.MIT[0],
         {
@@ -358,7 +358,7 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "one-dep", { licenses: [{ type: "MIT" }, { type: "MIT" }, { type: "Apache-2.0" }] });
 
     const parsed = await licensesJson(dir);
-    expect(parsed["(MIT OR MIT OR Apache-2.0)"]).toEqual([
+    expect(parsed["(MIT OR MIT OR Apache-2.0)"]).toStrictEqual([
       { name: "one-dep", versions: ["1.0.0"], license: "(MIT OR MIT OR Apache-2.0)" },
     ]);
   });
@@ -372,12 +372,12 @@ describe("bun pm licenses", () => {
     });
 
     const parsed = await licensesJson(dir);
-    expect(parsed["MIT"]).toEqual([
+    expect(parsed["MIT"]).toStrictEqual([
       { name: "no-deps", versions: ["1.0.0", "1.0.1"], license: "MIT", homepage: "https://example.com/new" },
       ...fullJson.MIT,
     ]);
-    expect(parsed["Unknown"]).toEqual([u("a-dep", "1.0.1"), u("one-dep", "1.0.0")]);
-    expect(pathsOf(await licensesEntries(dir), "no-deps")).toEqual([
+    expect(parsed["Unknown"]).toStrictEqual([u("a-dep", "1.0.1"), u("one-dep", "1.0.0")]);
+    expect(pathsOf(await licensesEntries(dir), "no-deps")).toStrictEqual([
       nm(dir, "no-deps"),
       nm(dir, "one-dep", "node_modules", "no-deps"),
     ]);
@@ -389,7 +389,7 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { license: "0BSD", description: "newer" });
     patchInstalledManifest(dir, "a-dep", { licenses: [{ type: "MIT" }, { type: "Apache-2.0" }] });
 
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       "(MIT OR Apache-2.0)": [{ name: "a-dep", versions: ["1.0.1"], license: "(MIT OR Apache-2.0)" }],
       "0BSD": [{ name: "no-deps", versions: ["1.0.1"], license: "0BSD", description: "newer" }],
       "ISC": [{ name: "no-deps", versions: ["1.0.0"], license: "ISC" }],
@@ -415,7 +415,7 @@ describe("bun pm licenses", () => {
     expect(exitCode).toBe(0);
 
     const parsed = await licensesJson(dir);
-    expect(parsed["Unknown"][0]).toEqual(u("a-dep", "1.0.9", "1.0.10"));
+    expect(parsed["Unknown"][0]).toStrictEqual(u("a-dep", "1.0.9", "1.0.10"));
   });
 
   test.concurrent("(dev) marks packages only reachable through devDependencies", async () => {
@@ -438,10 +438,12 @@ describe("bun pm licenses", () => {
     expect(jsonStderr).toBe("");
     expect(json).not.toContain("(dev)");
     expect(json).not.toContain('"dev"');
-    expect(stripPaths(JSON.parse(json))).toEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
+    expect(stripPaths(JSON.parse(json))).toStrictEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
     expect(jsonExit).toBe(0);
 
-    expect(await licensesJson(dir, "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")] });
+    expect(await licensesJson(dir, "--dev")).toStrictEqual({
+      Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")],
+    });
     expect(normalizeBunSnapshot(await licensesText(dir, "--dev"))).toMatchInlineSnapshot(`
       "Unknown (2)
       ├── a-dep@1.0.9
@@ -475,7 +477,7 @@ describe("bun pm licenses", () => {
       ├── one-dep@1.0.0 (dev)
       └── uses-a-dep-9@1.0.0 (dev)"
     `);
-    expect(await licensesJson(dir, "--dev")).toEqual({
+    expect(await licensesJson(dir, "--dev")).toStrictEqual({
       Unknown: [u("a-dep", "1.0.9"), u("no-deps", "1.0.1"), u("one-dep", "1.0.0"), u("uses-a-dep-9", "1.0.0")],
     });
   });
@@ -486,8 +488,8 @@ describe("bun pm licenses", () => {
     });
 
     const expected = { Unknown: [u("no-deps", "1.0.1"), u("one-dep", "1.0.0")] };
-    expect(await licensesJson(dir, "--dev")).toEqual(expected);
-    expect(await licensesJson(dir, "-D")).toEqual(expected);
+    expect(await licensesJson(dir, "--dev")).toStrictEqual(expected);
+    expect(await licensesJson(dir, "-D")).toStrictEqual(expected);
     expect(normalizeBunSnapshot(await licensesText(dir, "--dev"))).toMatchInlineSnapshot(`
       "Unknown (2)
       ├── no-deps@1.0.1 (dev)
@@ -498,16 +500,18 @@ describe("bun pm licenses", () => {
       "Unknown (1)
       └── a-dep@1.0.1 (dev)"
     `);
-    expect(await licensesJson(hoistedDir, "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.1")] });
+    expect(await licensesJson(hoistedDir, "--dev")).toStrictEqual({ Unknown: [u("a-dep", "1.0.1")] });
   });
 
   test.concurrent("--dev in a workspace", async () => {
-    expect(await licensesJson(monoDir, "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.1")] });
-    expect(await licensesJson(join(monoDir, "packages", "foo"), "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.1")] });
+    expect(await licensesJson(monoDir, "--dev")).toStrictEqual({ Unknown: [u("a-dep", "1.0.1")] });
+    expect(await licensesJson(join(monoDir, "packages", "foo"), "--dev")).toStrictEqual({
+      Unknown: [u("a-dep", "1.0.1")],
+    });
 
     const bar = join(monoDir, "packages", "bar");
     expect(await licensesText(bar, "--dev")).toBe(EMPTY_TEXT);
-    expect(await licensesJson(bar, "--dev")).toEqual({});
+    expect(await licensesJson(bar, "--dev")).toStrictEqual({});
   });
 
   test.concurrent("--dev cannot be combined with --prod", async () => {
@@ -524,7 +528,7 @@ describe("bun pm licenses", () => {
   });
 
   test.concurrent.each(["--prod", "--production", "-p", "-P"])("%s omits devDependencies (--json)", async flag => {
-    expect(await licensesJson(hoistedDir, flag)).toEqual(prodJson);
+    expect(await licensesJson(hoistedDir, flag)).toStrictEqual(prodJson);
   });
 
   test.concurrent("--prod omits devDependencies (text)", async () => {
@@ -552,10 +556,10 @@ describe("bun pm licenses", () => {
       }),
     });
 
-    expect(await licensesJson(dir, "--prod")).toEqual({
+    expect(await licensesJson(dir, "--prod")).toStrictEqual({
       Unknown: [u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")],
     });
-    expect(names(await licensesJson(dir))).toEqual(["a-dep", "no-deps", "one-dep"]);
+    expect(names(await licensesJson(dir))).toStrictEqual(["a-dep", "no-deps", "one-dep"]);
   });
 
   test.concurrent("os/cpu-skipped optional dependencies are omitted, their parent is listed", async () => {
@@ -571,7 +575,7 @@ describe("bun pm licenses", () => {
       .map(name => u(name, "1.0.0"));
     expect(installedNatives.map(entry => entry.name)).not.toContain("native-foo-x64");
 
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       Unknown: [...installedNatives, u("optional-native", "1.0.0")],
     });
   });
@@ -605,7 +609,7 @@ describe("bun pm licenses", () => {
       licensesText(hoistedDir, "--long", "--json"),
     ]);
     expect(longJson).toBe(plainJson);
-    expect(stripPaths(JSON.parse(longJson))).toEqual(fullJson);
+    expect(stripPaths(JSON.parse(longJson))).toStrictEqual(fullJson);
   });
 
   test.concurrent("--long details are per version in text; --json takes them from the newest version", async () => {
@@ -617,7 +621,7 @@ describe("bun pm licenses", () => {
     expect(first).toContain(
       "├── a-dep@1.0.1 (dev)\n│   Ann <ann@example.com>\n├── no-deps@1.0.0\n│   only a description\n├── no-deps@1.0.1\n└── one-dep@1.0.0\n",
     );
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       MIT: fullJson.MIT,
       Unknown: [
         { ...u("a-dep", "1.0.1"), author: "Ann <ann@example.com>" },
@@ -637,7 +641,7 @@ describe("bun pm licenses", () => {
     );
     expect(second.split("\n").some(line => line.startsWith("line two"))).toBeFalse();
     const parsed = await licensesJson(dir);
-    expect(parsed.Unknown[1]).toEqual({
+    expect(parsed.Unknown[1]).toStrictEqual({
       ...u("no-deps", "1.0.0", "1.0.1"),
       homepage: "https://example.com/new",
       description: "newest wins\nline two",
@@ -661,7 +665,7 @@ describe("bun pm licenses", () => {
       expect(stdout).toContain("MIT[31mEVIL (1)\n└── a-dep@1.0.1 (dev)\n    tabhere\n");
       expect(stdout).toContain("ISCGPL-3.0 (1)\n└── one-dep@1.0.0\n");
       expect(stdout).toContain("BSD2 (1)\n└── no-deps@1.0.0\n");
-      expect(stdout.split("\n").filter(line => / \(\d+\)$/.test(line))).toEqual([
+      expect(stdout.split("\n").filter(line => / \(\d+\)$/.test(line))).toStrictEqual([
         "BSD2 (1)",
         "ISCGPL-3.0 (1)",
         "MIT (2)",
@@ -671,13 +675,13 @@ describe("bun pm licenses", () => {
       expect(stdout.split("\n").some(line => line.startsWith("GPL-3.0") || line.startsWith("EVIL"))).toBeFalse();
 
       const parsed = await licensesJson(dir);
-      expect(Object.keys(parsed)).toEqual(["BSD\t2", "ISC\nGPL-3.0", "MIT", evilLicense, "Unknown"]);
-      expect(parsed[evilLicense]).toEqual([
+      expect(Object.keys(parsed)).toStrictEqual(["BSD\t2", "ISC\nGPL-3.0", "MIT", evilLicense, "Unknown"]);
+      expect(parsed[evilLicense]).toStrictEqual([
         { name: "a-dep", versions: ["1.0.1"], license: evilLicense, description: "tab\there\r\n" },
       ]);
-      expect(parsed["ISC\nGPL-3.0"]).toEqual([{ name: "one-dep", versions: ["1.0.0"], license: "ISC\nGPL-3.0" }]);
-      expect(parsed["BSD\t2"]).toEqual([{ name: "no-deps", versions: ["1.0.0"], license: "BSD\t2" }]);
-      expect(parsed.Unknown).toEqual([u("no-deps", "1.0.1")]);
+      expect(parsed["ISC\nGPL-3.0"]).toStrictEqual([{ name: "one-dep", versions: ["1.0.0"], license: "ISC\nGPL-3.0" }]);
+      expect(parsed["BSD\t2"]).toStrictEqual([{ name: "no-deps", versions: ["1.0.0"], license: "BSD\t2" }]);
+      expect(parsed.Unknown).toStrictEqual([u("no-deps", "1.0.1")]);
     },
   );
 
@@ -697,13 +701,17 @@ describe("bun pm licenses", () => {
     );
     expect(stdout.split("\n").some(line => line.startsWith("second"))).toBeFalse();
 
-    expect((await licensesJson(dir)).Unknown[0]).toEqual({ ...u("a-dep", "1.0.1"), author, description, homepage });
+    expect((await licensesJson(dir)).Unknown[0]).toStrictEqual({
+      ...u("a-dep", "1.0.1"),
+      author,
+      description,
+      homepage,
+    });
   });
 
-  test.concurrent("isolated linker matches hoisted: marker, --dev, --long and --filter", async () => {
-    const [dir, isoMono] = await Promise.all([setup("isolated"), setup("isolated", monorepoFiles)]);
-    const [expected] = await licenses(hoistedDir);
-    const [stdout, stderr, exitCode] = await licenses(dir);
+  test.concurrent("isolated linker matches hoisted: marker, --dev and --long", async () => {
+    const dir = await setup("isolated");
+    const [[expected], [stdout, stderr, exitCode]] = await Promise.all([licenses(hoistedDir), licenses(dir)]);
     expect(stdout).toBe(expected);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "MIT (2)
@@ -719,14 +727,33 @@ describe("bun pm licenses", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
-    for (const args of [["--long"], ["--dev"]]) {
-      expect(await licensesText(dir, ...args)).toBe(await licensesText(hoistedDir, ...args));
-    }
-    expect(await licensesJson(dir, "--dev")).toEqual(await licensesJson(hoistedDir, "--dev"));
-    expect(await licensesJson(dir, "--long")).toEqual(await licensesJson(hoistedDir, "--long"));
-    expect(await licensesText(dir, "--long")).toContain("│   Javier Blanco <http://jbgutierrez.info>\n");
-    expect(await licensesJson(isoMono, "--filter", "foo")).toEqual(await licensesJson(monoDir, "--filter", "foo"));
-    expect(await licensesText(isoMono, "--filter", "foo")).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
+    const [isoLong, hoistedLong, isoDev, hoistedDev, isoDevJson, hoistedDevJson, isoLongJson, hoistedLongJson] =
+      await Promise.all([
+        licensesText(dir, "--long"),
+        licensesText(hoistedDir, "--long"),
+        licensesText(dir, "--dev"),
+        licensesText(hoistedDir, "--dev"),
+        licensesJson(dir, "--dev"),
+        licensesJson(hoistedDir, "--dev"),
+        licensesJson(dir, "--long"),
+        licensesJson(hoistedDir, "--long"),
+      ]);
+    expect(isoLong).toBe(hoistedLong);
+    expect(isoDev).toBe(hoistedDev);
+    expect(isoDevJson).toStrictEqual(hoistedDevJson);
+    expect(isoLongJson).toStrictEqual(hoistedLongJson);
+    expect(isoLong).toContain("│   Javier Blanco <http://jbgutierrez.info>\n");
+  });
+
+  test.concurrent("isolated linker matches hoisted: --filter in a workspace", async () => {
+    const isoMono = await setup("isolated", monorepoFiles);
+    const [isoJson, hoistedJson, isoText] = await Promise.all([
+      licensesJson(isoMono, "--filter", "foo"),
+      licensesJson(monoDir, "--filter", "foo"),
+      licensesText(isoMono, "--filter", "foo"),
+    ]);
+    expect(isoJson).toStrictEqual(hoistedJson);
+    expect(isoText).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
   });
 
   test.concurrent("isolated linker: scoped transitive dependency is found through the store", async () => {
@@ -734,10 +761,10 @@ describe("bun pm licenses", () => {
     expect(existsSync(join(dir, "node_modules", "@types", "is-number"))).toBeFalse();
     expect(existsSync(join(dir, "node_modules", ".bun", "@types+is-number@2.0.0"))).toBeTrue();
 
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       Unknown: [u("@types/is-number", "2.0.0"), u("no-deps", "1.1.0"), u("two-range-deps", "1.0.0")],
     });
-    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toEqual([
+    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toStrictEqual([
       store(dir, "@types+is-number@2.0.0", "@types", "is-number"),
     ]);
   });
@@ -745,14 +772,14 @@ describe("bun pm licenses", () => {
   test.concurrent("paths: isolated installs report the store directory", async () => {
     const dir = await setup("isolated");
     const entries = await licensesEntries(dir);
-    expect(Object.fromEntries(entries.map(entry => [entry.name, entry.paths]))).toEqual({
+    expect(Object.fromEntries(entries.map(entry => [entry.name, entry.paths]))).toStrictEqual({
       "path-parse": [store(dir, "path-parse@1.0.6", "path-parse")],
       "resolve": [store(dir, "resolve@1.9.0", "resolve")],
       "a-dep": [store(dir, "a-dep@1.0.1", "a-dep")],
       "no-deps": [store(dir, "no-deps@1.0.0", "no-deps"), store(dir, "no-deps@1.0.1", "no-deps")],
       "one-dep": [store(dir, "one-dep@1.0.0", "one-dep")],
     });
-    expect(await licensesJson(dir)).toEqual(fullJson);
+    expect(await licensesJson(dir)).toStrictEqual(fullJson);
   });
 
   test.concurrent("isolated linker: store entries with a peer hash suffix are matched", async () => {
@@ -762,7 +789,7 @@ describe("bun pm licenses", () => {
     const storeEntries = readdirSync(join(dir, "node_modules", ".bun"));
     expect(storeEntries.some(name => /^peer-deps-lvl[12]@1\.0\.0\+[0-9a-f]{16}$/.test(name))).toBeTrue();
 
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       Unknown: [
         u("no-deps", "1.0.0"),
         u("peer-deps-lvl0", "1.0.0"),
@@ -784,10 +811,10 @@ describe("bun pm licenses", () => {
       "sub-dep/package.json": JSON.stringify({ name: "sub-dep", version: "2.5.0" }),
     });
 
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       Unknown: [u("no-deps", "1.0.0"), u("sub-dep", "sub-dep")],
     });
-    expect(pathsOf(await licensesEntries(dir), "sub-dep")).toEqual([
+    expect(pathsOf(await licensesEntries(dir), "sub-dep")).toStrictEqual([
       linker === "hoisted" ? nm(dir, "sub-dep") : store(dir, "sub-dep@file+sub-dep", "sub-dep"),
     ]);
   });
@@ -802,8 +829,8 @@ describe("bun pm licenses", () => {
       }),
     });
 
-    expect(names(await licensesJson(dir))).toEqual(["a-dep", "no-deps", "sub-dep"]);
-    expect(names(await licensesJson(dir, "--prod"))).toEqual(["no-deps", "sub-dep"]);
+    expect(names(await licensesJson(dir))).toStrictEqual(["a-dep", "no-deps", "sub-dep"]);
+    expect(names(await licensesJson(dir, "--prod"))).toStrictEqual(["no-deps", "sub-dep"]);
   });
 
   test.concurrent.each(["hoisted", "isolated"] as Linker[])("link: dependency is not listed (%s)", async linker => {
@@ -835,7 +862,7 @@ describe("bun pm licenses", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stripPaths(JSON.parse(stdout))).toEqual({ Unknown: [u("no-deps", "1.0.0")] });
+    expect(stripPaths(JSON.parse(stdout))).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
     expect(exitCode).toBe(0);
   });
 
@@ -847,22 +874,24 @@ describe("bun pm licenses", () => {
         "package.json": pkg({ dependencies: { "no-deps": "1.0.0", "nd2": "npm:no-deps@1.0.1" } }),
       });
 
-      expect(await licensesJson(dir)).toEqual({ Unknown: [u("no-deps", "1.0.0", "1.0.1")] });
+      expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0", "1.0.1")] });
     },
   );
 
   // pnpm 'path should be correct for workspaces' / 'filter outputs'; pnpm#5689 (same output from every directory of a monorepo).
   test.concurrent("workspace root lists every member's dependencies; a member lists only its own closure", async () => {
-    expect(await licensesJson(monoDir)).toEqual(monoJson);
-    expect(await licensesJson(join(monoDir, "packages", "bar"))).toEqual(barJson);
-    expect(await licensesJson(join(monoDir, "packages", "foo"))).toEqual(fooJson);
+    expect(await licensesJson(monoDir)).toStrictEqual(monoJson);
+    expect(await licensesJson(join(monoDir, "packages", "bar"))).toStrictEqual(barJson);
+    expect(await licensesJson(join(monoDir, "packages", "foo"))).toStrictEqual(fooJson);
     expect(await licensesText(monoDir)).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
 
     const fromRoot = await licensesEntries(monoDir);
-    expect(pathsOf(fromRoot, "a-dep")).toEqual([nm(monoDir, "a-dep")]);
-    expect(pathsOf(fromRoot, "resolve")).toEqual([nm(monoDir, "resolve")]);
-    expect(pathsOf(await licensesEntries(monoDir, "--filter", "foo"), "a-dep")).toEqual([nm(monoDir, "a-dep")]);
-    expect(pathsOf(await licensesEntries(join(monoDir, "packages", "foo")), "a-dep")).toEqual([nm(monoDir, "a-dep")]);
+    expect(pathsOf(fromRoot, "a-dep")).toStrictEqual([nm(monoDir, "a-dep")]);
+    expect(pathsOf(fromRoot, "resolve")).toStrictEqual([nm(monoDir, "resolve")]);
+    expect(pathsOf(await licensesEntries(monoDir, "--filter", "foo"), "a-dep")).toStrictEqual([nm(monoDir, "a-dep")]);
+    expect(pathsOf(await licensesEntries(join(monoDir, "packages", "foo")), "a-dep")).toStrictEqual([
+      nm(monoDir, "a-dep"),
+    ]);
   });
 
   test.concurrent("(dev) from the root is unmarked when another member needs the package in production", async () => {
@@ -889,8 +918,11 @@ describe("bun pm licenses", () => {
   });
 
   test.concurrent("--prod inside a workspace drops members' devDependencies", async () => {
-    expect(await licensesJson(monoDir, "--prod")).toEqual({ MIT: fullJson.MIT, Unknown: [u("no-deps", "1.0.0")] });
-    expect(await licensesJson(join(monoDir, "packages", "foo"), "--prod")).toEqual({
+    expect(await licensesJson(monoDir, "--prod")).toStrictEqual({
+      MIT: fullJson.MIT,
+      Unknown: [u("no-deps", "1.0.0")],
+    });
+    expect(await licensesJson(join(monoDir, "packages", "foo"), "--prod")).toStrictEqual({
       Unknown: [u("no-deps", "1.0.0")],
     });
   });
@@ -911,29 +943,31 @@ describe("bun pm licenses", () => {
         licensesText(monoDir, "--filter", "foo"),
       ],
     );
-    expect(await licensesJson(monoDir, "--filter", "foo")).toEqual(fooJson);
-    expect(await licensesJson(monoDir, "--filter", "bar")).toEqual(barJson);
-    expect(await licensesJson(monoDir, "--filter", "./packages/bar")).toEqual(barJson);
-    expect(await licensesJson(bar, "--filter", "foo")).toEqual(fooJson);
-    expect(await licensesJson(bar, "--filter", "./")).toEqual(barJson);
-    expect(union).toEqual(monoJson);
-    expect(names(union)).toEqual(monoNames);
-    expect(star).toEqual(all);
-    expect(all).toEqual(monoJson);
-    expect(notFoo).toEqual(barJson);
-    expect(starNotFoo).toEqual(barJson);
-    expect(glob).toEqual(barJson);
-    expect(parentGlob).toEqual(monoJson);
-    expect(packagesGlob).toEqual(monoJson);
+    expect(await licensesJson(monoDir, "--filter", "foo")).toStrictEqual(fooJson);
+    expect(await licensesJson(monoDir, "--filter", "bar")).toStrictEqual(barJson);
+    expect(await licensesJson(monoDir, "--filter", "./packages/bar")).toStrictEqual(barJson);
+    expect(await licensesJson(bar, "--filter", "foo")).toStrictEqual(fooJson);
+    expect(await licensesJson(bar, "--filter", "./")).toStrictEqual(barJson);
+    expect(union).toStrictEqual(monoJson);
+    expect(names(union)).toStrictEqual(monoNames);
+    expect(star).toStrictEqual(all);
+    expect(all).toStrictEqual(monoJson);
+    expect(notFoo).toStrictEqual(barJson);
+    expect(starNotFoo).toStrictEqual(barJson);
+    expect(glob).toStrictEqual(barJson);
+    expect(parentGlob).toStrictEqual(monoJson);
+    expect(packagesGlob).toStrictEqual(monoJson);
     expect(rootOnly).toBe(EMPTY_TEXT);
     expect(normalizeBunSnapshot(fooText)).toMatchInlineSnapshot(`
       "Unknown (2)
       ├── a-dep@1.0.1 (dev)
       └── no-deps@1.0.0"
     `);
-    expect(await licensesJson(monoDir, "--filter", "foo", "--prod")).toEqual({ Unknown: [u("no-deps", "1.0.0")] });
-    expect(await licensesJson(monoDir, "--filter", "foo", "--dev")).toEqual({ Unknown: [u("a-dep", "1.0.1")] });
-    expect(await licensesJson(monoDir, "--filter", "bar", "--dev")).toEqual({});
+    expect(await licensesJson(monoDir, "--filter", "foo", "--prod")).toStrictEqual({
+      Unknown: [u("no-deps", "1.0.0")],
+    });
+    expect(await licensesJson(monoDir, "--filter", "foo", "--dev")).toStrictEqual({ Unknown: [u("a-dep", "1.0.1")] });
+    expect(await licensesJson(monoDir, "--filter", "bar", "--dev")).toStrictEqual({});
   });
 
   test.concurrent("--filter selecting the root lists only the root's own dependencies", async () => {
@@ -947,10 +981,10 @@ describe("bun pm licenses", () => {
       }),
     });
 
-    expect(await licensesJson(dir, "--filter", "mono")).toEqual({
+    expect(await licensesJson(dir, "--filter", "mono")).toStrictEqual({
       Unknown: [u("no-deps", "1.0.1"), u("one-dep", "1.0.0")],
     });
-    expect(await licensesJson(dir)).toEqual({
+    expect(await licensesJson(dir)).toStrictEqual({
       MIT: fullJson.MIT,
       Unknown: [u("a-dep", "1.0.1"), u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")],
     });
@@ -971,7 +1005,7 @@ describe("bun pm licenses", () => {
     expect(stderr).toContain("--filter is only supported by `bun pm licenses`");
     expect(exitCode).toBe(1);
 
-    expect(await licensesJson(hoistedDir, "--filter", "licenses-fixture")).toEqual(fullJson);
+    expect(await licensesJson(hoistedDir, "--filter", "licenses-fixture")).toStrictEqual(fullJson);
   });
 
   test.concurrent('nothing to list prints "No packages found" / {}', async () => {
@@ -985,7 +1019,7 @@ describe("bun pm licenses", () => {
     expect(json).toBe("{}\n");
     expect(jsonStderr).toBe("");
     expect(jsonExit).toBe(0);
-    expect(await licensesJson(dir)).toEqual({ Unknown: [u("no-deps", "1.0.0")] });
+    expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
   });
 
   test.concurrent("licenses list / ls aliases", async () => {
@@ -997,7 +1031,7 @@ describe("bun pm licenses", () => {
     expect(plain).toContain("MIT (2)");
     expect(list).toBe(plain);
     expect(ls).toBe(plain);
-    expect([plainExit, listExit, lsExit]).toEqual([0, 0, 0]);
+    expect([plainExit, listExit, lsExit]).toStrictEqual([0, 0, 0]);
 
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "bogus");
     expect(stdout).toBe("");
@@ -1035,7 +1069,7 @@ describe("bun pm licenses", () => {
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
         `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
       );
-      expect(stripPaths(JSON.parse(stdout))).toEqual({
+      expect(stripPaths(JSON.parse(stdout))).toStrictEqual({
         MIT: [fullJson.MIT[0]],
         Unknown: [u("a-dep", "1.0.1"), u("no-deps", "1.0.0"), u("resolve", "1.9.0")],
       });
@@ -1056,10 +1090,10 @@ describe("bun pm licenses", () => {
     expect(JSON.parse(readFileSync(join(dir, "node_modules", "a-dep", "package.json"), "utf8")).version).toBe("1.0.10");
     expect(existsSync(join(dir, "node_modules", "uses-a-dep-10", "node_modules"))).toBeFalse();
 
-    expect(await licensesJson(dir, "--prod")).toEqual({
+    expect(await licensesJson(dir, "--prod")).toStrictEqual({
       Unknown: [u("a-dep", "1.0.10"), u("uses-a-dep-10", "1.0.0")],
     });
-    expect(pathsOf(await licensesEntries(dir, "--prod"), "a-dep")).toEqual([nm(dir, "a-dep")]);
+    expect(pathsOf(await licensesEntries(dir, "--prod"), "a-dep")).toStrictEqual([nm(dir, "a-dep")]);
   });
 
   test.concurrent("pnpm#8589: a different version at the tree path is not misattributed", async () => {
@@ -1070,7 +1104,7 @@ describe("bun pm licenses", () => {
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
       `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
     );
-    expect(stripPaths(JSON.parse(stdout))).toEqual({
+    expect(stripPaths(JSON.parse(stdout))).toStrictEqual({
       MIT: [{ name: "a-dep", versions: ["1.0.10"], license: "MIT" }],
       Unknown: [u("uses-a-dep-10", "1.0.0")],
     });
@@ -1084,16 +1118,16 @@ describe("bun pm licenses", () => {
       const dir = await setup(linker, { "package.json": pkg({ dependencies: { "bundled-1": "1.0.0" } }) });
       expect(existsSync(join(dir, "node_modules", "bundled-1", "node_modules", "no-deps", "package.json"))).toBeTrue();
 
-      expect(await licensesJson(dir)).toEqual({
+      expect(await licensesJson(dir)).toStrictEqual({
         Unknown: [u("bundled-1", "1.0.0"), u("no-deps", "1.0.0")],
       });
 
       const entries = await licensesEntries(dir);
       if (linker === "hoisted") {
-        expect(pathsOf(entries, "bundled-1")).toEqual([nm(dir, "bundled-1")]);
-        expect(pathsOf(entries, "no-deps")).toEqual([nm(dir, "bundled-1", "node_modules", "no-deps")]);
+        expect(pathsOf(entries, "bundled-1")).toStrictEqual([nm(dir, "bundled-1")]);
+        expect(pathsOf(entries, "no-deps")).toStrictEqual([nm(dir, "bundled-1", "node_modules", "no-deps")]);
       } else {
-        expect(pathsOf(entries, "bundled-1")).toEqual([store(dir, "bundled-1@1.0.0", "bundled-1")]);
+        expect(pathsOf(entries, "bundled-1")).toStrictEqual([store(dir, "bundled-1@1.0.0", "bundled-1")]);
         const noDepsPaths = pathsOf(entries, "no-deps")!;
         expect(noDepsPaths).toBeArrayOfSize(1);
         expect(noDepsPaths[0]).toEndWith(join("bundled-1", "node_modules", "no-deps"));
@@ -1123,11 +1157,11 @@ describe("bun pm licenses", () => {
     });
 
     const parsed = await licensesJson(dir);
-    expect(Object.keys(parsed)).toEqual(["ISC", "Unknown"]);
-    expect(parsed.ISC).toEqual([
+    expect(Object.keys(parsed)).toStrictEqual(["ISC", "Unknown"]);
+    expect(parsed.ISC).toStrictEqual([
       { name: "git-pkg", versions: [expect.stringContaining("git+file://")], license: "ISC" },
     ]);
-    expect(parsed.Unknown).toEqual([u("no-deps", "1.0.0")]);
+    expect(parsed.Unknown).toStrictEqual([u("no-deps", "1.0.0")]);
   });
 
   test.concurrent("bun pm help lists licenses and its flags", async () => {

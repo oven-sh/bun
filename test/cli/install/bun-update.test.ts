@@ -654,7 +654,7 @@ it("named update --filter rewrites only the selected workspace", async () => {
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect((await fanOutJson("packages/pkg-a/package.json")).dependencies.baz).toBe("~0.0.5");
-  expect(await fanOutTexts()).toEqual([root, expect.any(String), pkgB, pkgC]);
+  expect(await fanOutTexts()).toStrictEqual([root, expect.any(String), pkgB, pkgC]);
 });
 
 it("named update accepts -F as the short form of --filter", async () => {
@@ -663,7 +663,7 @@ it("named update accepts -F as the short form of --filter", async () => {
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect((await fanOutJson("packages/pkg-a/package.json")).dependencies.baz).toBe("~0.0.5");
-  expect(await fanOutTexts()).toEqual([root, expect.any(String), pkgB, pkgC]);
+  expect(await fanOutTexts()).toStrictEqual([root, expect.any(String), pkgB, pkgC]);
 });
 
 it("named update --filter of a workspace that does not depend on the name is an error", async () => {
@@ -672,7 +672,7 @@ it("named update --filter of a workspace that does not depend on the name is an 
   const { err, exitCode } = await spawnUpdate("baz", "--filter", "pkg-c");
   expect(err).toContain('"baz" is only a dependency of other workspaces, so there is nothing to update here');
   expect(exitCode).toBe(1);
-  expect(await fanOutTexts()).toEqual(before);
+  expect(await fanOutTexts()).toStrictEqual(before);
   expect(await file(join(package_dir, "bun.lock")).text()).toBe(lockBefore);
 });
 
@@ -681,7 +681,7 @@ it("named update -r with a name missing from the lockfile is an error", async ()
   const { err, exitCode } = await spawnUpdate("nope", "-r");
   expect(err).toContain('"nope" is not in the lockfile, so there is nothing to update');
   expect(exitCode).toBe(1);
-  expect(await fanOutTexts()).toEqual(before);
+  expect(await fanOutTexts()).toStrictEqual(before);
 });
 
 // Root's exact pin and pkg-b's `^0.0.3` (which excludes 0.0.5) only move with --latest.
@@ -703,7 +703,7 @@ it("named update -r --dry-run writes nothing", async () => {
   const { err, exitCode } = await spawnUpdate("baz", "-r", "--latest", "--dry-run");
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
-  expect(await fanOutTexts()).toEqual(before);
+  expect(await fanOutTexts()).toStrictEqual(before);
 });
 
 // https://github.com/oven-sh/bun/issues/33176
@@ -1160,7 +1160,7 @@ it("--recursive --latest keeps a member's dist-tag literal and follows the tag",
   });
   bumpBazTo_0_0_5();
   await runUpdate(["--recursive", "--latest"]);
-  expect((await pkgJson("pkg-a")).dependencies).toEqual({ baz: "latest" });
+  expect((await pkgJson("pkg-a")).dependencies).toStrictEqual({ baz: "latest" });
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
     version: "0.0.5",
   });
@@ -1397,7 +1397,7 @@ it("bun update <name> from the root leaves a member's own entry alone; running i
   const pkgOneShared = () => file(join(pkgOneDir, "node_modules", "shared", "package.json")).json();
 
   await runInPackageDir("update", "shared");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@2.0.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"', '"shared@2.0.0"']);
   expect(await pkgOneShared()).toMatchObject({ version: "1.0.0" });
 
   await runIn(pkgOneDir, "update", "shared");
@@ -1405,7 +1405,7 @@ it("bun update <name> from the root leaves a member's own entry alone; running i
   expect(await pkgOneShared()).toMatchObject({ version: "1.1.0" });
 
   await runIn(pkgOneDir, "update", "shared");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"', '"shared@2.0.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"', '"shared@2.0.0"']);
   expect(await pkgOneShared()).toMatchObject({ version: "1.1.0" });
 });
 
@@ -1449,14 +1449,14 @@ it("bun update <name> --latest holds back only the root's entry; a transitive ed
     JSON.stringify({ name: "root", dependencies: { shared: "1.1.0", "dep-x": "1.0.0" } }),
   );
   await runInPackageDir("install");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
 
   await runInPackageDir("update", "shared", "--latest");
-  expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({
+  expect((await file(join(package_dir, "package.json")).json()).dependencies).toStrictEqual({
     shared: "1.1.0",
     "dep-x": "1.0.0",
   });
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
   expect(
     await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
   ).toMatchObject({ version: "1.0.0" });
@@ -1474,19 +1474,19 @@ it("bun update <name> --latest on a dist-tag entry follows the tag even when it 
   const packageJson = { name: "root", dependencies: { shared: "latest" } };
   await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJson));
   await runInPackageDir("install");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"']);
 
   setHandler(perNameHandler(tgzDir, { shared: { versions, latest: "1.0.0" } }));
   await runInPackageDir("update", "shared", "--latest");
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
   expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
     version: "1.0.0",
   });
 
   await runInPackageDir("update");
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.0.0"']);
 });
 
 // `shared` is only reachable through dep-x; the install below pins 1.0.0 before the registry starts serving 1.1.0.
@@ -1641,8 +1641,8 @@ describe("bun update <name> semantics", () => {
     const root = (await lock(dir)).workspaces[""];
     for (const group of GROUPS) {
       if (!(group in groups)) continue;
-      expect(packageJson[group]).toEqual(groups[group]);
-      expect(root[group]).toEqual(groups[group]);
+      expect(packageJson[group]).toStrictEqual(groups[group]);
+      expect(root[group]).toStrictEqual(groups[group]);
     }
     await install(dir, "--frozen-lockfile");
   }
@@ -1662,8 +1662,8 @@ describe("bun update <name> semantics", () => {
       const dir = await stale(SIBLINGS_PINNED, SIBLINGS_WIDENED);
       await update(dir, "a-dep", ...flags);
       await expectInSync(dir, { "no-deps": "^1.0.0", "a-dep": "^1.0.10" });
-      expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.10"]);
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
       expect(await installedVersion(dir, "a-dep")).toBe("1.0.10");
       expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
     });
@@ -1674,7 +1674,7 @@ describe("bun update <name> semantics", () => {
     expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");
     await update(dir, "dep-with-tags");
     await expectInSync(dir, { "dep-with-tags": "pre-2" });
-    expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["2.0.1"]);
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1"]);
   });
 
   for (const args of [[], ["dep-with-tags"]]) {
@@ -1686,7 +1686,7 @@ describe("bun update <name> semantics", () => {
         const lockBefore = await lockText(dir);
         await update(dir, ...args, "--latest");
         await expectInSync(dir, { "dep-with-tags": "pre-2" });
-        expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["2.0.1"]);
+        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1"]);
         expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");
         expect(await lockText(dir)).toBe(lockBefore);
       },
@@ -1697,8 +1697,8 @@ describe("bun update <name> semantics", () => {
     const dir = await setup({ "dep-with-tags": "pre-2", "no-deps": "~1.0.0" });
     const { stdout } = await update(dir, "--latest");
     await expectInSync(dir, { "dep-with-tags": "pre-2", "no-deps": "~2.0.0" });
-    expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["2.0.1"]);
-    expect(await lockedVersions(dir, "no-deps")).toEqual(["2.0.0"]);
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["2.0.1"]);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
     expect(stdout).toContain("no-deps");
     expect(stdout).not.toContain("dep-with-tags");
   });
@@ -1738,7 +1738,7 @@ describe("bun update <name> semantics", () => {
       const dir = await stale({ "no-deps": pin }, { "no-deps": literal });
       await update(dir, ...names);
       await expectInSync(dir, { "no-deps": literal });
-      expect(await lockedVersions(dir, "no-deps")).toEqual([version]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual([version]);
       expect(await installedVersion(dir, "no-deps")).toBe(version);
     },
   );
@@ -1759,10 +1759,10 @@ describe("bun update <name> semantics", () => {
 
   it.concurrent("bun update <real name> reaches a dependency declared behind an npm: alias", async () => {
     const dir = await stale({ aliased: "npm:no-deps@1.0.0" }, { aliased: "npm:no-deps@~1.0.0" });
-    expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
     await update(dir, "no-deps");
     await expectInSync(dir, { aliased: "npm:no-deps@~1.0.1" });
-    expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.1"]);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1"]);
     expect(await installedVersion(dir, "aliased")).toBe("1.0.1");
   });
 
@@ -1775,7 +1775,7 @@ describe("bun update <name> semantics", () => {
       );
       await update(dir, "no-deps");
       await expectInSync(dir, { "no-deps": "^1.1.0", aliased: "npm:no-deps@~1.0.1" });
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.1", "1.1.0"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1", "1.1.0"]);
       expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
       expect(await installedVersion(dir, "aliased")).toBe("1.0.1");
     },
@@ -1786,7 +1786,7 @@ describe("bun update <name> semantics", () => {
     expect(await installedVersion(dir, "aliased")).toBe("1.0.1");
     await update(dir, "no-deps", "--latest");
     await expectInSync(dir, { aliased: "npm:no-deps@~2.0.0" });
-    expect(await lockedVersions(dir, "no-deps")).toEqual(["2.0.0"]);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
     expect(await installedVersion(dir, "aliased")).toBe("2.0.0");
   });
 
@@ -1880,7 +1880,7 @@ describe("bun update <name> semantics", () => {
       );
       await update(dir, "@types/*", "--latest");
       await expectInSync(dir, { "@types/no-deps": "^2.0.0", "@types/is-number": "^2.0.0", "no-deps": "^1.0.0" });
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
       expect(await installedVersion(dir, "@types/no-deps")).toBe("2.0.0");
       expect(await installedVersion(dir, "@types/is-number")).toBe("2.0.0");
     });
@@ -1889,9 +1889,9 @@ describe("bun update <name> semantics", () => {
       const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
       await update(dir, "a-*", "dep-*");
       await expectInSync(dir, { "no-deps": "^1.0.0", "a-dep": "^1.0.10", "dep-with-tags": "^1.0.1" });
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
-      expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.10"]);
-      expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["1.0.1"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+      expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.1"]);
     });
 
     it.concurrent("--dry-run with a pattern writes nothing", async () => {
@@ -1910,14 +1910,14 @@ describe("bun update <name> semantics", () => {
       const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
       await update(dir, "!no-deps", ...flags);
       await expectInSync(dir, expected);
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
     });
 
     it.concurrent("a positive pattern minus a negation updates the matched set minus the exclusion", async () => {
       const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
       await update(dir, "*-*", "!a-dep");
       await expectInSync(dir, { "no-deps": "^1.1.0", "a-dep": "^1.0.1", "dep-with-tags": "^1.0.1" });
-      expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.1"]);
+      expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
     });
 
     it.concurrent.each([
@@ -1955,9 +1955,9 @@ describe("bun update <name> semantics", () => {
         devDependencies: { "a-dep": "^1.0.10" },
         optionalDependencies: { "dep-with-tags": "^1.0.0" },
       });
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.0"]);
-      expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["1.0.0"]);
-      expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.10"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.0"]);
+      expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
       expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
       expect(await installedVersion(dir, "a-dep")).toBe("1.0.10");
     });
@@ -1972,7 +1972,7 @@ describe("bun update <name> semantics", () => {
           devDependencies: { "a-dep": "^1.0.1" },
           optionalDependencies: { "dep-with-tags": "^1.0.1" },
         });
-        expect(await lockedVersions(dir, "a-dep")).toEqual(["1.0.1"]);
+        expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
         expect(await installedVersion(dir, "a-dep")).toBe("1.0.1");
         expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
         expect(await installedVersion(dir, "dep-with-tags")).toBe("1.0.1");
@@ -1989,7 +1989,7 @@ describe("bun update <name> semantics", () => {
         dependencies: { "dep-with-tags": "~1.0.0" },
         devDependencies: { "no-deps": "~2.0.0" },
       });
-      expect(await lockedVersions(dir, "dep-with-tags")).toEqual(["1.0.1"]);
+      expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.1"]);
     });
 
     it.concurrent("--dev with a name declared in another group updates nothing", async () => {
@@ -2035,7 +2035,7 @@ describe("bun update <name> semantics", () => {
     async function fanOut() {
       const dir = await createDir(FILES);
       await install(dir);
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.0.1", "1.1.0"]);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1", "1.1.0"]);
       return { dir, before: await texts(dir), lockBefore: await lockText(dir) };
     }
 
@@ -2044,12 +2044,12 @@ describe("bun update <name> semantics", () => {
     it.concurrent("--filter rewrites the selected workspace only, reaching an alias by its real name", async () => {
       const { dir, before } = await fanOut();
       await update(dir, "no-deps", "--filter", "api");
-      expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual(API_UPDATED);
+      expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual(API_UPDATED);
       const after = await texts(dir);
-      expect(after).toEqual({ ...before, "packages/api": after["packages/api"] });
+      expect(after).toStrictEqual({ ...before, "packages/api": after["packages/api"] });
       const { workspaces } = await lock(dir);
-      expect(workspaces["packages/api"].dependencies).toEqual(API_UPDATED);
-      expect(workspaces[""].dependencies).toEqual({ "no-deps": "^1.0.0" });
+      expect(workspaces["packages/api"].dependencies).toStrictEqual(API_UPDATED);
+      expect(workspaces[""].dependencies).toStrictEqual({ "no-deps": "^1.0.0" });
       await install(dir, "--frozen-lockfile");
     });
 
@@ -2058,23 +2058,23 @@ describe("bun update <name> semantics", () => {
       async flags => {
         const { dir, before } = await fanOut();
         await update(dir, "no-deps", ...flags);
-        expect((await packageJsonOf(dir)).dependencies).toEqual({ "no-deps": "^1.1.0" });
-        expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual(API_UPDATED);
-        expect(await packageJsonOf(dir, "packages/web")).toEqual({
+        expect((await packageJsonOf(dir)).dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+        expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual(API_UPDATED);
+        expect(await packageJsonOf(dir, "packages/web")).toStrictEqual({
           name: "web",
           peerDependencies: { "no-deps": "~1.0.1" },
         });
-        expect(await packageJsonOf(dir, "packages/pkg-a")).toEqual({
+        expect(await packageJsonOf(dir, "packages/pkg-a")).toStrictEqual({
           name: "pkg-a",
           devDependencies: { "no-deps": "^1.1.0" },
           dependencies: { api: "workspace:*" },
         });
         expect(await packageJsonText(dir, "packages/pkg-b")).toBe(before["packages/pkg-b"]);
         const { workspaces } = await lock(dir);
-        expect(workspaces[""].dependencies).toEqual({ "no-deps": "^1.1.0" });
-        expect(workspaces["packages/api"].dependencies).toEqual(API_UPDATED);
-        expect(workspaces["packages/web"].peerDependencies).toEqual({ "no-deps": "~1.0.1" });
-        expect(workspaces["packages/pkg-a"].devDependencies).toEqual({ "no-deps": "^1.1.0" });
+        expect(workspaces[""].dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+        expect(workspaces["packages/api"].dependencies).toStrictEqual(API_UPDATED);
+        expect(workspaces["packages/web"].peerDependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+        expect(workspaces["packages/pkg-a"].devDependencies).toStrictEqual({ "no-deps": "^1.1.0" });
         await install(dir, "--frozen-lockfile");
       },
     );
@@ -2084,20 +2084,20 @@ describe("bun update <name> semantics", () => {
       async () => {
         const { dir, before } = await fanOut();
         await update(dir, "no-deps", "--latest", "--filter", "api", "--filter", "pkg-a");
-        expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual({
+        expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual({
           "no-deps": "^2.0.0",
           "a-dep": "^1.0.1",
           aliased: "npm:no-deps@~2.0.0",
         });
-        expect((await packageJsonOf(dir, "packages/pkg-a")).devDependencies).toEqual({ "no-deps": "^2.0.0" });
+        expect((await packageJsonOf(dir, "packages/pkg-a")).devDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
         expect(await packageJsonText(dir)).toBe(before[""]);
         expect(await packageJsonText(dir, "packages/web")).toBe(before["packages/web"]);
         expect(await packageJsonText(dir, "packages/pkg-b")).toBe(before["packages/pkg-b"]);
         const { workspaces } = await lock(dir);
-        expect(workspaces[""].dependencies).toEqual({ "no-deps": "^1.0.0" });
-        expect(workspaces["packages/web"].peerDependencies).toEqual({ "no-deps": "~1.0.0" });
+        expect(workspaces[""].dependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+        expect(workspaces["packages/web"].peerDependencies).toStrictEqual({ "no-deps": "~1.0.0" });
         // 1.0.1 was only ever placed by api's alias row; web's peer entry is satisfied by whatever is hoisted.
-        expect(await lockedVersions(dir, "no-deps")).toEqual(["1.1.0", "2.0.0"]);
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0", "2.0.0"]);
         await install(dir, "--frozen-lockfile");
       },
     );
@@ -2105,13 +2105,16 @@ describe("bun update <name> semantics", () => {
     it.concurrent("several names never add a name to a workspace that does not declare it", async () => {
       const { dir, before } = await fanOut();
       await update(dir, "no-deps", "a-dep", "--filter", "api", "--filter", "web");
-      expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual({ ...API_UPDATED, "a-dep": "^1.0.10" });
-      expect(await packageJsonOf(dir, "packages/web")).toEqual({
+      expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual({
+        ...API_UPDATED,
+        "a-dep": "^1.0.10",
+      });
+      expect(await packageJsonOf(dir, "packages/web")).toStrictEqual({
         name: "web",
         peerDependencies: { "no-deps": "~1.0.1" },
       });
       const after = await texts(dir);
-      expect(after).toEqual({
+      expect(after).toStrictEqual({
         ...before,
         "packages/api": after["packages/api"],
         "packages/web": after["packages/web"],
@@ -2131,7 +2134,7 @@ describe("bun update <name> semantics", () => {
       const { dir, before, lockBefore } = await fanOut();
       const { stderr, exitCode } = await run(dir, "update", ...args);
       expect(stderr).toContain(message);
-      expect(await texts(dir)).toEqual(before);
+      expect(await texts(dir)).toStrictEqual(before);
       expect(await lockText(dir)).toBe(lockBefore);
       expect(exitCode).toBe(1);
     });
@@ -2140,7 +2143,7 @@ describe("bun update <name> semantics", () => {
       const { dir, before, lockBefore } = await fanOut();
       const { stderr } = await update(dir, "no-deps", "--filter", "api", "--dry-run");
       expect(stderr).not.toContain("Saved lockfile");
-      expect(await texts(dir)).toEqual(before);
+      expect(await texts(dir)).toStrictEqual(before);
       expect(await lockText(dir)).toBe(lockBefore);
     });
 
@@ -2149,7 +2152,7 @@ describe("bun update <name> semantics", () => {
       const { stderr, exitCode } = await run(join(dir, "packages", "web"), "update", "no-deps", "--filter", "api");
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
-      expect((await packageJsonOf(dir, "packages/api")).dependencies).toEqual(API_UPDATED);
+      expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual(API_UPDATED);
       expect(await packageJsonText(dir, "packages/web")).toBe(before["packages/web"]);
       expect(await packageJsonText(dir)).toBe(before[""]);
     });
@@ -2171,8 +2174,8 @@ describe("bun update <name> semantics", () => {
       expect(await packageJsonText(dir, "packages/api")).toBe(apiBefore);
       expect(await packageJsonText(dir)).toBe(rootBefore);
       expect(await packageJsonText(dir, "packages/web")).toBe(webBefore);
-      expect((await lock(dir)).catalog).toEqual({ "no-deps": "^1.0.0" });
-      expect(await lockedVersions(dir, "no-deps")).toEqual(["1.1.0"]);
+      expect((await lock(dir)).catalog).toStrictEqual({ "no-deps": "^1.0.0" });
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
       await install(dir, "--frozen-lockfile");
     });
 
@@ -2210,12 +2213,12 @@ describe("bun update <name> semantics", () => {
       await update(dir, "--latest", "--filter", "lib...");
       const libDeps = { util: "workspace:*", "no-deps": "2.0.0" };
       const utilDeps = { "a-dep": "1.0.10" };
-      expect((await packageJsonOf(dir, "packages/lib")).dependencies).toEqual(libDeps);
-      expect((await packageJsonOf(dir, "packages/util")).dependencies).toEqual(utilDeps);
-      expect(await Promise.all(untouched.map(rel => packageJsonText(dir, rel)))).toEqual(before);
+      expect((await packageJsonOf(dir, "packages/lib")).dependencies).toStrictEqual(libDeps);
+      expect((await packageJsonOf(dir, "packages/util")).dependencies).toStrictEqual(utilDeps);
+      expect(await Promise.all(untouched.map(rel => packageJsonText(dir, rel)))).toStrictEqual(before);
       const { workspaces } = await lock(dir);
-      expect(workspaces["packages/lib"].dependencies).toEqual(libDeps);
-      expect(workspaces["packages/util"].dependencies).toEqual(utilDeps);
+      expect(workspaces["packages/lib"].dependencies).toStrictEqual(libDeps);
+      expect(workspaces["packages/util"].dependencies).toStrictEqual(utilDeps);
       await install(dir, "--frozen-lockfile");
     });
 
@@ -2251,9 +2254,9 @@ describe("bun update <name> semantics", () => {
     it.concurrent("a named --filter update links only the selected workspace (hoisted)", async () => {
       const dir = await linkRepo("hoisted");
       await update(dir, "no-deps", "--filter", "api", "--linker=hoisted");
-      expect(await installed(dir, HOISTED_LINK_PATHS)).toEqual([true, true, false, false, false, true]);
+      expect(await installed(dir, HOISTED_LINK_PATHS)).toStrictEqual([true, true, false, false, false, true]);
       await install(dir, "--linker=hoisted");
-      expect(await installed(dir, ["node_modules/is-number", "node_modules/a-dep"])).toEqual([true, true]);
+      expect(await installed(dir, ["node_modules/is-number", "node_modules/a-dep"])).toStrictEqual([true, true]);
     });
 
     it.concurrent("a named --filter update links only the selected workspace (isolated)", async () => {
@@ -2266,15 +2269,15 @@ describe("bun update <name> semantics", () => {
           "packages/web/node_modules/stale/package.json",
           "node_modules/web",
         ]),
-      ).toEqual([true, false, true, false]);
+      ).toStrictEqual([true, false, true, false]);
       await install(dir, "--linker=isolated");
-      expect(await installed(dir, ["packages/web/node_modules/is-number/package.json"])).toEqual([true]);
+      expect(await installed(dir, ["packages/web/node_modules/is-number/package.json"])).toStrictEqual([true]);
     });
 
     it.concurrent("an unnamed --filter update links only the selected workspace", async () => {
       const dir = await linkRepo("hoisted");
       await update(dir, "--filter", "api", "--linker=hoisted");
-      expect(await installed(dir, HOISTED_LINK_PATHS)).toEqual([true, true, false, false, false, true]);
+      expect(await installed(dir, HOISTED_LINK_PATHS)).toStrictEqual([true, true, false, false, false, true]);
     });
 
     it.concurrent.each([[["-r"]], [["--filter", "*"]]])(
@@ -2290,7 +2293,7 @@ describe("bun update <name> semantics", () => {
             "node_modules/is-number",
             "node_modules/a-dep",
           ]),
-        ).toEqual([true, true, true, true, true]);
+        ).toStrictEqual([true, true, true, true, true]);
       },
     );
   });

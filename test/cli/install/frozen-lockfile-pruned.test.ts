@@ -265,7 +265,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
         linker === "hoisted"
           ? join(packageDir, "node_modules", "no-deps", "package.json")
           : join(packageDir, "packages", "shared", "node_modules", "no-deps", "package.json");
-      expect(await file(noDeps).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+      expect(await file(noDeps).json()).toStrictEqual({ name: "no-deps", version: "1.0.0" });
     },
   );
 
@@ -328,7 +328,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
       linker === "hoisted"
         ? join(packageDir, "node_modules", "no-deps", "package.json")
         : join(packageDir, "packages", "shared", "node_modules", "no-deps", "package.json");
-    expect(await file(noDeps).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+    expect(await file(noDeps).json()).toStrictEqual({ name: "no-deps", version: "1.0.0" });
   });
 
   test.concurrent("a real package.json change in a pruned tree still fails --frozen-lockfile", async () => {
@@ -703,7 +703,7 @@ describe("hoisted", () => {
     await frozen(packageDir, "hoisted", 0, ["ci"]);
 
     expect(await lockText(packageDir)).toBe(pruned);
-    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
       name: "no-deps",
       version: "1.0.0",
     });
@@ -1013,7 +1013,7 @@ describe("hoisted", () => {
 
     await frozen(packageDir, "hoisted", 0);
 
-    expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+    expect(await file(join(packageDir, "bun.lockb")).bytes()).toStrictEqual(lockb);
     expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
     expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
@@ -1135,7 +1135,7 @@ describe("hoisted", () => {
       await frozen(packageDir, "hoisted", 0);
 
       expect(await lockText(packageDir)).toBe(pruned);
-      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
         name: "no-deps",
         version: "1.0.0",
       });

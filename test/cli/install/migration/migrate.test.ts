@@ -1,7 +1,7 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -563,4 +563,483 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
   expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
   expect(exitCode).toBe(0);
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+});
+
+describe("package-lock.json migration fixes", () => {
+  const NPM = join(import.meta.dir, "npm");
+  // Port 1 refuses connections, so any accidental registry access fails the test.
+  const OFFLINE_BUNFIG = `[install]\nregistry = "http://localhost:1/"\n`;
+
+  function writeExtra(dir: string, extra: Record<string, string>) {
+    fs.writeFileSync(join(dir, "bunfig.toml"), OFFLINE_BUNFIG);
+    for (const [name, contents] of Object.entries(extra)) {
+      fs.mkdirSync(dirname(join(dir, name)), { recursive: true });
+      fs.writeFileSync(join(dir, name), contents);
+    }
+  }
+
+  function fixture(name: string, extra: Record<string, string> = {}) {
+    const dir = tempDir("npm-migrate-" + name, join(NPM, name));
+    writeExtra(String(dir), extra);
+    return dir;
+  }
+
+  function synthetic(name: string, files: Record<string, string>) {
+    const dir = tempDir(name, files);
+    writeExtra(String(dir), {});
+    return dir;
+  }
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function readLock(dir: string) {
+    const text = await Bun.file(join(String(dir), "bun.lock")).text();
+    return { text, lock: Bun.JSONC.parse(text) as any };
+  }
+
+  async function migrate(dir: string) {
+    const result = await run(dir, "pm", "migrate");
+    if (result.exitCode !== 0) {
+      throw new Error(`bun pm migrate exited with ${result.exitCode}\n${result.stderr}`);
+    }
+    return { ...result, ...(await readLock(dir)) };
+  }
+
+  async function frozen(dir: string) {
+    const before = await Bun.file(join(String(dir), "bun.lock")).text();
+    const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(stderr).not.toContain("Ignoring lockfile");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "bun.lock")).text()).toBe(before);
+  }
+
+  async function pmHash(dir: string) {
+    const { stdout, stderr, exitCode } = await run(dir, "pm", "hash");
+    if (exitCode !== 0) throw new Error(`bun pm hash exited with ${exitCode}\n${stderr}`);
+    return stdout.trim();
+  }
+
+  const firstsOf = (packages: Record<string, unknown[]>) => Object.values(packages).map(v => v[0]);
+
+  const sha = (n: number) => Buffer.alloc(39, "0").toString() + n;
+
+  test.concurrent("git hosts round-trip (B1, github: parity)", async () => {
+    const dependencies = {
+      a: "github:user/a",
+      c: "git+https://github.com/user/c.git",
+      d: "user/d#v1",
+      e: "git+https://gitlab.com/user/e.git",
+      f: "git+ssh://git@github.com/user/f.git",
+    };
+    using dir = synthetic("npm-migrate-git-hosts", {
+      "package.json": JSON.stringify({ name: "git-hosts", dependencies }),
+      "package-lock.json": JSON.stringify({
+        name: "git-hosts",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "git-hosts", dependencies },
+          "node_modules/a": { version: "1.0.0", resolved: `git+ssh://git@github.com/user/a.git#${sha(1)}` },
+          "node_modules/c": { version: "1.0.0", resolved: `git+https://github.com/user/c.git#${sha(3)}` },
+          "node_modules/d": { version: "1.0.0", resolved: `git+ssh://git@github.com/user/d.git#${sha(4)}` },
+          "node_modules/e": { version: "1.0.0", resolved: `git+https://gitlab.com/user/e.git#${sha(5)}` },
+          "node_modules/f": { version: "1.0.0", resolved: `git+ssh://git@github.com/user/f.git#${sha(6)}` },
+        },
+      }),
+    });
+
+    const { text, lock } = await migrate(dir);
+    expect(lock.packages.a[0]).toBe(`a@github:user/a#${sha(1)}`);
+    expect(lock.packages.c[0]).toBe(`c@github:user/c#${sha(3)}`);
+    expect(lock.packages.d[0]).toBe(`d@github:user/d#${sha(4)}`);
+    expect(lock.packages.e[0]).toBe(`e@git+https://gitlab.com/user/e.git#${sha(5)}`);
+    expect(lock.packages.f[0]).toBe(`f@git+ssh://git@github.com/user/f.git#${sha(6)}`);
+    expect(text).not.toContain("git+user/");
+    await frozen(dir);
+  });
+
+  test.concurrent("root bundleDependencies keeps its subtree (B2)", async () => {
+    using dir = fixture("testing-rebuild-bundle-a");
+    const { text, lock } = await migrate(dir);
+    expect(lock.packages["@isaacs/testing-rebuild-bundle-b"][0]).toBe("@isaacs/testing-rebuild-bundle-b@1.0.1");
+    expect(lock.workspaces[""].dependencies).toStrictEqual({ "@isaacs/testing-rebuild-bundle-b": "" });
+    expect(text).not.toContain('"bundled"');
+    await frozen(dir);
+  });
+
+  test.concurrent("root bundle with cyclic bundled contents (B2)", async () => {
+    using dir = fixture("bundle-metadep-duplication-x");
+    const before = await pmHash(dir);
+    const { text, lock } = await migrate(dir);
+    expect(Object.keys(lock.packages).sort()).toStrictEqual(
+      [
+        "@isaacs/bundle-metadep-duplication-a",
+        "@isaacs/bundle-metadep-duplication-y",
+        "@isaacs/bundle-metadep-duplication-z",
+      ].sort(),
+    );
+    expect(text).not.toContain('"bundled"');
+    expect(await pmHash(dir)).toBe(before);
+    await frozen(dir);
+  });
+
+  test.concurrent("workspace bundleDependencies are plain edges (B2 variant)", async () => {
+    const a = { name: "a", version: "1.0.0", dependencies: { abbrev: "1.1.1" }, bundleDependencies: ["abbrev"] };
+    using dir = synthetic("npm-migrate-ws-bundle", {
+      "package.json": JSON.stringify({ name: "ws-bundle", workspaces: ["packages/a"] }),
+      "packages/a/package.json": JSON.stringify(a),
+      "package-lock.json": JSON.stringify({
+        name: "ws-bundle",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "ws-bundle", workspaces: ["packages/a"] },
+          "node_modules/a": { resolved: "packages/a", link: true },
+          "node_modules/abbrev": {
+            version: "1.1.1",
+            resolved: "https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz",
+            integrity:
+              "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==",
+            inBundle: true,
+          },
+          "packages/a": { version: "1.0.0", dependencies: { abbrev: "1.1.1" }, bundleDependencies: ["abbrev"] },
+        },
+      }),
+    });
+
+    const { text, lock } = await migrate(dir);
+    expect(lock.packages.abbrev[0]).toBe("abbrev@1.1.1");
+    expect(lock.workspaces["packages/a"].dependencies).toStrictEqual({ abbrev: "1.1.1" });
+    expect(text).not.toContain('"bundled"');
+    await frozen(dir);
+  });
+
+  test.concurrent("root bundleDependencies: true still injects workspaces (B10)", async () => {
+    using dir = synthetic("npm-migrate-b10", {
+      "package.json": JSON.stringify({
+        name: "b10",
+        workspaces: ["packages/w"],
+        dependencies: { x: "1.0.0" },
+        bundleDependencies: true,
+      }),
+      "packages/w/package.json": JSON.stringify({ name: "w", version: "1.0.0" }),
+      "package-lock.json": JSON.stringify({
+        name: "b10",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "b10", workspaces: ["packages/w"], dependencies: { x: "1.0.0" }, bundleDependencies: true },
+          "node_modules/w": { resolved: "packages/w", link: true },
+          "packages/w": { version: "1.0.0" },
+          "node_modules/x": { version: "1.0.0", inBundle: true },
+        },
+      }),
+    });
+
+    const { text, lock } = await migrate(dir);
+    expect(lock.packages.w).toStrictEqual(["w@workspace:packages/w"]);
+    expect(lock.workspaces[""].dependencies).toStrictEqual({ x: "1.0.0" });
+    expect(lock.packages.x[0]).toBe("x@1.0.0");
+    expect(text).not.toContain('"bundled"');
+    await frozen(dir);
+  });
+
+  test.concurrent("lockfileVersion 1 is a warning, not a fatal error (B3)", async () => {
+    {
+      using dir = fixture("old-package-lock");
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      expect(stderr).toContain("lockfileVersion 1");
+      expect(stderr).toContain("--lockfile-version=3");
+      expect(stderr).not.toContain("Please upgrade");
+      expect(exitCode).toBe(1);
+    }
+    {
+      using dir = synthetic("npm-migrate-v1-install", {
+        "package.json": JSON.stringify({ name: "v1", dependencies: { "dep-1": "file:dep-1" } }),
+        "dep-1/package.json": JSON.stringify({ name: "dep-1" }),
+        "package-lock.json": JSON.stringify({ lockfileVersion: 1, requires: true, dependencies: {} }),
+      });
+      const { stderr, exitCode } = await run(dir, "install");
+      expect(stderr).toContain("lockfileVersion 1");
+      expect(exitCode).toBe(0);
+      expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeTrue();
+      expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
+    }
+  });
+
+  test.concurrent("lockfileVersion 4 is accepted (B3)", async () => {
+    const src = join(NPM, "workspaces-with-overrides");
+    const packageLock = JSON.parse(fs.readFileSync(join(src, "package-lock.json"), "utf8"));
+    packageLock.lockfileVersion = 4;
+    packageLock.packages["node_modules/arg"].patched = { "patches/arg.patch": "sha512-x" };
+    using dir = synthetic("npm-migrate-v4", {
+      "package.json": fs.readFileSync(join(src, "package.json"), "utf8"),
+      "ws/package.json": fs.readFileSync(join(src, "ws", "package.json"), "utf8"),
+      "package-lock.json": JSON.stringify(packageLock),
+    });
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain("npm patches for 1 package");
+    expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
+    expect(lock.packages.arg[0]).toBe("arg@4.1.3");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "dist-tag and empty specs without resolved use the registry (B4) and duplicate groups collapse (B5)",
+    async () => {
+      using dir = fixture("testing-rebuild-script-env-flags");
+      const before = await pmHash(dir);
+      const { text, lock } = await migrate(dir);
+      expect(text).not.toContain("file:node_modules");
+      const root = lock.workspaces[""];
+      expect(root.dependencies).toBeUndefined();
+      expect(root.optionalDependencies).toStrictEqual({ optdep: "1.0.0" });
+      expect(root.devDependencies).toStrictEqual({ devdep: "1.0.0" });
+      expect(lock.packages.devdep[0]).toBe("devdep@1.0.0");
+      expect(lock.packages.devdep[2]).toStrictEqual({
+        dependencies: { devopt: "" },
+        optionalDependencies: { "opt-and-dev": "" },
+      });
+      expect(Object.keys(lock.packages).sort()).toStrictEqual(["devdep", "devopt", "opt-and-dev", "optdep"]);
+      expect(await pmHash(dir)).toBe(before);
+      await frozen(dir);
+    },
+  );
+
+  test.concurrent("root duplicate groups and optional peer meta match a fresh parse (B5, B8)", async () => {
+    using dir = fixture("edit-package-json-ok");
+    const { lock } = await migrate(dir);
+    const root = lock.workspaces[""];
+    expect(root.dependencies).toStrictEqual({ abbrev: "^1.1.1" });
+    expect(root.optionalDependencies).toStrictEqual({ "json-parse-even-better-errors": "" });
+    expect(root.devDependencies).toStrictEqual({ walden: "" });
+    expect(root.peerDependencies).toStrictEqual({ once: "", semver: "" });
+    expect(root.optionalPeers).toStrictEqual(["semver"]);
+    await frozen(dir);
+  });
+
+  test.concurrent("file: specs into a registry package's folder (B4)", async () => {
+    const src = join(NPM, "external-link-dep");
+    using base = tempDir("npm-migrate-external-link-dep", {
+      "proj/package.json": fs.readFileSync(join(src, "package.json"), "utf8"),
+      "proj/package-lock.json": fs.readFileSync(join(src, "package-lock.json"), "utf8"),
+      "proj/bunfig.toml": OFFLINE_BUNFIG,
+      "cli-750/package.json": '{"name":"monorepo"}',
+    });
+    const dir = join(String(base), "proj");
+
+    const { text, lock } = await migrate(dir);
+    for (const key of ["aaaaaa", "abbrev", "zzzzzz"]) {
+      expect(lock.packages[key][0]).toBe("abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz");
+    }
+    expect(lock.packages.monorepo[0]).toBe("monorepo@file:../cli-750");
+    expect(text).not.toContain("file:https://");
+    await frozen(dir);
+  });
+
+  test.concurrent(
+    "unreferenced entries are skipped with a warning (B6) and github shorthand keeps github: form",
+    async () => {
+      using dir = fixture("minimist-git-metadep");
+      const { stderr, exitCode, lock } = await migrate(dir);
+      expect(stderr).toContain("not depended on by any package");
+      expect(stderr).toContain('"node_modules/@isaacs/no-thing-here"');
+      expect(lock.packages.minimist[0]).toBe(
+        "minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4",
+      );
+      expect(lock.packages["@isaacs/minimist-git-dep"][0]).toBe("@isaacs/minimist-git-dep@1.0.0");
+      expect(exitCode).toBe(0);
+      await frozen(dir);
+    },
+  );
+
+  test.concurrent("out-of-tree link targets and their node_modules (B6, walk)", async () => {
+    using dir = fixture("external-link-root");
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain('"../a"');
+    expect(stderr).toContain('"../i"');
+    expect(stderr).toContain('"../m"');
+    expect(lock.packages.j[0]).toBe("j@file:../i/j");
+    expect(lock.packages.j[1]).toStrictEqual({ dependencies: { k: "" } });
+    expect(lock.packages.x[0]).toBe("x@1.0.0");
+    const firsts = firstsOf(lock.packages);
+    expect(firsts).toContain("k@1.0.0");
+    expect(firsts).toContain("b@file:../a/node_modules/b");
+    expect(firsts).toContain("c@1.0.0");
+    expect(firsts).toContain("o@file:../m/node_modules/n/o");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("optional peer that is present keeps optionalPeers (B8)", async () => {
+    using dir = fixture("prune-lockfile-optional-peer");
+    const { lock } = await migrate(dir);
+    expect(lock.packages.dedent[2]).toStrictEqual({
+      peerDependencies: { "babel-plugin-macros": "^3.1.0" },
+      optionalPeers: ["babel-plugin-macros"],
+    });
+    expect(lock.packages["babel-plugin-macros"][0]).toBe("babel-plugin-macros@3.1.0");
+    await frozen(dir);
+  });
+
+  test.concurrent("dependency-level bundles use bundled: true (B9) and same-version copies dedupe (B7)", async () => {
+    const B = "@isaacs/testing-bundledeps";
+    using dir = fixture("testing-bundledeps-sw");
+    const before = await pmHash(dir);
+    const { lock } = await migrate(dir);
+    expect(lock.packages[B][2].dependencies).toStrictEqual({ [`${B}-a`]: "*", [`${B}-c`]: "*" });
+    const nested = lock.packages[`${B}/${B}-a`];
+    expect(nested[0]).toBe(`${B}-a@1.0.0`);
+    expect(nested[2].bundled).toBe(true);
+    expect(await pmHash(dir)).toBe(before);
+    await frozen(dir);
+  });
+
+  test.concurrent("bundled entry without resolved (B9)", async () => {
+    const A = "@isaacs/testing-rebuild-bundle-a";
+    const Bn = "@isaacs/testing-rebuild-bundle-b";
+    using dir = fixture("testing-rebuild-bundle-parent");
+    const { lock } = await migrate(dir);
+    expect(lock.packages[A][2].dependencies).toStrictEqual({ [Bn]: "" });
+    const nested = lock.packages[`${A}/${Bn}`];
+    expect(nested[0]).toBe(`${Bn}@1.0.1`);
+    expect(nested[2].bundled).toBe(true);
+    await frozen(dir);
+  });
+
+  test.concurrent("identical name@version at several paths becomes one package (B7)", async () => {
+    using dir = fixture("carbonium");
+    const before = await pmHash(dir);
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("not depended on");
+    expect(exitCode).toBe(0);
+    expect(await pmHash(dir)).toBe(before);
+    expect(firstsOf(lock.packages).filter(v => v === "eslint-visitor-keys@1.3.0")).toHaveLength(4);
+    await frozen(dir);
+
+    using fresh = fixture("carbonium");
+    const result = await run(fresh, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(result.stderr).not.toContain("Ignoring lockfile");
+    expect(result.exitCode).toBe(0);
+    expect((await readLock(fresh)).lock.packages).toStrictEqual(lock.packages);
+  });
+
+  test.concurrent("overrides are carried into the migrated lockfile (#55)", async () => {
+    using dir = fixture("workspaces-with-overrides");
+    const { lock } = await migrate(dir);
+    expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
+    expect(lock.packages.arg[0]).toBe("arg@4.1.3");
+    expect(lock.workspaces.ws.dependencies).toStrictEqual({ arg: "4.1.2" });
+    await frozen(dir);
+  });
+
+  test.concurrent("workspace on disk but missing from a stale lockfile (#59)", async () => {
+    using dir = fixture("workspaces-shared-deps-virtual", {
+      "packages/d/package.json": '{"name":"d","version":"1.0.0"}',
+    });
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain('workspace "d"');
+    expect(stderr).toContain("packages/d");
+    expect(Object.keys(lock.workspaces).sort()).toStrictEqual(["", "packages/a", "packages/b", "packages/c"]);
+    const firsts = firstsOf(lock.packages);
+    expect(firsts).toContain("abbrev@1.1.1");
+    expect(firsts).toContain("uuid@3.3.3");
+    expect(firsts).toContain("once@1.4.0");
+    expect(firsts).toContain("wrappy@1.0.2");
+    expect(exitCode).toBe(0);
+
+    const install = await run(dir, "install", "--lockfile-only");
+    expect(install.exitCode).toBe(0);
+    const { lock: updated } = await readLock(dir);
+    expect(updated.workspaces["packages/d"]).toStrictEqual({ name: "d", version: "1.0.0" });
+    expect(updated.packages).toStrictEqual(lock.packages);
+  });
+
+  test.concurrent("absent peer and optional targets keep their edges (#49, #52)", async () => {
+    const dependencies = { once: "1.4.0", "has-opt": "1.0.0" };
+    using dir = synthetic("npm-migrate-missing-targets", {
+      "package.json": JSON.stringify({ name: "missing-targets", dependencies }),
+      "package-lock.json": JSON.stringify({
+        name: "missing-targets",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "missing-targets", dependencies },
+          "node_modules/once": {
+            version: "1.4.0",
+            resolved: "https://registry.npmjs.org/once/-/once-1.4.0.tgz",
+            peerDependencies: { wrappy: "1" },
+          },
+          "node_modules/has-opt": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/has-opt/-/has-opt-1.0.0.tgz",
+            optionalDependencies: { fsevents: "^2" },
+          },
+        },
+      }),
+    });
+
+    const { lock } = await migrate(dir);
+    expect(lock.packages.once[2]).toStrictEqual({ peerDependencies: { wrappy: "1" }, optionalPeers: ["wrappy"] });
+    expect(lock.packages["has-opt"][2]).toStrictEqual({ optionalDependencies: { fsevents: "^2" } });
+    await frozen(dir);
+  });
+
+  test.concurrent("unsupported specs are skipped, not fatal (B11)", async () => {
+    using dir = synthetic("npm-migrate-b11", {
+      "package.json": JSON.stringify({ name: "b11", dependencies: { x: "1.0.0" } }),
+      "package-lock.json": JSON.stringify({
+        name: "b11",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "b11", dependencies: { x: "1.0.0" } },
+          "node_modules/x": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
+            dependencies: { y: "catalog:", z: "ftp://example.invalid/z.tgz" },
+          },
+        },
+      }),
+    });
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain('skipped "y@catalog:"');
+    expect(stderr).toContain('skipped "z@ftp://example.invalid/z.tgz"');
+    expect(lock.packages.x[2]).toStrictEqual({});
+    expect(exitCode).toBe(0);
+    await frozen(dir);
+  });
+
+  describe("regression guard", () => {
+    // Snapshot matchers are unsupported inside a concurrent group, so these stay sequential.
+    test.each([
+      "workspaces-simple-virtual",
+      "workspaces-top-level-link-virtual",
+      "workspaces-shared-deps-virtual",
+      "cli-750",
+      "dedupe-lockfile",
+      "update-exact-version",
+      "peer-dep-cycle-with-sw",
+      "testing-peer-deps-nested",
+      "link-dep-lifecycle-scripts",
+      "flow-outdated",
+    ])("regression guard: %s migrates unchanged", async name => {
+      using dir = fixture(name);
+      const { text, exitCode } = await migrate(dir);
+      expect(text).toMatchSnapshot();
+      expect(exitCode).toBe(0);
+      await frozen(dir);
+    });
+  });
 });

@@ -1,0 +1,270 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`package-lock.json migration fixes regression guard regression guard: workspaces-simple-virtual migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "workspace-simple",
+    },
+    "a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "^1.0.0",
+      },
+    },
+    "b": {
+      "name": "b",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:a"],
+
+    "b": ["b@workspace:b"],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: workspaces-top-level-link-virtual migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "workspaces-top-level-link",
+      "dependencies": {
+        "a": "^1.0.0",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: workspaces-shared-deps-virtual migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "workspaces-shared-deps",
+      "dependencies": {
+        "once": "",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "abbrev": "^1.1.1",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "1.0.0",
+      "dependencies": {
+        "abbrev": "^1.1.1",
+      },
+    },
+    "packages/c": {
+      "name": "c",
+      "version": "1.0.0",
+      "dependencies": {
+        "uuid": "=3.3.3",
+      },
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "abbrev": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
+
+    "b": ["b@workspace:packages/b"],
+
+    "c": ["c@workspace:packages/c"],
+
+    "once": ["once@1.4.0", "", { "dependencies": { "wrappy": "1" } }, "sha1-WDsap3WWHUsROsF9nFC6753Xa9E="],
+
+    "uuid": ["uuid@3.3.3", "", { "bin": "bin/uuid" }, "sha512-pW0No1RGHgzlpHJO1nsVrHKpOEIxkGg1xB+v0ZmdNH5OAeAwzAVrCnI2/6Mtx+Uys6iaylxa+D3g4j63IKKjSQ=="],
+
+    "wrappy": ["wrappy@1.0.2", "", {}, "sha1-tSQ9jz7BqjXxNkYFvA0QNuMKtp8="],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: cli-750 migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "monorepo",
+      "dependencies": {
+        "app": "file:./app",
+      },
+    },
+  },
+  "packages": {
+    "app": ["app@file:app", { "dependencies": { "lib": "file:../lib" } }],
+
+    "app/lib": ["lib@file:lib", {}],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: dedupe-lockfile migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "dedupe-lockfile",
+      "dependencies": {
+        "@isaacs/dedupe-tests-a": "1.0.1",
+        "@isaacs/dedupe-tests-b": "1||2",
+      },
+    },
+  },
+  "packages": {
+    "@isaacs/dedupe-tests-a": ["@isaacs/dedupe-tests-a@1.0.1", "", { "dependencies": { "@isaacs/dedupe-tests-b": "1" } }, "sha512-8AN9lNCcBt5Xeje7fMEEpp5K3rgcAzIpTtAjYb/YMUYu8SbIVF6wz0WqACDVKvpQOUcSfNHZQNLNmue0QSwXOQ=="],
+
+    "@isaacs/dedupe-tests-b": ["@isaacs/dedupe-tests-b@2.0.0", "", {}, "sha512-KTYkpRv9EzlmCg4Gsm/jpclWmRYFCXow8GZKJXjK08sIZBlElTZEa5Bw/UQxIvEfcKmWXczSqItD49Kr8Ax4UA=="],
+
+    "@isaacs/dedupe-tests-a/@isaacs/dedupe-tests-b": ["@isaacs/dedupe-tests-b@1.0.0", "", {}, "sha512-3nmvzIb8QL8OXODzipwoV3U8h9OQD9g9RwOPuSBQqjqSg9JZR1CCFOWNsDUtOfmwY8HFUJV9EAZ124uhqVxq+w=="],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: update-exact-version migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "abbrev": "1.0.4",
+      },
+    },
+  },
+  "packages": {
+    "abbrev": ["abbrev@1.0.4", "", {}, "sha1-vVWuXkE7oXIu5Mq6H26hBBSlns0="],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: peer-dep-cycle-with-sw migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@isaacs/peer-dep-cycle",
+      "dependencies": {
+        "@isaacs/peer-dep-cycle-a": "1",
+      },
+    },
+  },
+  "packages": {
+    "@isaacs/peer-dep-cycle-a": ["@isaacs/peer-dep-cycle-a@1.0.0", "", { "peerDependencies": { "@isaacs/peer-dep-cycle-b": "1" } }, "sha512-TrtKy03X2HSESjcRbWGIpCJWLZifvW6aViaOnWXjZ7xC2bhuWT/ZSpvE5weStWZRQZIfAO9dmG7EK3D9TbauUg=="],
+
+    "@isaacs/peer-dep-cycle-b": ["@isaacs/peer-dep-cycle-b@1.0.0", "", { "peerDependencies": { "@isaacs/peer-dep-cycle-c": "1" } }, "sha512-lRSvQ4sIRhXjMBcn9z8wCxNTySpCvMyDJvQfAGrE9FsAhmugJRRDYcCHTEpTMRqYJQR0Rn97Np5P7QbiBuH1aQ=="],
+
+    "@isaacs/peer-dep-cycle-c": ["@isaacs/peer-dep-cycle-c@1.0.0", "", { "peerDependencies": { "@isaacs/peer-dep-cycle-a": "1" } }, "sha512-mE1f1QdCY1+hMkdlGruWYauq8wZaUJ5uA9U8vc2LBs0pPdq9cPESLk6NY7n338WTiZkuqdh3+ooIjTzgR9IGiQ=="],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: testing-peer-deps-nested migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "testing-peer-deps-nested",
+      "dependencies": {
+        "@isaacs/testing-peer-deps": "2 || 3",
+      },
+    },
+  },
+  "packages": {
+    "@isaacs/testing-peer-deps": ["@isaacs/testing-peer-deps@2.0.0", "", { "dependencies": { "@isaacs/testing-peer-deps-a": "1", "@isaacs/testing-peer-deps-d": "2" } }, "sha512-4urwrUZGQ948uZfnIeY2nuYOGrh6eBhMpIvJo6KTTdG8ys25NylqN3MmeXdraXTQLr7vb3UrPq1pVL6h9vkuvA=="],
+
+    "@isaacs/testing-peer-deps-a": ["@isaacs/testing-peer-deps-a@1.2.4", "", { "peerDependencies": { "@isaacs/testing-peer-deps-b": "1" } }, "sha512-AZh6hYg/RYoS8Ea59JUOxYKS8Tg/95kW5hiZHyhpB/eg4hDllp6dAedxTvZzJN68aKpvA4YYuqodMtdzUinNPQ=="],
+
+    "@isaacs/testing-peer-deps-b": ["@isaacs/testing-peer-deps-b@1.2.4", "", { "peerDependencies": { "@isaacs/testing-peer-deps-c": "1" } }, "sha512-7rfmqBPEKWlRnU+o495Cynlc1A3MxFf+rNEIdXYRawM3lU6RzY7BX2nOtQsEE4uIKnqbEJR5uj7XaR5RWFmcBw=="],
+
+    "@isaacs/testing-peer-deps-c": ["@isaacs/testing-peer-deps-c@1.2.3", "", {}, "sha512-sq2Bc2XsWCrvCm1Hw+hVEd9oadnsb7T/91v3OwtLx0KMqinj6ncn6p4uixsB6dZuC+sHJlFHZjbnB4crfeVSgw=="],
+
+    "@isaacs/testing-peer-deps-d": ["@isaacs/testing-peer-deps-d@2.0.0", "", { "dependencies": { "@isaacs/testing-peer-deps-a": "2" } }, "sha512-uVdlNNBv6K1Cqo9NeCCX6Byv5WobrWpAgW3I9FnyVb3w2M7Q7kds+zvcXn5tDY+VzKUqFH/JcrKmSXRo7Jt2xQ=="],
+
+    "@isaacs/testing-peer-deps-d/@isaacs/testing-peer-deps-a": ["@isaacs/testing-peer-deps-a@2.0.0", "", { "peerDependencies": { "@isaacs/testing-peer-deps-b": "2" } }, "sha512-jpHyXoPZrCrwuiZjZPd5PU0tsgVAnpCVGpR772ZhF5B93GGfTlhKdi06Ev7gVaqQnTkV9gk6xKS/loJfRmAzTw=="],
+
+    "@isaacs/testing-peer-deps-d/@isaacs/testing-peer-deps-a/@isaacs/testing-peer-deps-b": ["@isaacs/testing-peer-deps-b@2.0.1", "", { "peerDependencies": { "@isaacs/testing-peer-deps-c": "2" } }, "sha512-sgYGXt0YwVLZ31DZKgoQm7JHEETS71GE2x9g1RIqQ1xarGFfGyor2sF3ekxUOeaE/4FInrh+K+nUP5YgPXLBQQ=="],
+
+    "@isaacs/testing-peer-deps-d/@isaacs/testing-peer-deps-a/@isaacs/testing-peer-deps-b/@isaacs/testing-peer-deps-c": ["@isaacs/testing-peer-deps-c@2.0.0", "", {}, "sha512-ixTvB2pyv08B5pLskjuuM/w/+U6/oHFNtaZbnqbyl1HUZrm9LbBhL5rNCQCddXLwds0beiin9ue4dPyq9dUjDw=="],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: link-dep-lifecycle-scripts migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "a": "file:./a",
+      },
+    },
+  },
+  "packages": {
+    "a": ["a@file:a", {}],
+  }
+}
+"
+`;
+
+exports[`package-lock.json migration fixes regression guard regression guard: flow-outdated migrates unchanged 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "flow-outdated",
+      "dependencies": {
+        "flow-parser": "0.x",
+        "flow-remove-types": "^2.112.0",
+      },
+    },
+  },
+  "packages": {
+    "flow-parser": ["flow-parser@0.112.0", "", {}, "sha512-sxjnwhR76B/fUN6n/XerYzn8R1HvtVo3SM8Il3WiZ4nkAlb2BBzKe1TSVKGSyZgD6FW9Bsxom/57ktkqrqmXGA=="],
+
+    "flow-remove-types": ["flow-remove-types@2.112.0", "", { "dependencies": { "flow-parser": "^0.112.0", "pirates": "^3.0.2", "vlq": "^0.2.1" } }, "sha512-h3bwcfh41nR9kvlhZFr5ySGmzzOyG4VUsnN4OBl9R6anbWAiX4H5lPhKTwZ7AelWF8Rtqmw/Vnq+VLEMg7PdAw=="],
+
+    "node-modules-regexp": ["node-modules-regexp@1.0.0", "", {}, "sha1-jZ2+KJZKSsVxLpExZCEHxx6Q7EA="],
+
+    "pirates": ["pirates@3.0.2", "", { "dependencies": { "node-modules-regexp": "^1.0.0" } }, "sha512-c5CgUJq6H2k6MJz72Ak1F5sN9n9wlSlJyEnwvpm9/y3WB4E3pHBDT2c6PEiS1vyJvq2bUxUAIu0EGf8Cx4Ic7Q=="],
+
+    "vlq": ["vlq@0.2.1", "", {}, "sha512-nHsLkUCZjkeZgTWmMA1htGsht29a8Qdf+o2LhJlMN3cIY24DNpHapLWnUTJ3rpZ3eD3240yiS6nRya/km8L7lQ=="],
+  }
+}
+"
+`;

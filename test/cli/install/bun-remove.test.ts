@@ -374,7 +374,7 @@ it.concurrent("bun remove drops every duplicate key of the removed package", asy
   const { stderr, exitCode } = await remove(String(dir), "foo");
 
   expect(stderr).not.toContain("error:");
-  expect(await file(join(String(dir), "package.json")).json()).toEqual({
+  expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
     name: "dup",
     dependencies: { bar: "file:./bar" },
   });
@@ -401,7 +401,7 @@ it.concurrent("bun remove drops the list when the removed package is its only (d
   const { stderr, exitCode } = await remove(String(dir), "foo");
 
   expect(stderr).not.toContain("error:");
-  expect(await file(join(String(dir), "package.json")).json()).toEqual({
+  expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
     name: "dup",
     dependencies: { bar: "file:./bar" },
   });

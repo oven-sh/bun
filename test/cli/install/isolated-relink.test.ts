@@ -43,7 +43,7 @@ test("an existing store entry is re-linked when an override re-resolves its depe
   expect(firstErr).not.toContain("error:");
   expect(firstExitCode).toBe(0);
   const link = await nestedNoDeps(packageDir);
-  expect(await nestedNoDepsPackageJson(link)).toEqual({ name: "no-deps", version: "1.1.0" });
+  expect(await nestedNoDepsPackageJson(link)).toStrictEqual({ name: "no-deps", version: "1.1.0" });
 
   await write(
     packageJson,
@@ -54,7 +54,7 @@ test("an existing store entry is re-linked when an override re-resolves its depe
     }),
   );
   const [out, err, exitCode] = await install(packageDir);
-  expect(await nestedNoDepsPackageJson(link)).toEqual({ name: "no-deps", version: "1.0.0" });
+  expect(await nestedNoDepsPackageJson(link)).toStrictEqual({ name: "no-deps", version: "1.0.0" });
   expect(out).toMatch(/\d+ packages? installed/);
   expect(out).not.toContain("(no changes)");
   expect(err).not.toContain("error:");
@@ -66,5 +66,5 @@ test("an existing store entry is re-linked when an override re-resolves its depe
   expect(againErr).not.toContain("error:");
   expect(againExitCode).toBe(0);
   expect((await lstat(link)).mtimeMs).toBe(linkMtime);
-  expect(await nestedNoDepsPackageJson(link)).toEqual({ name: "no-deps", version: "1.0.0" });
+  expect(await nestedNoDepsPackageJson(link)).toStrictEqual({ name: "no-deps", version: "1.0.0" });
 });

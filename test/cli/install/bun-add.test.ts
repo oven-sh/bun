@@ -1354,15 +1354,15 @@ describe("npm aliases", () => {
         `installed ${alias}@npm:${resolved.name}@${resolved.version}${resolved.binaries ? " with binaries:" : ""}`,
       );
       expect(exitCode).toBe(0);
-      expect(urls.sort()).toEqual([
+      expect(urls.sort()).toStrictEqual([
         `${root_url}/${resolved.name.replace("/", "%2f")}`,
         `${root_url}/${resolved.name}-${resolved.tarballVersion ?? resolved.version}.tgz`,
       ]);
-      expect(await file(join(package_dir, "package.json")).json()).toEqual({ ...packageJSON, ...expected });
+      expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({ ...packageJSON, ...expected });
 
       const lockfileText = await file(join(package_dir, "bun.lock")).text();
       const lockfile = Bun.JSONC.parse(lockfileText) as BunLockFile;
-      expect(lockfile.workspaces[""]).toEqual({ name: packageJSON.name, ...expected });
+      expect(lockfile.workspaces[""]).toStrictEqual({ name: packageJSON.name, ...expected });
       expect(lockfile.packages[alias][0]).toBe(`${resolved.name}@${resolved.version}`);
 
       const frozen = spawn({
@@ -2814,7 +2814,7 @@ it("should add an uncompressed .tar local tarball", async () => {
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   const out = await stdout.text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toStrictEqual([
     expect.stringContaining("bun add v1."),
     "",
     "installed baz@baz-0.0.3.tar with binaries:",
@@ -2825,7 +2825,7 @@ it("should add an uncompressed .tar local tarball", async () => {
   expect(await exited).toBe(0);
   expect(urls).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toStrictEqual(["index.js", "package.json"]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");

@@ -5160,7 +5160,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(packageJson).json()).toEqual({
+    expect(await file(packageJson).json()).toStrictEqual({
       name: "foo",
       dependencies: {
         "a-dep": "latest",
@@ -5171,7 +5171,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["a-dep"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(packageJson).json()).toEqual({
+    expect(await file(packageJson).json()).toStrictEqual({
       name: "foo",
       dependencies: {
         "a-dep": "latest",
@@ -5180,7 +5180,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["--latest"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(packageJson).json()).toEqual({
+    expect(await file(packageJson).json()).toStrictEqual({
       name: "foo",
       dependencies: {
         "a-dep": "latest",
@@ -5316,7 +5316,7 @@ describe("update", () => {
           await runBunUpdate(env, packageDir, ["--latest"]);
           assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(packageJson).json()).toEqual({
+          expect(await file(packageJson).json()).toStrictEqual({
             name: "foo",
             dependencies: {
               "a1": "npm:no-deps@^2.0.0",
@@ -5340,18 +5340,19 @@ describe("update", () => {
           await runBunUpdate(env, packageDir);
           assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(packageJson).json()).toEqual({
+          // bare `1` / `1.0` / `1.1` ranges are kept as written; only bun.lock and node_modules move
+          expect(await file(packageJson).json()).toStrictEqual({
             name: "foo",
             dependencies: {
-              "a1": "npm:no-deps@^1.1.0",
+              "a1": "npm:no-deps@1",
               "a10": "npm:no-deps@~1.0.1",
               "a11": "npm:no-deps@^1.1.0",
               "a12": "npm:no-deps@~1.0.1",
               "a13": "npm:no-deps@^1.1.0",
               "a14": "npm:no-deps@~1.1.0",
               "a15": "npm:no-deps@^1.1.0",
-              "a2": "npm:no-deps@~1.0.1",
-              "a3": "npm:no-deps@~1.1.0",
+              "a2": "npm:no-deps@1.0",
+              "a3": "npm:no-deps@1.1",
               "a4": "npm:no-deps@1.0.1",
               "a5": "npm:no-deps@1.1.0",
               "a6": "npm:no-deps@~1.1.0",
@@ -5938,7 +5939,7 @@ describe("update", () => {
     let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([
+    expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
       "installed no-deps@1.0.0",
@@ -5993,7 +5994,7 @@ describe("update", () => {
     ({ out } = await runBunUpdate(env, packageDir, ["no-deps"]));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([
+    expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
       "installed no-deps@1.1.0",

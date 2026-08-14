@@ -1893,7 +1893,7 @@ describe("install --filter", () => {
 
     // util and its dependents: lib, app, root (via app), tool (via its devDependency on lib); not lone
     const dependentsExit = await installWithFilter("...util");
-    expect(await installed()).toEqual([true, true, true, true, true, false]);
+    expect(await installed()).toStrictEqual([true, true, true, true, true, false]);
     expect(await file(join(packageDir, "bun.lock")).text()).toContain('"peer-no-deps": "1.0.0"');
     expect(dependentsExit).toBe(0);
 
@@ -1901,7 +1901,7 @@ describe("install --filter", () => {
 
     // only app's dependencies: lib and util
     const dependenciesExit = await installWithFilter("app^...");
-    expect(await installed()).toEqual([true, true, false, false, false, false]);
+    expect(await installed()).toStrictEqual([true, true, false, false, false, false]);
     expect(dependenciesExit).toBe(0);
   });
 });

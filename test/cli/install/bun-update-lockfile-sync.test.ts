@@ -96,7 +96,7 @@ async function expectInSync(
     const manifest = await pkg(dir, key);
     for (const group of GROUPS) {
       if (manifest[group] === undefined) continue;
-      expect({ [key || "."]: { [group]: lockfile.workspaces[key]?.[group] } }).toEqual({
+      expect({ [key || "."]: { [group]: lockfile.workspaces[key]?.[group] } }).toStrictEqual({
         [key || "."]: { [group]: manifest[group] },
       });
     }
@@ -109,12 +109,12 @@ async function expectInSync(
           typeof value === "string" && value.startsWith("$") ? declaredLiteral(manifest, value.slice(1)) : value,
         ]),
       );
-      expect(lockfile.overrides).toEqual(expected);
+      expect(lockfile.overrides).toStrictEqual(expected);
     }
     const catalog = manifest.workspaces?.catalog ?? manifest.catalog;
-    if (catalog !== undefined) expect(lockfile.catalog).toEqual(catalog);
+    if (catalog !== undefined) expect(lockfile.catalog).toStrictEqual(catalog);
     const catalogs = manifest.workspaces?.catalogs ?? manifest.catalogs;
-    if (catalogs !== undefined) expect(lockfile.catalogs).toEqual(catalogs);
+    if (catalogs !== undefined) expect(lockfile.catalogs).toStrictEqual(catalogs);
   }
   const env = envFor(dir);
   await runBunInstall(env, dir, { frozenLockfile: true, allowWarnings: opts.allowWarnings });
@@ -146,8 +146,8 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     });
     await run(dir, "update");
     const expected = { "no-deps": "^1.1.0", aliased: "npm:no-deps@~1.0.1" };
-    expect((await pkg(dir)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual(expected);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
     await expectInSync(dir, [""], { reinstall: true });
   });
 
@@ -157,9 +157,9 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     });
     await run(dir, "update", "--latest");
     const expected = { "no-deps": "~2.0.0", aliased: "npm:no-deps@~2.0.0" };
-    expect((await pkg(dir)).dependencies).toEqual(expected);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
     const ws = (await lock(dir)).workspaces[""];
-    expect(ws.dependencies).toEqual(expected);
+    expect(ws.dependencies).toStrictEqual(expected);
     expect(JSON.stringify(ws)).not.toContain("latest");
     await expectInSync(dir);
   });
@@ -173,13 +173,13 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
   ])("bun update leaves a %s range as written and moves bun.lock to %s", async (literal, resolved) => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "1.0.0" } }) });
     await reinstall(dir, root({ dependencies: { "no-deps": literal } }));
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
     const pkgBefore = await pkgText(dir);
     const { stdout } = await run(dir, "update");
     expect(stdout).toMatch(new RegExp(`no-deps 1\\.0\\.0 (→|->) ${resolved.replaceAll(".", "\\.")}`));
     expect(await pkgText(dir)).toBe(pkgBefore);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": literal });
-    expect(await resolutions(dir, "no-deps")).toEqual([`no-deps@${resolved}`]);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": literal });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual([`no-deps@${resolved}`]);
     expect(await installed(dir, "no-deps")).toMatchObject({ version: resolved });
     await expectInSync(dir);
   });
@@ -197,24 +197,24 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
   test("bun update --latest rewrites a * range", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "*" } }) });
     await run(dir, "update", "--latest");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^2.0.0" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "^2.0.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
     await expectInSync(dir);
   });
 
   test("bun update <name> keeps the pin style", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "~1.0.0" } }) });
     await run(dir, "update", "no-deps");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "~1.0.1" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
     await expectInSync(dir);
   });
 
   test("bun update <name> on an exact literal", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "1.0.0" } }) });
     await run(dir, "update", "no-deps");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "1.0.0" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "1.0.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "1.0.0" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "1.0.0" });
     await expectInSync(dir);
   });
 
@@ -223,26 +223,26 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await reinstall(dir, root({ dependencies: { "no-deps": "*", "a-dep": "^1.0.1" } }));
     await run(dir, "update", "no-deps");
     const expected = { "no-deps": "*", "a-dep": "^1.0.1" };
-    expect((await pkg(dir)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual(expected);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@2.0.0"]);
-    expect(await resolutions(dir, "a-dep")).toEqual(["a-dep@1.0.1"]);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    expect(await resolutions(dir, "a-dep")).toStrictEqual(["a-dep@1.0.1"]);
     await expectInSync(dir);
   });
 
   test("bun update <alias> keeps the alias", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { aliased: "npm:no-deps@~1.0.0" } }) });
     await run(dir, "update", "aliased");
-    expect((await pkg(dir)).dependencies).toEqual({ aliased: "npm:no-deps@~1.0.1" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ aliased: "npm:no-deps@~1.0.1" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ aliased: "npm:no-deps@~1.0.1" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ aliased: "npm:no-deps@~1.0.1" });
     await expectInSync(dir);
   });
 
   test("bun update <name>@<range>", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "~1.0.0" } }) });
     await run(dir, "update", "no-deps@^1.0.0");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "~1.1.0" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "~1.1.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "~1.1.0" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "~1.1.0" });
     await expectInSync(dir);
   });
 
@@ -254,8 +254,8 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     const dir = await setup({ "package.json": inBothGroups("~1.0.0") }, { allowWarnings: true });
     await run(dir, "update", "no-deps");
     const manifest = await pkg(dir);
-    expect(manifest.dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect(manifest.devDependencies).toEqual({ "no-deps": "~1.0.0" });
+    expect(manifest.dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect(manifest.devDependencies).toStrictEqual({ "no-deps": "~1.0.0" });
     await expectInSync(dir, [""], { allowWarnings: true });
   });
 
@@ -265,7 +265,7 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     const { stdout } = await run(dir, "update");
     expect(stdout).toMatch(/no-deps 1\.0\.0 (→|->) 1\.0\.1/);
     const manifest = await pkg(dir);
-    expect([manifest.dependencies["no-deps"], manifest.devDependencies["no-deps"]].sort()).toEqual([
+    expect([manifest.dependencies["no-deps"], manifest.devDependencies["no-deps"]].sort()).toStrictEqual([
       "~1.0.0",
       "~1.0.1",
     ]);
@@ -275,8 +275,8 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
   test("install.exact", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { "no-deps": "^1.0.0" } }) }, { exact: true });
     await run(dir, "update");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "1.1.0" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ "no-deps": "1.1.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "1.1.0" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "1.1.0" });
     await expectInSync(dir);
   });
 
@@ -302,27 +302,27 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await runBunInstall(envFor(dir), dir);
     await run(dir, "update", ...args);
     const expected = { ...dependencies, "no-deps": args.length ? "^2.0.0" : "^1.1.0" };
-    expect((await pkg(dir)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual(expected);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
     await expectInSync(dir, ["", PKG1]);
   });
 
   test("bun update -r", async () => {
     const dir = await setup(MONOREPO({ dependencies: { "no-deps": "~1.0.0" } }));
     await run(dir, "update", "-r");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual({ "no-deps": "~1.0.1" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
     await expectInSync(dir, ["", PKG1]);
   });
 
   test("bun update -r keeps a member's 1.x literal", async () => {
     const dir = await setup(MONOREPO({ dependencies: { "no-deps": "1.0.0" } }));
     await reinstall(dir, member("pkg1", { dependencies: { "no-deps": "1.x" } }), PKG1);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
     await run(dir, "update", "-r");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "1.x" });
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual({ "no-deps": "1.x" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.1.0"]);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "1.x" });
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual({ "no-deps": "1.x" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -330,9 +330,9 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     const dir = await setup(MONOREPO({ dependencies: { "dep-with-tags": "pre-2", "no-deps": "~1.0.0" } }));
     await run(dir, "update", "-r", "--latest");
     const expected = { "dep-with-tags": "pre-2", "no-deps": "~2.0.0" };
-    expect((await pkg(dir, PKG1)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual(expected);
-    expect(await resolutions(dir, "dep-with-tags")).toEqual(["dep-with-tags@2.0.1"]);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual(expected);
+    expect(await resolutions(dir, "dep-with-tags")).toStrictEqual(["dep-with-tags@2.0.1"]);
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -341,8 +341,8 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
       MONOREPO({ dependencies: { "no-deps": "~1.0.0", "a-dep": "^1.0.1" } }, { dependencies: { "no-deps": "~1.0.0" } }),
     );
     await run(dir, "update", "no-deps", "--filter", "pkg1");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1", "a-dep": "^1.0.1" });
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "~1.0.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1", "a-dep": "^1.0.1" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
     await expectInSync(dir, ["", PKG1], { reinstall: true });
   });
 
@@ -354,10 +354,10 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
       ),
     );
     await run(dir, "update", "no-deps", "-r", "--latest");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "~2.0.0" });
-    expect((await pkg(dir, PKG2)).dependencies).toEqual({ "no-deps": "~2.0.0" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "a-dep": "1.0.1" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@2.0.0"]);
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "~2.0.0" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "no-deps": "~2.0.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "a-dep": "1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
     await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
@@ -367,11 +367,11 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     );
     await writePkg(dir, wsRoot({ dependencies: { "no-deps": "^1.0.0" } }));
     await reinstall(dir, member("pkg1", { dependencies: { "no-deps": "~1.0.0" } }), PKG1);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
     await run(dir, "update", "no-deps@1.0.1", "-r");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^1.0.1" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.1"]);
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1"]);
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -388,8 +388,8 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
   test("bun update from a workspace member", async () => {
     const dir = await setup(MONOREPO({ dependencies: { "no-deps": "~1.0.0" } }));
     await runIn(dir, PKG1, "update");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual({ "no-deps": "~1.0.1" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
     await expectInSync(dir, ["", PKG1]);
   });
 });
@@ -401,19 +401,19 @@ describe.concurrent("named update is scoped to the invoking workspace", () => {
     );
     await writePkg(dir, wsRoot({ dependencies: { "no-deps": "^1.0.0" } }));
     await reinstall(dir, member("pkg1", { dependencies: { "no-deps": "~1.0.0" } }), PKG1);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
 
     await run(dir, "update", "no-deps");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^1.1.0" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.0" });
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual({ "no-deps": "~1.0.0" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0", "no-deps@1.1.0"]);
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0", "no-deps@1.1.0"]);
     await expectInSync(dir, ["", PKG1]);
 
     await run(dir, "update", "no-deps", "-r");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^1.1.0" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.1", "no-deps@1.1.0"]);
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1", "no-deps@1.1.0"]);
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -426,13 +426,13 @@ describe.concurrent("named update is scoped to the invoking workspace", () => {
     );
     await writePkg(dir, member("pkg1", { dependencies: { "no-deps": "^1.0.0" } }), PKG1);
     await reinstall(dir, member("pkg2", { dependencies: { "no-deps": "~1.0.0" } }), PKG2);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
 
     await runIn(dir, PKG1, "update", "no-deps");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "^1.1.0" });
-    expect((await pkg(dir, PKG2)).dependencies).toEqual({ "no-deps": "~1.0.0" });
-    expect((await lock(dir)).workspaces[PKG2].dependencies).toEqual({ "no-deps": "~1.0.0" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0", "no-deps@1.1.0"]);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
+    expect((await lock(dir)).workspaces[PKG2].dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0", "no-deps@1.1.0"]);
     await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
@@ -446,16 +446,16 @@ describe.concurrent("named update is scoped to the invoking workspace", () => {
     await writePkg(dir, wsRoot({ dependencies: { "no-deps": "^1.0.0" } }));
     await writePkg(dir, member("pkg1", { dependencies: { "no-deps": "~1.0.0" } }), PKG1);
     await reinstall(dir, member("pkg2", { dependencies: { "no-deps": "~1.0.0" } }), PKG2);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
 
     await run(dir, "update", "no-deps", "--filter", "pkg1");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "~1.0.1" });
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^1.0.0" });
-    expect((await pkg(dir, PKG2)).dependencies).toEqual({ "no-deps": "~1.0.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "~1.0.1" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
     const { workspaces } = await lock(dir);
-    expect(workspaces[""].dependencies).toEqual({ "no-deps": "^1.0.0" });
-    expect(workspaces[PKG2].dependencies).toEqual({ "no-deps": "~1.0.0" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.1"]);
+    expect(workspaces[""].dependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+    expect(workspaces[PKG2].dependencies).toStrictEqual({ "no-deps": "~1.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1"]);
     await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
@@ -532,7 +532,7 @@ describe.concurrent("npm: aliases", () => {
   test("bun update <alias>@npm:<other> retargets the alias", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { aliased: "npm:no-deps@~1.0.0" } }) });
     await run(dir, "update", "aliased@npm:a-dep");
-    expect((await pkg(dir)).dependencies).toEqual({ aliased: "npm:a-dep@~1.0.10" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ aliased: "npm:a-dep@~1.0.10" });
     expect(await installed(dir, "aliased")).toMatchObject({ name: "a-dep", version: "1.0.10" });
     await expectInSync(dir);
   });
@@ -548,8 +548,8 @@ describe.concurrent("npm: aliases", () => {
 
     await run(dir, "add", "new-alias@npm:@types/no-deps@^1.0.0");
     const expected = { "a-dep": "1.0.1", "new-alias": "npm:@types/no-deps@^1.0.0" };
-    expect((await pkg(dir)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual(expected);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
     expect(await installed(dir, "new-alias")).toMatchObject({ name: "@types/no-deps", version: "1.0.0" });
     await expectInSync(dir);
   });
@@ -557,7 +557,7 @@ describe.concurrent("npm: aliases", () => {
   test("bun update <alias>@npm:<scoped>@<range> retargets a scoped alias in the declared pin style", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { aliased: "npm:no-deps@~1.0.0" } }) });
     await run(dir, "update", "aliased@npm:@types/no-deps@^1.0.0");
-    expect((await pkg(dir)).dependencies).toEqual({ aliased: "npm:@types/no-deps@~1.0.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ aliased: "npm:@types/no-deps@~1.0.0" });
     expect(await installed(dir, "aliased")).toMatchObject({ name: "@types/no-deps", version: "1.0.0" });
     await expectInSync(dir);
   });
@@ -576,31 +576,31 @@ describe.concurrent("bun add", () => {
   ])("bun add $args", async ({ args, expected }) => {
     const dir = await setup({ "package.json": root({}) }, { install: false });
     await run(dir, "add", ...args);
-    expect((await pkg(dir)).dependencies).toEqual(expected);
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual(expected);
+    expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
     await expectInSync(dir);
   });
 
   test("bun add <workspace>@workspace:*", async () => {
     const dir = await setup(MONOREPO());
     await run(dir, "add", "pkg1@workspace:*");
-    expect((await pkg(dir)).dependencies).toEqual({ pkg1: "workspace:*" });
-    expect((await lock(dir)).workspaces[""].dependencies).toEqual({ pkg1: "workspace:*" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:*" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:*" });
     await expectInSync(dir, ["", PKG1]);
   });
 
   test("bun add --filter", async () => {
     const dir = await setup(MONOREPO());
     await run(dir, "add", "x@npm:no-deps@latest", "--filter", "pkg1");
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ x: "npm:no-deps@^2.0.0" });
-    expect((await lock(dir)).workspaces[PKG1].dependencies).toEqual({ x: "npm:no-deps@^2.0.0" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ x: "npm:no-deps@^2.0.0" });
+    expect((await lock(dir)).workspaces[PKG1].dependencies).toStrictEqual({ x: "npm:no-deps@^2.0.0" });
     await expectInSync(dir, ["", PKG1]);
   });
 
   test("bun add --lockfile-only", async () => {
     const dir = await setup({ "package.json": root({}) }, { install: false });
     await run(dir, "add", "no-deps", "--lockfile-only");
-    expect((await pkg(dir)).dependencies).toEqual({ "no-deps": "^2.0.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
     expect(await exists(join(dir, "node_modules"))).toBe(false);
     await expectInSync(dir);
   });
@@ -608,7 +608,7 @@ describe.concurrent("bun add", () => {
   test("bun add --trust", async () => {
     const dir = await setup({ "package.json": root({}) }, { install: false });
     await run(dir, "add", "uses-what-bin@1.0.0", "--trust");
-    expect(await pkg(dir)).toEqual({
+    expect(await pkg(dir)).toStrictEqual({
       name: "foo",
       dependencies: { "uses-what-bin": "1.0.0" },
       trustedDependencies: ["uses-what-bin"],
@@ -622,8 +622,8 @@ describe.concurrent("bun add", () => {
     await run(dir, "add", "uses-what-bin@1.0.0", "--trust");
     const manifest = await pkg(dir);
     expect(manifest.dependencies).toBeUndefined();
-    expect(manifest.devDependencies).toEqual({ "uses-what-bin": "1.0.0" });
-    expect(manifest.trustedDependencies).toEqual(["uses-what-bin"]);
+    expect(manifest.devDependencies).toStrictEqual({ "uses-what-bin": "1.0.0" });
+    expect(manifest.trustedDependencies).toStrictEqual(["uses-what-bin"]);
     expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBe(true);
     await expectInSync(dir);
   });
@@ -637,15 +637,15 @@ describe.concurrent("catalogs", () => {
     );
 
   async function expectCatalog(dir: string, expected: Json) {
-    expect((await pkg(dir)).workspaces.catalog).toEqual(expected);
-    expect((await lock(dir)).catalog).toEqual(expected);
+    expect((await pkg(dir)).workspaces.catalog).toStrictEqual(expected);
+    expect((await lock(dir)).catalog).toStrictEqual(expected);
   }
 
   test("bun update", async () => {
     const dir = await setup(CATALOG_REPO());
     await run(dir, "update");
     await expectCatalog(dir, { "no-deps": "^1.1.0", aliased: "npm:no-deps" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "catalog:", aliased: "catalog:" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "catalog:", aliased: "catalog:" });
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -669,18 +669,18 @@ describe.concurrent("catalogs", () => {
     const dir = await setup(CATALOG_REPO({ "no-deps": "1.x" }));
     await run(dir, "update");
     await expectCatalog(dir, { "no-deps": "1.x" });
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "catalog:" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "catalog:" });
     await expectInSync(dir, ["", PKG1]);
   });
 
   test("bun update keeps a * catalog entry and moves only bun.lock", async () => {
     const dir = await setup(CATALOG_REPO({ "no-deps": "1.0.0" }));
     await reinstall(dir, wsRoot({ workspaces: { packages: ["packages/*"], catalog: { "no-deps": "*" } } }));
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
     await run(dir, "update");
     await expectCatalog(dir, { "no-deps": "*" });
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@2.0.0"]);
-    expect((await pkg(dir, PKG1)).dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "catalog:" });
     await expectInSync(dir, ["", PKG1]);
   });
 
@@ -703,9 +703,9 @@ describe.concurrent("$ref overrides", () => {
     await writePkg(dir, root({ dependencies: { "no-deps": "^1.0.0", "one-range-dep": "1.0.0" }, overrides }));
     await run(dir, "update");
     const manifest = await pkg(dir);
-    expect(manifest.dependencies).toEqual({ "no-deps": "^1.1.0", "one-range-dep": "1.0.0" });
-    expect(manifest.overrides).toEqual(overrides);
-    expect((await lock(dir)).overrides).toEqual({ "no-deps": "^1.1.0", "one-range-dep": "1.0.0" });
+    expect(manifest.dependencies).toStrictEqual({ "no-deps": "^1.1.0", "one-range-dep": "1.0.0" });
+    expect(manifest.overrides).toStrictEqual(overrides);
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.1.0", "one-range-dep": "1.0.0" });
     await expectInSync(dir);
   });
 
@@ -714,8 +714,8 @@ describe.concurrent("$ref overrides", () => {
       "package.json": root({ dependencies: { a1: "npm:no-deps@^1.0.0" }, overrides: { a1: "$a1" } }),
     });
     await run(dir, "update");
-    expect((await pkg(dir)).dependencies).toEqual({ a1: "npm:no-deps@^1.1.0" });
-    expect((await lock(dir)).overrides).toEqual({ a1: "npm:no-deps@^1.1.0" });
+    expect((await pkg(dir)).dependencies).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
+    expect((await lock(dir)).overrides).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
     await expectInSync(dir);
   });
 });
@@ -739,7 +739,7 @@ describe.concurrent("bumping a direct dependency re-points its dependents", () =
     expect(await nested(dir)).toBe(false);
     if (text) {
       const { packages } = await lock(dir);
-      expect(Object.keys(packages).sort()).toEqual(["no-deps", "one-range-dep"]);
+      expect(Object.keys(packages).sort()).toStrictEqual(["no-deps", "one-range-dep"]);
       expect(packages["no-deps"][0]).toBe("no-deps@1.0.1");
     }
 
@@ -748,11 +748,11 @@ describe.concurrent("bumping a direct dependency re-points its dependents", () =
     expect(await installed(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
     expect(await installed(dir, "one-range-dep/node_modules/no-deps")).toMatchObject({ version: "1.0.1" });
     if (!text) return;
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.1", "no-deps@2.0.0"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1", "no-deps@2.0.0"]);
 
     await writePkg(dir, deps());
     await runBunInstall(envFor(dir), dir);
-    expect(await resolutions(dir, "no-deps")).toEqual(["no-deps@1.0.1"]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1"]);
 
     await writePkg(dir, deps("1.0.0"));
     await runBunInstall(envFor(dir), dir);

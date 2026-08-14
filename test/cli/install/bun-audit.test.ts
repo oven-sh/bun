@@ -354,7 +354,7 @@ describe("`bun audit`", () => {
     args: ["--json", "--audit-level", "critical"],
     fn: async ({ stdout }) => {
       const json = JSON.parse(await stdout);
-      expect(json.ms.map((a: { severity: string }) => a.severity).sort()).toEqual(["high", "moderate"]);
+      expect(json.ms.map((a: { severity: string }) => a.severity).sort()).toStrictEqual(["high", "moderate"]);
     },
   });
 
@@ -1329,7 +1329,7 @@ describe("`bun audit fix`", () => {
     const lockAfter = await lock(dir);
     const packageRows = lockBefore.split("\n").filter(line => /^    "[^"]+": \["/.test(line));
     const untouched = packageRows.filter(line => !line.includes('"a-dep@') && !line.includes('"no-deps@'));
-    expect(untouched.map(line => line.split('"')[1]).sort()).toEqual(["@types/is-number", "one-range-dep"]);
+    expect(untouched.map(line => line.split('"')[1]).sort()).toStrictEqual(["@types/is-number", "one-range-dep"]);
     for (const line of untouched) expect(lockAfter).toContain(line);
     expect(lockAfter).toContain('"a-dep@1.0.4"');
     expect(lockAfter).toContain('"no-deps@1.0.1"');
@@ -1410,7 +1410,7 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
     expect(exitCode).toBe(0);
 
-    expect((await pkgJson(dir)).catalog).toEqual({ "no-deps": "1.0.1" });
+    expect((await pkgJson(dir)).catalog).toStrictEqual({ "no-deps": "1.0.1" });
     expect(await pkgJsonText(dir, "packages", "a")).toBe(member);
     const lockfile = await lock(dir);
     expect(lockfile).toContain('"no-deps@1.0.1"');
@@ -1440,7 +1440,10 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("package.json (catalog build): 1.0.0 → 1.0.1");
     expect(exitCode).toBe(0);
 
-    expect((await pkgJson(dir)).catalogs).toEqual({ build: { "no-deps": "1.0.1" }, other: { "no-deps": "1.0.0" } });
+    expect((await pkgJson(dir)).catalogs).toStrictEqual({
+      build: { "no-deps": "1.0.1" },
+      other: { "no-deps": "1.0.0" },
+    });
     expect(await pkgJsonText(dir, "packages", "a")).toBe(member);
     const lockfile = await lock(dir);
     expect(lockfile).toContain('"no-deps@1.0.1"');
@@ -1764,7 +1767,7 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("package.json: npm:a-dep@1.0.2 → npm:a-dep@1.0.4");
     expect(exitCode).toBe(0);
 
-    expect((await pkgJson(dir)).dependencies).toEqual({ nd: "npm:a-dep@1.0.4" });
+    expect((await pkgJson(dir)).dependencies).toStrictEqual({ nd: "npm:a-dep@1.0.4" });
     expect(await installedVersion(dir, "nd")).toBe("1.0.4");
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
@@ -1789,7 +1792,7 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(0);
 
     const { dependencies, devDependencies } = await pkgJson(dir);
-    expect({ dependencies, devDependencies }).toEqual({
+    expect({ dependencies, devDependencies }).toStrictEqual({
       dependencies: { "no-deps": "^1.0.0" },
       devDependencies: { "a-dep": "1.0.4" },
     });
@@ -1812,7 +1815,7 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("a-dep@1.0.2 → 1.0.4\n    packages/a/package.json: 1.0.2 → 1.0.4\n");
     expect(exitCode).toBe(0);
 
-    expect((await pkgJson(dir, "packages", "a")).dependencies).toEqual({ "a-dep": "1.0.4" });
+    expect((await pkgJson(dir, "packages", "a")).dependencies).toStrictEqual({ "a-dep": "1.0.4" });
     expect(await pkgJsonText(dir)).toBe(rootPkgJson);
     const lockfile = await lock(dir);
     expect(lockfile).toContain('"a-dep@1.0.4"');
@@ -1838,7 +1841,7 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("a-dep@1.0.2 → 1.0.4\n    packages/a/package.json: 1.0.2 → 1.0.4\n");
     expect(exitCode).toBe(0);
 
-    expect((await pkgJson(dir, "packages", "a")).dependencies).toEqual({ "a-dep": "1.0.4" });
+    expect((await pkgJson(dir, "packages", "a")).dependencies).toStrictEqual({ "a-dep": "1.0.4" });
     expect(await pkgJsonText(dir)).toBe(rootPkgJson);
     expect(await exists(join(dir, "packages", "a", "bun.lock"))).toBeFalse();
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
@@ -1943,7 +1946,7 @@ describe("`bun audit fix`", () => {
       expect(stdout).toContain("1 vulnerability remaining");
       expect(exitCode).toBe(1);
 
-      expect((await pkgJson(dir)).dependencies).toEqual({ "a-dep": "1.0.4", "uses-a-dep-2": "1.0.0" });
+      expect((await pkgJson(dir)).dependencies).toStrictEqual({ "a-dep": "1.0.4", "uses-a-dep-2": "1.0.0" });
       lockfile = await lock(dir);
       expect(lockfile).toContain('"a-dep@1.0.4"');
       expect(lockfile).toContain('"a-dep@1.0.2"');
@@ -2074,7 +2077,7 @@ describe("`bun audit fix`", () => {
     const lockBefore = await lock(dir);
 
     const { stdout, exitCode } = await auditFix(dir, "--json", "--dry-run");
-    expect(JSON.parse(stdout)).toEqual({
+    expect(JSON.parse(stdout)).toStrictEqual({
       dryRun: true,
       fixed: 1,
       remaining: 0,
@@ -2108,7 +2111,7 @@ describe("`bun audit fix`", () => {
     expect(stdout.trim().split("\n")).toHaveLength(1);
     const doc = JSON.parse(stdout);
     expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0 });
-    expect(doc.fixes).toEqual([
+    expect(doc.fixes).toStrictEqual([
       {
         name: "a-dep",
         from: "1.0.2",
@@ -2134,7 +2137,7 @@ describe("`bun audit fix`", () => {
 
     const { stdout, exitCode } = await auditFix(dir, "--json");
     const doc = JSON.parse(stdout);
-    expect(doc.blocked).toEqual([
+    expect(doc.blocked).toStrictEqual([
       {
         name: "no-deps",
         from: "1.0.1",
@@ -2143,7 +2146,7 @@ describe("`bun audit fix`", () => {
         blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false }],
       },
     ]);
-    expect(doc.unmatched).toEqual([{ name: "no-deps", range: ">=9.0.0" }]);
+    expect(doc.unmatched).toStrictEqual([{ name: "no-deps", range: ">=9.0.0" }]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 2, fixes: [] });
     expect(exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);

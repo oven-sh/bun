@@ -202,12 +202,6 @@ pub enum Error {
     NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
     #[error("DependencyLoop")]
     DependencyLoop,
     #[error("NotSupported")]
@@ -380,9 +374,6 @@ impl Error {
             }
             Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
             Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",

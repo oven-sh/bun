@@ -116,7 +116,7 @@ async function expectAddedOnlyTo(
   dep = "no-deps",
   range = "^2.0.0",
 ) {
-  expect(await declaring(dir, dep)).toEqual(WORKSPACES.filter(w => edited.includes(w)));
+  expect(await declaring(dir, dep)).toStrictEqual(WORKSPACES.filter(w => edited.includes(w)));
   for (const [i, workspace] of WORKSPACES.entries()) {
     if (edited.includes(workspace)) {
       expect((await pkg(dir, workspace)).dependencies[dep]).toBe(range);
@@ -135,7 +135,7 @@ test.concurrent(
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await allPackageJsons(dir)).toEqual([
+    expect(await allPackageJsons(dir)).toStrictEqual([
       ROOT,
       { name: "api", dependencies: { "no-deps": "^2.0.0" } },
       WEB,
@@ -143,12 +143,12 @@ test.concurrent(
       PKG_B,
     ]);
 
-    expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
       name: "no-deps",
       version: "2.0.0",
     });
     // node_modules/api is the linked workspace, not a registry package
-    expect(await file(join(dir, "node_modules", "api", "package.json")).json()).toEqual({
+    expect(await file(join(dir, "node_modules", "api", "package.json")).json()).toStrictEqual({
       name: "api",
       dependencies: { "no-deps": "^2.0.0" },
     });
@@ -167,9 +167,9 @@ test.concurrent("-F alias with --dev and --exact", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
-    expect(await pkg(dir, "root")).toEqual(ROOT);
-    expect(await pkg(dir, "web")).toEqual(WEB);
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
+    expect(await pkg(dir, "root")).toStrictEqual(ROOT);
+    expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
 
   // Same as unfiltered `bun add -d`: an entry that already exists in another list is updated in place.
@@ -178,9 +178,9 @@ test.concurrent("-F alias with --dev and --exact", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "1.0.10" } });
-    expect(await pkg(dir, "api")).toEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
-    expect(await pkg(dir, "root")).toEqual(ROOT);
+    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.10" } });
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
+    expect(await pkg(dir, "root")).toStrictEqual(ROOT);
   }
 });
 
@@ -191,9 +191,9 @@ test.concurrent("bun install <pkg> --filter carries the filter through", async (
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "root")).toEqual(ROOT);
-  expect(await pkg(dir, "web")).toEqual(WEB);
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual(ROOT);
+  expect(await pkg(dir, "web")).toStrictEqual(WEB);
 });
 
 test.concurrent("glob filter edits every match", async () => {
@@ -203,7 +203,7 @@ test.concurrent("glob filter edits every match", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await allPackageJsons(dir)).toEqual([
+  expect(await allPackageJsons(dir)).toStrictEqual([
     ROOT,
     API,
     WEB,
@@ -220,7 +220,7 @@ test.concurrent("'*' edits every workspace except the root; '!' excludes", async
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await allPackageJsons(dir)).toEqual([
+  expect(await allPackageJsons(dir)).toStrictEqual([
     ROOT,
     API,
     { name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } },
@@ -228,7 +228,7 @@ test.concurrent("'*' edits every workspace except the root; '!' excludes", async
     { name: "pkg-b", dependencies: { "no-deps": "^2.0.0" } },
   ]);
   expect(await pkgText(dir, "root")).toBe(rootBefore);
-  expect((await lockfileJson(dir)).workspaces[""]).toEqual({ name: "root" });
+  expect((await lockfileJson(dir)).workspaces[""]).toStrictEqual({ name: "root" });
 });
 
 test.concurrent("a negation-only filter set skips the root", async () => {
@@ -241,9 +241,9 @@ test.concurrent("a negation-only filter set skips the root", async () => {
 
   expect(await pkgText(dir, "root")).toBe(rootBefore);
   expect(await pkgText(dir, "api")).toBe(apiBefore);
-  expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "pkg-a")).toEqual({ name: "pkg-a", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "pkg-b")).toEqual({ name: "pkg-b", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "pkg-a", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "pkg-b")).toStrictEqual({ name: "pkg-b", dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("every member negated: zero targets is an error, the root is not silently edited", async () => {
@@ -267,7 +267,7 @@ test.concurrent("every member negated: zero targets is an error, the root is not
     expect(exitCode).toBe(1);
   }
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   expect(await file(join(dir, "bun.lock")).text()).toBe(lockBefore);
   expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
@@ -282,7 +282,7 @@ test.concurrent("the root is included by naming it next to '*'", async () => {
     expect(exitCode).toBe(0);
 
     expect(await pkgText(dir, "root")).toBe(rootBefore);
-    expect(await declaring(dir, "a-dep")).toEqual(["api", "web", "pkg-a", "pkg-b"]);
+    expect(await declaring(dir, "a-dep")).toStrictEqual(["api", "web", "pkg-a", "pkg-b"]);
   }
 
   {
@@ -290,8 +290,8 @@ test.concurrent("the root is included by naming it next to '*'", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await declaring(dir, "no-deps")).toEqual(WORKSPACES);
-    expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
+    expect(await declaring(dir, "no-deps")).toStrictEqual(WORKSPACES);
+    expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
   }
 });
 
@@ -302,8 +302,8 @@ test.concurrent("'{.}' from the root selects the root and every workspace", asyn
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await declaring(dir, "no-deps")).toEqual(WORKSPACES);
-  expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
+  expect(await declaring(dir, "no-deps")).toStrictEqual(WORKSPACES);
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("'{dir}' selects every workspace under the directory", async () => {
@@ -315,7 +315,7 @@ test.concurrent("'{dir}' selects every workspace under the directory", async () 
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await declaring(dir, "no-deps")).toEqual(["api", "web", "pkg-a", "pkg-b"]);
+    expect(await declaring(dir, "no-deps")).toStrictEqual(["api", "web", "pkg-a", "pkg-b"]);
     expect(await pkgText(dir, "root")).toBe(rootBefore);
   }
 
@@ -351,7 +351,7 @@ test.concurrent("'{dir}' naming one workspace directory selects just it; '!{dir}
     const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "*", "--filter", "!{./packages}"], dir);
     expect(stderr).toContain('error: No workspace packages matched the filter "*", "!{./packages}"');
     expect(exitCode).toBe(1);
-    expect(await allPackageJsonTexts(dir)).toEqual(after);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(after);
   }
 });
 
@@ -363,7 +363,7 @@ test.concurrent("a '{dir}' matching nothing is the usual no-match error", async 
   expect(stderr).toContain('error: No workspace packages matched the filter "{./tools}"');
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent.each<[string, Workspace[]]>([
@@ -441,7 +441,7 @@ test.concurrent(
     expect(exitCode).toBe(0);
 
     await expectAddedOnlyTo(dir, before, ["api", "web"]);
-    expect((await lockfileJson(dir)).workspaces[""].dependencies).toEqual({ api: "workspace:*" });
+    expect((await lockfileJson(dir)).workspaces[""].dependencies).toStrictEqual({ api: "workspace:*" });
   },
 );
 
@@ -464,8 +464,8 @@ test.concurrent("relation selectors terminate on a workspace dependency cycle", 
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect((await read(dir, "x").json()).dependencies).toEqual({ y: "workspace:*", "no-deps": "^2.0.0" });
-    expect((await read(dir, "y").json()).dependencies).toEqual({ x: "workspace:*", "no-deps": "^2.0.0" });
+    expect((await read(dir, "x").json()).dependencies).toStrictEqual({ y: "workspace:*", "no-deps": "^2.0.0" });
+    expect((await read(dir, "y").json()).dependencies).toStrictEqual({ x: "workspace:*", "no-deps": "^2.0.0" });
     expect(await read(dir, "z").text()).toBe(zBefore);
     expect(await read(dir, "root").text()).toBe(rootBefore);
   }
@@ -484,7 +484,7 @@ test.concurrent("relation selectors terminate on a workspace dependency cycle", 
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect((await read(dir, "y").json()).dependencies).toEqual({ x: "workspace:*", "no-deps": "^2.0.0" });
+    expect((await read(dir, "y").json()).dependencies).toStrictEqual({ x: "workspace:*", "no-deps": "^2.0.0" });
     expect(await read(dir, "x").text()).toBe(xBefore);
     expect(await read(dir, "z").text()).toBe(zBefore);
     expect(await read(dir, "root").text()).toBe(rootBefore);
@@ -504,8 +504,8 @@ test.concurrent("remove with a relation", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "pkg-a": "workspace:*" } });
-  expect(await pkg(dir, "pkg-a")).toEqual({ name: "pkg-a" });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "pkg-a": "workspace:*" } });
+  expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "pkg-a" });
   expect(await pkgText(dir, "web")).toBe(webBefore);
   expect(await pkgText(dir, "root")).toBe(rootBefore);
   expect(await pkgText(dir, "pkg-b")).toBe(pkgBBefore);
@@ -530,7 +530,7 @@ test.concurrent("a relation that reaches nothing warns like any other pattern", 
     const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "nope..."], dir);
     expect(stderr).toContain('error: No workspace packages matched the filter "nope..."');
     expect(exitCode).toBe(1);
-    expect(await allPackageJsonTexts(dir)).toEqual(before);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   }
 });
 
@@ -545,7 +545,7 @@ test.concurrent("a relation needs a lockfile; a name selector does not", async (
     );
     expect(exitCode).toBe(1);
 
-    expect(await allPackageJsonTexts(dir)).toEqual(before);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
     expect(await exists(join(dir, "bun.lock"))).toBeFalse();
     expect(await exists(join(dir, "node_modules"))).toBeFalse();
   }
@@ -568,7 +568,7 @@ test.concurrent("a bare '...' is rejected", async () => {
   expect(stderr).toContain('error: --filter "..." is missing a workspace name or path');
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   expect(await file(join(dir, "bun.lock")).text()).toBe(lockBefore);
   expect(await exists(join(dir, "node_modules", "no-deps"))).toBeFalse();
 });
@@ -594,7 +594,7 @@ test.concurrent(
         exists(join(dir, "node_modules", "a-dep")),
         exists(join(dir, "node_modules", "is-number")),
       ]),
-    ).toEqual([true, false, false]);
+    ).toStrictEqual([true, false, false]);
   },
 );
 
@@ -615,7 +615,7 @@ test.concurrent("install --filter with relations installs the closure only", asy
 
     expect(
       await Promise.all(["no-deps", "is-number", "api", "pkg-a", "a-dep", "left-pad", "basic-1"].map(installed)),
-    ).toEqual([true, true, true, true, false, false, false]);
+    ).toStrictEqual([true, true, true, true, false, false, false]);
   }
 
   {
@@ -623,7 +623,7 @@ test.concurrent("install --filter with relations installs the closure only", asy
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await Promise.all(["a-dep", "left-pad", "basic-1"].map(installed))).toEqual([true, false, false]);
+    expect(await Promise.all(["a-dep", "left-pad", "basic-1"].map(installed))).toStrictEqual([true, false, false]);
   }
 });
 
@@ -675,9 +675,9 @@ test.concurrent("path filter, run from inside another workspace", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-    expect(await pkg(dir, "root")).toEqual(ROOT);
-    expect(await pkg(dir, "web")).toEqual(WEB);
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "root")).toStrictEqual(ROOT);
+    expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
 
   {
@@ -687,12 +687,12 @@ test.concurrent("path filter, run from inside another workspace", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({
+    expect(await pkg(dir, "api")).toStrictEqual({
       name: "api",
       dependencies: { "a-dep": "^1.0.10", "no-deps": "^2.0.0" },
     });
-    expect(await pkg(dir, "root")).toEqual(ROOT);
-    expect(await pkg(dir, "web")).toEqual(WEB);
+    expect(await pkg(dir, "root")).toStrictEqual(ROOT);
+    expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
 });
 
@@ -704,7 +704,7 @@ test.concurrent("no match is an error and nothing is written", async () => {
   expect(stderr).toContain("error: No workspace packages matched the filter");
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   expect(await exists(join(dir, "bun.lock"))).toBeFalse();
   expect(await exists(join(dir, "node_modules"))).toBeFalse();
 });
@@ -723,8 +723,8 @@ test.concurrent("remove --filter removes from the matched workspace only", async
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({ name: "api" });
-    expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api" });
+    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "no-deps": "^2.0.0" } });
     expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
   }
 
@@ -733,7 +733,7 @@ test.concurrent("remove --filter removes from the matched workspace only", async
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "web")).toEqual({ name: "web" });
+    expect(await pkg(dir, "web")).toStrictEqual({ name: "web" });
     expect(await exists(join(dir, "node_modules", "no-deps"))).toBeFalse();
   }
 });
@@ -752,15 +752,21 @@ test.concurrent("remove --filter '*' leaves the root's entries alone", async () 
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await allPackageJsons(dir)).toEqual([{ ...ROOT, dependencies: deps }, API, { name: "web" }, PKG_A, PKG_B]);
+  expect(await allPackageJsons(dir)).toStrictEqual([
+    { ...ROOT, dependencies: deps },
+    API,
+    { name: "web" },
+    PKG_A,
+    PKG_B,
+  ]);
   expect(await pkgText(dir, "root")).toBe(rootBefore);
   expect(
     await Promise.all([
       exists(join(dir, "node_modules", "no-deps", "package.json")),
       exists(join(dir, "node_modules", "a-dep", "package.json")),
     ]),
-  ).toEqual([true, true]);
-  expect((await lockfileJson(dir)).workspaces[""].dependencies).toEqual(deps);
+  ).toStrictEqual([true, true]);
+  expect((await lockfileJson(dir)).workspaces[""].dependencies).toStrictEqual(deps);
 });
 
 test.concurrent("add --filter with an existing lockfile re-resolves only the added dep", async () => {
@@ -771,15 +777,15 @@ test.concurrent("add --filter with an existing lockfile re-resolves only the add
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "web")).toEqual({
+  expect(await pkg(dir, "web")).toStrictEqual({
     name: "web",
     dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" },
   });
-  expect(await file(join(dir, "node_modules", "a-dep", "package.json")).json()).toEqual({
+  expect(await file(join(dir, "node_modules", "a-dep", "package.json")).json()).toStrictEqual({
     name: "a-dep",
     version: "1.0.1",
   });
-  expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+  expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
     name: "no-deps",
     version: "2.0.0",
   });
@@ -794,7 +800,7 @@ test.concurrent("--dry-run writes nothing", async () => {
   expect(exitCode).toBe(0);
 
   expect(await pkgText(dir, "api")).toBe(before);
-  expect(await pkg(dir, "root")).toEqual(ROOT);
+  expect(await pkg(dir, "root")).toStrictEqual(ROOT);
 });
 
 // Ported from pnpm's filtered add/remove suites and pacquet's install_filters.rs.
@@ -810,7 +816,7 @@ test.concurrent(
     expect(exitCode).toBe(0);
 
     expect(await pkgText(dir, "api")).toBe(apiBefore);
-    expect(await allPackageJsons(dir)).toEqual([
+    expect(await allPackageJsons(dir)).toStrictEqual([
       ROOT,
       { name: "api", dependencies: { "no-deps": "1.0.0" } },
       { name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } },
@@ -833,7 +839,7 @@ test.concurrent("add --only-missing --filter resolves from a target that receive
   expect(exitCode).toBe(0);
 
   expect(await pkgText(dir, "root")).toBe(rootBefore);
-  expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("add --only-missing --filter where every target already has it writes nothing", async () => {
@@ -850,7 +856,7 @@ test.concurrent("add --only-missing --filter where every target already has it w
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent("remove --filter leaves targets that did not contain the dependency byte-identical", async () => {
@@ -868,7 +874,7 @@ test.concurrent("remove --filter leaves targets that did not contain the depende
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api" });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api" });
   expect(await pkgText(dir, "web")).toBe(webBefore);
   expect(await pkgText(dir, "root")).toBe(rootBefore);
   expect(await pkgText(dir, "pkg-a")).toBe(pkgABefore);
@@ -885,7 +891,7 @@ test.concurrent("remove --filter where no target contains the dependency writes 
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent("add/remove --filter with the isolated linker links only the target workspace", async () => {
@@ -898,8 +904,8 @@ test.concurrent("add/remove --filter with the isolated linker links only the tar
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-    expect(await file(join(dir, "packages", "api", "node_modules", "no-deps", "package.json")).json()).toEqual({
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await file(join(dir, "packages", "api", "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
       name: "no-deps",
       version: "2.0.0",
     });
@@ -915,8 +921,8 @@ test.concurrent("add/remove --filter with the isolated linker links only the tar
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "api")).toEqual({ name: "api" });
-    expect(await pkg(dir, "web")).toEqual(WEB);
+    expect(await pkg(dir, "api")).toStrictEqual({ name: "api" });
+    expect(await pkg(dir, "web")).toStrictEqual(WEB);
     // The isolated installer does not yet prune packages/api/node_modules/no-deps (same as unfiltered `bun remove`).
     expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps");
   }
@@ -945,11 +951,11 @@ test.concurrent("add --filter links only the selected workspace (hoisted)", asyn
   expect(stdout).toMatch(/\b2 packages installed\b/);
   expect(exitCode).toBe(0);
 
-  expect(await installed()).toEqual([true, true, false, false, false, true]);
+  expect(await installed()).toStrictEqual([true, true, false, false, false, true]);
   expect(await file(join(dir, "bun.lock")).text()).toContain('"a-dep@1.0.1"');
 
   await installOk(dir, "hoisted");
-  expect(await installed()).toEqual([true, true, true, true, true, true]);
+  expect(await installed()).toStrictEqual([true, true, true, true, true, true]);
 });
 
 test.concurrent("add --filter leaves the root's own dependencies alone unless the root is selected", async () => {
@@ -961,9 +967,9 @@ test.concurrent("add --filter leaves the root's own dependencies alone unless th
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await Promise.all(["is-number", "api", "web", "pkg-a", "pkg-b", "a-dep", "no-deps"].map(installed))).toEqual(
-      [false, true, true, true, true, true, true],
-    );
+    expect(
+      await Promise.all(["is-number", "api", "web", "pkg-a", "pkg-b", "a-dep", "no-deps"].map(installed)),
+    ).toStrictEqual([false, true, true, true, true, true, true]);
   }
 
   {
@@ -990,9 +996,9 @@ test.concurrent("remove --filter re-links only the selected workspace", async ()
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api" });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api" });
   expect(await pkgText(dir, "web")).toBe(webBefore);
-  expect(await installed()).toEqual([true, false, false, false]);
+  expect(await installed()).toStrictEqual([true, false, false, false]);
   expect((await lockfileJson(dir)).packages["no-deps"]).toBeDefined();
 
   await installOk(dir, "hoisted");
@@ -1019,7 +1025,7 @@ test.concurrent("add --filter with a relation links the whole closure and nothin
     await Promise.all(
       ["api", "pkg-a", "no-deps", "web", "a-dep", "is-number"].map(name => exists(join(dir, "node_modules", name))),
     ),
-  ).toEqual([true, true, true, false, false, false]);
+  ).toStrictEqual([true, true, true, false, false, false]);
 });
 
 test.concurrent("outdated --filter warns about a positive pattern that matched nothing", async () => {
@@ -1064,8 +1070,8 @@ test.concurrent("two name filters are unioned and unselected workspaces are byte
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
   expect(await pkgText(dir, "root")).toBe(rootBefore);
   expect(await pkgText(dir, "pkg-a")).toBe(pkgABefore);
   expect(await pkgText(dir, "pkg-b")).toBe(pkgBBefore);
@@ -1081,7 +1087,7 @@ test.concurrent("remove --filter with no match names the pattern and touches not
   expect(stderr).toContain('error: No workspace packages matched the filter "nope"');
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   expect(await file(join(dir, "bun.lock")).text()).toBe(lockBefore);
   expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
@@ -1094,7 +1100,7 @@ test.concurrent("a filter that matches nothing warns when another filter matched
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("negated filters that match nothing do not warn", async () => {
@@ -1105,7 +1111,7 @@ test.concurrent("negated filters that match nothing do not warn", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("an explicit version is written verbatim to every target", async () => {
@@ -1129,7 +1135,7 @@ test.concurrent("an explicit version is written verbatim to every target", async
       name: "web",
       dependencies: { "a-dep": "1.0.1", "no-deps": "^1.0.0" },
     });
-    expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
       name: "no-deps",
       version: "1.1.0",
     });
@@ -1170,9 +1176,9 @@ test.concurrent("the root can be selected by name", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "no-deps": "^2.0.0" } });
   const [, ...membersAfter] = await allPackageJsonTexts(dir);
-  expect(membersAfter).toEqual(membersBefore);
+  expect(membersAfter).toStrictEqual(membersBefore);
 });
 
 test.concurrent("'.' selects the workspace of the invoking directory", async () => {
@@ -1184,9 +1190,9 @@ test.concurrent("'.' selects the workspace of the invoking directory", async () 
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { "a-dep": "^1.0.10" } });
+    expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "a-dep": "^1.0.10" } });
     const [, ...membersAfter] = await allPackageJsonTexts(dir);
-    expect(membersAfter).toEqual(membersBefore);
+    expect(membersAfter).toStrictEqual(membersBefore);
   }
 
   {
@@ -1197,9 +1203,12 @@ test.concurrent("'.' selects the workspace of the invoking directory", async () 
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "web")).toStrictEqual({
+      name: "web",
+      dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" },
+    });
     expect(await pkgText(dir, "root")).toBe(rootBefore);
-    expect(await pkg(dir, "api")).toEqual(API);
+    expect(await pkg(dir, "api")).toStrictEqual(API);
   }
 });
 
@@ -1212,7 +1221,7 @@ test.concurrent("a directory excluded by a '!' entry in workspaces is never a ta
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await allPackageJsons(dir)).toEqual([
+    expect(await allPackageJsons(dir)).toStrictEqual([
       { name: "root", workspaces: ["packages/*", "!packages/web"] },
       { name: "api", dependencies: { "no-deps": "^2.0.0" } },
       WEB,
@@ -1237,8 +1246,8 @@ test.concurrent("workspaces: { packages: [...] } object form is honoured", async
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "root")).toEqual({ name: "root", workspaces: { packages: ["packages/*"] } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual({ name: "root", workspaces: { packages: ["packages/*"] } });
 });
 
 test.concurrent("scoped workspace names match a scope glob", async () => {
@@ -1249,7 +1258,7 @@ test.concurrent("scoped workspace names match a scope glob", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await allPackageJsons(dir)).toEqual([
+    expect(await allPackageJsons(dir)).toStrictEqual([
       ROOT,
       API,
       WEB,
@@ -1263,8 +1272,8 @@ test.concurrent("scoped workspace names match a scope glob", async () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "pkg-a")).toEqual({ name: "@acme/a" });
-    expect(await pkg(dir, "pkg-b")).toEqual({ name: "@acme/b", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "@acme/a" });
+    expect(await pkg(dir, "pkg-b")).toStrictEqual({ name: "@acme/b", dependencies: { "no-deps": "^2.0.0" } });
   }
 });
 
@@ -1275,7 +1284,7 @@ test.concurrent("add --filter --lockfile-only edits package.json and bun.lock bu
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
   expect(await file(join(dir, "bun.lock")).text()).toContain('"no-deps@2.0.0"');
   expect(await exists(join(dir, "node_modules"))).toBeFalse();
 });
@@ -1305,9 +1314,12 @@ test.concurrent("running from a non-package subdirectory selects by filter and s
     expect(await exists(join(dir, "tools", "scratch", "package.json"))).toBeFalse();
   }
 
-  expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "^1.0.10", "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "api")).toEqual(API);
-  expect(await pkg(dir, "root")).toEqual(ROOT);
+  expect(await pkg(dir, "web")).toStrictEqual({
+    name: "web",
+    dependencies: { "a-dep": "^1.0.10", "no-deps": "^2.0.0" },
+  });
+  expect(await pkg(dir, "api")).toStrictEqual(API);
+  expect(await pkg(dir, "root")).toStrictEqual(ROOT);
 });
 
 test.concurrent.each(["add", "install"])(
@@ -1335,8 +1347,8 @@ test.concurrent("filtered remove keeps the unselected workspace's lockfile entri
   expect(exitCode).toBe(0);
 
   const lockfile = await lockfileJson(dir);
-  expect(lockfile.workspaces["packages/api"]).toEqual({ name: "api" });
-  expect(lockfile.workspaces["packages/web"]).toEqual({
+  expect(lockfile.workspaces["packages/api"]).toStrictEqual({ name: "api" });
+  expect(lockfile.workspaces["packages/web"]).toStrictEqual({
     name: "web",
     dependencies: { api: "workspace:*", "no-deps": "^2.0.0" },
   });
@@ -1351,8 +1363,8 @@ test.concurrent("bun install <pkg> -F targets the workspace", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "root")).toEqual(ROOT);
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual(ROOT);
 });
 
 // The root is only skipped by '*' when there are workspaces to select instead.
@@ -1363,7 +1375,7 @@ test.concurrent("--filter outside a workspace: the lone package is the only cand
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "*"], packageDir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(join(packageDir, "package.json")).json()).toStrictEqual({
       name: "solo",
       dependencies: { "no-deps": "^2.0.0" },
     });
@@ -1393,7 +1405,7 @@ test.concurrent("--filter with --global is rejected", async () => {
   expect(stderr).toContain("error: --filter cannot be used with --global");
   expect(exitCode).toBe(1);
 
-  expect(await pkg(dir, "api")).toEqual(API);
+  expect(await pkg(dir, "api")).toStrictEqual(API);
   expect(await exists(join(globalDir, "install", "global", "node_modules", "no-deps"))).toBeFalse();
 });
 
@@ -1412,11 +1424,11 @@ test.concurrent("package.json is written even when a root postinstall fails (pnp
   expect(stderr).toContain('postinstall script from "root" exited with 1');
   expect(exitCode).toBe(1);
 
-  expect((await pkg(dir, "root")).dependencies).toEqual({ "no-deps": "^2.0.0" });
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect((await pkg(dir, "root")).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
   const { workspaces } = await lockfileJson(dir);
-  expect(workspaces[""].dependencies).toEqual({ "no-deps": "^2.0.0" });
-  expect(workspaces["packages/api"]).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(workspaces[""].dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+  expect(workspaces["packages/api"]).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("the root's lifecycle scripts do not run when --filter leaves the root out", async () => {
@@ -1439,7 +1451,7 @@ test.concurrent("a failed resolution leaves every target untouched", async () =>
   expect(stderr).toContain(`error: GET ${registry.registryUrl()}does-not-exist-anywhere - 404`);
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent("bun.lock records the resolved range for every target, not just the first", async () => {
@@ -1450,8 +1462,8 @@ test.concurrent("bun.lock records the resolved range for every target, not just 
   expect(exitCode).toBe(0);
 
   const { workspaces } = await lockfileJson(dir);
-  expect(workspaces["packages/pkg-a"]).toEqual({ name: "pkg-a", dependencies: { "no-deps": "^2.0.0" } });
-  expect(workspaces["packages/pkg-b"]).toEqual({ name: "pkg-b", dependencies: { "no-deps": "^2.0.0" } });
+  expect(workspaces["packages/pkg-a"]).toStrictEqual({ name: "pkg-a", dependencies: { "no-deps": "^2.0.0" } });
+  expect(workspaces["packages/pkg-b"]).toStrictEqual({ name: "pkg-b", dependencies: { "no-deps": "^2.0.0" } });
 
   const second = await run(["install"], dir);
   expect(second.stderr).not.toContain("Saved lockfile");
@@ -1471,8 +1483,11 @@ test.concurrent("--only-missing resolves each request from a target that receive
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "web")).toEqual({ name: "web", dependencies: { "a-dep": "^1.0.10", "no-deps": "1.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "web")).toStrictEqual({
+    name: "web",
+    dependencies: { "a-dep": "^1.0.10", "no-deps": "1.0.0" },
+  });
 });
 
 test.concurrent("a local path is relative to the cwd and re-spelled for each target (pnpm#9368)", async () => {
@@ -1485,13 +1500,13 @@ test.concurrent("a local path is relative to the cwd and re-spelled for each tar
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "root")).toEqual({ ...ROOT, dependencies: { foo: "./vendor/foo" } });
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { foo: "../../vendor/foo" } });
-  expect(await pkg(dir, "web")).toEqual(WEB);
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { foo: "./vendor/foo" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { foo: "../../vendor/foo" } });
+  expect(await pkg(dir, "web")).toStrictEqual(WEB);
   const { workspaces } = await lockfileJson(dir);
-  expect(workspaces[""].dependencies).toEqual({ foo: "./vendor/foo" });
-  expect(workspaces["packages/api"].dependencies).toEqual({ foo: "../../vendor/foo" });
-  expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toEqual(VENDOR_FOO);
+  expect(workspaces[""].dependencies).toStrictEqual({ foo: "./vendor/foo" });
+  expect(workspaces["packages/api"].dependencies).toStrictEqual({ foo: "../../vendor/foo" });
+  expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
 
   const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
   expect(frozen.stderr).not.toContain("error:");
@@ -1508,8 +1523,8 @@ test.concurrent("a file: path keeps its prefix and resolves from a nested cwd", 
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { foo: "file:../../vendor/foo" } });
-  expect(await pkg(dir, "web")).toEqual(WEB);
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { foo: "file:../../vendor/foo" } });
+  expect(await pkg(dir, "web")).toStrictEqual(WEB);
 });
 
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
@@ -1522,7 +1537,7 @@ test.concurrent("a local path that does not exist relative to the cwd fails and 
   expect(stderr).toContain('error: Could not find package.json for "file:');
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent("--filter writes the same entry as running bun add inside the workspace (pnpm#7194)", async () => {
@@ -1540,8 +1555,8 @@ test.concurrent("--filter writes the same entry as running bun add inside the wo
   }
 
   const [pkgA, api] = await Promise.all([pkg(dir, "pkg-a"), pkg(dir, "api")]);
-  expect(pkgA.dependencies).toEqual({ "a-dep": "^1.0.10", "no-deps": "2.0.0" });
-  expect(api.dependencies).toEqual(pkgA.dependencies);
+  expect(pkgA.dependencies).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": "2.0.0" });
+  expect(api.dependencies).toStrictEqual(pkgA.dependencies);
 });
 
 test.concurrent("a directory name is not a package name for a scoped workspace (pnpm#5601)", async () => {
@@ -1552,7 +1567,7 @@ test.concurrent("a directory name is not a package name for a scoped workspace (
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "pkg-a"], dir);
     expect(stderr).toContain('error: No workspace packages matched the filter "pkg-a"');
     expect(exitCode).toBe(1);
-    expect(await allPackageJsonTexts(dir)).toEqual(before);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   }
 
   for (const pattern of ["*/pkg-a", "./packages/pkg-a"]) {
@@ -1560,7 +1575,7 @@ test.concurrent("a directory name is not a package name for a scoped workspace (
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   }
-  expect(await pkg(dir, "pkg-a")).toEqual({ name: "@org/pkg-a", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "@org/pkg-a", dependencies: { "no-deps": "^2.0.0" } });
 });
 
 test.concurrent("a name glob does not cross the scope separator (pnpm#3452)", async () => {
@@ -1570,16 +1585,16 @@ test.concurrent("a name glob does not cross the scope separator (pnpm#3452)", as
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "*-utils"], dir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
-    expect(await pkg(dir, "pkg-a")).toEqual({ name: "@org/date-utils" });
-    expect(await pkg(dir, "pkg-b")).toEqual({ name: "string-utils", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "@org/date-utils" });
+    expect(await pkg(dir, "pkg-b")).toStrictEqual({ name: "string-utils", dependencies: { "no-deps": "^2.0.0" } });
   }
 
   {
     const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "*/*-utils"], dir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
-    expect(await pkg(dir, "pkg-a")).toEqual({ name: "@org/date-utils", dependencies: { "a-dep": "^1.0.10" } });
-    expect(await pkg(dir, "pkg-b")).toEqual({ name: "string-utils", dependencies: { "no-deps": "^2.0.0" } });
+    expect(await pkg(dir, "pkg-a")).toStrictEqual({ name: "@org/date-utils", dependencies: { "a-dep": "^1.0.10" } });
+    expect(await pkg(dir, "pkg-b")).toStrictEqual({ name: "string-utils", dependencies: { "no-deps": "^2.0.0" } });
   }
 });
 
@@ -1591,7 +1606,7 @@ test.concurrent("a negated pattern wins regardless of flag order (pnpm#9354)", a
   expect(stderr).toContain("error: No workspace packages matched the filter");
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 // Only the brace form `{./packages}` is a subtree selector; a bare path must name a workspace directory.
@@ -1603,14 +1618,14 @@ test.concurrent("a path pattern naming the parent directory selects nothing (pnp
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "./packages"], dir);
     expect(stderr).toContain("error: No workspace packages matched the filter");
     expect(exitCode).toBe(1);
-    expect(await allPackageJsonTexts(dir)).toEqual(before);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   }
 
   {
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "./packages/*"], dir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
-    expect(await allPackageJsons(dir)).toEqual([
+    expect(await allPackageJsons(dir)).toStrictEqual([
       ROOT,
       { name: "api", dependencies: { "no-deps": "^2.0.0" } },
       { name: "web", dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" } },
@@ -1628,7 +1643,7 @@ test.concurrent("an empty --filter value is a no-match error, not a crash (pnpm#
   expect(stderr).toContain('error: No workspace packages matched the filter ""');
   expect(exitCode).toBe(1);
 
-  expect(await allPackageJsonTexts(dir)).toEqual(before);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
   expect(await exists(join(dir, "node_modules"))).toBeFalse();
 });
 
@@ -1642,7 +1657,7 @@ test.concurrent("path filters resolve against --cwd (pnpm#5270)", async () => {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  expect(await pkg(dir, "api")).toEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
-  expect(await pkg(dir, "root")).toEqual(ROOT);
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+  expect(await pkg(dir, "root")).toStrictEqual(ROOT);
   expect(await exists(join(elsewhere, "package.json"))).toBeFalse();
 });

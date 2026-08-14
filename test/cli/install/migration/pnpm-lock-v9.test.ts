@@ -560,7 +560,7 @@ importers:
       expect(bunLock).not.toContain("is-positive@3.1.0@");
 
       const packageJson = await Bun.file(join(String(dir), "package.json")).json();
-      expect(packageJson.patchedDependencies).toEqual({ "is-positive@3.1.0": "patches/is-positive@3.1.0.patch" });
+      expect(packageJson.patchedDependencies).toStrictEqual({ "is-positive@3.1.0": "patches/is-positive@3.1.0.patch" });
     });
 
     test.concurrent("bare hash whose patch is not in the config is skipped with a warning", async () => {
@@ -593,7 +593,7 @@ importers:
       expect(bunLock).toContain(`"no-deps@1.0.1": "patches/no-deps.patch"`);
 
       const packageJson = await Bun.file(join(packageDir, "package.json")).json();
-      expect(packageJson.patchedDependencies).toEqual({ "no-deps@1.0.1": "patches/no-deps.patch" });
+      expect(packageJson.patchedDependencies).toStrictEqual({ "no-deps@1.0.1": "patches/no-deps.patch" });
     });
   });
 
@@ -779,7 +779,7 @@ snapshots:
       const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
 
       expect(install.stderr).not.toContain("error:");
-      expect(await installedPackageJson(String(dir), "", "foo")).toEqual({ name: "foo", version: "1.0.0" });
+      expect(await installedPackageJson(String(dir), "", "foo")).toStrictEqual({ name: "foo", version: "1.0.0" });
       expect(install.exitCode).toBe(0);
     });
 
@@ -1543,12 +1543,23 @@ snapshots:
 
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
-      expect(await Bun.file(join(packageDir, "packages/project-2/node_modules/project-1/package.json")).json()).toEqual(
-        expect.objectContaining({ name: "project-1" }),
-      );
-      expect(await Bun.file(join(packageDir, "packages/project-3/node_modules/project-2/package.json")).json()).toEqual(
-        expect.objectContaining({ name: "project-2" }),
-      );
+      expect(
+        await Bun.file(join(packageDir, "packages/project-2/node_modules/project-1/package.json")).json(),
+      ).toStrictEqual({
+        name: "project-1",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.1" },
+        peerDependencies: { "no-deps": ">=1.0.0" },
+      });
+      expect(
+        await Bun.file(join(packageDir, "packages/project-3/node_modules/project-2/package.json")).json(),
+      ).toStrictEqual({
+        name: "project-2",
+        version: "1.0.0",
+        dependencies: { "project-1": "workspace:*" },
+        devDependencies: { "no-deps": "1.0.1" },
+        dependenciesMeta: { "project-1": { injected: true } },
+      });
     });
 
     test("an unrecorded required peer is reported and left for bun install", async () => {
@@ -1688,9 +1699,7 @@ snapshots:
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
       expect(await bunLockOf(packageDir)).toBe(migrated);
-      expect(await installedPackageJson(packageDir, "", "a-dep")).toEqual(
-        expect.objectContaining({ name: "a-dep", version: "1.0.1" }),
-      );
+      expect(await installedPackageJson(packageDir, "", "a-dep")).toStrictEqual({ name: "a-dep", version: "1.0.1" });
     });
 
     test("bun install straight from pnpm-lock.yaml writes the same importers as bun pm migrate", async () => {
@@ -2024,7 +2033,10 @@ importers:
     const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
 
     expect(install.stderr).not.toContain("error:");
-    expect(await installedPackageJson(String(dir), "apps/web", "common")).toEqual({ name: "common", version: "1.2.0" });
+    expect(await installedPackageJson(String(dir), "apps/web", "common")).toStrictEqual({
+      name: "common",
+      version: "1.2.0",
+    });
     expect(install.exitCode).toBe(0);
   });
 

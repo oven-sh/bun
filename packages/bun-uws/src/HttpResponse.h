@@ -496,7 +496,16 @@ public:
     }
 
     HttpResponse *resume() {
-        Super::resume();
+        /* While requests are parked behind this response the pause belongs to the
+         * pipelining code (HttpContext resumes when it replays them, upgrade() when
+         * it drops them). The resumes arriving here release a request-body
+         * backpressure pause and can land after the body completed and the bytes
+         * behind it were parked; reading on would only queue more behind them, or
+         * take a FIN that closes the connection over them. node:http's flood
+         * prevention only gets here once its parked bytes are gone. */
+        if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
+            Super::resume();
+        }
         this->resetTimeout();
         return this;
     }

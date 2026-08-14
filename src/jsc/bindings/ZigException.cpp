@@ -185,16 +185,14 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
-        source_line_numbers[0] = location.line();
-        // The caret is measured from the excerpt's text (the printer trims the previous
-        // line's '\n' that lineStart is still on), not taken from location.column(): on
-        // the first line of a source with a start column (node:vm's columnOffset) the
-        // reported column includes that offset, which the excerpt does not contain.
-        int textStart = static_cast<int>(lineStart);
-        if (lineStart < sourceString.length() && sourceString[lineStart] == '\n')
+        // The scan above stops on the previous line's '\n' (the loop below counts on lineStart staying there); the excerpt starts after it.
+        unsigned int textStart = lineStart;
+        if (lineStart < lineEnd && sourceString[lineStart] == '\n')
             textStart++;
-        *source_lines_caret_column = std::max(location.byte_position - textStart, 0);
+        source_lines[0] = Bun::toStringView(sourceString.substring(textStart, lineEnd - textStart));
+        source_line_numbers[0] = location.line();
+        // Not location.column(): on the first line of a source with a start column (node:vm's columnOffset) that includes the offset.
+        *source_lines_caret_column = location.byte_position - static_cast<int>(textStart);
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;

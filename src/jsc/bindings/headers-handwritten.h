@@ -218,11 +218,7 @@ typedef struct ZigStackTrace {
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
-    /// Column of `source_lines_ptr[0]` the error printer puts its caret under
-    /// (-1 if unset). Set by whoever fills `source_lines_ptr[0]`. It differs
-    /// from the top frame's column when the reported column does not count
-    /// from the start of the excerpted text: positions on the first line of a
-    /// source with a start column (node:vm's columnOffset) include that offset.
+    /// Column of `source_lines_ptr[0]` the caret is drawn under (-1 if unset); filled together with that line.
     int32_t source_lines_caret_column_zero_based;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;

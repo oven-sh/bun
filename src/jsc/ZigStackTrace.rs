@@ -17,11 +17,7 @@ pub struct ZigStackTrace {
     pub(crate) source_lines_numbers: *mut i32,
     pub(crate) source_lines_len: u8,
     pub(crate) source_lines_to_collect: u8,
-    /// Column of `source_lines_ptr[0]` the caret is drawn under; set together
-    /// with that line. Not necessarily the top frame's column: on the first
-    /// line of a source with a start column (node:vm's `columnOffset`) the
-    /// frame's column includes the offset, while the excerpt is the physical
-    /// line.
+    /// Column of `source_lines_ptr[0]` the caret is drawn under; filled together with that line.
     pub(crate) source_lines_caret_column: Ordinal,
 
     pub(crate) frames_ptr: *mut ZigStackFrame,

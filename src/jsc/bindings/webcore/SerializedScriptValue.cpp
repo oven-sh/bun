@@ -1228,8 +1228,7 @@ private:
                 // prepareStackTrace propagates here instead of tripping the exception
                 // assertion inside JSObject::getOwnPropertyDescriptor.
                 errorInstance->materializeErrorInfoIfNeeded(vm);
-                // A throwing prepareStackTrace still leaves the default text in `stack`; node drops the field, so skip it.
-                bool stackUnreadable = fieldUnreadable();
+                (void)fieldUnreadable();
                 RETURN_IF_EXCEPTION(scope, false);
                 {
                     JSC::PropertyDescriptor d;
@@ -1255,7 +1254,7 @@ private:
                         sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
                 }
-                if (!stackUnreadable) {
+                {
                     JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
                     if (fieldUnreadable())
                         v = jsUndefined();

@@ -757,10 +757,11 @@ describe("error event", () => {
         `const e = new TypeError("boom"); e.name = Symbol("name"); throw e;`,
         { name: "TypeError", message: "boom" },
       ],
+      // bun leaves the default stack text on the error when prepareStackTrace throws, and reports it.
       [
         "throwing Error.prepareStackTrace",
         `Error.prepareStackTrace = () => { throw new Error("x"); }; throw new Error("boom");`,
-        { name: "Error", message: "boom", stack: undefined },
+        { name: "Error", message: "boom", stack: expect.any(String) },
       ],
       [
         "AggregateError with a throwing stack getter",

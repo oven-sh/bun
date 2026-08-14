@@ -17,42 +17,23 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-/// Resolve a user-level config file (`.bunfig.toml`, `.npmrc`) to
-/// `$XDG_CONFIG_HOME/<name>` when it exists there, otherwise `$HOME/<name>`.
-///
-/// The existence probe is what makes this a fallback rather than an override:
-/// many Linux setups export `XDG_CONFIG_HOME` by default, so preferring it
-/// unconditionally hides a pre-existing `$HOME/.npmrc` from users who never
-/// opted into XDG.
-pub fn user_config_path<'a>(buf: &'a mut PathBuffer, name: &[u8]) -> Option<&'a ZStr> {
-    let paths: [&[u8]; 1] = [name];
+/// `$XDG_CONFIG_HOME/.bunfig.toml` when that file exists, otherwise
+/// `$HOME/.bunfig.toml` (same rule as the user-level `.npmrc` in
+/// `PackageManager::init`). Many desktops and CI runners export
+/// `XDG_CONFIG_HOME` without ever putting a bunfig there.
+fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+    let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
-    let dir = match (env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()) {
-        (Some(xdg_dir), Some(home_dir)) => {
-            let mut probe = bun_paths::path_buffer_pool::get();
-            let candidate = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                xdg_dir,
-                &mut probe[..],
-                &paths,
-            );
-            if bun_sys::exists_z(candidate) {
-                xdg_dir
-            } else {
-                home_dir
-            }
-        }
-        (Some(xdg_dir), None) => xdg_dir,
-        (None, Some(home_dir)) => home_dir,
-        (None, None) => return None,
-    };
+    let xdg_dir = env_var::XDG_CONFIG_HOME.get_not_empty().filter(|xdg_dir| {
+        bun_sys::exists_z(resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            xdg_dir, &mut **buf, &paths,
+        ))
+    });
+    let dir = xdg_dir.or_else(|| env_var::HOME.get_not_empty())?;
 
     Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
         dir, &mut **buf, &paths,
     ))
-}
-
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    user_config_path(buf, b".bunfig.toml")
 }
 
 fn load_bunfig(

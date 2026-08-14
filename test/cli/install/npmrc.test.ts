@@ -2,7 +2,7 @@ import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, tempDir } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
@@ -221,6 +221,67 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+  });
+
+  // The global .bunfig.toml is looked up with the same rule as the user .npmrc above.
+  describe("global .bunfig.toml lookup", () => {
+    const bunfig = (cacheDir: string) => `[install]\ncache = "${cacheDir}"\n`;
+    const pkg = { "pkg/package.json": JSON.stringify({ name: "bunfig-lookup", version: "0.0.1" }) };
+
+    // `bun pm cache` prints the install cache directory. Each candidate .bunfig.toml
+    // points it at a differently named directory, so the output shows which file was
+    // read. BUN_INSTALL_CACHE_DIR would take precedence over bunfig, and CI runners
+    // set it as well as XDG_CONFIG_HOME, so both are removed.
+    async function pmCache(dir: string, envOverride: Record<string, string>) {
+      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
+      delete spawnEnv.XDG_CONFIG_HOME;
+      delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "cache"],
+        cwd: join(dir, "pkg"),
+        env: { ...spawnEnv, ...envOverride },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { cacheDir: basename(stdout.trim()), stderr, exitCode };
+    }
+
+    const usesCacheDir = (cacheDir: string) => ({ cacheDir, stderr: "", exitCode: 0 });
+
+    it.concurrent("uses $XDG_CONFIG_HOME/.bunfig.toml when it exists", async () => {
+      using dir = tempDir("bunfig-xdg", {
+        ...pkg,
+        "home/.bunfig.toml": bunfig("home-cache"),
+        "xdg/.bunfig.toml": bunfig("xdg-cache"),
+      });
+      const result = await pmCache(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesCacheDir("xdg-cache"));
+    });
+
+    // https://github.com/oven-sh/bun/issues/23128
+    it.concurrent("falls back to $HOME/.bunfig.toml when $XDG_CONFIG_HOME has no .bunfig.toml", async () => {
+      using dir = tempDir("bunfig-xdg-without-bunfig", {
+        ...pkg,
+        "home/.bunfig.toml": bunfig("home-cache"),
+        "xdg/.keep": "",
+      });
+      const result = await pmCache(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesCacheDir("home-cache"));
+    });
+
+    it.concurrent("uses $HOME/.bunfig.toml when $XDG_CONFIG_HOME is unset", async () => {
+      using dir = tempDir("bunfig-xdg-unset", { ...pkg, "home/.bunfig.toml": bunfig("home-cache") });
+      const result = await pmCache(String(dir), {});
+      expect(result).toEqual(usesCacheDir("home-cache"));
+    });
+
+    it.concurrent("uses $HOME/.bunfig.toml when $XDG_CONFIG_HOME is empty", async () => {
+      using dir = tempDir("bunfig-xdg-empty", { ...pkg, "home/.bunfig.toml": bunfig("home-cache") });
+      const result = await pmCache(String(dir), { XDG_CONFIG_HOME: "" });
+      expect(result).toEqual(usesCacheDir("home-cache"));
     });
   });
 

@@ -1186,7 +1186,7 @@ pub(crate) fn parse_rgb_components(
         from.percent_basis = (RGB_PERCENT_BASIS, RGB_PERCENT_BASIS, RGB_PERCENT_BASIS);
     }
 
-    let red = parser.parse_number_or_percentage(input)?;
+    let red = parser.parse_number_or_percentage(input, RGB_PERCENT_BASIS)?;
 
     let is_legacy_syntax = parser.from.is_none()
         && !red.unit_value().is_nan()
@@ -1228,8 +1228,8 @@ pub(crate) fn parse_rgb_components(
         }
 
         let r = get_component(red);
-        let g = get_component(parser.parse_number_or_percentage(input)?);
-        let b = get_component(parser.parse_number_or_percentage(input)?);
+        let g = get_component(parser.parse_number_or_percentage(input, RGB_PERCENT_BASIS)?);
+        let b = get_component(parser.parse_number_or_percentage(input, RGB_PERCENT_BASIS)?);
         (r, g, b)
     };
 
@@ -1491,11 +1491,13 @@ fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f
     Ok(res)
 }
 
+/// Alpha and the `color()` channels, whose percent basis is 1, so a number and
+/// a unit value are the same thing.
 pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
 ) -> CssResult<f32> {
-    let result = parser.parse_number_or_percentage(input)?;
+    let result = parser.parse_number_or_percentage(input, 1.0)?;
     Ok(match result {
         NumberOrPercentage::Number { value } => value,
         NumberOrPercentage::Percentage { unit_value } => unit_value,
@@ -1958,13 +1960,18 @@ impl ComponentParser {
         func(input, self)
     }
 
-    fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
+    /// `percent_basis` is what `100%` of the channel being parsed stands for.
+    fn parse_number_or_percentage(
+        &self,
+        input: &mut css::Parser,
+        percent_basis: f32,
+    ) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
             if let Ok(value) = input.try_parse(|i| RelativeComponentParser::parse_number(i, from)) {
                 return Ok(NumberOrPercentage::Number { value });
             }
-            if let Ok(unit_value) =
-                input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
+            if let Ok(unit_value) = input
+                .try_parse(|i| RelativeComponentParser::parse_percentage(i, from, percent_basis))
             {
                 return Ok(NumberOrPercentage::Percentage { unit_value });
             }
@@ -2016,8 +2023,8 @@ impl ComponentParser {
             if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
                 return Ok(value / percent_basis);
             }
-            if let Ok(unit_value) =
-                input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
+            if let Ok(unit_value) = input
+                .try_parse(|i| RelativeComponentParser::parse_percentage(i, from, percent_basis))
             {
                 return Ok(unit_value);
             }
@@ -2170,10 +2177,18 @@ impl RelativeComponentParser {
 
     /// Second pass for what `parse_number` could not fold: math functions with a
     /// percentage in them, and `min(r, g)`, since `reduce_args` only compares values.
-    fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        match Calc::<Percentage>::parse_with(input, this, |ctx, ident| {
-            let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;
-            Some(Calc::Value(Box::new(Percentage { v: unit_value })))
+    /// A keyword is its `<number>` as a fraction of the channel's `percent_basis`,
+    /// so `min(l, a)` compares lab's 0..100 `l` with `a` on the same scale.
+    fn parse_percentage(
+        input: &mut css::Parser,
+        this: &RelativeComponentParser,
+        percent_basis: f32,
+    ) -> CssResult<f32> {
+        match Calc::<Percentage>::parse_with(input, this, move |ctx, ident| {
+            let number = ctx.get_number(ident, ChannelType::NUMBER)?;
+            Some(Calc::Value(Box::new(Percentage {
+                v: number / percent_basis,
+            })))
         }) {
             Ok(Calc::Value(v)) => Ok(v.v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),

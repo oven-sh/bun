@@ -7774,8 +7774,10 @@ describe("css tests", () => {
 
     describe("percentage pass", () => {
       // What the <number> pass cannot fold is retried as a percentage
-      // expression, which is what folds min()/max() of two keywords. Unchanged
-      // from before, and lightningcss leaves these unparsed.
+      // expression, which is what folds min()/max() of keywords; lightningcss
+      // leaves all of these unparsed. Every keyword is compared as a number in
+      // the function's range, so alpha (1) and lab a/b (unscaled) mean the same
+      // thing next to r (0..255) or l (0..100) as they do on their own.
       minify_test(".foo { color: rgb(from rgb(200 100 50) min(r, g) g b) }", ".foo{color:#646432}");
       minify_test(".foo { color: rgb(from rgb(200 100 50) r g max(g, b)) }", ".foo{color:#c86464}");
       minify_test(
@@ -7785,6 +7787,13 @@ describe("css tests", () => {
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h min(s, l) l) }", ".foo{color:#3d8f3d}");
       minify_test(".foo { color: hwb(from hwb(120 20% 30%) h max(w, b) b) }", ".foo{color:#4cb34c}");
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(50% + 10%) l) }", ".foo{color:#29a329}");
+      // min(200, 1), min(1, 200), min(50, 1), min(50, 20), max(20, 30), min(50, 30).
+      minify_test(".foo { color: rgb(from rgb(200 100 50) min(r, alpha) g b) }", ".foo{color:#016432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / min(alpha, r)) }", ".foo{color:#c86432}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h min(s, alpha) l) }", ".foo{color:#656765}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) min(l, a) a b) }", ".foo{color:lab(20% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) max(a, b) a b) }", ".foo{color:lab(30% 20 30)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) min(l, c) c h) }", ".foo{color:lch(30% 30 120)}");
     });
   });
 

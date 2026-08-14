@@ -684,11 +684,15 @@ describe("relative color channel keywords", () => {
     expect(color(input, "css")).toBe(expected);
   });
 
-  // min()/max() of two keywords fold through the percentage pass, as before.
+  // min()/max() of keywords fold through the percentage pass, comparing the
+  // keywords as numbers in the function's range: min(200, 100), min(50, 40),
+  // max(20, 30), min(1, 200), min(50, 20).
   test.each([
     ["rgb(from rgb(200 100 50) min(r, g) g b)", "#646432"],
     ["hsl(from hsl(120 50% 40%) h min(s, l) l)", "#3d8f3d"],
     ["hwb(from hwb(120 20% 30%) h max(w, b) b)", "#4cb34c"],
+    ["rgb(from rgb(200 100 50) r g b / min(alpha, r))", "#c86432"],
+    ["lab(from lab(50% 20 30) min(l, a) a b)", "lab(20% 20 30)"],
   ])("%s", (input, expected) => {
     expect(color(input, "css")).toBe(expected);
   });

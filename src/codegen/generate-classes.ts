@@ -59,19 +59,9 @@ function DOMJITName(fnName) {
   return `${fnName}WithoutTypeChecks`;
 }
 
-// Emitted at every generated site that creates a wrapper (`instance`), once its
-// m_ctx is set. The member it calls is generated below and is also what the
-// hand-written creation sites (JSBunRequest, JSBakeResponse, ShellBindings)
-// call, so the class definition alone decides what gets reported.
+// Emitted once `instance->m_ctx` is set at every generated wrapper creation site.
 function reportExtraMemoryAllocated(obj: ClassDefinition) {
   return obj.estimatedSize ? `instance->reportExtraMemoryAllocated(vm);` : "";
-}
-
-// The Rust symbol `JS${typeName}::reportExtraMemoryAllocated` hands to the heap.
-// `visitChildren` always re-reports `estimatedSize`; see
-// ClassDefinition.newlyAllocatedSize for why the creation-time number can differ.
-function allocationSizeSymbol(typeName: string, obj: ClassDefinition) {
-  return symbolName(typeName, obj.newlyAllocatedSize ? "newlyAllocatedSize" : "estimatedSize");
 }
 
 function argTypeName(arg) {
@@ -1429,10 +1419,8 @@ ${
   obj.estimatedSize
     ? `
         /**
-         * Tells the GC what creating this wrapper allocated. Every site that creates
-         * one, generated or hand-written, calls this once after m_ctx is set; which
-         * number it reports is decided by the class definition (estimatedSize /
-         * newlyAllocatedSize). visitChildren re-reports estimatedSize on every GC.
+         * Call once per wrapper, after m_ctx is set. Reports estimatedSize, or
+         * newlyAllocatedSize when the class definition sets it.
          */
         void reportExtraMemoryAllocated(JSC::VM& vm);
 `
@@ -1680,9 +1668,10 @@ size_t ${name}::memoryCost(void* ptr) {
   }
 
   if (obj.estimatedSize) {
+    const sizeFn = symbolName(typeName, obj.newlyAllocatedSize ? "newlyAllocatedSize" : "estimatedSize");
     output += `
 void ${name}::reportExtraMemoryAllocated(JSC::VM& vm) {
-  vm.heap.reportExtraMemoryAllocated(this, ${allocationSizeSymbol(typeName, obj)}(m_ctx));
+  vm.heap.reportExtraMemoryAllocated(this, ${sizeFn}(m_ctx));
 }
 `;
   }

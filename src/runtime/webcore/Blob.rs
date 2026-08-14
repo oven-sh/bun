@@ -3530,12 +3530,8 @@ impl BlobExt for Blob {
         self.reported_estimated_size.get()
     }
 
-    /// `Blob__newlyAllocatedSize`: what the JS wrapper being created for this
-    /// Blob reports as freshly allocated. A store that other Blobs also hold
-    /// (`slice()`, `dupe()`, `new Blob([blob])`, a FormData entry) is already
-    /// accounted for through them; reporting it again for every view made JSC
-    /// schedule a collection every few views of a large blob. Each view still
-    /// re-reports its window as retained memory on every GC via `estimated_size`.
+    /// A store shared with other Blobs (`slice()`, `dupe()`) is already accounted
+    /// for through them; re-reporting it per view made JSC collect every few views.
     fn newly_allocated_size(&self) -> usize {
         estimate_in_memory_size(self, self.store().is_none_or(|store| store.has_one_ref()))
     }
@@ -3689,8 +3685,7 @@ impl BlobExt for Blob {
     }
 }
 
-/// In-memory footprint, not the size on disk. `include_store` adds the
-/// refcounted `Store` and what it owns (for bytes, this blob's window of them).
+/// In-memory size, not the size on disk.
 fn estimate_in_memory_size(blob: &Blob, include_store: bool) -> usize {
     let mut size: usize = core::mem::size_of::<Blob>();
 

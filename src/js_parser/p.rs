@@ -4899,8 +4899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `first.rest[0].rest[1]...` for names taken from options (JSX factory,
-    /// define value) rather than from the source; `first` resolves as if written at `loc`.
+    /// `first.rest[0]...` as if written at `loc`, for names that come from options, not source.
     fn member_expression_for_names(
         &mut self,
         loc: bun_ast::Loc,

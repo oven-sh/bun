@@ -815,7 +815,7 @@ test("terminate() stops a worker blocked in Atomics.wait()", async () => {
   expect(stderr).toBe("");
   expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
   expect(exitCode).toBe(0);
-});
+}, timeout);
 
 // crypto.generatePrime()/generatePrimeSync()/checkPrime() with `safe: true` (or awkward add/rem
 // constraints) can grind for minutes. The worker's teardown waits for its pool job, and the sync

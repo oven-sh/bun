@@ -968,7 +968,8 @@ describe("property lookup throws while formatting an object", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toMatchInlineSnapshot(`
       "{
         b: 2,
@@ -1002,7 +1003,8 @@ describe("property lookup throws while formatting an object", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe('["redis"]\n');
     expect(exitCode).toBe(0);
   });

@@ -422,6 +422,10 @@ pub struct DevServer {
     /// Reference count to number of active sockets with the memory_visualizer enabled.
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
+    /// `BUN_DUMP_STATE_ON_CRASH`: this DevServer is registered with the crash
+    /// handler, which calls `dump_state_due_to_crash` if the process crashes.
+    /// Set once `init` has registered it; `Drop` unregisters it.
+    pub(crate) has_pre_crash_handler: bool,
 
     pub(crate) assume_perfect_incremental_bundling: bool,
 
@@ -535,6 +539,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             memory_visualizer_timer,
             EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
+        w!(has_pre_crash_handler, false);
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
@@ -1000,6 +1005,17 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
+    if bun_core::feature_flags::BAKE_DEBUGGING_FEATURES
+        && bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH
+            .get()
+            .unwrap_or(false)
+    {
+        // SAFETY: `dev` is boxed, so this address stays valid until the box is
+        // freed, and `Drop for DevServer` unregisters it before that.
+        unsafe { bun_crash_handler::append_pre_crash_handler::<DevServer>(&raw const *dev) };
+        dev.has_pre_crash_handler = true;
+    }
+
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -1063,9 +1079,15 @@ impl Drop for DevServer {
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
                 memory_visualizer_timer: _,
+                has_pre_crash_handler: _,
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;
+        }
+
+        // First, so that a crash anywhere below does not dump a half-destroyed graph.
+        if self.has_pre_crash_handler {
+            bun_crash_handler::remove_pre_crash_handler::<DevServer>(std::ptr::from_ref(self));
         }
 
         // WebSockets should be deinitialized before other parts.
@@ -5515,6 +5537,133 @@ impl DevServer {
             }
         }
         Ok(())
+    }
+
+    /// Serializes both incremental graphs as a `MessageId::Visualizer` message,
+    /// the format `incremental_visualizer.html` decodes (see its `decodeAndUpdate`):
+    /// the client and server file lists, then the client and server edge lists.
+    fn write_visualizer_message(&self, payload: &mut Vec<u8>) {
+        payload.push(MessageId::Visualizer.char());
+        self.write_visualizer_files(&self.client_graph, payload);
+        self.write_visualizer_files(&self.server_graph, payload);
+        write_visualizer_edges(&self.client_graph, payload);
+        write_visualizer_edges(&self.server_graph, payload);
+    }
+
+    /// - `u32`: number of files. For each:
+    ///   - `u32`: length of the path, relative to the root. Zero for a deleted
+    ///     file, in which case no other fields follow.
+    ///   - `[n]u8`: the path
+    ///   - `u8` each: stale, server (RSC), SSR, route, special framework file,
+    ///     boundary (client component boundary / HMR root). The flags that only
+    ///     exist on one side are zero on the other.
+    fn write_visualizer_files<const SIDE: bake::Side>(
+        &self,
+        graph: &IncrementalGraph<SIDE>,
+        payload: &mut Vec<u8>,
+    ) {
+        let keys = graph.bundled_files.keys();
+        payload.extend_from_slice(&u32::try_from(keys.len()).expect("int cast").to_le_bytes());
+        let mut buf = paths::path_buffer_pool::get();
+        for (i, (key, file)) in keys.iter().zip(graph.bundled_files.values()).enumerate() {
+            if key.is_empty() {
+                payload.extend_from_slice(&0u32.to_le_bytes());
+                continue;
+            }
+            let path = self.relative_path(&mut *buf, key);
+            payload.extend_from_slice(&u32::try_from(path.len()).expect("int cast").to_le_bytes());
+            payload.extend_from_slice(path);
+            let stale = graph.stale_files.is_set_allow_out_of_bound(i, true) || file.failed;
+            let flags: [bool; 6] = match SIDE {
+                bake::Side::Client => [
+                    stale,
+                    false,
+                    false,
+                    file.html_route_bundle_index.is_some(),
+                    file.is_special_framework_file,
+                    file.is_hmr_root,
+                ],
+                bake::Side::Server => [
+                    stale,
+                    file.is_rsc,
+                    file.is_ssr,
+                    file.is_route,
+                    false,
+                    file.is_client_component_boundary,
+                ],
+            };
+            payload.extend_from_slice(&flags.map(u8::from));
+        }
+    }
+
+    /// `BUN_DUMP_STATE_ON_CRASH`: writes `incremental_visualizer.html` to the
+    /// working directory with the current graphs inlined in place of its
+    /// WebSocket feed, so the page works offline, after the process is gone.
+    fn dump_state_due_to_crash(&self) -> sys::Maybe<()> {
+        const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
+        // The page's own script starts at the last `<script>` tag; `inlinedData`
+        // has to be defined before it runs.
+        let script_start = strings::last_index_of(VISUALIZER, b"<script>")
+            .expect("incremental_visualizer.html has an inline <script>")
+            + b"<script>".len();
+        let (head, script) = VISUALIZER.split_at(script_start);
+
+        let file_name = format!(
+            "incremental-graph-crash-dump.{}.html",
+            bun_core::time::timestamp()
+        );
+        let file = sys::File::create(sys::Fd::cwd(), file_name.as_bytes(), true)?;
+
+        let mut payload: Vec<u8> = Vec::new();
+        self.write_visualizer_message(&mut payload);
+
+        file.write_all(head)?;
+        file.write_all(b"\nlet inlinedData = Uint8Array.from(atob(\"")?;
+        // A multiple of 3 input bytes encodes without padding, so the chunks
+        // concatenate into one valid base64 string.
+        const CHUNK: usize = 3 * 1024;
+        let mut encoded = [0u8; bun_core::base64::standard_encoder_calc_size(CHUNK)];
+        for chunk in payload.chunks(CHUNK) {
+            file.write_all(bun_core::base64::standard_encode(&mut encoded, chunk))?;
+        }
+        file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
+        file.write_all(script)?;
+
+        bun_core::note!(
+            "Dumped incremental bundler graph to {}",
+            bun_core::fmt::quote(file_name.as_bytes())
+        );
+        Ok(())
+    }
+}
+
+/// - `u32`: number of edges. For each:
+///   - `u32`: index of the file containing the import
+///   - `u32`: index of the imported file
+fn write_visualizer_edges<const SIDE: bake::Side>(
+    graph: &IncrementalGraph<SIDE>,
+    payload: &mut Vec<u8>,
+) {
+    let live_edges = graph.edges.len() - graph.edges_free_list.len();
+    payload.extend_from_slice(&u32::try_from(live_edges).expect("int cast").to_le_bytes());
+    for (i, edge) in graph.edges.iter().enumerate() {
+        if graph
+            .edges_free_list
+            .iter()
+            .any(|free| free.get() as usize == i)
+        {
+            continue;
+        }
+        payload.extend_from_slice(&edge.dependency.get().to_le_bytes());
+        payload.extend_from_slice(&edge.imported.get().to_le_bytes());
+    }
+}
+
+impl bun_crash_handler::PreCrashHandler for DevServer {
+    fn on_crash(&self) {
+        if let Err(err) = self.dump_state_due_to_crash() {
+            bun_core::warn!("Could not dump incremental bundler graph: {}", err);
+        }
     }
 }
 

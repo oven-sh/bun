@@ -24,6 +24,7 @@ pub(crate) mod js_bindings {
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
+            ("rustPanic", __jsc_host_js_rust_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             ("abort", __jsc_host_js_abort),
@@ -130,6 +131,15 @@ pub(crate) mod js_bindings {
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+    }
+
+    /// Unlike `panic` above, which enters `crash_handler()` directly, this takes
+    /// the route a failed `assert!`/`unwrap()` takes: `std::panic` → the panic
+    /// hook the crash handler installs.
+    #[bun_jsc::host_fn]
+    fn js_rust_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        panic!("invoked crashByRustPanic() handler");
     }
 
     #[bun_jsc::host_fn]

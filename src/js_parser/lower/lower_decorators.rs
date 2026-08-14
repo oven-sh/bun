@@ -414,10 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Expand an undecorated `accessor k = v` into the three class elements it
-    /// stands for: a `#k_accessor_storage = v` field plus a `get k`/`set k`
-    /// pair over it. They are then lowered (or kept native) like any other
-    /// field, getter and setter of the class.
+    /// `accessor k = v` → a `#k_accessor_storage = v` field plus a `get k`/`set k` pair over it.
     fn expand_auto_accessor(
         &mut self,
         prop: &Property,
@@ -1445,8 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope = parent;
         }
 
-        // Undecorated accessors become ordinary field + getter + setter
-        // elements before anything below indexes `class.properties`.
+        // Must precede Phase 2, which indexes `class.properties` by position.
         let mut accessor_storage_counter: usize = 0;
         if class
             .properties

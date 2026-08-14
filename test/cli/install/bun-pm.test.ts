@@ -1084,3 +1084,62 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm untrusted and bun pm trust escape control characters in dependency scripts", async () => {
+  // Everything after `#` is a shell comment, so only the echo runs once the package is
+  // trusted. Printed raw, though, the tail erases the listing line (ESC[2K), returns to
+  // column 1 (ESC[1G) and repaints it as the harmless looking command. `\r`, DEL and the
+  // 8-bit CSI (U+009B) are the other control characters a terminal would act on.
+  const script = 'echo "real command" #\x1b[2K\x1b[1G\r\x7f\u009b » [postinstall]: node scripts/postinstall.js';
+  const shown = 'echo "real command" #\\x1b[2K\\x1b[1G\\r\\x7f\\u009b » [postinstall]: node scripts/postinstall.js';
+
+  using dir = tempDir("pm-untrusted-control-chars", {
+    "package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "nice-pkg": "file:./nice-pkg",
+      },
+    }),
+    "nice-pkg/package.json": JSON.stringify({
+      name: "nice-pkg",
+      version: "1.0.0",
+      scripts: {
+        postinstall: script,
+      },
+    }),
+  });
+
+  async function run(...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  let [stdout, stderr, exitCode] = await run("install");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("Blocked 1 postinstall");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await run("pm", "untrusted");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain(` » [postinstall]: ${shown}\n`);
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\x7f");
+  expect(stdout).not.toContain("\u009b");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await run("pm", "trust", "nice-pkg");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain(` ✓ [postinstall]: ${shown}\n`);
+  expect(stdout).toContain("1 script ran across 1 package");
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\x7f");
+  expect(stdout).not.toContain("\u009b");
+  expect(exitCode).toBe(0);
+});

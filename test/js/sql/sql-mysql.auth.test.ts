@@ -218,3 +218,39 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
     server.close();
   }
 });
+
+// AuthMoreData 0x04 (perform_full_authentication) over plain TCP makes the client
+// fetch the server's RSA public key, which is refused unless allowPublicKeyRetrieval
+// is set. Every MySQL 8 first connection for a user looks like this by default, so
+// the refusal must name the cause and the remedies, not just say "Connection closed".
+test("public key retrieval refusal names allowPublicKeyRetrieval and TLS as remedies", async () => {
+  const PERFORM_FULL_AUTH = 0x04;
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+        if (!authed) {
+          // HandshakeResponse41 -> demand full authentication.
+          authed = true;
+          socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([PERFORM_FULL_AUTH])));
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db`, max: 1 });
+    const err = await sql.connect().then(
+      () => null,
+      e => e,
+    );
+    expect(err?.code).toBe("ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED");
+    expect(err?.message).toContain("allowPublicKeyRetrieval: true");
+    expect(err?.message).toContain("TLS");
+  } finally {
+    server.close();
+  }
+});

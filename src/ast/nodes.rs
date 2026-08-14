@@ -1228,7 +1228,6 @@ pub enum ToJSError {
     MacroError,
     OutOfMemory,
     JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 

@@ -327,12 +327,12 @@ impl TopExceptionScope {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
+    /// If the termination exception is pending, `Err(Thrown)`: it is an exception, so unwind (`?`).
+    /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
             if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                return Err(JsError::Terminated);
+                return Err(JsError::Thrown);
             }
             #[cfg(any(debug_assertions, bun_asan))]
             self.assertion_failure(e);
@@ -537,8 +537,8 @@ impl ExceptionValidationScope {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
+    /// If the termination exception is pending, `Err(Thrown)` (so you can `?`).
+    /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.assert_no_exception_except_termination();

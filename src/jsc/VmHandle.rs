@@ -556,6 +556,8 @@ mod test_gate {
     static SAY: bun_threading::Mutex = bun_threading::Mutex::new();
     fn say(what: core::fmt::Arguments<'_>) {
         let _g = SAY.lock_guard();
+        // The poster can be a thread Bun never set up for output (a JSC helper).
+        bun_core::output::Source::configure_thread();
         let w = bun_core::output::error_writer();
         let _ = writeln!(w, "[vm] {what}");
         let _ = w.flush();

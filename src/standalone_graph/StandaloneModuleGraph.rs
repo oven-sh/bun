@@ -442,47 +442,18 @@ mod elf {
         if link_vaddr == 0 {
             return None;
         }
+        // BUN_COMPILED.size holds the link-time virtual address of the
+        // appended data. For a PIE executable (mandatory on Android) the
+        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
+        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
+        // non-PIE it is 0.
+        // Format at target: [u64 payload_len][payload bytes]
+        // Synthesize a `*mut u8` directly so the provenance carries write
+        // permission for the in-place bytecode mutation done by JSC.
+        let load_bias =
+            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let target = (link_vaddr as usize).wrapping_add(load_bias) as *mut u8;
 
-        // PIE binary: ASLR shifts the load base at runtime, so the link-time
-        // vaddr is not the runtime address.  Read /proc/self/maps to find the
-        // first file-backed mapping at file offset 0 (the ELF header PT_LOAD),
-        // whose start address is the PIE load base.  On OHOS (hmdfs/tmpfs) the
-        // header segment is mapped `r--p` (not `r-xp` as on glibc Linux), so
-        // the scan matches on offset+path instead of execute permission.
-        let load_base: usize = {
-            let mut base = 0usize;
-            if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
-                for line in maps.lines() {
-                    let mut cols = line.split_whitespace();
-                    let Some(addr_range) = cols.next() else { continue };
-                    let _perms = cols.next();
-                    let Some(file_off) = cols.next() else { continue };
-                    cols.next(); // dev
-                    let inode_str = cols.next().unwrap_or("0");
-                    let path = cols.next().unwrap_or("");
-                    if file_off == "00000000"
-                        && inode_str != "0"
-                        && !path.is_empty()
-                        && !path.starts_with('[')
-                    {
-                        if let Some(start_hex) = addr_range.split('-').next() {
-                            if let Ok(b) = usize::from_str_radix(start_hex, 16) {
-                                base = b;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            base
-        };
-        if load_base == 0 {
-            return None;
-        }
-
-        // runtime_addr = load_base + link_vaddr (PIE relocation).
-        let runtime_addr = load_base.wrapping_add(link_vaddr as usize);
-        let target = runtime_addr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });

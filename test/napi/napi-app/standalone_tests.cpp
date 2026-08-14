@@ -266,6 +266,40 @@ static napi_value test_napi_threadsafe_function_microtask_order(
   return env.Undefined();
 }
 
+// A `call_js` that throws through Node-API. Each queued item's exception is
+// that item's uncaught exception (`process.on('uncaughtException')` sees all
+// three, in order), the remaining items still run, and a microtask queued by
+// the handler runs before the next item.
+static void tsfn_throwing_call_js(napi_env env, napi_value js_callback,
+                                  void *context, void *data) {
+  intptr_t i = reinterpret_cast<intptr_t>(data);
+  char message[32];
+  snprintf(message, sizeof(message), "call_js error %d", static_cast<int>(i));
+  napi_throw_error(env, nullptr, message);
+}
+
+static napi_value test_napi_threadsafe_function_call_js_throws(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "call_js_throws");
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    /* finalize callback */ nullptr, /* context */ nullptr,
+                    tsfn_throwing_call_js, &tsfn));
+  for (intptr_t i = 1; i <= 3; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           tsfn, reinterpret_cast<void *>(i),
+                           napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  return env.Undefined();
+}
+
 static napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -4359,6 +4393,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
       env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_microtask_order);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_call_js_throws);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);

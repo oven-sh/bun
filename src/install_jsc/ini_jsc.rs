@@ -186,7 +186,6 @@ impl IniTestingAPIs {
             Ok(v) => Ok(v),
             Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
             Err(ToJSError::JSError) => Err(JsError::Thrown),
-            Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
             Err(e) => {
                 Err(global.throw_error(bun_jsc::CrateError::from(e), "failed to turn AST into JS"))
             }

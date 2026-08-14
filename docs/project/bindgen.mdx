@@ -149,7 +149,6 @@ An example of `stringEnum` from `fmt_jsc.bind.ts` / `bun:internal-for-testing`:
 export const Formatter = t.stringEnum("highlight-javascript", "highlight-javascript-redacted", "escape-powershell");
 
 export const fmtString = fn({
-  implNamespace: "js_bindings",
   args: {
     global: t.globalObject,
     code: t.UTF8String,
@@ -165,32 +164,24 @@ On the Rust side, the enum is mirrored as a `#[repr(u8)]` enum. Bindgen
 the `.bind.ts` declaration order:
 
 ```rust
-pub mod js_bindings {
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Formatter {
-        EscapePowershell = 0,
-        HighlightJavascript = 1,
-        HighlightJavascriptRedacted = 2,
-    }
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Formatter {
+    EscapePowershell = 0,
+    HighlightJavascript = 1,
+    HighlightJavascriptRedacted = 2,
+}
 
-    pub fn fmt_string(
-        global: &JSGlobalObject,
-        code: &[u8],
-        formatter_id: Formatter,
-    ) -> JsResult<bun_core::String> {
-        // ...
-    }
+pub fn fmt_string(
+    global: &JSGlobalObject,
+    code: &[u8],
+    formatter_id: Formatter,
+) -> JsResult<bun_core::String> {
+    // ...
 }
 ```
 
 WebIDL strongly encourages kebab-case for enumeration values, to be consistent with existing Web APIs.
-
-## `implNamespace`
-
-Setting `implNamespace: "foo"` on a `fn({...})` routes the generated call to
-`crate::<basename>::foo::fn_name` instead of `crate::<basename>::fn_name`. Use
-this to group related binding implementations under a submodule.
 
 ## `t.oneOf`
 

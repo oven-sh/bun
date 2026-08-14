@@ -1990,10 +1990,10 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 };
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult = dev
-                                    .server
-                                    .as_ref()
-                                    .expect("infallible: server bound")
+                                // Copy the `AnyServer` handle out first: `dev` itself is
+                                // lent to the loader below.
+                                let server = dev.server.expect("infallible: server bound");
+                                let load_result: crate::server::GetOrStartLoadResult = server
                                     .get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );

@@ -1171,8 +1171,7 @@ impl CreateCommand {
             create_options.skip_git = !GitHandler::wait();
         }
 
-        // Checked only after the git thread is joined so a failed install does
-        // not exit while `git commit` is still writing the repository.
+        // Only after the git thread is joined: exiting earlier would abandon git mid-commit.
         if !install_ok {
             Global::exit(1);
         }

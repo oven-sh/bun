@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -255,10 +256,10 @@ impl<'a> Installer<'a> {
             Output::err_generic(
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
-                    bstr::BStr::new(name),
-                    resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    escape_control_chars(name),
+                    EscapeControlChars(resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     bstr::BStr::new(download_error_reason(err)),
-                    bstr::BStr::new(url),
+                    escape_control_chars(url),
                 ),
             );
             Output::flush();
@@ -327,8 +328,8 @@ impl<'a> Installer<'a> {
                     link_err.clone(),
                     "failed to link package: {}@{}",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        escape_control_chars(pkg_name.slice(string_buf)),
+                        EscapeControlChars(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -337,8 +338,8 @@ impl<'a> Installer<'a> {
                     symlink_err.clone(),
                     "failed to symlink dependencies for package: {}@{}",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        escape_control_chars(pkg_name.slice(string_buf)),
+                        EscapeControlChars(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -346,8 +347,8 @@ impl<'a> Installer<'a> {
                 Output::err_generic(
                     "failed to patch package: {}@{}",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        escape_control_chars(pkg_name.slice(string_buf)),
+                        EscapeControlChars(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
@@ -357,8 +358,8 @@ impl<'a> Installer<'a> {
                     *bin_err,
                     "failed to link binaries for package: {}@{}",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        escape_control_chars(pkg_name.slice(string_buf)),
+                        EscapeControlChars(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -366,10 +367,10 @@ impl<'a> Installer<'a> {
                 Output::err_generic(
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        escape_control_chars(pkg_name.slice(string_buf)),
+                        EscapeControlChars(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                         bstr::BStr::new(download_error_reason(dl.err)),
-                        bstr::BStr::new(&dl.url),
+                        escape_control_chars(&dl.url),
                     ),
                 );
             }

@@ -806,8 +806,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                    bstr::BStr::new(
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                                    bun_fmt::escape_control_chars(
                                                         this.lockfile.str(&version.dist_tag().tag)
                                                     ),
                                                 ),
@@ -825,8 +825,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             None,
                                             bun_ast::Loc::EMPTY,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
-                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
-                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                            bun_fmt::escape_control_chars(
+                                                this.lockfile.str(&version.literal)
+                                            ),
+                                            bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                         );
                                     }
                                 }
@@ -844,8 +846,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.dist_tag().tag)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
@@ -856,8 +860,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.literal)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
@@ -877,8 +883,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    bstr::BStr::new(this.lockfile.str(version.folder())),
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(version.folder())),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                                 ),
                                             );
                                     } else {
@@ -887,7 +893,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             bun_ast::Loc::EMPTY,
                                             format_args!(
                                                 "Could not find package.json for dependency \"{}\"",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
                                             ),
                                         );
                                     }

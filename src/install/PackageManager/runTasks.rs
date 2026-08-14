@@ -28,7 +28,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars};
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
@@ -746,10 +746,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
-                            bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            escape_control_chars(extract.name.slice()),
+                            EscapeControlChars(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -758,10 +760,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
-                            bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            escape_control_chars(extract.name.slice()),
+                            EscapeControlChars(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -834,7 +838,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            escape_control_chars(metadata.url.slice()),
                             response.status_code,
                         );
                     } else {
@@ -843,7 +847,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            escape_control_chars(metadata.url.slice()),
                             response.status_code,
                         );
                     }

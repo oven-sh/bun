@@ -37,8 +37,7 @@ pub(crate) struct SecretsJob {
 impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
-    /// The credential store (Keychain, libsecret's D-Bus service, ...) may sit
-    /// on a user prompt indefinitely; the job owns everything it hands it.
+    /// The credential store may sit on a user prompt indefinitely; the job owns all it hands it.
     type Vm = crate::Unborrowed;
 
     fn run(

@@ -110,14 +110,10 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
     bun_http_types::MimeType::by_extension_no_default(ext)
 }
 
-/// Make `path` the store's own. The pool jobs reading a store (`CopyFile`,
-/// `ReadFile`, `WriteFile`) run without a VM borrow and may drop its last ref
-/// after the VM is gone, so it may keep nothing of the JS heap: a `Buffer` path
-/// (`Bun.file(bytes)`, documented as copying) points into the caller's
-/// ArrayBuffer and is copied out here, on the JS thread, which also releases
-/// the pin on that ArrayBuffer; a string path gets its own WTF impl.
+/// File jobs read and release stores without a VM borrow, so a store keeps nothing of the JS heap.
 fn own_path(path: &mut PathLike) {
     if let PathLike::Buffer(buffer) = &*path {
+        // Documented as a copy; dropping the `Buffer` below unpins it, here on the JS thread.
         let copy = bun_core::handle_oom(ZigStringSlice::init_dupe(buffer.slice()));
         *path = PathLike::EncodedSlice(copy);
         return;

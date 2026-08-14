@@ -815,8 +815,7 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// The tsconfig.json nearest to `path`, as `bun build` applies it; `None` for
-    /// paths with no directory on disk. Uses the resolver, so JS thread only.
+    /// Nearest tsconfig.json to `path` (as in `bun build`). Resolver lookup, so JS thread only.
     pub fn tsconfig_for_file(&mut self, path: &[u8]) -> Option<&'static TSConfigJSON> {
         let dir = Fs::PathName::init(path).dir;
         if !bun_paths::is_absolute(dir) {
@@ -829,14 +828,12 @@ impl<'a> Transpiler<'a> {
             .enclosing_tsconfig_json
     }
 
-    /// Settings for a file governed by `tsconfig` ([`Self::tsconfig_for_file`]);
-    /// without one, the cwd tsconfig values `configure_linker` put in `options`.
+    /// Without a `tsconfig`, the cwd tsconfig values `configure_linker` put in `options` apply.
     pub fn tsconfig_parse_options(&self, tsconfig: Option<&TSConfigJSON>) -> TSConfigParseOptions {
         match tsconfig {
             Some(tsconfig) => {
                 let mut jsx = tsconfig.merge_jsx(self.options.jsx.clone());
-                // An explicit NODE_ENV (settled in `options.jsx` by `configure_defines`)
-                // outranks the tsconfig's react-jsx / react-jsxdev choice.
+                // Explicit NODE_ENV (already in `options.jsx`) outranks tsconfig's dev/prod jsx.
                 if self.options.production
                     || self.options.force_node_env != options::ForceNodeEnv::Unspecified
                 {
@@ -1005,8 +1002,7 @@ pub struct ParseOptions<'a, 'b> {
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
-    /// The file-backed `options_impl::jsx::Pragma` (NOT the lib.rs shim), with
-    /// the file's tsconfig.json merged in; see [`TSConfigParseOptions`].
+    /// File-backed `options_impl::jsx::Pragma` (NOT the lib.rs shim), tsconfig already merged in.
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,

@@ -416,8 +416,7 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: OwnedString,
     pub(crate) non_threadsafe_referrer: OwnedString,
     pub(crate) loader: Loader,
-    /// Looked up on the JS thread (the worker's transpiler copy must not use the
-    /// resolver); process-lifetime, so the worker reads it freely.
+    /// Looked up on the JS thread: the worker's transpiler copy must not use the resolver.
     pub(crate) tsconfig: Option<&'static TSConfigJSON>,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;

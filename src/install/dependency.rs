@@ -693,7 +693,7 @@ impl VersionExt for Version {
         parse_with_tag(
             alias,
             Some(alias_hash),
-            sliced.slice,
+            trim_literal(sliced.slice),
             tag,
             &sliced,
             Some(ctx.log),

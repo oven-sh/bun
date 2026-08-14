@@ -2726,8 +2726,7 @@ fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
     (l, a, b)
 }
 
-// lightningcss's expression, evaluated in f32 like upstream. Rounding it through f64 (#14832) puts
-// x and z one ulp higher, and lab()/lch() of most greys then print a, b around 1e-5 instead of 0 0.
+// Must stay bit-identical to lightningcss's D50, so this is evaluated in f32 like upstream.
 const D50: [f32; 3] = [0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585];
 
 // ──────────────────────────────────────────────────────────────────────────

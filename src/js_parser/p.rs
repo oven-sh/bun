@@ -4899,11 +4899,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Builds `first.rest[0].rest[1]...` for names that did not come from the
-    /// source text (JSX factories, `--define` values). `first` is resolved
-    /// like an identifier written at `loc`, so whatever it names is counted as
-    /// used, renamed along with its declaration, and rewritten when it is an
-    /// import.
+    /// `first.rest[0].rest[1]...` for names taken from options (JSX factory,
+    /// define value) rather than from the source; `first` resolves as if written at `loc`.
     fn member_expression_for_names(
         &mut self,
         loc: bun_ast::Loc,
@@ -6350,21 +6347,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = define_data.value;
         match value {
             js_ast::ExprData::EIdentifier(id) => {
-                // `DefineData::parse` stores a value like `ns.value` as one
-                // identifier whose original_name is the whole dotted path:
-                // only the first segment names a symbol.
-                let original_name: &'a [u8] = define_data
+                // `DefineData::parse` keeps an `a.b.c` value as one identifier named "a.b.c".
+                let path: &'a [u8] = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                let (first, rest) =
-                    strings::split_once_char(original_name, b'.').unwrap_or((original_name, b""));
+                let (first, rest) = strings::split_once_char(path, b'.').unwrap_or((path, b""));
+                // `X = 1` assigns to the property access built below, not to `first`.
                 let opts = if rest.is_empty() {
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
                 } else {
-                    // The assignment or delete applies to the property
-                    // access built below, not to the symbol it reads.
                     IdentifierOpts::new()
                 };
                 return self

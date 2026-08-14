@@ -271,9 +271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
-                    // Only an identifier or a property access can be assigned to, so
-                    // substituting anything else into an assignment target would
-                    // produce a syntax error
+                    // Substituting anything else into an assignment target is a syntax error
                     if matches!(newvalue.data.tag(), Tag::EIdentifier | Tag::EDot)
                         || in_.assign_target == js_ast::AssignTarget::None
                     {

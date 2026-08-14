@@ -5248,7 +5248,11 @@ impl VirtualMachine {
         // `logged` dedupes against the module loader having already printed
         // it, which doesn't apply to user code throwing it later.
         let was_thrown = value.is_exception(self.jsc_vm);
-        let diagnostic = if was_thrown { value.to_error().unwrap_or(value) } else { value };
+        let diagnostic = if was_thrown {
+            value.to_error().unwrap_or(value)
+        } else {
+            value
+        };
         if diagnostic.js_type() == jsc::JSType::DOMWrapper {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
@@ -5642,38 +5646,37 @@ impl VirtualMachine {
         let top_source_url = frames[top].source_url.to_utf8();
 
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped
-            && !frames[top].position.line.is_valid()
-        {
-            // `at <file>` with no line (e.g. parsed from a `.stack`): nothing
-            // to look up or preview.
-            None
-        } else if already_remapped {
-            Some(bun_sourcemap::mapping::Lookup {
-                mapping: bun_sourcemap::mapping::Mapping {
-                    generated: bun_sourcemap::LineColumnOffset::default(),
-                    original: bun_sourcemap::LineColumnOffset {
-                        lines: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.line.zero_based().max(0),
-                        ),
-                        columns: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.column.zero_based().max(0),
-                        ),
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> =
+            if already_remapped && !frames[top].position.line.is_valid() {
+                // `at <file>` with no line (e.g. parsed from a `.stack`): nothing
+                // to look up or preview.
+                None
+            } else if already_remapped {
+                Some(bun_sourcemap::mapping::Lookup {
+                    mapping: bun_sourcemap::mapping::Mapping {
+                        generated: bun_sourcemap::LineColumnOffset::default(),
+                        original: bun_sourcemap::LineColumnOffset {
+                            lines: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.line.zero_based().max(0),
+                            ),
+                            columns: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.column.zero_based().max(0),
+                            ),
+                        },
+                        source_index: 0,
+                        name_index: -1,
                     },
-                    source_index: 0,
-                    name_index: -1,
-                },
-                source_map: None,
-                prefetched_source_code: None,
-            })
-        } else {
-            self.resolve_source_mapping(
-                top_source_url.slice(),
-                frames[top].position.line,
-                frames[top].position.column,
-                bun_sourcemap::SourceContentHandling::SourceContents,
-            )
-        };
+                    source_map: None,
+                    prefetched_source_code: None,
+                })
+            } else {
+                self.resolve_source_mapping(
+                    top_source_url.slice(),
+                    frames[top].position.line,
+                    frames[top].position.column,
+                    bun_sourcemap::SourceContentHandling::SourceContents,
+                )
+            };
 
         if let Some(lookup) = maybe_lookup {
             // The source-map Arc drops on scope exit.

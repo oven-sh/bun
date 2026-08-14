@@ -519,7 +519,10 @@ impl CpPendingDirs {
         dest_buf[dd] = paths::SEP as OSPathChar;
         dest_buf[dd + 1..dd + 1 + name.len()].copy_from_slice(name);
         dest_buf[dd + 1 + name.len()] = 0;
-        let lens = ((sd + 1 + name.len()) as PathInt, (dd + 1 + name.len()) as PathInt);
+        let lens = (
+            (sd + 1 + name.len()) as PathInt,
+            (dd + 1 + name.len()) as PathInt,
+        );
         self.names.truncate(dir.name_start as usize);
         Some(lens)
     }

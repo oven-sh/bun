@@ -781,12 +781,14 @@ test.skipIf(!isDebug)(
 // the parked thread when termination is requested, but the wake-up predicate
 // only looked at a flag the parked thread itself would have had to set, so it
 // went back to sleep and terminate()'s promise never settled.
-test("terminate() stops a worker blocked in Atomics.wait()", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test(
+  "terminate() stops a worker blocked in Atomics.wait()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const { Worker } = require("node:worker_threads");
       const w = new Worker(
         "const { parentPort } = require('node:worker_threads');" +
@@ -806,16 +808,18 @@ test("terminate() stops a worker blocked in Atomics.wait()", async () => {
       });
       w.on("exit", (c) => console.log("exit", c));
     `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
-  expect(exitCode).toBe(0);
-}, timeout);
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
 // crypto.generatePrime()/generatePrimeSync()/checkPrime() with `safe: true` (or awkward add/rem
 // constraints) can grind for minutes. The worker's teardown waits for its pool job, and the sync

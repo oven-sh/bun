@@ -264,11 +264,68 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
   }
 });
 
+// A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet
+// parks on the io loop instead of blocking a pool thread, so terminate() can
+// and does cancel it: the worker goes away promptly and the read never settles.
+describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", () => {
+  test.each([
+    ["Bun.stdin.text()", `Bun.stdin.text()`],
+    ["Bun.file(fifo).text()", `Bun.file(workerData).text()`],
+    ["Bun.file(fifo).bytes() twice", `Bun.file(workerData).bytes(); Bun.file(workerData).bytes()`],
+  ])("%s", async (_, read) => {
+    using dir = tempDir("worker-terminate-cancels", {});
+    const fifo = path.join(String(dir), "fifo");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { execFileSync } = require("node:child_process");
+        const fifo = ${JSON.stringify(fifo)};
+        execFileSync("mkfifo", [fifo]);
+        // Hold the FIFO open read-write (does not block, unlike a write-only
+        // open) so the worker's open() succeeds and its read parks waiting for
+        // data that never comes.
+        const writer = require("node:fs").openSync(fifo, "r+");
+        const w = new Worker(
+          'const { parentPort, workerData } = require("node:worker_threads");' +
+          'const settled = w => v => parentPort.postMessage(w);' +
+          'for (const p of [${read.replace(/;/g, ",")}]) p.then(settled("resolved"), settled("rejected"));' +
+          'parentPort.postMessage("reading");',
+          { eval: true, workerData: fifo },
+        );
+        const seen = [];
+        w.on("message", async m => {
+          seen.push(m);
+          if (m !== "reading") return;
+          const code = await w.terminate();
+          console.log(JSON.stringify({ code, seen }));
+          require("node:fs").closeSync(writer);
+        });
+      `,
+      ],
+      env: bunEnv,
+      // The parent's stdin is the worker's Bun.stdin: a pipe nobody writes to.
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ code: 1, seen: ["reading"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // The wait is unbounded by design: a job that cannot be cancelled makes
 // terminate() take as long as the job (as Node's environment cleanup does),
-// and then complete cleanly. Here the job is a read() parked on a FIFO nobody
-// has written to yet, so its duration is entirely the test's to decide — no
-// timing thresholds. Debug builds also name what the wait is waiting for.
+// and then complete cleanly. Here the job is a read() blocking a pool thread on
+// a FIFO nobody has written to yet (node:fs reads that way), so its duration is
+// entirely the test's to decide — no timing thresholds. Debug builds also name
+// what the wait is waiting for.
 describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});

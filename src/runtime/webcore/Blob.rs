@@ -7032,6 +7032,111 @@ pub trait FileOpener: Sized {
     }
 }
 
+/// Who currently owns a `ReadFile`/`WriteFile` that may park on the io loop
+/// waiting for a pipe/tty/socket to become ready — the one wait a `Bun.file`
+/// read or write can be stuck on indefinitely, and so the one its VM's stop
+/// phase must be able to end ([`bun_jsc::JobContext::cancel`]). All
+/// transitions are compare-exchanges on one byte, so the JS thread's cancel,
+/// the io thread's arm/fire, and the pool thread's park agree on who
+/// completes the job exactly once.
+#[cfg(not(windows))]
+pub(crate) struct IoParking(core::sync::atomic::AtomicU8);
+#[cfg(not(windows))]
+use core::sync::atomic::Ordering;
+
+#[cfg(not(windows))]
+impl IoParking {
+    /// A pool thread has it (running, or about to).
+    const IDLE: u8 = 0;
+    /// Its wait request is queued for the io thread, not yet processed.
+    const PARKED: u8 = 1;
+    /// The io thread registered its poll; readiness sends it back to the pool.
+    const ARMED: u8 = 2;
+    /// The JS thread cancelled the wait; the io thread closes it out.
+    const CANCELLED: u8 = 3;
+
+    pub(crate) const fn new() -> Self {
+        Self(core::sync::atomic::AtomicU8::new(Self::IDLE))
+    }
+
+    /// Pool thread, before queuing the wait request.
+    pub(crate) fn park(&self) {
+        self.0.store(Self::PARKED, Ordering::SeqCst);
+    }
+
+    /// io thread, processing the wait request: `true` ⇒ register the poll;
+    /// `false` ⇒ cancelled meanwhile — close it out instead.
+    pub(crate) fn arm(&self) -> bool {
+        match self.0.compare_exchange(
+            Self::PARKED,
+            Self::ARMED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => true,
+            Err(Self::CANCELLED) => false,
+            Err(_other) => {
+                debug_assert!(
+                    false,
+                    "io wait request processed while not parked ({_other})"
+                );
+                true
+            }
+        }
+    }
+
+    /// io thread, the poll fired or errored: `true` ⇒ hand back to the pool;
+    /// `false` ⇒ cancelled meanwhile — do nothing, the re-queued wait request
+    /// closes it out.
+    pub(crate) fn fire(&self) -> bool {
+        self.0
+            .compare_exchange(Self::ARMED, Self::IDLE, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    /// JS thread (the VM's stop phase): cancel the wait if there is one.
+    /// `true` ⇒ the poll was already registered: re-queue the wait request so
+    /// the io thread sees the cancellation (it is not queued, and no other
+    /// thread queues it while cancelled). `false` ⇒ nothing to do here: either
+    /// a pool thread has the job (it finishes or parks again — a later sweep
+    /// catches that), or the still-queued wait request will see the flag.
+    pub(crate) fn cancel(&self) -> bool {
+        loop {
+            match self.0.load(Ordering::SeqCst) {
+                Self::PARKED => {
+                    if self
+                        .0
+                        .compare_exchange(
+                            Self::PARKED,
+                            Self::CANCELLED,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        return false;
+                    }
+                }
+                Self::ARMED => {
+                    if self
+                        .0
+                        .compare_exchange(
+                            Self::ARMED,
+                            Self::CANCELLED,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
 // TODO: move to bun_sys?
 pub trait FileCloser: Sized {
     const IO_TAG: bun_io::Tag;

@@ -60,6 +60,19 @@ impl bun_jsc::JobContext for WriteFile {
     fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
         Ok(WriteFile::then(this, cx.global())?)
     }
+    /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
+    /// state this job can be stuck in.
+    unsafe fn cancel(this: *mut Self) {
+        #[cfg(not(windows))]
+        // SAFETY: fn contract; see `ReadFile::cancel`.
+        unsafe {
+            if (*this).io_parking.cancel() {
+                io::IoRequestLoop::schedule(&mut *core::ptr::addr_of_mut!((*this).io_request));
+            }
+        }
+        #[cfg(windows)]
+        let _ = this;
+    }
 }
 
 impl WriteFile {
@@ -83,6 +96,8 @@ pub struct WriteFile {
     pub(crate) io_task: Option<WriteFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
+    pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) on_complete_ctx: *mut c_void,
@@ -181,6 +196,10 @@ impl WriteFile {
 
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -192,6 +211,10 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
+        #[cfg(not(windows))]
+        if !this.io_parking.fire() {
+            return;
+        }
         this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
@@ -207,6 +230,12 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
         let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `this` is the live parent (see above); io thread owns it while parked.
+        if !unsafe { (*this).io_parking.arm() } {
+            // SAFETY: as above.
+            unsafe { (*this).fail_cancelled() };
+            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
+        }
         // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
         // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
         let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
@@ -219,11 +248,23 @@ impl WriteFile {
         })
     }
 
+    /// io thread: the parked wait was cancelled; the close path that follows
+    /// finishes the job with this error.
+    #[cfg(not(windows))]
+    fn fail_cancelled(&mut self) {
+        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.state
+            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
+        self.io_parking.park();
         if !self.io_request.scheduled {
             io::IoRequestLoop::schedule(&mut self.io_request);
         }
@@ -250,6 +291,8 @@ impl WriteFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
+            #[cfg(not(windows))]
+            io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
             on_complete_ctx: on_write_file_context,
             on_complete_callback,

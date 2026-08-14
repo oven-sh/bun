@@ -240,6 +240,21 @@ impl bun_jsc::JobContext for ReadFile {
     ) -> jsc::JsResult<()> {
         Ok(ReadFile::then(this, completion, cx.global())?)
     }
+    /// A read parked on a pipe/tty that never becomes readable is the one
+    /// state this job can be stuck in; end that wait (the read fails with
+    /// ECANCELED through the usual close path).
+    unsafe fn cancel(this: *mut Self) {
+        #[cfg(not(windows))]
+        // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
+        // other thread touches `io_request` until it is queued again here.
+        unsafe {
+            if (*this).io_parking.cancel() {
+                io::IoRequestLoop::schedule(&mut *core::ptr::addr_of_mut!((*this).io_request));
+            }
+        }
+        #[cfg(windows)]
+        let _ = this;
+    }
 }
 
 #[cfg(not(windows))]
@@ -284,6 +299,8 @@ pub struct ReadFile {
     pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
+    pub(crate) io_parking: super::IoParking,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
@@ -380,6 +397,7 @@ impl ReadFile {
                 callback: Self::on_request_readable,
                 scheduled: false,
             },
+            io_parking: super::IoParking::new(),
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
@@ -392,6 +410,10 @@ impl ReadFile {
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_read_loop_task,
@@ -410,6 +432,10 @@ impl ReadFile {
 
     pub(crate) fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
@@ -446,6 +472,10 @@ impl ReadFile {
                 std::ptr::from_mut::<io::Request>(request)
             ))
         };
+        if !this.io_parking.arm() {
+            this.fail_cancelled();
+            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
+        }
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
             ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
@@ -455,12 +485,24 @@ impl ReadFile {
         })
     }
 
+    /// io thread: the parked wait was cancelled; the close path that follows
+    /// finishes the job with this error.
+    #[cfg(not(windows))]
+    fn fail_cancelled(&mut self) {
+        let err = bun_sys::Error::from_code(bun_sys::E::ECANCELED, bun_sys::Tag::read);
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.state
+            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
+        self.io_parking.park();
         if !self.io_request.scheduled {
             io::IoRequestLoop::schedule(&mut self.io_request);
         }

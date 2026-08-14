@@ -210,13 +210,77 @@ pub trait JobContext: Sized + 'static {
     /// JS thread, VM still running script: the completion. Both halves are
     /// handed over to use and drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
+
+    /// JS thread, the VM's stop phase (possibly more than once): make a job
+    /// that is waiting on something *external* — not computing — finish soon,
+    /// so the VM's wait for it is short. Runs concurrently with wherever the
+    /// job is (queued, in `run`, parked on another thread's loop): touch only
+    /// what that tolerates (atomics, thread-safe queues). The default, for
+    /// jobs that only compute, does nothing.
+    ///
+    /// # Safety
+    /// `off` points at the live job's off-thread half.
+    unsafe fn cancel(off: *mut Self::OffThread) {
+        let _ = off;
+    }
 }
 
-/// The type-erased head of every [`Job<C>`] (one task tag serves every `C`).
+/// The type-erased head of every [`Job<C>`] (one task tag serves every `C`),
+/// linked into its VM's [`JobList`] while the job is live.
 #[repr(C)]
 pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
     release_unrun: unsafe fn(*mut JobHeader),
+    cancel: unsafe fn(*mut JobHeader),
+    prev: *mut JobHeader,
+    next: *mut JobHeader,
+}
+
+/// A VM's live jobs (JS thread only; zero-valid), so its stop phase can
+/// [`cancel`](JobContext::cancel) the ones waiting on something external.
+pub struct JobList {
+    head: *mut JobHeader,
+}
+
+impl JobList {
+    fn push(&mut self, job: *mut JobHeader) {
+        // SAFETY: `job` is a live, unlinked header; JS thread.
+        unsafe {
+            (*job).prev = core::ptr::null_mut();
+            (*job).next = self.head;
+            if !self.head.is_null() {
+                (*self.head).prev = job;
+            }
+        }
+        self.head = job;
+    }
+    fn unlink(&mut self, job: *mut JobHeader) {
+        // SAFETY: `job` is linked in this list; JS thread.
+        unsafe {
+            let (prev, next) = ((*job).prev, (*job).next);
+            if prev.is_null() {
+                debug_assert!(core::ptr::eq(self.head, job));
+                self.head = next;
+            } else {
+                (*prev).next = next;
+            }
+            if !next.is_null() {
+                (*next).prev = prev;
+            }
+        }
+    }
+    /// The VM's stop phase (JS thread): ask every live job to finish soon.
+    pub fn cancel_all(&self) {
+        let mut job = self.head;
+        while !job.is_null() {
+            // SAFETY: linked ⇒ live (jobs unlink, on this thread, before they
+            // are freed); `cancel` neither frees nor unlinks.
+            unsafe {
+                ((*job).cancel)(job);
+                job = (*job).next;
+            }
+        }
+    }
 }
 
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
@@ -255,6 +319,10 @@ impl<C: JobContext> Job<C> {
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
                 release_unrun: |p| drop(unsafe { Self::take(p.cast::<Self>()) }),
+                // SAFETY: linked ⇒ live; see `JobContext::cancel`.
+                cancel: |p| unsafe { C::cancel(core::ptr::addr_of_mut!((*p.cast::<Self>()).off)) },
+                prev: core::ptr::null_mut(),
+                next: core::ptr::null_mut(),
             },
             ticket: ManuallyDrop::new(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -266,7 +334,10 @@ impl<C: JobContext> Job<C> {
             js,
         }));
         // SAFETY: live until completed/released on this thread; the pool owns it now.
-        WorkPool::schedule(unsafe { &raw mut (*job).task });
+        unsafe {
+            cx.vm().jobs().push(&raw mut (*job).header);
+            WorkPool::schedule(&raw mut (*job).task);
+        }
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
@@ -291,6 +362,8 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once.
     unsafe fn take(this: *mut Self) -> (C::OffThread, C::Js) {
+        // SAFETY: fn contract; JS thread.
+        unsafe { VirtualMachine::get().jobs().unlink(&raw mut (*this).header) };
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,

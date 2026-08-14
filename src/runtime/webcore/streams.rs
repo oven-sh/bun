@@ -1062,8 +1062,8 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     /// `flush_promise()` → `pending.run()`.
     pub(crate) pending: WritablePending,
     pub(crate) wrote_at_start_of_flush: BlobSizeType,
-    // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
-    // `end_from_js` install it. Safe `Deref` via `BackRef`.
+    // JSC_BORROW: process-lifetime VM global, installed by
+    // `RequestContext::do_render_stream` at construction. Safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub(crate) high_water_mark: BlobSizeType,
 
@@ -1668,13 +1668,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
         self.wrote_at_start_of_flush = self.wrote;
-        self.pending_flush = Some(JSPromise::create(global_this));
-        self.global_this = Some(BackRef::new(global_this));
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        let promise_value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-        promise_value.protect();
-
-        bun_sys::Result::Ok(promise_value)
+        bun_sys::Result::Ok(self.park_pending_flush(global_this))
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
@@ -1831,7 +1825,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.unregister_auto_flusher();
     }
 
-    /// In this case, it's always an error
+    /// Controller `close()`. The buffered tail is sent here rather than left
+    /// to the auto-flusher: a `pull()` that closes synchronously has its sink
+    /// torn down by `do_render_stream` before any deferred task runs.
     pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
 
@@ -1858,6 +1854,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.finalize();
             return bun_sys::Result::Ok(());
         }
+
+        if self.send_readable(0) {
+            self.handle_ended_response(err);
+        } else {
+            let global_this = BackRef::new(self.global_this());
+            self.park_pending_flush(&global_this);
+        }
         bun_sys::Result::Ok(())
     }
 
@@ -1882,12 +1885,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if readable_len > 0 {
             if !self.send_readable(0) {
-                self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = Some(BackRef::new(global_this));
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-                value.protect();
-                return bun_sys::Result::Ok(value);
+                return bun_sys::Result::Ok(self.park_pending_flush(global_this));
             }
         } else {
             if let Some(res) = self.any_res() {
@@ -1895,19 +1893,38 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
 
+        self.handle_ended_response(None);
+
+        bun_sys::Result::Ok(JSValue::from(self.wrote))
+    }
+
+    /// uWS could not drain what was handed to it: `on_writable` settles this
+    /// promise via `flush_promise` once it has (resending the `try_end` tail
+    /// still in `buffer` first). For an ended sink the request waits on it
+    /// instead of tearing the sink down (`do_render_stream`,
+    /// `handle_resolve_stream`).
+    fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        let promise = JSPromise::create(global_this);
+        self.pending_flush = Some(promise);
+        self.global_this = Some(BackRef::new(global_this));
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let value = JSPromise::opaque_ref(promise).to_js();
+        value.protect();
+        value
+    }
+
+    /// `end()`/`end_from_js()` fully ended the response through uWS, which
+    /// `markDone()`s it and drops its `onAborted` (see `ended_response`).
+    fn handle_ended_response(&mut self, err: Option<SysError>) {
         if let Some(res) = self.any_res() {
             // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
             res.resume();
         }
-        // Both branches above fully ended the response through uWS, which
-        // `markDone()`s it and drops its `onAborted`.
         self.ended_response = true;
         self.mark_done();
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-        self.source.close(None);
+        let _ = self.flush_promise();
+        self.source.close(err);
         self.finalize();
-
-        bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
@@ -1966,6 +1983,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.auto_flusher.registered.set(false);
             return false;
         }
+        // `end()`/`end_from_js()` send their own tail (or park it for
+        // `on_writable`) and unregister this flusher on the way.
+        debug_assert!(!self.requested_end);
 
         let readable_len = self.readable_slice().len();
 
@@ -1979,20 +1999,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return true;
         }
         self.auto_flusher.registered.set(false);
-
-        if self.requested_end {
-            if let Some(res) = self.any_res() {
-                res.clear_on_writable();
-                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume();
-            }
-            // `send_readable` drained the parked `try_end`/`end`, so uWS has
-            // `markDone()`d the response and dropped its `onAborted`.
-            self.ended_response = true;
-            self.source.close(None);
-            let _ = self.flush_promise();
-            self.finalize();
-        }
         false
     }
 

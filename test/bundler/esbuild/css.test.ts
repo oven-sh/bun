@@ -2098,6 +2098,49 @@ c {
     },
   });
 
+  // A layer's position in the cascade order is fixed by its first declaration,
+  // so the empty blocks in order.css decide that `b` beats `a` in entry.css.
+  // They must come out as `@layer` statements instead of being removed as
+  // empty rules.
+  itBundled("css/CSSAtLayerEmptyBlockKeepsLayerOrder", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./order.css";
+        @layer b { .x { color: red } }
+        @layer a { .x { color: blue } }
+      `,
+      "/order.css": /* css */ `
+        @layer a {}
+        @layer b {}
+        @media print { @layer c {} }
+        @layer {}
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* order.css */
+        @layer a, b;
+        @media print {
+          @layer c;
+        }
+
+        /* entry.css */
+        @layer b {
+          .x {
+            color: red;
+          }
+        }
+
+        @layer a {
+          .x {
+            color: #00f;
+          }
+        }
+      `);
+    },
+  });
+
   itBundled("css/CSSAtImportConditionsChainExternal", {
     files: {
       "/entry.css": /* css */ `

@@ -13,6 +13,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use bun_io::{self as Async, Waker};
+use bun_threading::unbounded_queue::Batch;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -513,47 +514,51 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
-        let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
-            return 0;
-        }
-
-        let mut iter = concurrent.iterator();
         let start_count = self.tasks.readable_length();
-        let _ = self.tasks.ensure_unused_capacity(count);
-
-        // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
-        let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
-
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            if let Some(dest) = to_destroy.take() {
-                // SAFETY: dest was returned by iterator and marked auto_delete; uniquely owned here
-                let _ = unsafe { bun_core::heap::take(dest) };
-            }
-
-            // SAFETY: `task` is non-null (checked above) and owned by this
-            // batch; only shared reads follow (`auto_delete`, the `task` copy).
-            let task_ref = unsafe { &*task };
-            if task_ref.auto_delete() {
-                to_destroy = Some(task);
-            }
-
-            // LinearFifo's fields are private — `write_item` is the
-            // public path (single-slot copy, same complexity).
-            let _ = self.tasks.write_item(task_ref.task);
+        let posted = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_batch(posted);
+        if let Some(posted) = self
+            .finished_macro_loop()
+            .map(|macro_loop| macro_loop.concurrent_tasks.pop_batch())
+        {
+            self.take_concurrent_batch(posted);
         }
-
-        if let Some(dest) = to_destroy {
-            // SAFETY: see above
-            let _ = unsafe { bun_core::heap::take(dest) };
-        }
-
         self.tasks.readable_length() - start_count
+    }
+
+    /// Move a popped batch into `self.tasks`, freeing the heap `ConcurrentTask` carriers.
+    fn take_concurrent_batch(&mut self, batch: Batch<ConcurrentTaskItem>) {
+        if batch.count == 0 {
+            return;
+        }
+        let _ = self.tasks.ensure_unused_capacity(batch.count);
+        let mut iter = batch.iterator();
+        while let Some(node) = NonNull::new(iter.next()) {
+            // SAFETY: a node of the popped batch; the iterator has already moved past it.
+            let task = unsafe { ConcurrentTaskItem::into_task(node) };
+            let _ = self.tasks.write_item(task);
+        }
+    }
+
+    /// The macro loop, when this is the regular loop and no macro is running.
+    /// Work a macro started posts its completion there (`LoopKind::Macro`), but
+    /// that loop only ticks while a macro is being waited on, so whatever
+    /// completes after the macro returned would otherwise sit there forever,
+    /// holding its keep-alive on the platform loop both loops share.
+    fn finished_macro_loop(&self) -> Option<&EventLoop> {
+        let vm = self.vm_ref();
+        (vm.has_enabled_macro_mode
+            && !vm.macro_mode
+            && core::ptr::eq(self, &raw const vm.regular_event_loop))
+        .then_some(&vm.macro_event_loop)
+    }
+
+    /// Other threads have posted work that this loop's next drain will pick up.
+    pub(crate) fn has_concurrent_tasks(&self) -> bool {
+        !self.concurrent_tasks.is_empty()
+            || self
+                .finished_macro_loop()
+                .is_some_and(|macro_loop| !macro_loop.concurrent_tasks.is_empty())
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
@@ -643,7 +648,7 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
     }
 
     pub fn tick(&mut self) {
@@ -730,27 +735,6 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
-    /// Move whatever other threads posted (`concurrent_tasks`) into
-    /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
-    /// over `self.tasks` releases everything. Called by `release_queued_tasks`
-    /// in teardown, after `join_child_workers()` (every child has posted its
-    /// close task by then) and before the JSC VM is destroyed (so captured
-    /// `Ref<>`s in queued C++ lambdas drop against a live heap).
-    fn take_concurrent_tasks(&mut self) {
-        let mut iter = self.concurrent_tasks.pop_batch().iterator();
-        loop {
-            let node = iter.next();
-            if node.is_null() {
-                break;
-            }
-            // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning.
-            let task =
-                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
-            let _ = self.tasks.write_item(task);
-        }
-    }
-
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
     /// `Taskable::release_unrun`, and refuse (release on arrival) anything
@@ -759,7 +743,8 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
+        let posted = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_batch(posted);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.

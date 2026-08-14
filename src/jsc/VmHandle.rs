@@ -74,6 +74,8 @@ enum State {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
     Regular,
+    /// Once the macro has returned, the regular loop drains this queue too
+    /// (`EventLoop::finished_macro_loop`).
     Macro,
 }
 

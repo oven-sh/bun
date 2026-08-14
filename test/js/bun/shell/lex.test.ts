@@ -706,6 +706,138 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  // Tokens of `[[ -n x ]]`
+  const cond = [
+    { DoubleBracketOpen: {} },
+    { Text: "-n" },
+    { Delimit: {} },
+    { Text: "x" },
+    { Delimit: {} },
+    { DoubleBracketClose: {} },
+  ];
+  const BACKTICK = { raw: "`" };
+
+  describe("double brackets", () => {
+    test("]] directly before the ) of a subshell", () => {
+      expect(JSON.parse(lex`([[ -n x ]])`)).toEqual([{ OpenParen: {} }, ...cond, { CloseParen: {} }, { Eof: {} }]);
+    });
+
+    // Whether a Delimit is emitted in front of CmdSubstEnd is decided by the
+    // arm that closes the substitution (#38479 changes it), so these two
+    // compare the token stream without Delimits.
+    const dropDelimits = (tokens: object[]) => tokens.filter(tok => !("Delimit" in tok));
+    const condInSubst = [{ CmdSubstBegin: {} }, ...dropDelimits(cond), { CmdSubstEnd: {} }, { Eof: {} }];
+
+    test("]] directly before the ) of a command substitution", () => {
+      expect(dropDelimits(JSON.parse(lex`$([[ -n x ]])`))).toEqual(condInSubst);
+    });
+
+    test("]] directly before the closing backtick", () => {
+      expect(dropDelimits(JSON.parse(lex`${BACKTICK}[[ -n x ]]${BACKTICK}`))).toEqual(condInSubst);
+    });
+
+    test("]] directly before a redirect", () => {
+      expect(JSON.parse(lex`[[ -n x ]]<in`)).toEqual([
+        ...cond,
+        { Redirect: redirect({ stdin: true }) },
+        { Text: "in" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+      expect(JSON.parse(lex`[[ -n x ]]>out`)).toEqual([
+        ...cond,
+        { Redirect: redirect({ stdout: true }) },
+        { Text: "out" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("]] directly before an operator or a paren", () => {
+      expect(JSON.parse(lex`[[ -n x ]]&&echo`)).toEqual([
+        ...cond,
+        { DoubleAmpersand: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+      expect(JSON.parse(lex`[[ -n x ]];`)).toEqual([...cond, { Semicolon: {} }, { Eof: {} }]);
+      expect(JSON.parse(lex`[[ -n x ]]()`)).toEqual([...cond, { OpenParen: {} }, { CloseParen: {} }, { Eof: {} }]);
+    });
+
+    test("]] glued to the next word is part of the word", () => {
+      expect(JSON.parse(lex`[[ -n x ]]y`)).toEqual([
+        { DoubleBracketOpen: {} },
+        { Text: "-n" },
+        { Delimit: {} },
+        { Text: "x" },
+        { Delimit: {} },
+        { Text: "]]y" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("]] outside of [[ is text", () => {
+      expect(JSON.parse(lex`echo ]]`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "]]" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+      expect(JSON.parse(lex`echo [[x]]`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "[[x]]" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+      expect(JSON.parse(lex`$(echo ]])`)).toEqual([
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "]]" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("]] after the conditional was closed is text", () => {
+      expect(JSON.parse(lex`[[ -n x ]] && echo ]]`)).toEqual([
+        ...cond,
+        { DoubleAmpersand: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "]]" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("a command substitution inside the conditional starts outside of it", () => {
+      expect(JSON.parse(lex`[[ -n $(echo ]] ) ]]`)).toEqual([
+        { DoubleBracketOpen: {} },
+        { Text: "-n" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "]]" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Delimit: {} },
+        { DoubleBracketClose: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("[[ at the end of the input", () => {
+      expect(JSON.parse(lex`[[`)).toEqual([{ DoubleBracketOpen: {} }, { Eof: {} }]);
+    });
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

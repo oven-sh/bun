@@ -1703,9 +1703,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
-        // The property hooks read the contextified object. Script#runInContext installs this object
-        // there on its first run; compileFunction and modules never do, so install it up front.
-        targetContext->setContextifiedObject(specialSandbox);
         return JSValue::encode(specialSandbox);
     }
 

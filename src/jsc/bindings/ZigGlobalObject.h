@@ -567,6 +567,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
+    V(public, JSC::LazyClassStructure, m_JSDOMFileClassStructure)                                            \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
@@ -675,7 +676,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaBakeObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
-    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \
@@ -782,7 +782,8 @@ public:
     JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
-    JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    JSObject* JSDOMFileConstructor() const { return m_JSDOMFileClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::Structure* JSDOMFileStructure() const { return m_JSDOMFileClassStructure.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }

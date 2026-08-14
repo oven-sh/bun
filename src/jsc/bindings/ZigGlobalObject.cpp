@@ -2097,6 +2097,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSDirentClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSDirentClassStructure(init);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileClassStructure), [](LazyClassStructure::Initializer& init) {
+             Bun::setupJSDOMFileClassStructure(init);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSX509CertificateClassStructure), [](LazyClassStructure::Initializer& init) {
              setupX509CertificateClassStructure(init);
          } },
@@ -2487,10 +2490,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSAsymmetricKeyObjectPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              setupAsymmetricKeyObjectPrototype(init);
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
-             init.set(fileConstructor);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSC::JSGlobalObject* globalObject = init.owner;
              JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
@@ -2768,26 +2767,6 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
     ASSERT(classInfo());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    Zig::GlobalObject* bunGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    return JSValue::encode(
-        bunGlobalObject->JSDOMFileConstructor());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
 }
 
 // `console.Console` or `import { Console } from 'console';`

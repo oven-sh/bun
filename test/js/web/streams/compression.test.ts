@@ -926,21 +926,38 @@ describe("bounded output per input chunk", () => {
     },
   );
 
-  test("cancelling the readable while the flush is parked settles close()", async () => {
-    const cs = new CompressionStream("zstd");
-    const writer = cs.writable.getWriter();
-    const reader = cs.readable.getReader();
-    // zstd holds all of this back until the flush, which then needs two steps.
-    await writer.write(randomBytes(100 * 1024));
-    const closed = writer.close();
+  // reader.cancel() after writer.close() is the one terminal that does not go
+  // through the transform's cancel reaction (the close already owns the finish
+  // promise, so the source cancel algorithm just returns it), and the cancelled
+  // readable will never pull again. A flush parked between steps at that point
+  // still has to be woken up, or close() and cancel() both stay pending forever.
+  // Both encoders hold incompressible input back until the flush: zstd's ~100 KiB
+  // flush takes two steps (parked after the first, cancelled with no read in
+  // between), and brotli's ~200 KiB one takes four (the second read is served by
+  // the resumed flush, which then parks again before the cancel lands).
+  test.each([
+    { format: "zstd", writes: [100 * 1024], readsBeforeCancel: 0 },
+    { format: "brotli", writes: [100 * 1024, 100 * 1024], readsBeforeCancel: 2 },
+  ] as const)(
+    "reader.cancel() after writer.close() settles both while a $format flush is parked (reads first: $readsBeforeCancel)",
+    async ({ format, writes, readsBeforeCancel }) => {
+      const cs = new CompressionStream(format);
+      const writer = cs.writable.getWriter();
+      const reader = cs.readable.getReader();
+      for (const size of writes) await writer.write(randomBytes(size));
+      const closed = writer.close();
 
-    const first = await reader.read();
-    expect(first.value!.byteLength).toBeLessThanOrEqual(kStepOutput);
-    await reader.cancel();
-    // close() shares the transform's finish promise with cancel(): the abandoned
-    // flush resolves it instead of leaving both pending forever.
-    expect(await closed).toBeUndefined();
-  });
+      for (let i = 0; i < readsBeforeCancel; i++) {
+        const { value, done } = await reader.read();
+        expect(done).toBe(false);
+        expect(value!.byteLength).toBeLessThanOrEqual(kStepOutput);
+      }
+      const cancelled = reader.cancel();
+      // close() and cancel() share the transform's finish promise; the abandoned
+      // flush resolves it rather than leaving both pending forever.
+      expect(await Promise.all([closed, cancelled])).toEqual([undefined, undefined]);
+    },
+  );
 });
 
 // The native coder (a gzip deflate context is ~280 KiB of zlib state) must be

@@ -262,9 +262,12 @@ static JSPromise* completeChunkWhenSinkDrains(JSGlobalObject* globalObject, JSTr
 
 // CodecVerdict::ParkOnReadable / ParkOnSink. Leaves the chunk pending and registers
 // onCodecChunkResume on the promise the consumer resolves when it has room: the readable
-// side's [[backpressureChangePromise]] (resolved by its pull, and by the unblock-write step
-// of every error/cancel terminal), or a fresh gate in m_nativeSinkReadyPromise (resolved by
-// the sink's onReady or by detaching from the sink). Returns the chunk's promise.
+// side's [[backpressureChangePromise]], or a fresh gate in m_nativeSinkReadyPromise (resolved
+// by the sink's onReady or by detaching from the sink). Besides the readable's pull, every
+// terminal resolves the former through transformStreamUnblockWrite: the error path, the
+// cancel reaction, and (Bun addition, for a flush parked here) the cancel that arrives while
+// a close is already in flight, see transformStreamDefaultSourceCancelAlgorithm. Returns the
+// chunk's promise.
 static JSPromise* parkCodecChunk(JSGlobalObject* globalObject, JSTransformStream* stream, CodecVerdict wait)
 {
     auto& vm = getVM(globalObject);

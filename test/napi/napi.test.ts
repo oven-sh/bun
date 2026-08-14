@@ -458,19 +458,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // still succeed and must leave that exception pending.
     it("ungated functions succeed while an engine exception is pending and preserve it", async () => {
       const result = await checkSameOutput("test_ungated_calls_with_engine_exception", []);
-      expect(result).toBe(
-        [
-          "napi_call_function: status=10",
-          "napi_get_value_bigint_int64: status=0 value=-7",
-          "napi_get_value_bigint_uint64: status=0 lossless=0",
-          "napi_get_value_string_utf8: status=0 value=ungated",
-          "napi_create_bigint_int64: status=0",
-          "napi_create_bigint_uint64: status=0",
-          "napi_create_symbol: status=0",
-          "exception pending after: true",
-          "pending exception code: EPENDING",
-        ].join("\n"),
-      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "napi_call_function: status=10",
+        "napi_get_value_bigint_int64: status=0 value=-7",
+        "napi_get_value_bigint_uint64: status=0 lossless=0",
+        "napi_get_value_string_utf8: status=0 value=ungated",
+        "napi_create_bigint_int64: status=0",
+        "napi_create_bigint_uint64: status=0",
+        "napi_create_symbol: status=0",
+        "exception pending after: true",
+        "pending exception code: EPENDING",
+      ]);
     });
 
     // Bun-only: a termination (here a node:vm timeout) delivered inside an
@@ -491,11 +490,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The first three lines are printf() (\r\n via the Windows CRT), the last
+      // one is console.log.
       expect({
         stdout: stdout
-          .replaceAll("\r\n", "\n")
           .replaceAll(/^\[\w+\].+$/gm, "")
-          .trim(),
+          .trim()
+          .split(/\r?\n/),
         stderr,
         exitCode,
       }).toEqual({
@@ -504,7 +505,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           "napi_get_value_bigint_int64 eventually returned: status=10",
           "pending after napi_get_and_clear_last_exception: true",
           "ERR_SCRIPT_EXECUTION_TIMEOUT",
-        ].join("\n"),
+        ],
         stderr: "",
         exitCode: 0,
       });
@@ -517,14 +518,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // would otherwise never stop. Hangs when broken.
     it("a node:vm timeout interrupts a script looping through ungated functions", async () => {
       const result = await checkSameOutput("test_ungated_calls_vm_timeout", []);
-      expect(result).toBe(Array(5).fill("ERR_SCRIPT_EXECUTION_TIMEOUT").join("\n"));
+      expect(result.split(/\r?\n/)).toEqual(Array(5).fill("ERR_SCRIPT_EXECUTION_TIMEOUT"));
     });
 
     // Worker startup dominates this one: about two seconds per worker under a
     // debug build, before any CI load.
     it("worker.terminate() stops a worker looping through ungated functions", async () => {
       const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
-      expect(result).toBe(`${Array(2).fill("terminate() resolved with 1").join("\n")}\nresolved to undefined`);
+      expect(result.split(/\r?\n/)).toEqual([
+        "terminate() resolved with 1",
+        "terminate() resolved with 1",
+        "resolved to undefined",
+      ]);
     }, 30_000);
   });
 

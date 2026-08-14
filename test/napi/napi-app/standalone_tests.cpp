@@ -3085,6 +3085,9 @@ ungated_calls_until_terminated(const Napi::CallbackInfo &info) {
   napi_is_exception_pending(env, &pending);
   printf("pending after napi_get_and_clear_last_exception: %s\n",
          pending ? "true" : "false");
+  // The driver prints the vm error after this returns; on Windows (no
+  // BlockingStdoutScope) a piped stdout is otherwise only flushed at exit.
+  fflush(stdout);
   return nullptr;
 }
 

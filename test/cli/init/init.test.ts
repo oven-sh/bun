@@ -90,10 +90,11 @@ describe.concurrent("bun init", () => {
     await Promise.all(dirs.map(dir => fs.promises.rm(dir, { recursive: true, force: true })));
   });
 
-  // The scaffolding `bun init` does for a react template is fully determined
-  // by the template's source directory plus the generated README/.gitignore,
-  // and `bun init` exits 0 even when the nested `bun install` fails, so the
-  // evidence that the install ran is the lockfile and node_modules.
+  // A react template's scaffold is fully determined by its source directory
+  // plus the generated README.md and .gitignore. Whether the nested
+  // `bun install` did its job is checked through what it leaves behind
+  // (the lockfile is in the file listing, node_modules is checked here)
+  // rather than through `bun init`'s exit code.
   function expectReactTemplate(init: InitResult, source: string, readmeTitle: string) {
     const { dir, stdout, stderr, exitCode } = init;
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });

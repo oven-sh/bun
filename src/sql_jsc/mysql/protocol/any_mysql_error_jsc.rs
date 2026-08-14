@@ -108,6 +108,11 @@ pub(crate) fn mysql_error_to_js(
             b"ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
             b"Wrong number of parameters provided",
         ),
+        "TooManyParameters" => (
+            b"ERR_MYSQL_TOO_MANY_PARAMETERS",
+            b"Query has too many parameters - the MySQL wire protocol supports a maximum \
+              of 65535 parameters per query. Try reducing your batch size",
+        ),
         "UnsupportedColumnType" => (
             b"ERR_MYSQL_UNSUPPORTED_COLUMN_TYPE",
             b"Unsupported column type",

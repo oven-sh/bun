@@ -212,6 +212,9 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
+    /// Every `import()` target, including files that are also user-specified entry points.
+    pub(crate) dynamically_imported_files: BitSet,
+
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
@@ -225,9 +228,9 @@ pub struct LinkerGraph<'a> {
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
-// - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
-//   before fan-out and only read by workers.
+// - `files_live` / `parts_live` / `is_scb_bitset` / `dynamically_imported_files` /
+//   `reachable_files` / `stable_source_indices` / `code_splitting` / `ts_enums` are
+//   populated before fan-out and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns
@@ -275,6 +278,7 @@ impl Default for LinkerGraph<'_> {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
+            dynamically_imported_files: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
         }
     }
@@ -625,6 +629,7 @@ impl<'a> LinkerGraph<'a> {
         self.files.set_capacity(sources.len())?;
         self.files.zero();
         self.files_live = BitSet::init_empty(sources.len())?;
+        self.dynamically_imported_files = BitSet::init_empty(sources.len())?;
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
         unsafe { self.files.set_len(sources.len()) };
 
@@ -681,6 +686,7 @@ impl<'a> LinkerGraph<'a> {
 
             for &id in dynamic_import_entry_points {
                 debug_assert!(self.code_splitting); // this should never be a thing without code splitting
+                self.dynamically_imported_files.set(id as usize);
 
                 if entry_point_kinds[id as usize] != entry_point::Kind::None {
                     // You could dynamic import a file that is already an entry point
@@ -978,7 +984,7 @@ pub struct File {
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
-    /// may be ".user_specified" instead of ".dynamic_import".
+    /// may be ".user_specified" instead of ".dynamic_import" (see `dynamically_imported_files`).
     pub entry_point_kind: EntryPoint::Kind,
 
     /// If "entry_point_kind" is not ".none", this is the index of the

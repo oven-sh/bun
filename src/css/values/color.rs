@@ -1126,8 +1126,6 @@ pub(crate) fn parse_color_function(
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
-    // The lightness percent basis: `lab()`/`lch()` write lightness as 0..100,
-    // the ok variants as 0..1.
     crate::match_ignore_ascii_case! { function, {
         b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
@@ -1176,11 +1174,8 @@ pub(crate) fn parse_color_function(
     }}
 }
 
-/// Percent basis (what `100%` stands for, see `RelativeComponentParser`) of the
-/// `rgb()` channels.
+// See `RelativeComponentParser::percent_basis`.
 const RGB_PERCENT_BASIS: f32 = 255.0;
-/// Percent basis of `hsl()` saturation and lightness and `hwb()` whiteness and
-/// blackness.
 const HSL_PERCENT_BASIS: f32 = 100.0;
 
 pub(crate) fn parse_rgb_components(
@@ -2015,15 +2010,8 @@ impl ComponentParser {
         }
     }
 
-    /// Parses a channel that is stored as a unit value and written as a
-    /// `<percentage>`, or, in the relative color syntax, as a `<number>` (a
-    /// channel keyword, a calc() over them, or a literal) out of `percent_basis`.
-    ///
-    /// css-color-4 also allows the `<number>` outside the relative syntax. That
-    /// is left for the change that stops folding out-of-gamut origin colors:
-    /// today `rgb(from lab(100 104 -51) r g b)` is left alone only because the
-    /// origin does not parse, and accepting it would fold it to a gamut-mapped
-    /// color, which browsers do not do.
+    /// A channel stored as a unit value: a `<percentage>`, or in the relative
+    /// color syntax also a `<number>` out of `percent_basis`.
     fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
@@ -2109,19 +2097,14 @@ impl NumberOrPercentage {
 // RelativeComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Resolves the channel keywords of a relative color (`rgb(from red r g b)`).
-/// https://drafts.csswg.org/css-color-5/#relative-colors
 pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
-    /// The origin color's channels as the colorspace struct stores them.
     pub(crate) components: (f32, f32, f32, f32),
-    /// What `100%` of each channel is in the function being parsed: 255 for the
-    /// `rgb()` channels, 100 for `hsl()` saturation/lightness and `lab()`
-    /// lightness, 1 for `color()`, the ok variants and everything unscaled. The
-    /// structs store those channels as unit values, and a keyword is a
-    /// `<number>` in the function's own range, so a keyword resolves to
-    /// `component * percent_basis`. `r` is 200 in `rgb()` but 0.784 in
-    /// `color(srgb ...)`, which is why the function being parsed sets this.
+    /// What `100%` of each channel is in the function being parsed (255 in
+    /// `rgb()`, 1 in `color(srgb ...)`, for the same `SRGB` components). The
+    /// structs store unit values and a keyword is a `<number>` in the function's
+    /// range, so a keyword is `component * percent_basis`.
+    /// https://drafts.csswg.org/css-color-5/#relative-colors
     pub(crate) percent_basis: (f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
 }
@@ -2153,8 +2136,6 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // A calc() with an <angle> in it, e.g. `calc(h + 30deg)`. The hue
-        // keyword is an angle inside it, every other keyword stays a <number>.
         if let Ok(value) = input.try_parse(|i| {
             match Calc::<Angle>::parse_with(i, this, |ctx, ident| {
                 if let Some((degrees, _)) = ctx.get_ident(ident, ChannelType::ANGLE) {
@@ -2190,13 +2171,9 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    /// A math function the `<number>` pass could not fold, evaluated as a
-    /// `<percentage>` and returned as a unit value. Callers try `parse_number`
-    /// first, so this only sees functions with a percentage in them, plus
-    /// `min(r, g)`, which `reduce_args` folds here because it only compares
-    /// values. A keyword is its channel as a percentage of its basis here, as
-    /// before this parser had a basis; typing it as a `<number>` like upstream
-    /// does needs `Percentage::from_calc` to reject a number first (#38513).
+    /// Second pass for what `parse_number` could not fold: a math function with
+    /// a percentage in it, or `min(r, g)` (`reduce_args` only compares values).
+    /// A keyword is its channel as a percentage of its basis here.
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         match Calc::<Percentage>::parse_with(input, this, |ctx, ident| {
             let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;
@@ -2239,13 +2216,12 @@ impl RelativeComponentParser {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    /// The `<number>` a channel keyword stands for in the function being parsed.
     fn get_number(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
         let (component, percent_basis) = self.get_ident(ident, allowed_types)?;
         Some(component * percent_basis)
     }
 
-    /// A channel keyword's stored component and its percent basis.
+    /// Returns the keyword's stored component and its percent basis.
     fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<(f32, f32)> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
@@ -2276,15 +2252,12 @@ impl RelativeComponentParser {
 }
 
 bitflags::bitflags! {
-    /// What a color space's channel keyword stands for in the relative color
-    /// syntax, which decides the positions it may be used in.
+    /// What a channel keyword stands for in the relative color syntax.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ChannelType: u8 {
         /// A hue in degrees.
         const ANGLE = 1 << 0;
-        /// A `<number>` in the range of the function being parsed (see
-        /// `RelativeComponentParser::percent_basis`); every channel other than
-        /// a hue, and `alpha`.
+        /// A `<number>` in the function's range; every other channel, and `alpha`.
         const NUMBER = 1 << 1;
     }
 }

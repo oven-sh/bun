@@ -105,8 +105,11 @@ jobs:
       # and the manifest against the clearsigned body. Fails the
       # workflow when the release cannot be verified, instead of users
       # discovering it (https://github.com/oven-sh/bun/issues/28931).
+      # --download keeps a dispatch against an older release (assets
+      # predating GitHub's digest field) verifiable by hashing the
+      # downloaded bytes instead of false-failing the job.
       - name: Validate Digests
-        run: bun scripts/validate-digests.ts "$BUN_VERSION"
+        run: bun scripts/validate-digests.ts "$BUN_VERSION" --download
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   npm:

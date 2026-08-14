@@ -24,7 +24,9 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.repository == 'oven-sh/bun'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Trigger Vercel deployment
         env:
@@ -34,5 +36,8 @@ jobs:
             echo "::error::SITE_VERCEL_DEPLOY_HOOK secret is not set"
             exit 1
           fi
-          curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK"
+          curl --fail --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 60 \
+            -X POST "$VERCEL_DEPLOY_HOOK"
           echo "Vercel deployment triggered"

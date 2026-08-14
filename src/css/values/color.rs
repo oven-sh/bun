@@ -801,7 +801,8 @@ impl CssColor {
             });
         }
 
-        fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
+        /// Whether `color` is already specified in the interpolation color space `T`.
+        fn is_in_space<T: 'static>(color: &CssColor) -> Option<bool> {
             use core::any::TypeId;
             debug_assert!(!matches!(
                 color,
@@ -819,8 +820,11 @@ impl CssColor {
             }
         }
 
-        let converted_first = check_converted::<T>(self)?;
-        let converted_second = check_converted::<T>(other)?;
+        // Only operands converted into the interpolation space are gamut mapped and have
+        // their powerless components treated as missing; a color specified directly in
+        // that space is interpolated as written (https://www.w3.org/TR/css-color-4/#interpolation-space).
+        let converted_first = !is_in_space::<T>(self)?;
+        let converted_second = !is_in_space::<T>(other)?;
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
         let mut first_color = T::try_from_css_color(self)?;

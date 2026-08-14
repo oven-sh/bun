@@ -649,3 +649,42 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+// https://www.w3.org/TR/css-color-4/#interpolation-space: only an operand that is
+// converted into the interpolation space is gamut mapped and has its powerless
+// components treated as missing; an operand authored in that space is mixed as
+// written. Expected values are lightningcss output.
+describe("color-mix() converted operands", () => {
+  test.each([
+    // Authored in the interpolation space: mixed as written.
+    ["color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5))", "#0f0"],
+    ["color-mix(in srgb, color(srgb 1.13 0 0), white)", "#ff8886"],
+    ["color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%))", "#0fa"],
+    ["color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%))", "#40997b"],
+    ["color-mix(in lab, lab(0% 30 40), lab(50% 50 -20))", "lab(25% 40 10)"],
+    ["color-mix(in lch, lch(50% 0 200), lch(50% 50 120))", "lch(50% 25 160)"],
+    ["color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120))", "oklch(50% .1 160)"],
+    ["color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white)", "color(srgb-linear 1.25 .5 .5)"],
+    // Converted into it: gamut mapped first, powerless components taken from the other side.
+    // color(display-p3 0 1 0) converts to the color(srgb -0.51 1.018 -0.31) used above.
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "#4d9654"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), white)", "#80fca0"],
+    ["color-mix(in srgb, white, color(display-p3 0 1 0))", "#80fca0"],
+    ["color-mix(in srgb, color(display-p3 1 0 0), color(display-p3 0 1 0))", "#808428"],
+    ["color-mix(in hsl, white, red)", "#ff8080"],
+    ["color-mix(in hsl, hsl(200 100% 50%), black)", "#005580"],
+    ["color-mix(in lab, black, lab(50% 50 -20))", "lab(25% 50 -20)"],
+    ["color-mix(in lch, lab(50% 0 0), lch(50% 50 120))", "lch(50% 25 120)"],
+    ["color-mix(in oklch, black, oklch(50% 0.2 120))", "oklch(25% .2 120)"],
+    ["color-mix(in srgb-linear, color(display-p3 0 1 0), white)", "color(srgb-linear .5 .972601 .527217)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the mixed color is what the other output formats convert", () => {
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), white)", "hex")).toBe("#80fca0");
+    expect(color("color-mix(in srgb, color(srgb 1.13 0 0), white)", "hex")).toBe("#ff8886");
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), white)", "{rgb}")).toEqual({ r: 128, g: 252, b: 160 });
+  });
+});

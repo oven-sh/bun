@@ -7538,6 +7538,198 @@ describe("css tests", () => {
     );
   });
 
+  // https://www.w3.org/TR/css-color-4/#interpolation-space: an operand that has to be
+  // converted into the interpolation color space is gamut mapped there and has its
+  // powerless components treated as missing. An operand written directly in that space
+  // is interpolated as authored, out-of-gamut or powerless components included. Expected
+  // values are lightningcss output.
+  describe("color-mix() converted operands", () => {
+    describe("in srgb", () => {
+      // color(display-p3 0 1 0) converts to color(srgb -0.51 1.018 -0.31). Authored in
+      // srgb those channels are interpolated as-is; converted from display-p3 they are
+      // gamut mapped first. These two used to come out the other way around.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#4d9654}",
+      );
+
+      // Authored in srgb: out-of-gamut channels cancel out during interpolation.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:#0f0}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 0.5 0.5 0.5), color(srgb -0.5 1.5 -0.5)) }",
+        ".foo{color:#0f0}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.5 -0.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:red}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 2 0 0) 25%, color(srgb 0 1 1)) }",
+        ".foo{color:#80bfbf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), color(srgb 0.5 1 1)) }",
+        ".foo{color:#d08080}",
+      );
+      // An out-of-gamut result is still mapped when it is serialized.
+      minify_test(".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), white) }", ".foo{color:#ff8886}");
+      minify_test(".foo { color: color-mix(in srgb, color(srgb none 2 0), rgb(0 255 0)) }", ".foo{color:#fff}");
+
+      // Converted into srgb: mapped into the srgb gamut before interpolating.
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0), white) }", ".foo{color:#80fca0}");
+      minify_test(".foo { color: color-mix(in srgb, white, color(display-p3 0 1 0)) }", ".foo{color:#80fca0}");
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 25%, white) }", ".foo{color:#bffdd0}");
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0 / 0.5), white) }", ".foo{color:#aafdc0bf}");
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 1 0 0), white) }", ".foo{color:#ff8786}");
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 1 0 0), color(display-p3 0 1 0)) }",
+        ".foo{color:#808428}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 none 1 0), rgb(0 255 0)) }",
+        ".foo{color:#00fc21}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, color(rec2020 0 1 0), white) }", ".foo{color:#80f8bb}");
+      minify_test(".foo { color: color-mix(in srgb, color(prophoto-rgb 0 1 0), white) }", ".foo{color:#80f9be}");
+      minify_test(".foo { color: color-mix(in srgb, lab(80% -120 80), white) }", ".foo{color:#80f0b3}");
+      minify_test(".foo { color: color-mix(in srgb, oklch(80% 0.3 145), white) }", ".foo{color:#80f29a}");
+
+      // One of each.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 30%, color(srgb -0.51 1.018 -0.31)) }",
+        ".foo{color:#00fc3c}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, light-dark(color(display-p3 0 1 0), color(srgb 1.13 0 0)), white) }",
+        ".foo{color:light-dark(#80fca0,#ff8886)}",
+      );
+
+      // In-gamut operands are unaffected either way.
+      minify_test(".foo { color: color-mix(in srgb, red, blue) }", ".foo{color:purple}");
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)) }",
+        ".foo{color:#00f942}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), color(srgb 1.13 0 0)) }",
+        ".foo{color:#ff5645}",
+      );
+    });
+
+    describe("in srgb-linear", () => {
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white) }",
+        ".foo{color:color(srgb-linear 1.25 .5 .5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear 1.5 0 0) 25%, white) }",
+        ".foo{color:color(srgb-linear 1.125 .75 .75)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb 1.13 0 0), white) }",
+        ".foo{color:color(srgb-linear 1 .546954 .530043)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(display-p3 0 1 0), white) }",
+        ".foo{color:color(srgb-linear .5 .972601 .527217)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(rec2020 0 1 0), white) }",
+        ".foo{color:color(srgb-linear .5 .935714 .591488)}",
+      );
+    });
+
+    describe("in hsl", () => {
+      // hsl() without `none` parses to rgb, so these operands are all converted: the
+      // hue and saturation of white and black are powerless and come from the other side.
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 100% 50%), white) }", ".foo{color:#80ff80}");
+      minify_test(".foo { color: color-mix(in hsl, white, red) }", ".foo{color:#ff8080}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 100% 100%), red) }", ".foo{color:#ff8080}");
+      minify_test(".foo { color: color-mix(in hsl, black, hsl(200 100% 50%)) }", ".foo{color:#005580}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), black) }", ".foo{color:#005580}");
+      minify_test(".foo { color: color-mix(in hsl, rgb(none 0 0), hsl(200 100% 50%)) }", ".foo{color:#005580}");
+      minify_test(".foo { color: color-mix(in hsl, hwb(120 none 100%), hsl(200 100% 50%)) }", ".foo{color:#005580}");
+      minify_test(".foo { color: color-mix(in hsl, color(srgb 1.13 0 0), white) }", ".foo{color:#ffaba2}");
+      minify_test(".foo { color: color-mix(in hsl, color(display-p3 0 1 0), white) }", ".foo{color:#7cff9f}");
+
+      // hsl() with `none` stays in hsl: its hue is kept even though it is powerless,
+      // and the `none` component is filled in from the other operand.
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 0% none), hsl(200 100% 50%)) }", ".foo{color:#40bf95}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 100%), hsl(200 100% 50%)) }", ".foo{color:#80ffd5}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%)) }", ".foo{color:#0fa}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), hsl(120 none 50%)) }", ".foo{color:#0fa}");
+
+      minify_test(".foo { color: color-mix(in hsl, red, blue) }", ".foo{color:#f0f}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 0% 50%), hsl(200 100% 50%)) }", ".foo{color:#4095bf}");
+      minify_test(".foo { color: color-mix(in hsl, gray, hsl(120 100% 50%)) }", ".foo{color:#40bf40}");
+    });
+
+    describe("in hwb", () => {
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 none 100%), hwb(200 0% 0%)) }", ".foo{color:#008055}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%)) }", ".foo{color:#40997b}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(200 0% 40%), hwb(120 50% none)) }", ".foo{color:#40997b}");
+      minify_test(".foo { color: color-mix(in hwb, white, hwb(200 0% 0%)) }", ".foo{color:#80d4ff}");
+      minify_test(".foo { color: color-mix(in hwb, black, hwb(200 0% 0%)) }", ".foo{color:#005580}");
+    });
+
+    describe("in lab and oklab", () => {
+      // a and b are powerless at 0% lightness, but only for converted operands.
+      minify_test(".foo { color: color-mix(in lab, lab(0% 30 40), lab(50% 50 -20)) }", ".foo{color:lab(25% 40 10)}");
+      minify_test(".foo { color: color-mix(in lab, lch(0% 30 40), lab(50% 50 -20)) }", ".foo{color:lab(25% 50 -20)}");
+      minify_test(".foo { color: color-mix(in lab, black, lab(50% 50 -20)) }", ".foo{color:lab(25% 50 -20)}");
+      minify_test(".foo { color: color-mix(in lab, lab(50% 50 -20), black) }", ".foo{color:lab(25% 50 -20)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklab(0% 0.1 0.1), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 .025)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklch(0% 0.1 45), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 -.05)}",
+      );
+      minify_test(".foo { color: color-mix(in oklab, black, oklab(50% 0.1 -0.05)) }", ".foo{color:oklab(25% .1 -.05)}");
+      minify_test(
+        ".foo { color: color-mix(in lab, color(srgb 1.13 0 0), white) }",
+        ".foo{color:lab(80.5691% 44.3385 38.3499)}",
+      );
+    });
+
+    describe("in lch and oklch", () => {
+      // The hue is powerless at zero chroma; hue and chroma are powerless at 0% lightness.
+      minify_test(".foo { color: color-mix(in lch, lch(50% 0 200), lch(50% 50 120)) }", ".foo{color:lch(50% 25 160)}");
+      minify_test(".foo { color: color-mix(in lch, lab(50% 0 0), lch(50% 50 120)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), lab(50% 0 0)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(0% 30 40), lch(50% 50 120)) }", ".foo{color:lch(25% 40 80)}");
+      minify_test(".foo { color: color-mix(in lch, lab(0% 30 40), lch(50% 50 120)) }", ".foo{color:lch(25% 50 120)}");
+      minify_test(".foo { color: color-mix(in lch, black, lch(50% 50 120)) }", ".foo{color:lch(25% 50 120)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 160)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 120)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0% 0.1 40), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .15 80)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(0% 0.1 0.1), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .2 120)}",
+      );
+      minify_test(".foo { color: color-mix(in oklch, black, oklch(50% 0.2 120)) }", ".foo{color:oklch(25% .2 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), lch(50% 50 120)) }", ".foo{color:lch(50% 50 120)}");
+      minify_test(".foo { color: color-mix(in lch, red, blue) }", ".foo{color:lch(41.9294% 119.019 351.111)}");
+    });
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

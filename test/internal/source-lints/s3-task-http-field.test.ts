@@ -25,6 +25,24 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     handed the task back.
 // Any other access (a new JS-thread abort/resume path, a caller in client.rs
 // or multipart.rs) fails here; route it through `async_http_id` instead.
+//
+// The same window has a second rule, checked below for `S3HttpSimpleTask`: the
+// functions that run on the task while it is out (IN_FLIGHT_FNS) take it as a
+// raw pointer and borrow one field per statement, never as `&mut self`. While
+// the HTTP thread is inside one of them, the JS thread's `stop_for_vm_teardown`
+// (VM teardown, and the sweep between files under `bun test`) may store into
+// the task's `signal_store`; a `&mut self` argument is a protected exclusive
+// borrow of the whole task, atomics included, for the duration of the call, so
+// that store is undefined behaviour under Tree Borrows (the model `bun run
+// rust:miri` uses: "protected tags must never be Disabled") and Stacked
+// Borrows alike, and rustc passes the same claim to LLVM as `noalias`.
+// `http_callback` additionally returns only after the post that lets the JS
+// thread free the task. The simple task's other methods (`error_with_body`,
+// `fail_if_contains_error`, `release_portable`, `Drop`) run from `on_response`,
+// after the hand-back, and keep their receivers, hence a list rather than a
+// ban on every receiver in the file. The streaming task is not listed: it has
+// no after-the-hand-back phase (chunks are delivered while more arrive), so the
+// rule there is every method of the type, which is a different check.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const S3_DIR = "src/runtime/webcore/s3/";
@@ -58,9 +76,48 @@ const ALLOWED: Record<string, readonly string[]> = {
   [`${S3_DIR}download_stream.rs`]: ["schedule", "update_state", "release_portable"],
 };
 
+// file -> the functions that run on the task while it is out on the HTTP thread
+// (see the header comment); each must take the task as a raw pointer.
+const IN_FLIGHT_FNS: Record<string, readonly string[]> = {
+  [`${S3_DIR}simple_request.rs`]: ["http_callback", "stage_http_result", "release_at_shutdown", "stop_for_vm_teardown"],
+};
+
+// The first parameter of `fn <name>(..)`, up to the first `,` or `)` (a trailing
+// `()` unit type included), across rustfmt's one-parameter-per-line wrapping.
+// `(?!\w)` keeps `fn foo` from matching `fn foo_bar`.
+function firstParamPattern(fn: string): RegExp {
+  return new RegExp(String.raw`\bfn\s+${fn}(?!\w)\s*(?:<[^>]*>)?\s*\(\s*([^,()]*(?:\(\))?)`, "g");
+}
+
+// `release_at_shutdown` receives the type-erased `*mut ()`; the others `*mut Self`.
+const RAW_TASK_PARAM = /^this\s*:\s*\*\s*mut\b/;
+
+interface Declaration {
+  fn: string;
+  line: number;
+  firstParam: string;
+}
+
+function inFlightDeclarations(stripped: string, fns: readonly string[]): Declaration[] {
+  const found: Declaration[] = [];
+  for (const fn of fns) {
+    for (const m of stripped.matchAll(firstParamPattern(fn))) {
+      found.push({
+        fn,
+        line: stripped.slice(0, m.index).split("\n").length,
+        firstParam: m[1].replace(/\s+/g, " ").trim(),
+      });
+    }
+  }
+  return found;
+}
+
 const offenders: string[] = [];
 // `file::fn` for every access attributed to an ALLOWED function.
 const allowedHits = new Set<string>();
+// `file::fn` for every IN_FLIGHT_FNS declaration found, and the ones not taking a pointer.
+const inFlightDeclared: string[] = [];
+const receiverOffenders: string[] = [];
 let scanned = 0;
 for (const abs of globAllSources().rust) {
   if (!abs.endsWith(".rs")) continue;
@@ -83,6 +140,12 @@ for (const abs of globAllSources().rust) {
     }
     const line = stripped.slice(0, m.index).split("\n").length;
     offenders.push(`${source}:${line} (in fn ${fn}): ${m[0].replace(/\s+/g, "")}`);
+  }
+  for (const d of inFlightDeclarations(stripped, IN_FLIGHT_FNS[source] ?? [])) {
+    inFlightDeclared.push(`${source}::${d.fn}`);
+    if (!RAW_TASK_PARAM.test(d.firstParam)) {
+      receiverOffenders.push(`${source}:${d.line}: fn ${d.fn}(${d.firstParam}, ..)`);
+    }
   }
 }
 
@@ -136,4 +199,41 @@ test("every allowed function still touches the field", () => {
   // the real code, so the ban above cannot pass vacuously.
   const expected = Object.entries(ALLOWED).flatMap(([source, fns]) => fns.map(fn => `${source}::${fn}`));
   expect([...allowedHits].sort()).toEqual(expected.sort());
+});
+
+test("the receiver check reads the first parameter out of the spellings it claims to", () => {
+  const parsed = inFlightDeclarations(
+    [
+      // `stage_http_result` as it was, and as it is.
+      "fn stage_http_result(\n        &mut self,\n        async_http: *mut AsyncHTTP<'static>,\n    ) {",
+      "unsafe fn stage_http_result(\n        this: *mut Self,\n        async_http: *mut AsyncHTTP<'static>,\n    ) {",
+      // The other spellings of a task reference.
+      "pub(crate) fn http_callback(&self, async_http: *mut AsyncHTTP<'static>) {",
+      "pub(crate) unsafe fn release_at_shutdown(self: &mut Self) {",
+      "pub(crate) unsafe fn stop_for_vm_teardown<'a>(this: &'a mut Self) {",
+      // Type-erased is still a raw pointer.
+      "pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {",
+      // Not the functions in question.
+      "fn stage_http_result_for_tests(&mut self) {}",
+    ].join("\n"),
+    IN_FLIGHT_FNS[`${S3_DIR}simple_request.rs`],
+  );
+  expect(parsed.map(d => [d.fn, d.firstParam, RAW_TASK_PARAM.test(d.firstParam)])).toEqual([
+    ["http_callback", "&self", false],
+    ["stage_http_result", "&mut self", false],
+    ["stage_http_result", "this: *mut Self", true],
+    ["release_at_shutdown", "self: &mut Self", false],
+    ["release_at_shutdown", "this: *mut ()", true],
+    ["stop_for_vm_teardown", "this: &'a mut Self", false],
+  ]);
+});
+
+test("every in-flight function is still declared under its listed name", () => {
+  // A rename would otherwise silently drop the function out of the check below.
+  const expected = Object.entries(IN_FLIGHT_FNS).flatMap(([source, fns]) => fns.map(fn => `${source}::${fn}`));
+  expect(inFlightDeclared.sort()).toEqual(expected.sort());
+});
+
+test("functions that run on an in-flight S3HttpSimpleTask take it as a raw pointer", () => {
+  expect(receiverOffenders).toEqual([]);
 });

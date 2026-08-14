@@ -102,7 +102,10 @@ impl Default for Store {
 }
 
 impl Store {
-    pub fn to(&mut self) -> Signals {
+    /// The flags' addresses, for the HTTP thread. `&self` on purpose: the owner keeps storing
+    /// into the flags (abort) while the HTTP thread holds these, so they must not descend from
+    /// an exclusive borrow of the store.
+    pub fn to(&self) -> Signals {
         Signals {
             header_progress: Some(NonNull::from(&self.header_progress)),
             response_body_streaming: Some(NonNull::from(&self.response_body_streaming)),
@@ -112,7 +115,7 @@ impl Store {
         }
     }
 
-    pub fn to_with_backpressure(&mut self) -> Signals {
+    pub fn to_with_backpressure(&self) -> Signals {
         Signals {
             body_receive_mode: Some(NonNull::from(&self.body_receive_mode)),
             ..self.to()

@@ -1022,6 +1022,31 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await Bun.file(dest).text()).toBe("previous contents");
     });
 
+    it("a second Bun.write() on a fetch() body the first one is still waiting for", async () => {
+      using dir = tempDir("bun-write-claimed-fetch-body", { "second.txt": "previous contents" });
+      const first = join(String(dir), "first.txt");
+      const second = join(String(dir), "second.txt");
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield "hello ";
+            await gate;
+            yield "world";
+          }),
+      });
+      const res = await fetch(server.url);
+      const firstWrite = Bun.write(first, res);
+      const secondWrite = syncThrow(() => Bun.write(second, res));
+      openGate();
+
+      expect(secondWrite).toEqual(alreadyUsed);
+      expect(await firstWrite).toBe(11);
+      expect(await Bun.file(first).text()).toBe("hello world");
+      expect(await Bun.file(second).text()).toBe("previous contents");
+    });
+
     it("BunFile.write(usedResponse) throws and does not create the file", async () => {
       using dir = tempDir("bun-write-used-body-bunfile", {});
       const dest = join(String(dir), "never-created.txt");

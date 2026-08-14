@@ -10,7 +10,7 @@ import Publish from "/snippets/cli/publish.mdx";
 <Note>
   `workspace:*`, `workspace:^`, and `workspace:~` dependencies are replaced with the version of the referenced workspace
   package, so each workspace package referenced this way needs a `version` field in its `package.json`. Without one,
-  publishing fails with `Failed to resolve workspace version`.
+  both `bun publish` and `bun pm pack` fail with `Failed to resolve workspace version`.
 </Note>
 
 ```sh terminal icon="terminal"

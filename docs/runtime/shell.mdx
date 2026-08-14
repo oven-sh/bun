@@ -311,11 +311,11 @@ const upload = $`sleep 1 && echo "upload finished"`.nothrow().then(({ exitCode }
 
 await $`echo "doing other work"`;
 
-// Wait for it once you need the result
+// Later, wait for it to finish
 await upload;
 ```
 
-The process stays alive until the background command finishes, even if you never `await` it. A background command that fails rejects its promise like any other `$` command, so use `.nothrow()` or `.catch()` to keep the failure from becoming an unhandled rejection.
+The process stays alive until the background command finishes, even if you never `await` it. A background command that exits with a non-zero code rejects its promise like any other `$` command, and nothing is waiting on it, so use `.nothrow()` as in the example above, or attach a `.catch()`, to keep that from becoming an unhandled rejection.
 
 ---
 

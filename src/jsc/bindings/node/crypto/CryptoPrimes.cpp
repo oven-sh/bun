@@ -202,14 +202,16 @@ JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
     if (m_failed) [[unlikely]]
         return { createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s) };
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
-    EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
-    if (scope.exception()) [[unlikely]] {
-        // The thrown Error, not the Exception cell (node parity).
-        JSValue err = scope.exception()->value();
-        (void)scope.tryClearException();
-        return { err };
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // A stopped worker's termination (which a trap can raise anywhere in result(), even with a
+        // value made): leave it pending for then() to propagate. Anything else is this job's own
+        // failure and becomes the callback's `err` — the thrown Error, not the Exception cell
+        // (node parity).
+        if (!scope.tryClearException())
+            return {};
+        return { exception->value() };
     }
-
+    ASSERT(!result.isEmpty());
     return { jsUndefined(), result };
 }
 

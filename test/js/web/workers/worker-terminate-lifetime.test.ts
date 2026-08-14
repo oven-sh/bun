@@ -574,3 +574,57 @@ test.skipIf(!isDebug)(
   },
   timeout,
 );
+
+// Regression: WebCore-style callbacks (PerformanceObserver, abort algorithms)
+// were still invoked from the task queue after terminate() had stopped the
+// worker's VM mid-tick, entering JS with the TerminationException a previous
+// task left pending and tripping executeCallImpl's assertNoException(). They
+// now refuse once script is forbidden, like event listeners already did.
+test.skipIf(!isDebug)(
+  "terminate() while PerformanceObserver deliveries are queued does not invoke the observer on a stopped VM",
+  async () => {
+    const workers = slow ? 24 : 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const src =
+          "const { PerformanceObserver, performance } = require('node:perf_hooks');" +
+          "new PerformanceObserver(() => {}).observe({ entryTypes: ['mark', 'measure'] });" +
+          "self.onmessage = () => { performance.mark('x'); performance.measure('mx', 'x'); };" +
+          "for (let i = 0; i < 50; i++) { performance.mark('a' + i); performance.measure('m' + i, 'a' + i); }" +
+          "postMessage('go');" +
+          "Bun.sleepSync(20);";
+        const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+        let started = 0, closed = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (closed === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(url, { smol: true });
+          for (let i = 0; i < 500; i++) {
+            const ab = new ArrayBuffer(64);
+            w.postMessage({ i, ab }, [ab]);
+          }
+          w.onmessage = () => w.terminate();
+          w.onerror = () => {};
+          w.addEventListener("close", () => { closed++; again(); });
+        }
+        again(); again(); again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

@@ -183,7 +183,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: *part_range,
                                 i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(generate_compile_result_for_js_chunk, &group),
+                                task: ThreadPoolLib::CountedTask::new(
+                                    generate_compile_result_for_js_chunk,
+                                    &group,
+                                ),
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
@@ -203,7 +206,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: Default::default(),
                                 i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(generate_compile_result_for_css_chunk, &group),
+                                task: ThreadPoolLib::CountedTask::new(
+                                    generate_compile_result_for_css_chunk,
+                                    &group,
+                                ),
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
@@ -222,7 +228,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         combined_part_ranges.push(PendingPartRange {
                             part_range: Default::default(),
                             i: 0,
-                            task: ThreadPoolLib::CountedTask::new(generate_compile_result_for_html_chunk, &group),
+                            task: ThreadPoolLib::CountedTask::new(
+                                generate_compile_result_for_html_chunk,
+                                &group,
+                            ),
                             // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                             // conflating the borrow with
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck

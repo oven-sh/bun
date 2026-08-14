@@ -628,3 +628,58 @@ test.skipIf(!isDebug)(
   },
   timeout,
 );
+
+// Regression: a nested worker's parent that is itself being terminated still
+// tried to settle the getHeapSnapshot()/getHeapStatistics() promises it had
+// pending against its child when the child's exit was processed in the same
+// tick, building the ERR_WORKER_NOT_RUNNING error under its own pending
+// TerminationException — which yields no object — and rejecting with a null
+// cell (UBSan null member call in debug, SEGV in JSCell::validateIsNotSweeping
+// under ASAN). A stopped parent VM now settles nothing and just drops them.
+test(
+  "terminate() of a worker with cross-VM requests pending against its own child does not settle them on the stopped VM",
+  async () => {
+    const workers = slow ? 12 : 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const inner = "setImmediate(() => process.exit(0)); require('node:worker_threads').parentPort.postMessage('x');";
+        const middle =
+          "const { Worker, parentPort } = require('node:worker_threads');" +
+          "const w2 = new Worker(" + JSON.stringify(inner) + ", { eval: true });" +
+          "w2.on('error', () => {});" +
+          "w2.getHeapSnapshot().then(() => {}, () => {});" +
+          "const iv = setInterval(() => { w2.getHeapSnapshot().then(() => {}, () => {}); w2.getHeapStatistics().then(() => {}, () => {}); }, 1);" +
+          "w2.on('exit', () => clearInterval(iv));" +
+          "w2.terminate(); w2.terminate();" +
+          "parentPort.postMessage('up');";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w1 = new Worker(middle, { eval: true });
+          w1.on("online", () => w1.terminate());
+          w1.on("error", () => {});
+          w1.on("exit", () => { exited++; again(); });
+        }
+        again(); again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

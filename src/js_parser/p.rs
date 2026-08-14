@@ -9258,10 +9258,7 @@ impl LowerUsingDeclarationsContext {
         result
     }
 
-    /// Adds an export clause item for every identifier an exported declaration
-    /// binds, including the ones nested in destructuring patterns
-    /// (`export const { a, b: [c] } = ...` exports `a` and `c`).
-    /// Returns whether the binding declared any identifier.
+    /// Exports every identifier `binding` declares, recursing through destructuring patterns.
     fn export_binding<'a, const T: bool, const S_: bool>(
         p: &P<'a, T, S_>,
         binding: Binding,

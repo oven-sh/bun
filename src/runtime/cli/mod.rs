@@ -424,10 +424,10 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 ///
 /// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster, so every
-/// `bun` invocation would fault a fresh cold page to initialize it. `cli_arena()`
-/// is on the hot `bun <file>` / `bun run <script>` path (via `cli_dupe` /
-/// `cli_dupe_z` / `runner_arena`), so a plain cell is the correct shape.
+/// fat-LTO parks them tens of MB away from the startup symbol cluster.
+/// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
+/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -1116,8 +1116,6 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
-        // Record the one-byte command tag in the crash handler's `cli_state` so
-        // crash-report trace strings encode the running subcommand.
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);

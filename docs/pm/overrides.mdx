@@ -45,11 +45,6 @@ If a security vulnerability is introduced in `bar@4.5.6`, you may want to pin `b
 
 Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specified version range when determining which version of `bar` to install, whether it's a dependency or a metadependency.
 
-<Note>
-  Bun only supports top-level `"overrides"`, not [nested
-  overrides](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides).
-</Note>
-
 {/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
@@ -63,11 +58,13 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specif
 }
 ```
 
+Bun only reads `"overrides"` and `"resolutions"` from the root `package.json`; the field is ignored in workspace packages, and pnpm's `pnpm.overrides` field and `pnpm-workspace.yaml` are only consulted when migrating a `pnpm-lock.yaml`, which moves those rules into `"overrides"`.
+
+Rules also apply to `peerDependencies`. An overridden peer dependency is still a peer dependency; only its version range changes.
+
 ## `"resolutions"`
 
 `"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to make migration from Yarn easier.
-
-As with `"overrides"`, _nested resolutions_ are not supported.
 
 {/* prettier-ignore */}
 ```json package.json icon="file-json"
@@ -81,3 +78,86 @@ As with `"overrides"`, _nested resolutions_ are not supported.
   } // [!code ++]
 }
 ```
+
+## Values
+
+A value can be any dependency specifier, not only a version range. `npm:` swaps a package for a fork, and `catalog:` (or `catalog:<name>`) keeps the overridden version in sync with a [workspace catalog](/pm/catalogs):
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "quux": "npm:@myorg/quux@^1.0.0",
+    "foo": "catalog:"
+  }
+}
+```
+
+A value of `"$name"` copies the range you declared for `name` in your own `dependencies` (or `devDependencies`, `peerDependencies`, `optionalDependencies`); the referenced package doesn't have to be the one being overridden, so `"bar": "$foo"` pins `bar` to whatever range you declared for `foo`. If the root doesn't declare `name`, Bun looks in the workspace packages instead, which must all declare the same range for it.
+
+## Nested overrides
+
+A rule can be scoped to the dependencies of one package. Bun applies it to that package's direct dependency on the overridden package and nothing else, so the same package can resolve to different versions under different parents.
+
+The npm object form, the pnpm `>` form, and a parent with a version range are all accepted in `"overrides"`:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "micromatch": {
+      ".": "^4.0.5",
+      "picomatch": "^2.3.2"
+    },
+    "micromatch>picomatch": "^2.3.2",
+    "micromatch@^4>picomatch": "^2.3.2"
+  }
+}
+```
+
+`"."` inside an object overrides `micromatch` itself, like a top-level `"micromatch"` rule.
+
+`"resolutions"` accepts Yarn's path form. `**` is accepted for compatibility, but only the parent's direct dependency is affected either way:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "resolutions": {
+    "micromatch/picomatch": "^2.3.2",
+    "**/micromatch/**/picomatch": "^2.3.2"
+  }
+}
+```
+
+`$name` references and the other [value forms](#values) work in nested rules too.
+
+When several rules match one dependency, rules scoped to a parent with a version range win over rules scoped to a parent without one, which win over top-level rules. Within each of those groups, a rule with a matching [version selector](#version-scoped-overrides) wins over one without, and if several selectors match, the one whose range text sorts first is used.
+
+## Version-scoped overrides
+
+The overridden package's key can carry a version selector, so a rule only rewrites some of the edges pointing at that package. This is the shape `pnpm audit --fix` writes and the one npm documents, and it works in top-level and nested rules alike:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "semver@<7.5.2": "7.5.2",
+    "webpack>terser@4": "4.8.1",
+    "terser@4": {
+      ".": "4.8.1"
+    }
+  }
+}
+```
+
+`"terser@4": { ".": "4.8.1" }` is the object spelling of `"terser@4": "4.8.1"`; a selector on a child key, as in `{ "webpack": { "terser@4": "4.8.1" } }`, scopes that nested rule the same way.
+
+The selector is compared with the range each dependent _declares_ for that dependency, not with the version that would be installed, and the rule applies to every edge whose declared range overlaps the selector. `"semver@<7.5.2"` rewrites an edge declared as `^7.3.0`, since that range could still pick `7.3.x`, but leaves an edge declared as `^7.5.2` alone. Edges declared with a dist-tag such as `latest`, or with a `catalog:`, `workspace:`, git, or URL specifier, never match a selector. An `npm:` prefix inside a selector is ignored.
+
+## Limitations
+
+- Only one parent level is supported. `a>b>c`, `a/b/c`, and objects nested more than one level deep are ignored with a warning.
+- `"pkg@"` (pnpm's convergence override, an empty selector) is not supported and is skipped with a warning.
+- pnpm's `"-"` value, which removes a dependency, is not supported. Bun skips the rule with a warning and the dependency resolves from its declared range as if the rule weren't there.
+- A nested rule can't point at a `file:` path outside the project.
+- A `bun.lock` that contains nested or version-scoped rules is written as `lockfileVersion` 3, which older versions of Bun refuse to read (run `bun upgrade`). The exception is a lockfile that Bun already has to keep at `lockfileVersion` 1 — one with an npm package resolved to a tarball outside the default registry and no integrity hash, or a git dependency with an unsafe tag — which stays at 1 with the rules written as objects, so the version stamp never depends on the registries configured on the machine that wrote it. Projects without such rules keep their existing `lockfileVersion`.

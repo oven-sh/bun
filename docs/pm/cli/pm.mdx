@@ -163,6 +163,74 @@ bun list --trusted
 └── esbuild@0.21.5
 ```
 
+## licenses
+
+To list every installed package grouped by its license (read from the `license` or legacy `licenses` field of each package's installed `package.json`; packages declaring neither are listed under `Unknown`, and workspace and `link:` packages are not listed):
+
+```bash terminal icon="terminal"
+bun pm licenses
+# or
+bun pm licenses list
+# or
+bun pm licenses ls
+```
+
+```txt
+MIT (2)
+├── path-parse@1.0.6
+└── resolve@1.9.0
+
+Unknown (4)
+├── a-dep@1.0.1 (dev)
+├── no-deps@1.0.0
+├── no-deps@1.0.1
+└── one-dep@1.0.0
+```
+
+License groups are printed in name order with `Unknown` always last, and packages within a group are sorted by name and then version. Packages that are only reached through `devDependencies` are marked `(dev)`. When nothing is listed (for example `--filter` selecting a workspace with no dependencies), the text output is a single line showing how many packages were checked and how long it took, and `--json` prints `{}`:
+
+```txt
+No packages to list (checked 0 packages in bun.lock) [1.20ms]
+```
+
+Pass `--prod` (or `-P`, `-p`, `--production`) to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order), `paths` (the directory each of those versions was read from, in the same order — under `node_modules` for hoisted installs, inside `node_modules/.bun` for isolated installs), `license` (the same string as the key, `Unknown` included) and, when the newest listed version declares them, its `homepage`, `author` and `description`:
+
+```bash terminal icon="terminal"
+bun pm licenses --json --prod
+```
+
+```json
+{
+  "MIT": [
+    {
+      "name": "path-parse",
+      "versions": ["1.0.6"],
+      "paths": ["/home/me/app/node_modules/path-parse"],
+      "license": "MIT",
+      "homepage": "https://github.com/jbgutierrez/path-parse#readme",
+      "author": "Javier Blanco <http://jbgutierrez.info>",
+      "description": "Node.js path.parse() ponyfill"
+    }
+  ]
+}
+```
+
+`--long` prints each package's `author`, `description` and `homepage` (whichever it declares) on indented lines under its entry in the text output; it does not change `--json`, and `paths` are only part of the `--json` output.
+
+`--prod` drops every `devDependencies` edge — the same packages `bun install --production` leaves out, including the `devDependencies` of `file:` dependencies; `optionalDependencies`, `peerDependencies` and everything a production dependency pulls in are still listed, and from a workspace root every workspace's production dependencies are included. Run it inside a workspace package to list only that package's dependencies, and use [`bun why`](/pm/cli/why) to see which dependency pulls in an unexpected package.
+
+`--dev` (or `-D`) lists only the packages that the `devDependencies` of the root (or of every workspace, from a workspace root) pull in, including their transitive dependencies. It is an error to combine it with `--prod`, `--omit=dev` or `install.production`.
+
+`--filter <pattern>` (or `-F`, repeatable) lists the dependencies of the matching workspaces only, from any directory of the monorepo. It takes the same patterns as [`bun outdated --filter`](/pm/cli/outdated): workspace names, `./relative/paths` resolved from the current directory, `!` to exclude, and `*` for every workspace. With a filter each selected workspace contributes only its own dependencies, so selecting the root does not pull in the workspace members, and a filter that matches nothing is an error. Without a filter, running from the workspace root lists every workspace's dependencies and running inside a workspace package lists only that package's.
+
+`--omit=dev` is the same as `--prod` (as is [`install.production`](/runtime/bunfig#install-production) in `bunfig.toml`), and `--omit=optional` / `--omit=peer` skip `optionalDependencies` / `peerDependencies` as well, so the listing follows the same dependency types `bun install` would with those flags.
+
+`bun pm licenses` only reads `bun.lock` and `node_modules`; it never writes to either of them or to `package.json`, and it prints an error and exits with code `1` when the project has no lockfile or no `node_modules` directory.
+
+Packages that are in the lockfile but not in `node_modules` (for example after `bun install --production`) are omitted, and a `warn:` line with the number of omitted packages is printed to stderr. Packages that don't apply to the current platform (`os`/`cpu`) are omitted silently.
+
+This is the equivalent of `pnpm licenses list`, including its `--json`, `--prod`, `--dev`, `--long` and `--filter` flags.
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

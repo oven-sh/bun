@@ -859,10 +859,10 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     #[cfg(windows)]
     {
         // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
-        // `fstat` the handle, then close.
+        // stat the handle as a link, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
             Ok(file) => {
-                let r = fstat(file);
+                let r = windows_impl::fstat_handle(file, true);
                 let _ = close(file);
                 r
             }
@@ -3854,12 +3854,14 @@ mod windows_impl {
         // HANDLE directly instead of allocating a throwaway CRT fd via
         // `_open_osfhandle` (which cannot be `_close`d without also closing
         // the caller's HANDLE, so it leaked a CRT slot per call).
-        fstat_handle(fd)
+        fstat_handle(fd, false)
     }
     /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
     /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
-    /// raw HANDLE without touching the CRT fd table.
-    fn fstat_handle(fd: Fd) -> Maybe<Stat> {
+    /// raw HANDLE without touching the CRT fd table. `as_link`: the handle
+    /// was opened on the reparse point itself (`FILE_OPEN_REPARSE_POINT`), so
+    /// report one as `S_IFLNK`, as `lstat` does.
+    pub(crate) fn fstat_handle(fd: Fd, as_link: bool) -> Maybe<Stat> {
         use bun_core::S;
         let handle = fd.native();
         let nt_err = |rc: w::NTSTATUS| {
@@ -3953,10 +3955,13 @@ mod windows_impl {
             st.st_dev = volume_info.VolumeSerialNumber as u64;
         }
 
-        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
-        // the fstat path, so reparse points fall through to DIR-or-REG.
+        // As libuv: a followed handle is DIR-or-REG; only an `lstat`-style
+        // open reports the reparse point itself as a link.
         let attrs = file_info.BasicInformation.FileAttributes;
-        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+        if as_link && attrs & w::FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            st.st_mode = S::IFLNK as u64;
+            st.st_size = 0;
+        } else if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
             st.st_mode = S::IFDIR as u64;
             st.st_size = 0;
         } else {

@@ -8,6 +8,7 @@ import {
   bunEnv as env,
   isWindows,
   joinP,
+  normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
   tempDir,
@@ -6072,6 +6073,59 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  for (const filename of ["x.tar", "X.TGZ"]) {
+    it(`should handle tarball path ending in ${filename}`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+        const tgz = await file(join(import.meta.dir, "baz-0.0.3.tgz")).bytes();
+        await write(join(ctx.package_dir, filename), filename.endsWith(".tar") ? Bun.gunzipSync(tgz) : tgz);
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              baz: `./${filename}`,
+            },
+          }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).toContain("Saved lockfile");
+        expect(
+          out
+            .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+            .split(/\r?\n/)
+            .slice(1),
+        ).toStrictEqual(["", `+ baz@./${filename}`, "", "1 package installed"]);
+        expect(exitCode).toBe(0);
+        expect(urls).toBeEmpty();
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toStrictEqual([".bin", ".cache", "baz"]);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toStrictEqual([
+          "index.js",
+          "package.json",
+        ]);
+        expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toStrictEqual({
+          name: "baz",
+          version: "0.0.3",
+          bin: {
+            "baz-run": "index.js",
+          },
+        });
+        await access(join(ctx.package_dir, "bun.lockb"));
+      });
+    });
+  }
+
   it("should handle tarball path", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
@@ -9925,6 +9979,136 @@ for (const field of ["resolutions", "overrides"]) {
     expect(out).not.toContain("2 packages installed");
     expect(exitCode).toBe(1);
   });
+
+  const nestedRule = (value: string) =>
+    field === "overrides" ? { "pkg-a": { shared: value } } : { "pkg-a/shared": value };
+
+  it(`rejects a nested "${field}" rule pointing at a file: path outside the project`, async () => {
+    using dir = tempDir("nested-override-file-dep-outside", {
+      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+      "shared/index.js": "module.exports = 'shared';",
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": "file:./pkg-a",
+        },
+        [field]: nestedRule("file:../shared"),
+      }),
+      "project/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          shared: "1.0.0",
+        },
+      }),
+      "project/pkg-a/index.js": "module.exports = require('shared');",
+    });
+    const projectDir = join(String(dir), "project");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(err, projectDir)).toMatchInlineSnapshot(`
+      "error: Could not find package.json for "file:../shared" dependency "shared"
+      error: shared@1.0.0 failed to resolve"
+    `);
+    expect(out).not.toContain("packages installed");
+    expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
+    expect(await exists(join(projectDir, "node_modules", "pkg-a", "node_modules", "shared"))).toBe(false);
+    expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  it(`installs a nested "${field}" rule pointing at a file: path inside the project`, async () => {
+    using dir = tempDir("nested-override-file-dep-inside", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": "file:./pkg-a",
+        },
+        [field]: nestedRule("file:./vendor/shared"),
+      }),
+      "vendor/shared/package.json": JSON.stringify({ name: "shared", version: "2.0.0" }),
+      "vendor/shared/index.js": "module.exports = 'vendored shared';",
+      "pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          shared: "1.0.0",
+        },
+      }),
+      "pkg-a/index.js": "module.exports = require('shared');",
+    });
+    const projectDir = String(dir);
+
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect(exitCode).toBe(0);
+
+      await using runProc = spawn({
+        cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
+        cwd: projectDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([
+        runProc.stdout.text(),
+        runProc.stderr.text(),
+        runProc.exited,
+      ]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("vendored shared\n");
+      expect(runExit).toBe(0);
+    }
+
+    expect(normalizeBunSnapshot(await file(join(projectDir, "bun.lock")).text(), projectDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 3,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "my-app",
+            "dependencies": {
+              "pkg-a": "file:./pkg-a",
+            },
+          },
+        },
+        "overrides": {
+          "pkg-a": {
+            "shared": "file:./vendor/shared",
+          },
+        },
+        "packages": {
+          "pkg-a": ["pkg-a@file:pkg-a", { "dependencies": { "shared": "1.0.0" } }],
+
+          "pkg-a/shared": ["shared@file:./vendor/shared", {}],
+        }
+      }"
+    `);
+  });
 }
 
 it("installs the transitive file: dependency of a file: dependency", async () => {
@@ -9985,6 +10169,153 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
     expect(runOut.trim()).toBe("it worked");
     expect(runExit).toBe(0);
   }
+});
+
+const fileDepCycleFixture = {
+  "package.json": JSON.stringify({
+    name: "my-app",
+    version: "1.0.0",
+    dependencies: {
+      a: "file:./packages/a",
+      b: "file:./packages/b",
+    },
+  }),
+  "packages/a/package.json": JSON.stringify({
+    name: "a",
+    version: "1.0.0",
+    dependencies: { b: "file:../b" },
+  }),
+  "packages/a/index.js": `module.exports = "a->" + require("b/name");`,
+  "packages/a/name.js": `module.exports = "a";`,
+  "packages/b/package.json": JSON.stringify({
+    name: "b",
+    version: "1.0.0",
+    dependencies: { a: "file:../a" },
+  }),
+  "packages/b/index.js": `module.exports = "b->" + require("a/name");`,
+  "packages/b/name.js": `module.exports = "b";`,
+};
+
+async function installFileDepCycle(projectDir: string): Promise<string> {
+  const install = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  };
+
+  const [out, err, exitCode] = await install();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("packages installed");
+  expect(exitCode).toBe(0);
+
+  const lock = await file(join(projectDir, "bun.lock")).text();
+  expect(await readdirSorted(join(projectDir, "node_modules"))).toStrictEqual(["a", "b"]);
+  expect(await readdirSorted(join(projectDir, "node_modules", "a", "node_modules"))).toStrictEqual(["b"]);
+  expect(await readdirSorted(join(projectDir, "node_modules", "b", "node_modules"))).toStrictEqual(["a"]);
+  expect(await exists(join(projectDir, "node_modules", "a", "node_modules", "b", "node_modules"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "b", "node_modules", "a", "node_modules"))).toBe(false);
+  expect(await readdirSorted(join(projectDir, "packages", "a"))).toStrictEqual(["index.js", "name.js", "package.json"]);
+  expect(await readdirSorted(join(projectDir, "packages", "b"))).toStrictEqual(["index.js", "name.js", "package.json"]);
+
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", `console.log(require("a"), require("b"))`],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+  expect(runErr).toBe("");
+  expect(runOut).toBe("a->b b->a\n");
+  expect(runExit).toBe(0);
+
+  for (const args of [[], ["--frozen-lockfile"]]) {
+    const [, err2, exitCode2] = await install(...args);
+    expect(err2).not.toContain("Saved lockfile");
+    expect(err2).not.toContain("error:");
+    expect(exitCode2).toBe(0);
+    expect(await file(join(projectDir, "bun.lock")).text()).toBe(lock);
+  }
+
+  return normalizeBunSnapshot(lock, projectDir);
+}
+
+it("installs file: dependencies that depend on each other", async () => {
+  using dir = tempDir("file-dep-cycle", fileDepCycleFixture);
+  expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 2,
+      "configVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "my-app",
+          "dependencies": {
+            "a": "file:./packages/a",
+            "b": "file:./packages/b",
+          },
+        },
+      },
+      "packages": {
+        "a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+
+        "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+
+        "a/b": ["b@file:packages/b", {}],
+
+        "b/a": ["a@file:packages/a", {}],
+      }
+    }"
+  `);
+});
+
+it("installs file: dependencies that depend on each other from a lockfile that only lists the root's copies", async () => {
+  using dir = tempDir("file-dep-cycle-lock", {
+    ...fileDepCycleFixture,
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: {
+        "": {
+          name: "my-app",
+          dependencies: { a: "file:./packages/a", b: "file:./packages/b" },
+        },
+      },
+      packages: {
+        a: ["a@file:packages/a", { dependencies: { b: "file:../b" } }],
+        b: ["b@file:packages/b", { dependencies: { a: "file:../a" } }],
+      },
+    }),
+  });
+  expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 1,
+      "configVersion": 0,
+      "workspaces": {
+        "": {
+          "name": "my-app",
+          "dependencies": {
+            "a": "file:./packages/a",
+            "b": "file:./packages/b",
+          },
+        },
+      },
+      "packages": {
+        "a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+
+        "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+
+        "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+
+        "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+      }
+    }"
+  `);
 });
 
 it("fails when a transitive file: dependency's folder does not exist", async () => {

@@ -535,7 +535,7 @@ impl ShellMvBatchedTask {
             }
         }
 
-        // Windows `lstatat` never reports S_IFLNK.
+        // Windows has no `symlinkat`; a link source ends in ENOTSUP below.
         #[cfg(not(windows))]
         if S::ISLNK(mode) {
             let mut buf = bun_paths::path_buffer_pool::get();

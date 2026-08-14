@@ -1,23 +1,45 @@
 ---
 title: "bun update"
-description: "Update dependencies to latest versions"
+description: "Update dependencies to the newest versions their ranges allow"
 ---
 
 import Update from "/snippets/cli/update.mdx";
 
 <Note>To upgrade your Bun CLI version, see [`bun upgrade`](/installation#upgrading).</Note>
 
-To update all dependencies to the latest version:
+`bun update` (also spelled `bun up`) updates dependencies to the newest versions allowed by the ranges in `package.json`; [`bun update --latest`](#--latest) ignores those ranges.
 
 ```sh terminal icon="terminal"
 bun update
 ```
 
-To update a specific dependency to the latest version:
+To update specific packages, pass their names. A `@range` suffix applies to the entry in your `package.json`: `bun update jquery@3` moves it to the newest `3.x` even if its current range does not allow that. A suffix cannot be combined with `--latest`; `bun update jquery@3 --latest` is an error.
+
+A name can also be a pattern: `bun update '@types/*'` updates every package whose name matches, `bun update '!webpack'` updates everything except the excluded names, and the two combine (`bun update '@babel/*' '!@babel/core'`). Quote patterns so your shell does not expand them. Patterns are matched against the packages `bun.lock` records for the workspace you are in, so they reach nested packages too, and they need an existing `bun.lock`. A pattern that matches nothing is an error (patterns that exclude everything are a no-op, [below](#--dev---prod---no-optional)), and a pattern cannot carry a `@range`.
 
 ```sh terminal icon="terminal"
 bun update [package]
+bun update zod jquery@3
+bun update '@types/*'
 ```
+
+A plain `bun update` updates the whole tree, like `pnpm update` and `npm update`: the dependencies declared in `package.json` move within their declared ranges and have their `package.json` entries rewritten, and every package that other packages in `bun.lock` depend on is re-resolved exactly as a fresh `bun install` would resolve its dependent's range today (so `minimumReleaseAge` and a `latest` tag that lags behind the newest publish apply the same way), and moves only if that is newer than what is locked. Each dependent is resolved against its own range, so two packages declaring different ranges on the same dependency can end up on different versions. This also applies when one of the dependents is your own `package.json`: an exact pin there stays put, and a package depending on a range of the same name moves to the newest version in that range, so `bun.lock` ends up with two copies. Ranges are never widened: a package depending on `^1.0.0` never picks up `2.x`; update the package that declares the range instead. A package that depends on a dist-tag (`"foo": "next"`) is re-resolved to whatever that tag points at now. The [`overrides`](/pm/overrides) and catalogs in effect are the ones in your `package.json` now, not the ones recorded in `bun.lock`, so a package held back by an override you have since removed or loosened moves on the next `bun update`. Transitive updates only change `bun.lock` and `node_modules` (with the hoisted linker, a nested copy — `node_modules/a/node_modules/b` — whose version the update merged into the copy above it is deleted, so `a` loads the updated version), never `package.json`, and show up in the install summary as `↑ name old → new` rows, the same rows a direct dependency that moved gets, each package once (with `(v3.0.0 available)` after a row when a newer version is out of range). `--dry-run` prints the same rows followed by `N packages would be updated [12.00ms]` in place of the install summary; when nothing would move it prints `Checked N packages, nothing to update [12.00ms]`, where `N` counts the packages in `bun.lock`. A real run that moves nothing ends with install's usual `Checked N installs across M packages (no changes)` line. Run from the root of a monorepo, this covers everything any workspace reaches; run inside a workspace, or with `--filter`, it only re-resolves the packages the selected workspaces reach ([below](#--recursive-and---filter)).
+
+`bun update <package>` re-resolves `<package>` wherever the workspace you run it in depends on it, directly or through other packages (at the root of a monorepo, that includes everything its workspaces pull in), and nothing else: dependencies you did not name keep their locked versions, and so do the dependencies of `<package>` itself as long as its new version still allows them. `bun update <package> --latest` additionally moves the dependencies of `<package>` to the newest versions its ranges allow, the same as a plain `bun update` would for them. `<package>` is matched by the name of the package that gets installed, so a dependency declared as `"foo": "npm:<package>@^1"` is updated as well, and it is also matched by the alias, so `bun update foo` updates that same entry. If `<package>` is declared in your `package.json`, that entry is rewritten too; if it is only a dependency of your dependencies, only `bun.lock` changes, which is how to pick up a fix in a nested package (`bun update caniuse-lite`) without adding it to your own dependencies or using `overrides`. A name that is not in `bun.lock` at all is an error, not a no-op; use `bun add` to add a dependency. In a monorepo, another workspace's own entry for `<package>` is not re-resolved and its `package.json` is not touched; it only moves along when the version picked here also satisfies its range, so `bun.lock` does not gain a second copy. Run `bun update <package>` inside that workspace, or use `-r`/`--filter` ([below](#--recursive-and---filter)), to update it there; if only other workspaces depend on `<package>`, `bun update <package>` is an error.
+
+## What is held back
+
+A package that is only in `bun.lock` because it satisfies another package's `peerDependencies`, with nothing depending on it outright, is re-resolved like any other package by `bun update`, `bun update <package>` and `bun update <dependent> --latest`. A peer entry whose package something else does depend on keeps following that package rather than getting a second copy. The entries in your own `peerDependencies` are only rewritten or moved when their package moves for another reason.
+
+A version listed in `patchedDependencies` is not moved by `bun update` or `bun update <package>` as long as the ranges pointing at it still allow it, whether it is declared in `package.json` or nested. Every patched version an update leaves in place when its ranges would have allowed something newer is listed as `kept name@version (patched, v1.2.3 available)`. `--latest`, a range you have edited so that it no longer allows the patched version, and [`bun audit fix`](/pm/cli/audit#bun-audit-fix) do move it; to move on deliberately, update with `--latest` and re-create the patch on the new version with [`bun patch`](/pm/cli/patch).
+
+To find out what can move, a plain `bun update` requests the abbreviated manifest of every npm package name in `bun.lock` that a re-resolvable entry points at: one request per name, at most `--network-concurrency` of them at a time (see the flags below). A name whose request fails keeps its locked version and gets one `warn: name@version was not checked for updates: <reason>` line on stderr, the same line [`bun audit fix`](/pm/cli/audit#bun-audit-fix) prints (`--silent` suppresses it); the command still exits 0. A failed request for a dependency declared in `package.json` is an error, as it is for `bun install`.
+
+## What an update writes
+
+`bun update` rewrites a `package.json` entry only when it is written as `^x.y.z`, `~x.y.z` or an exact version, and keeps the operator you declared: `^1.1.0` becomes `^1.2.0`, `~` stays `~`, and an exact pin is left alone unless you pass `--latest`. With [`install.exact`](/runtime/bunfig#install-exact) (or `--exact`) the rewritten entry is an exact version even if it was declared with `^` or `~`. Any other range (`*`, `1`, `1.x`, `>=1.0.0`, `1.0.0 - 1.5.0`, or an alias without a version such as `npm:foo`) is left exactly as written and only `bun.lock` and `node_modules` move. A short range is rewritten only when filling it out keeps the same upper bound: `^1` and `~1.2` are rewritten (`^1.1.0`, `~1.2.3`), while `~1` and `^0` are kept as written, since `~1.5.0` or `^0.3.0` would allow less than they do. `--latest` does rewrite such a range, to a range of the same width on the latest version: `1` becomes `^2.0.0`, `1.0` becomes `~2.0.0`, and any other form (`*`, `1.x`, `>=1.0.0`, `1.0.0 - 1.5.0`, `npm:foo`) becomes a `^` range. A `catalog:` reference is never rewritten; a plain `bun update` updates the catalog entry in the root `package.json` instead. A dist-tag such as `"foo": "latest"` or `"foo": "next"` (also inside a catalog, or behind `npm:foo@next`) is kept as written by `bun update` and `bun update foo`, and `bun.lock` follows whatever the tag points at now; `--latest` replaces it with a `^` range (or an exact version with `install.exact`) on the version `latest` points at, so `"foo": "next"` becomes `"foo": "^2.0.0"` and `npm:foo@next` becomes `npm:foo@^2.0.0`. `--dry-run` prints what would change without writing anything, and `--no-save` updates `node_modules` but leaves both `package.json` and `bun.lock` untouched, so it never changes what the next `bun install` produces.
+
+After any `bun update` or `bun add`, `bun.lock` records the same ranges that were written to `package.json`, so a following `bun install --frozen-lockfile` passes.
 
 ## `--interactive`
 
@@ -28,7 +50,7 @@ bun update --interactive
 bun update -i
 ```
 
-The flag opens a terminal interface that lists every outdated package with its current and target versions.
+The flag opens a terminal interface that lists every outdated direct dependency with its current and target versions (`--dev`, `--prod` and `--no-optional` narrow that list, see [below](#--dev---prod---no-optional)). Once you confirm, the selection is applied like `bun update <package>` with the selected names: those entries are rewritten in `package.json` and updated everywhere they occur in `bun.lock`, while the packages you left unselected, and every other transitive package, keep their locked versions. Confirming with nothing selected changes nothing.
 
 ### Interactive Interface
 
@@ -99,25 +121,49 @@ Packages are organized in sections by dependency type:
 
 Within each section, individual packages may have a suffix (` dev`, ` peer`, ` optional`).
 
-## `--recursive`
+## `--recursive` and `--filter`
 
-Use the `--recursive` flag with `--interactive` to update dependencies across all workspaces in a monorepo:
+In a monorepo, a plain `bun update` rewrites only the `package.json` of the workspace you run it in, and which packages move in `bun.lock` depends on where you run it: from the root, every package any workspace reaches is re-resolved; from inside a workspace, only the packages that workspace reaches, so a package only other workspaces depend on keeps its locked version. `bun update --recursive` (`-r`) updates the direct dependencies of every workspace, rewrites each workspace's `package.json` and re-resolves every package in `bun.lock`; `bun update --filter <pattern>` (`-F`) limits both to the matching workspaces and the packages they reach; the pattern syntax, including `{dir}` and `...` relations, is described on the [filtering](/pm/filter) page. Both need an existing `bun.lock`. They also work with `--interactive`, which then adds a "Workspace" column showing which workspace each dependency belongs to.
+
+`bun update <package> -r` and `bun update <package> --filter <pattern>` rewrite the entry for `<package>` in every selected workspace whose `package.json` declares it, each keeping its own `^`/`~`/exact style; the `package.json` of a workspace that was not selected is left alone; in `bun.lock`, `<package>` is re-resolved wherever a selected workspace reaches it, directly or through other packages, and a copy that only unselected workspaces reach keeps its locked version. A name that none of the selected workspaces reaches, directly or through their dependencies, is an error, even if another workspace uses it. `--latest` and `--dry-run` apply the same way; in particular, `--latest` keeps a workspace's entry that is already locked ahead of the `latest` tag where it is, exactly as it does when run inside that workspace ([below](#--latest)). With `--filter`, with or without names, the install that follows links only the selected workspaces, exactly like [`bun install --filter`](/pm/filter), and a pattern that matches nothing prints a warning; `-r` installs every workspace:
 
 ```sh terminal icon="terminal"
-bun update --interactive --recursive
+bun update --recursive
+bun update --filter './packages/*'
 bun update -i -r
+bun update zod -r
+bun update zod --filter '...^ui'
 ```
 
-With `--recursive`, the interface adds a "Workspace" column showing which workspace each dependency belongs to.
+## `--dev`, `--prod`, `--no-optional`
+
+`bun update --dev` (`-D`) only updates the entries in `devDependencies`; `--prod` (`-P`, also `-p`/`--production`) only those in `dependencies` and `optionalDependencies`; `--no-optional` skips `optionalDependencies`. These select which entries of the current workspace's `package.json` (or of the workspaces chosen with `-r`/`--filter`) are updated, and combine with names, patterns and `--latest`. They do not change what gets installed: `bun update --production` still installs `devDependencies`, unlike `bun install --production`. The bunfig setting [`install.production`](/runtime/bunfig#install-production) is unrelated to these flags: it puts `bun update` (like `bun add`/`bun remove`) into install's production mode, so with it set `bun update` fails with `lockfile had changes, but lockfile is frozen` as soon as anything would be updated. The flags need an existing `bun.lock`; when no entry qualifies they change nothing and print how many entries were checked, for example `Checked 3 dependencies, none selected by --dev (no changes) [12.00ms]` (a set of patterns that excludes everything prints `none match "!webpack"` the same way). With `--interactive` the same flags decide which entries the picker lists (`bun update -i --dev`):
+
+```sh terminal icon="terminal"
+bun update --dev
+bun update --prod --latest
+bun update -D '@types/*'
+bun update -i --prod
+```
+
+## `--global`
+
+`bun update -g` (`--global`) updates the packages installed with `bun add -g` instead of the current project, following the same rules; `bun update -g <package>` and `--latest` work there too:
+
+```sh terminal icon="terminal"
+bun update -g
+bun update -g typescript
+```
 
 ## `--latest`
 
 By default, `bun update` updates each dependency to the latest version that satisfies the version range in your `package.json`.
 
-To update to the latest version regardless of whether it satisfies that range, use the `--latest` flag:
+To update the dependencies declared in `package.json` to the latest version regardless of whether it satisfies that range, use the `--latest` flag (`-L`). Transitive packages still move within the ranges their dependents declare, and an entry of the workspace you run in that is already ahead of the `latest` tag (for example a prerelease) is left where it is rather than downgraded. An entry you declared as a dist-tag (`"foo": "next"`) is replaced with a range on the version `latest` points at, even when its own tag was ahead of `latest`; a `"foo": "next"`-style entry declared by another package or workspace still resolves through its own tag:
 
 ```sh terminal icon="terminal"
 bun update --latest
+bun update -L
 ```
 
 In interactive mode, press **l** to toggle a package between its target version (respecting semver) and the latest version.

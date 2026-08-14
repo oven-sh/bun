@@ -1107,6 +1107,7 @@ impl CreateCommand {
             }
         }
 
+        let mut install_ok = true;
         if let Some(ref npm_client) = npm_client_ {
             let start_time = bun_core::time::nano_timestamp();
             let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
@@ -1157,10 +1158,10 @@ impl CreateCommand {
                 windows: (),
                 ..Default::default()
             })?;
-            let _ = process?;
+            install_ok = process?.status.is_ok();
         }
 
-        if !user_skipped_install && !postinstall_tasks.is_empty() {
+        if install_ok && !user_skipped_install && !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }
@@ -1168,6 +1169,12 @@ impl CreateCommand {
 
         if !create_options.skip_install && !create_options.skip_git {
             create_options.skip_git = !GitHandler::wait();
+        }
+
+        // Checked only after the git thread is joined so a failed install does
+        // not exit while `git commit` is still writing the repository.
+        if !install_ok {
+            Global::exit(1);
         }
 
         Output::print_error("\n");

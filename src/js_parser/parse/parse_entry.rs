@@ -1123,6 +1123,11 @@ impl<'a> Parser<'a> {
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
         let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
 
+        // Before anything below reads use counts (`__dirname`, `exports`, runtime helpers).
+        if p.options.features.remove_unused_declarations {
+            p.remove_unused_parts(&mut before, &mut parts);
+        }
+
         let mut uses_dirname =
             p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;
         let mut uses_filename =

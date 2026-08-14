@@ -7848,10 +7848,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             hmr_transform_ctx.finalize(self, head_parts)?;
         } else {
-            if self.options.features.remove_unused_declarations {
-                self.remove_unused_parts(parts);
-            }
-
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.

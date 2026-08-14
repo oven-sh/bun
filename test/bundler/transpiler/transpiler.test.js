@@ -2109,6 +2109,15 @@ export default class {
       ).toBe("export const keep = 1;\n");
     });
 
+    it.each(["ts", "js"])("exports opts TypeScript imports into the same trimming as JavaScript (%s)", loader => {
+      const source = 'import { db } from "./db";\nexport function gone() {\n  return db;\n}\nexport const keep = 1;\n';
+      const options = { exports: { eliminate: ["gone"] }, treeShaking: false, trimUnusedImports: true };
+      expect(shake(source, options, loader)).toBe("export const keep = 1;\n");
+      expect(shake(source, { ...options, trimUnusedImports: false }, loader)).toBe(
+        'import { db } from "./db";\nexport const keep = 1;\n',
+      );
+    });
+
     it("removes unused side-effect-free declarations", () => {
       expect(
         shake(
@@ -2271,6 +2280,41 @@ export default class {
       expect(shake(source, { treeShaking: false })).toBe(source);
       expect(shake(source, { deadCodeElimination: false })).toBe(source);
       expect(shake(source, { trimUnusedImports: false })).toBe('import { a } from "a";\nexport const keep = 1;\n');
+    });
+
+    it("drops the __dirname/__filename and bun:wrap prologue when only removed code needed it", () => {
+      const helper = name => `function ${name}() { using f = null; return __dirname + __filename; }\n`;
+      expect(shake(helper("unused") + "export const keep = 1;")).toBe("export const keep = 1;\n");
+      const withoutHelperSuffixes = shake(helper("used") + "export const keep = used;").replace(
+        /(__using|__callDispose)_[a-z0-9]+/g,
+        "$1",
+      );
+      expect(withoutHelperSuffixes).toBe(
+        [
+          'var __dirname = "", __filename = "input.tsx";',
+          'import { __callDispose as __callDispose, __using as __using } from "bun:wrap";',
+          "function used() {",
+          "  let __bun_temp_ref_1$ = [];",
+          "  try {",
+          "    const f = __using(__bun_temp_ref_1$, null, 0);",
+          "    return __dirname + __filename;",
+          "  } catch (__bun_temp_ref_2$) {",
+          "    var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;",
+          "  } finally {",
+          "    __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);",
+          "  }",
+          "}",
+          "export const keep = used;",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("does not let removed code decide the module format", () => {
+      // Only the removed helper touched `module`, so the file stays ESM and import.meta.main is left alone.
+      expect(shake("function unused() { return module.exports; }\nconsole.log(import.meta.main);")).toBe(
+        "console.log(import.meta.main);\n",
+      );
     });
   });
 

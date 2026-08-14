@@ -1,3 +1,4 @@
+use crate::RuntimeImports;
 use crate::p::P;
 use bun_alloc::ArenaVec;
 use bun_ast::{self as js_ast, DeclaredSymbol, ImportRecordFlags, Ref, flags};
@@ -9,8 +10,12 @@ use smallvec::SmallVec;
 type DeclaringParts = HashMap<Ref, SmallVec<[u32; 1]>>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Single-file tree shaking. Runs before the import scanner so the swept parts' imports go too.
-    pub(crate) fn remove_unused_parts(&mut self, parts: &mut ArenaVec<'a, js_ast::Part>) {
+    /// Single-file tree shaking of the hoisted (`before`) and remaining top-level parts.
+    pub(crate) fn remove_unused_parts(
+        &mut self,
+        before: &mut ArenaVec<'a, js_ast::Part>,
+        parts: &mut ArenaVec<'a, js_ast::Part>,
+    ) {
         // The bundler tree shakes in the linker, where cross-file uses are known.
         debug_assert!(!self.options.bundle);
 
@@ -20,11 +25,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let arena = self.arena;
-        let mut live = bun_alloc::vec_from_iter_in(core::iter::repeat_n(false, parts.len()), arena);
+        let hoisted = before.len();
+        let mut all = core::mem::replace(before, ArenaVec::new_in(arena));
+        all.append(parts);
+
+        let mut live = bun_alloc::vec_from_iter_in(core::iter::repeat_n(false, all.len()), arena);
         let mut worklist = ArenaVec::<u32>::new_in(arena);
         let mut declaring_parts = DeclaringParts::default();
 
-        for (i, part) in parts.iter().enumerate() {
+        for (i, part) in all.iter().enumerate() {
             if !self.part_only_declares_removable_symbols(part) {
                 live[i] = true;
                 worklist.push(i as u32);
@@ -41,7 +50,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         while let Some(i) = worklist.pop() {
-            let part = &parts[i as usize];
+            let part = &all[i as usize];
             for &used in part.symbol_uses.keys() {
                 self.mark_declaring_parts_live(used, &declaring_parts, &mut live, &mut worklist);
             }
@@ -55,15 +64,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        let live_count = live.iter().filter(|&&is_live| is_live).count();
-        if live_count == parts.len() {
-            return;
-        }
-
-        let all_parts = core::mem::replace(parts, ArenaVec::with_capacity_in(live_count, arena));
-        for (part, is_live) in all_parts.into_iter().zip(live.iter()) {
+        for (i, (part, is_live)) in all.into_iter().zip(live.iter()).enumerate() {
             if *is_live {
-                parts.push(part);
+                let kept = if i < hoisted {
+                    &mut *before
+                } else {
+                    &mut *parts
+                };
+                kept.push(part);
                 continue;
             }
             // `scan()` and the linker skip unused records.
@@ -74,6 +82,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             self.clear_symbol_usages_from_dead_part(&part);
         }
+
+        self.forget_unused_runtime_helpers();
     }
 
     fn mark_declaring_parts_live(
@@ -118,6 +128,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return ref_;
             }
             ref_ = symbol.link.get();
+        }
+    }
+
+    /// A `bun:wrap` helper whose callers were all swept would otherwise still be imported.
+    fn forget_unused_runtime_helpers(&mut self) {
+        let mut unused: SmallVec<[&'static [u8]; 4]> = SmallVec::new();
+        let mut helpers = self.runtime_imports.iter();
+        while let Some(helper) = helpers.next() {
+            if self.symbols[helper.value.inner_index() as usize].use_count_estimate == 0 {
+                unused.push(RuntimeImports::ALL[helper.key as usize]);
+            }
+        }
+        for name in unused {
+            self.runtime_imports.put(name, Ref::NONE);
         }
     }
 }

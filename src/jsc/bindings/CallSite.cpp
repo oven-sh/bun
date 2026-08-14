@@ -133,7 +133,7 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
 
         if (auto* object = thisValue.getObject()) {
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto className = object->calculatedClassName(object);
+            auto className = functionNameForDisplay(vm, object->calculatedClassName(object));
             if (topExceptionScope.exception()) {
                 (void)topExceptionScope.tryClearException();
             }

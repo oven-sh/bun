@@ -4908,7 +4908,7 @@ void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 
     JSObject* obj = value.toObject(arg1);
 
-    auto calculated = JSObject::calculatedClassName(obj);
+    auto calculated = Zig::functionNameForDisplay(JSC::getVM(arg1), JSObject::calculatedClassName(obj));
     if (calculated.length() > 0) {
         *arg2 = Zig::toZigString(calculated);
         return;

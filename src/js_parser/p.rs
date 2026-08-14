@@ -8975,13 +8975,6 @@ impl LowerUsingDeclarationsContext {
                     result.push(stmt);
                     continue;
                 }
-                js_ast::StmtData::SClass(c) => {
-                    if c.is_export {
-                        // can't go in try/catch; hoist out
-                        result.push(stmt);
-                        continue;
-                    }
-                }
                 js_ast::StmtData::SExportDefault(_) => {
                     continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                 }

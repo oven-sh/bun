@@ -1066,7 +1066,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
         if !mark_as_dead || was_export_inside_namespace {
-            // Lower class field syntax for browsers that don't support it
+            // Class counterpart of `select_local_kind` turning top-level `let`/`const` into `var`.
+            if p.will_wrap_module_in_try_catch_for_using && p.current_scope().parent.is_none() {
+                Self::convert_class_stmt_to_var(p, lowered, data);
+            }
             stmts.extend_from_slice(lowered);
         } else {
             let ref_ = data
@@ -1116,6 +1119,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = original_is_dead;
         }
         Ok(())
+    }
+
+    /// Swaps the class statement in `lowered` for `var Foo = class Foo {}` (exported if it was).
+    fn convert_class_stmt_to_var(p: &mut Self, lowered: &mut [Stmt], data: &mut S::Class) {
+        let Some(slot) = lowered
+            .iter_mut()
+            .find(|s| matches!(s.data, StmtData::SClass(_)))
+        else {
+            return;
+        };
+        let loc = slot.loc;
+        let name = data
+            .class
+            .class_name
+            .expect("infallible: class statements are always named");
+        let class_expr = p.new_expr(core::mem::take(&mut data.class), loc);
+        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+        *slot = p.s(
+            S::Local {
+                kind: S::Kind::KVar,
+                is_export: data.is_export,
+                decls: G::DeclList::from_slice(&[G::Decl {
+                    binding,
+                    value: Some(class_expr),
+                }]),
+                ..Default::default()
+            },
+            loc,
+        );
     }
 
     fn s_local(

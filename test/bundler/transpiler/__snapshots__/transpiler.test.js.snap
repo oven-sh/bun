@@ -178,3 +178,37 @@ export {
 };
 "
 `;
+
+exports[`Bun.Transpiler using top level turns class declarations into vars 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+export function f() {
+
+  class G {
+  }
+  return [new E, new G];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b(), 0);
+  var C = class C {
+    static a = a;
+  };
+  var D = class D extends C {
+    static self() {
+      return D;
+    }
+  };
+  var E = class E {
+  };
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  C,
+  D
+};
+"
+`;

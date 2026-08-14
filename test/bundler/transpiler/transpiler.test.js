@@ -4700,6 +4700,24 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  it("using top level turns class declarations into vars", () => {
+    // Everything but imports, exports and function declarations moves into the
+    // try block, so classes become module-scoped `var`s in source order (and
+    // exported ones move to the export clause), matching esbuild. Classes in
+    // nested scopes are left alone.
+    expectPrintedSnapshot(`
+      using a = b();
+      export class C { static a = a; }
+      class D extends C { static self() { return D; } }
+      export { D };
+      class E {}
+      export function f() {
+        class G {}
+        return [new E(), new G()];
+      }
+    `);
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

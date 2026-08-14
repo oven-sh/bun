@@ -83,7 +83,7 @@ pub(crate) fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
+        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {

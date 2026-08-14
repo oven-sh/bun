@@ -338,6 +338,8 @@ pub mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub mod audit_command;
+#[path = "dedupe_command.rs"]
+pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
 pub mod filter_arg;
 #[path = "filter_run.rs"]
@@ -354,6 +356,8 @@ pub mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_licenses_command.rs"]
+pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
 pub mod pm_pkg_command;
 #[path = "pm_trusted_command.rs"]
@@ -365,6 +369,8 @@ pub mod pm_version_command;
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub(crate) mod pm_why_command;
+#[path = "prune_command.rs"]
+pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
 pub mod publish_command;
 #[path = "remove_command.rs"]
@@ -651,6 +657,8 @@ pub mod help_command {
   <b><blue>remove<r>    <d>{:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
   <b><blue>update<r>    <d>{:<16}<r>     Update outdated dependencies
   <b><blue>audit<r>                          Check installed packages for vulnerabilities
+  <b><blue>dedupe<r>                         Remove duplicate versions from the lockfile
+  <b><blue>prune<r>                          Remove packages that are not in the lockfile from node_modules
   <b><blue>outdated<r>                       Display latest versions of outdated dependencies
   <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package
   <b><blue>unlink<r>                         Unregister a local npm package
@@ -1007,7 +1015,7 @@ pub mod command {
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
             return Tag::AddCommand;
         }
-        if x == RootCommandMatcher::case(b"update") {
+        if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
             return Tag::UpdateCommand;
         }
         if x == RootCommandMatcher::case(b"patch") {
@@ -1044,6 +1052,12 @@ pub mod command {
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
+        if x == RootCommandMatcher::case(b"dedupe") {
+            return Tag::DedupeCommand;
+        }
+        if x == RootCommandMatcher::case(b"prune") {
+            return Tag::PruneCommand;
+        }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
             || x == RootCommandMatcher::case(b"cloud")
@@ -1052,7 +1066,6 @@ pub mod command {
             || x == RootCommandMatcher::case(b"auth")
             || x == RootCommandMatcher::case(b"login")
             || x == RootCommandMatcher::case(b"logout")
-            || x == RootCommandMatcher::case(b"prune")
         {
             return Tag::ReservedCommand;
         }
@@ -1296,6 +1309,8 @@ pub mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::DedupeCommand => exec_dedupe(log),
+            Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
             Tag::BunxCommand => exec_bunx(log),
             Tag::ReplCommand => exec_repl(log),
@@ -1600,6 +1615,8 @@ pub mod command {
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
         exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
+        exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
+        exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
         exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
@@ -2156,6 +2173,12 @@ Execute a shell script directly from Bun.
             }
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::DedupeCommand => {
+                pm_print_help(PmSubcommand::Dedupe);
+            }
+            Tag::PruneCommand => {
+                pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
                 pretty!(

@@ -138,9 +138,9 @@ test.concurrent("migrate npm lockfile with missing `resolved` when scope registr
             "@myscope/b": "2.0.0",
           },
         },
-        // no `resolved` and no `integrity`
+        // without `integrity` the malformed URL failed the whole migration
         "node_modules/@myscope/a": { version: "1.0.0" },
-        // no `resolved`, but has `integrity`
+        // with `integrity` the malformed URL was written into bun.lock
         "node_modules/@myscope/b": {
           version: "2.0.0",
           integrity: "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
@@ -149,12 +149,12 @@ test.concurrent("migrate npm lockfile with missing `resolved` when scope registr
     }),
   });
 
-  // `bun pm migrate` never touches the network
+  // `bun pm migrate` never touches the network, so the unresolvable registry host is fine
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "migrate"],
     env: bunEnv,
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -162,7 +162,6 @@ test.concurrent("migrate npm lockfile with missing `resolved` when scope registr
   expect(stderr).not.toContain("InvalidNPMLockfile");
   expect(exitCode).toBe(0);
 
-  // the synthesized tarball URLs must have a `/` between registry and package name
   const lock = await Bun.file(join(String(dir), "bun.lock")).text();
   expect(lock).toContain("https://example-registry.invalid/@myscope/a/-/a-1.0.0.tgz");
   expect(lock).toContain("https://example-registry.invalid/@myscope/b/-/b-2.0.0.tgz");

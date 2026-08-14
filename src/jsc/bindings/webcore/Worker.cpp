@@ -67,8 +67,7 @@ ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const W
 {
     if (!Bun::isForbiddenFileURLHost(urlObject)) [[likely]]
         return {};
-    // The scope exists only on the throw path: an ExceptionOr caller cannot run
-    // the exception check a destructed ThrowScope demands of it.
+    // Throw path only: ExceptionOr callers cannot run a destructed ThrowScope's exception check.
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Bun::throwIfInvalidFileURLHost(scope, globalObject, urlObject);

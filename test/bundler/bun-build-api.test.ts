@@ -214,6 +214,42 @@ describe("Bun.build", () => {
     }
   });
 
+  test("an entry point too long for a path buffer is reported like any other missing one", async () => {
+    // Resolving it failed without logging anything, so the build went on
+    // with the entry point silently dropped: a successful build when another
+    // entry point was given, a crash in the linker when it was the only one.
+    // Runs in a child so the crash shows up as a failed assertion.
+    using dir = tempDir("build-api-long-entrypoint", { "valid.js": "console.log(1);" });
+    const fixture = /* ts */ `
+      // Longer than the path buffer on every platform, Windows included.
+      const long = Buffer.alloc(100_000, "a").toString();
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify({
+        alone: await report([long]),
+        withValidEntryPoint: await report(["./valid.js", long]),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notFound = {
+      success: false,
+      outputs: 0,
+      logs: [["BuildMessage", `ModuleNotFound resolving "${Buffer.alloc(100_000, "a").toString()}" (entry point)`]],
+    };
+    expect(JSON.parse(stdout)).toEqual({ alone: notFound, withValidEntryPoint: notFound });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({

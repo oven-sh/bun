@@ -1593,8 +1593,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Create the source origin
     SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };
 
-    // globalScope() is the global lexical environment, which holds script-level
-    // let/const/class bindings; a chain rooted at the global object skips them.
     JSScope* functionScope = options.parsingContext->globalScope();
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {

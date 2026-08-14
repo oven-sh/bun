@@ -381,7 +381,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut mark_for_replace: bool = false;
-        // `Replace` keeps this statement with a new value; `Delete` and `Inject` drop it.
         let mut replace_keeps_stmt: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
@@ -402,8 +401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        // Only the discarded value is dead; the statement a `Replace` entry keeps is not.
-        // For the other kinds the flag stays set and the checks below drop the statement.
+        // The statement a `Replace` entry keeps is live; only its old value was dead.
         macro_rules! discarded_value_visited {
             () => {
                 if replace_keeps_stmt {
@@ -811,8 +809,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replace_expr,
                             ) = entry
                             {
-                                // The class is discarded, so it is not lowered: lowering
-                                // writes the class back into `data.value`.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                                 stmts.push(*stmt);
                             } else {

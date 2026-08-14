@@ -1087,7 +1087,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
         let bytes = match core::mem::replace(&mut off.result, CompressWriteResult::Pending) {
             CompressWriteResult::Ok(v) => v,
             CompressWriteResult::Err(e) => {
-                return Ok(promise.reject(
+                return Ok(promise.reject_with_async_stack(
                     global,
                     Ok(global.create_error_instance(format_args!("Failed to gzip archive: {e}"))),
                 )?);

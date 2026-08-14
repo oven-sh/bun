@@ -270,8 +270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
                     // Don't substitute an identifier for a non-identifier if this is an
-                    // assignment target, since it'll cause a syntax error. The original
-                    // identifier is kept in that case.
+                    // assignment target, since it'll cause a syntax error
                     if matches!(newvalue.data.tag(), Tag::EIdentifier)
                         || in_.assign_target == js_ast::AssignTarget::None
                     {

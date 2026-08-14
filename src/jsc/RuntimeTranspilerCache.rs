@@ -51,10 +51,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: assigning to an identifier whose define has a non-identifier
-/// value keeps the identifier instead of printing the value (#21210). `bun test`
-/// caches output transpiled with user defines, so older entries may hold the
-/// invalid output.
+/// Version 26: Assigning to a define with a non-identifier value keeps the
+/// identifier instead of printing the value (#21210).
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

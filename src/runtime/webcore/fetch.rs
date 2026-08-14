@@ -1255,24 +1255,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
                 let body_value = req.get_body_value();
                 if let BodyValue::Locked(locked) = body_value {
-                    if locked.readable.has() {
+                    if let Some(stream) = locked.readable.try_get(global_this)? {
                         break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                            readable_stream::Strong::init(
-                                locked.readable.get(global_this).unwrap(),
-                                global_this,
-                            ),
+                            readable_stream::Strong::init(stream, global_this),
                         ));
                     }
                 }
                 let readable = body_value.to_readable_stream(global_this)?;
                 if !readable.is_empty_or_undefined_or_null() {
                     if let BodyValue::Locked(locked) = body_value {
-                        if locked.readable.has() {
+                        if let Some(stream) = locked.readable.try_get(global_this)? {
                             break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                                readable_stream::Strong::init(
-                                    locked.readable.get(global_this).unwrap(),
-                                    global_this,
-                                ),
+                                readable_stream::Strong::init(stream, global_this),
                             ));
                         }
                     }
@@ -1948,10 +1942,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
+            let Some(upload_body) = readable_stream.try_get(global_this)? else {
+                unreachable!("an HTTPRequestBody::ReadableStream holds a stream");
+            };
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
-                readable_stream.get(global_this).unwrap(),
+                upload_body,
                 global_this,
                 credentials_with_options.options,
                 credentials_with_options.acl,

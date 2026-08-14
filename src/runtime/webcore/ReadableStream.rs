@@ -95,6 +95,16 @@ impl Strong {
         None
     }
 
+    /// [`get`](Self::get) that says why there is no stream: `Ok(None)` when empty, `Err` when
+    /// re-tagging the held value left an exception pending (a stopped worker's termination) —
+    /// which `get` folds into `None`, so `has()` followed by `get().unwrap()` can panic.
+    pub(crate) fn try_get(&self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
+        match self.value() {
+            Some(value) => ReadableStream::from_js(value, global),
+            None => Ok(None),
+        }
+    }
+
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
         if let Some(stream) = self.get(global) {
             let Some((first, second)) = stream.tee(global)? else {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { isCI, isDebug } from "harness";
+import { isCI, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 interface InvalidFuzzOptions {
   maxLength: number;
@@ -121,6 +122,8 @@ if (!isCI) {
   )(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {
+      using dir = tempDir("css-fuzz", {});
+      const entrypoint = join(String(dir), "invalid.css");
       const options: InvalidFuzzOptions = {
         maxLength: 10000,
         strategy: strategy as any,
@@ -177,11 +180,11 @@ if (!isCI) {
         log("--- CSS Fuzz ---");
         invalidCSS = invalidCSS + "";
         log(JSON.stringify(invalidCSS, null, 2));
-        await Bun.write("invalid.css", invalidCSS);
+        await Bun.write(entrypoint, invalidCSS);
 
         try {
           const result = await Bun.build({
-            entrypoints: ["invalid.css"],
+            entrypoints: [entrypoint],
           });
 
           // We expect the parser to either throw an error or return a valid result
@@ -228,6 +231,8 @@ if (!isCI) {
 
   // Additional test for mixed valid/invalid input
   test("CSS Parser Mixed Input Fuzzing", async () => {
+    using dir = tempDir("css-fuzz-mixed", {});
+    const entrypoint = join(String(dir), "invalid.css");
     const validCSS = ".test{color:red}";
 
     for (let i = 0; i < 100; i++) {
@@ -239,11 +244,11 @@ if (!isCI) {
 
       console.log("--- Mixed CSS ---");
       console.log(JSON.stringify(mixedCSS, null, 2));
-      await Bun.write("invalid.css", mixedCSS);
+      await Bun.write(entrypoint, mixedCSS);
 
       try {
         await Bun.build({
-          entrypoints: ["invalid.css"],
+          entrypoints: [entrypoint],
         });
       } catch (error) {
         // Expected to throw, but shouldn't crash

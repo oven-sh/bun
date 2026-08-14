@@ -53,8 +53,6 @@ public:
     // [[backpressure]] — InitializeTransformStream sets it (to true) before anything reads it,
     // so the spec's initial "undefined" state needs no separate representation.
     bool m_backpressure : 1 { false };
-    // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached : 1 { false };
     // Native transform/flush arm is on the stack (coder pointer live); a re-entrant
     // ClearAlgorithms defers the eager free to the arm's epilogue instead.
     bool m_nativeStateInUse : 1 { false };

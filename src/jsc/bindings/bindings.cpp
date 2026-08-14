@@ -8,6 +8,7 @@
  *      can be disabled if necessary. Consult cppbind.ts for details.
  */
 #include "root.h"
+#include "vm/NodeVMRunTermination.h"
 
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -3045,14 +3046,9 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
+extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM*)
 {
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
-
-    return false;
+    return Bun::NodeVMRunTermination::timeoutArmedOnCurrentThread();
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)

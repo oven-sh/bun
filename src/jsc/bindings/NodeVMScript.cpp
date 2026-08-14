@@ -12,6 +12,7 @@
 #include "JavaScriptCore/SourceCodeKey.h"
 
 #include "NodeVMScriptFetcher.h"
+#include "../vm/NodeVMRunTermination.h"
 #include "../vm/SigintWatcher.h"
 
 #include <bit>
@@ -307,58 +308,6 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
-{
-    if (vm.hasTerminationRequest()) {
-        // The whole VM is being stopped (worker terminate()/exit): that
-        // termination is not ours to consume. The caller rethrows what
-        // evaluate() caught like any other exception.
-        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
-            return false;
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
-        }
-        return true;
-    }
-
-    return false;
-}
-
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
-{
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& dog = vm.ensureWatchdog();
-    dog.enteredVM();
-
-    Seconds oldLimit = dog.getTimeLimit();
-
-    if (oldTimeout) {
-        *oldTimeout = oldLimit.milliseconds();
-    }
-
-    if (oldLimit.isInfinity() || timeout < oldLimit.milliseconds()) {
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
-    } else {
-        timeout = oldLimit.milliseconds();
-    }
-
-    if (newTimeout) {
-        *newTimeout = timeout;
-    }
-}
-
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -383,44 +332,26 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     JSValue result {};
     auto run = [&] {
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
-
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
-
-    script->setSigintReceived(false);
-
-    // Node performs the afterEvaluate microtask checkpoint inside the
-    // watchdog/SIGINT scope, so a `timeout` also bounds microtasks the script
-    // scheduled on the context's own queue (e.g. promise jobs).
-    auto drainAfterEvaluate = [&] {
+        // Node performs the afterEvaluate microtask checkpoint inside the
+        // watchdog/SIGINT scope, so a `timeout` also bounds microtasks the script
+        // scheduled on the context's own queue (e.g. promise jobs).
         if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
             globalObject->drainOwnMicrotasks();
     };
 
-    if (options.breakOnSigint) {
-        auto holder = SigintWatcher::hold(globalObject, script);
-        run();
-        drainAfterEvaluate();
-    } else {
-        run();
-        drainAfterEvaluate();
-    }
-
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
-        return {};
+    {
+        NodeVMRunTermination termination(vm, options.timeout, options.breakOnSigint ? script : nullptr);
+        if (options.breakOnSigint) {
+            auto holder = SigintWatcher::hold(globalObject, script);
+            run();
+        } else {
+            run();
+        }
+        if (termination.finish(globalObject, scope, globalObject))
+            return {};
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-
-    script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
         // Node only decorates the error stack with the source line when
@@ -461,31 +392,18 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     };
 
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
+    {
+        NodeVMRunTermination termination(vm, options.timeout, options.breakOnSigint ? script : nullptr);
+        if (options.breakOnSigint) {
+            auto holder = SigintWatcher::hold(globalObject, script);
+            vm.ensureTerminationException();
+            run();
+        } else {
+            run();
+        }
+        if (termination.finish(globalObject, scope, nullptr))
+            return {};
     }
-
-    script->setSigintReceived(false);
-
-    if (options.breakOnSigint) {
-        auto holder = SigintWatcher::hold(globalObject, script);
-        vm.ensureTerminationException();
-        run();
-    } else {
-        run();
-    }
-
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
-        return {};
-    }
-
-    script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
         // Node only decorates the error stack with the source line when

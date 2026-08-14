@@ -1361,6 +1361,27 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("private-name accessor is lowered with its siblings when the class WeakMap-lowers its privates", async () => {
+      // #helper's body is hoisted out of the class, so its this.#z must be
+      // rewritten along with every other lowered private.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          accessor #z = 5;
+          #helper() { return this.#z; }
+          bump() { this.#z = this.#z + 1; return this.#helper(); }
+          static accessor #s = 10;
+          static #sh() { return C.#s; }
+          static readS() { C.#s = C.#s * 2; return C.#sh(); }
+        }
+        console.log(new C().bump(), C.readS());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6 20\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("accessor with a non-identifier string key round-trips", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         class C {

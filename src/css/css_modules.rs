@@ -453,22 +453,13 @@ impl<'a> CssModuleReference<'a> {
     }
 }
 
-/// The canonical implementation is `bun_base64::wyhash_url_safe`; this keeps the
-/// `css_modules::hash` path for in-crate callers (`dependencies.rs`,
-/// `rules/import.rs`, `local_name`).
 #[inline]
 pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }
 
-/// The name a CSS module's local (a class or id selector) is printed as:
-/// `<local>_<hash of path>`, where `path` is the stylesheet's path relative to
-/// the project (`Source.path.pretty` in the bundler) so the names are stable
-/// across machines. The bundler applies this to every local in the graph
-/// (`LinkerContext::mangle_local_css`); [`StyleSheet::local_names`] applies it
-/// to a sheet printed on its own.
-///
-/// [`StyleSheet::local_names`]: crate::StyleSheet::local_names
+/// The printed name of a CSS module's local (class or id): `<local>_<hash of path>`,
+/// `path` being the sheet's project-relative path (`Source.path.pretty` in the bundler).
 pub fn local_name(local: &[u8], path: &[u8]) -> Box<[u8]> {
     let scratch = Bump::new();
     let path_hash = hash(&scratch, format_args!("{}", bstr::BStr::new(path)), false);

@@ -2555,14 +2555,9 @@ mod stylesheet_impl {
             return Ok(ToCssResult { code: dest });
         }
 
-        /// The `local_names` to print this sheet with when it is not part of a
-        /// bundle (the bundler names the locals of the whole graph at once in
-        /// `LinkerContext::mangle_local_css`): every css-modules local, named
-        /// by [`css_modules::local_name`] as if the sheet were bundled from
-        /// `path`. Empty unless the sheet was parsed with css modules on.
-        ///
-        /// `source_index` must be the index the sheet was parsed with, since
-        /// the local refs embed it.
+        /// The `local_names` for printing this sheet outside a bundle (the bundler
+        /// builds the whole graph's in `LinkerContext::mangle_local_css`).
+        /// `source_index` must be the one the sheet was parsed with: the refs embed it.
         pub fn local_names(&self, source_index: SrcIndex, path: &[u8]) -> LocalsResultsMap {
             let mut local_names = LocalsResultsMap::default();
             for (local, entry) in self.local_scope.iter() {

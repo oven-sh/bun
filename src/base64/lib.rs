@@ -943,9 +943,7 @@ pub mod zig_base64 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_css` wraps this as `css_modules::hash`; everything that derives a CSS
-// module name (`css_modules::local_name`, the printer's pattern path) or a
-// dependency placeholder from a path goes through that wrapper.
+// The hash behind CSS module names; `bun_css` wraps it as `css_modules::hash`.
 //
 // Behavior: wyhash(u64) of the formatted args,
 // truncated to u32, url-safe-base64-encoded into a bump-allocated slice. If

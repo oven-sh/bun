@@ -23,9 +23,7 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
-/// Stands in for the path of the stylesheet under test when the `css_modules`
-/// option is on: the names of its locals are hashed from it, exactly as
-/// `bun build` would hash the path of a real `test.module.css`.
+/// The path `css_modules` test sheets are named as if they were read from.
 const CSS_MODULE_FILENAME: &[u8] = b"test.module.css";
 
 // These test-only wrappers are consumed as plain safe fns through
@@ -172,9 +170,7 @@ fn testing_impl(
     };
 
     let mut import_records = Vec::<ImportRecord>::default();
-    // Same single-sheet setup as `Transpiler::build_css_output`: css-modules
-    // locals are refs into `extra.symbols` at this source index, which
-    // `init_with_one_list` below puts at index 0.
+    // Index 0, where `init_with_one_list` below puts the symbols.
     let source_index = bun_ast::Index::RUNTIME;
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
@@ -268,8 +264,7 @@ fn parser_options_from_js(
         .get_truthy(global, b"css_modules")?
         .filter(|val| val.to_boolean())
     {
-        // Bun's css modules have no lightningcss-style `pure` mode, so a test
-        // asking for it must not silently run without it.
+        // Bun has no `pure` mode; a test asking for it must not silently run without it.
         if val.is_object() && val.get_boolean_loose(global, b"pure")? == Some(true) {
             return Err(global.throw(format_args!("css_modules.pure is not supported")));
         }

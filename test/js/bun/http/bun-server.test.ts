@@ -1640,57 +1640,9 @@ test("late keep-alive request to a node:http server after close() still dispatch
 });
 
 test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
-  // Companion to the test above: the connection that stays keep-alive after
-  // close() keeps the native server's wrapper (and so its handlers) alive, but
-  // it must not keep the process alive — node:http's close() releases the
-  // event-loop ref as soon as the listener and in-flight requests are gone.
-  // (Node itself keeps running here until keepAliveTimeout reaps the socket;
-  // this pins Bun's existing node:http behaviour so the wrapper-lifetime gate
-  // and the loop ref stay decoupled.)
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      /* js */ `
-        const http = require("node:http");
-        const net = require("node:net");
-        const { once } = require("node:events");
-        const release = Promise.withResolvers();
-        const inflight = Promise.withResolvers();
-        const server = http.createServer((req, res) => {
-          inflight.resolve();
-          release.promise.then(() => res.end("ok"));
-        });
-        await once(server.listen(0, "127.0.0.1"), "listening");
-        const client = net.connect(server.address().port, "127.0.0.1");
-        await once(client, "connect");
-        let received = "";
-        client.setEncoding("latin1").on("data", d => (received += d));
-        client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n");
-        await inflight.promise;
-        // Busy during close(), so the connection survives it and goes back to
-        // keep-alive once the response is out.
-        server.close();
-        release.resolve();
-        while (!received.endsWith("ok")) await once(client, "data");
-        // Only the surviving connection is left. The client end is unref'd, so
-        // the process exits now iff the closed server no longer holds the loop.
-        client.unref();
-        process.on("exit", () => {
-          console.log(JSON.stringify({ status: received.split("\\r\\n")[0], connectionOpenAtExit: client.readyState === "open" }));
-        });
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-    stdout: { status: "HTTP/1.1 200 OK", connectionOpenAtExit: true },
-    stderr: "",
-    exitCode: 0,
-  });
+  expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
+  );
 });
 
 test("request on a connection surviving graceful stop() never reaches a collected handler", async () => {

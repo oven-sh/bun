@@ -1527,3 +1527,28 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
 });
+
+// JSC's watchdog timer outlives the vm run that armed it; a fire that lands after the run must not
+// terminate whatever the thread is running by then (it did: the code below never printed, and a
+// worker's entry body was silently cut short).
+test("a vm timeout that expires after its run has finished terminates nothing else", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const spin = (ms) => { const t = Date.now(); while (Date.now() - t < ms); };
+    vm.runInThisContext("", { timeout: 10 });   // done long before 10 ms
+    spin(80);                                   // running when the stale timer fires
+    let real;
+    try { vm.runInThisContext("for(;;){}", { timeout: 20 }); } catch (e) { real = e.code; }
+    spin(80);
+    vm.runInThisContext("", { timeout: 10 });
+    setTimeout(() => { spin(80); console.log("main", real); }, 30);
+    const { Worker } = require("node:worker_threads");
+    const w = new Worker('require("node:vm").runInThisContext("", { timeout: 10 }); const t = Date.now(); while (Date.now() - t < 80); require("node:worker_threads").parentPort.postMessage("worker body finished");', { eval: true });
+    w.on("message", (m) => { console.log(m); w.terminate(); });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.split("\n").sort()).toEqual(["", "main ERR_SCRIPT_EXECUTION_TIMEOUT", "worker body finished"]);
+  expect(exitCode).toBe(0);
+}, 20_000);

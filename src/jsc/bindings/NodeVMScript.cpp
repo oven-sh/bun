@@ -336,11 +336,24 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
     return false;
 }
 
+// A `timeout` arms JSC's per-VM Watchdog, whose queued timer and CPU deadline outlive the run that
+// armed it: its own staleness check only covers the wall-clock deadline, so once the run is over the
+// fire lands in — and terminates — whatever this thread runs next. Only let it terminate while a
+// run with a deadline is on this thread's stack; every setupWatchdog() is paired with a
+// restoreWatchdog().
+static thread_local unsigned s_runsWithDeadline = 0;
+
+static bool watchdogMayTerminate(JSC::JSGlobalObject*, void*, void*)
+{
+    return s_runsWithDeadline > 0;
+}
+
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& dog = vm.ensureWatchdog();
     dog.enteredVM();
+    ++s_runsWithDeadline;
 
     Seconds oldLimit = dog.getTimeLimit();
 
@@ -349,7 +362,7 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
     }
 
     if (oldLimit.isInfinity() || timeout < oldLimit.milliseconds()) {
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout), watchdogMayTerminate);
     } else {
         timeout = oldLimit.milliseconds();
     }
@@ -357,6 +370,12 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
     if (newTimeout) {
         *newTimeout = timeout;
     }
+}
+
+void restoreWatchdog(VM& vm, double oldTimeout)
+{
+    --s_runsWithDeadline;
+    vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(oldTimeout), watchdogMayTerminate);
 }
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
@@ -411,7 +430,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     }
 
     if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
+        restoreWatchdog(vm, *oldLimit);
     }
 
     if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
@@ -478,7 +497,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
+        restoreWatchdog(vm, *oldLimit);
     }
 
     if (checkForTermination(vm, globalObject, scope, script, newLimit)) {

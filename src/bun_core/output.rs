@@ -1876,8 +1876,8 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G);
 impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
-/// with successive entries from `args`; the spec inside the braces is ignored.
-/// `{{` / `}}` are emitted as literal braces.
+/// with successive entries from `args`. `{{` / `}}` are emitted as literal
+/// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,

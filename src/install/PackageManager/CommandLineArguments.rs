@@ -1421,8 +1421,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
     }
 }
 
-/// `--cwd`: a value starting with `.` is resolved against the current directory, anything
-/// else is handed to `chdir` as given. Exits the process when the directory cannot be entered.
+/// `--cwd`. Exits the process when the directory cannot be entered.
 fn change_directory(arg: &[u8]) -> Result<(), crate::Error> {
     let mut buf = PathBuffer::uninit();
     let mut buf2 = PathBuffer::uninit();

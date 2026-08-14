@@ -553,11 +553,28 @@ impl SingleHTTPChannel {
             response_buffer: core::ptr::null_mut(),
         }
     }
-    fn write_item(&self, item: HTTPClientResult<'static>) {
-        let mut g = self.slot.lock();
-        *g = Some(item);
-        self.cv.notify_one();
+    /// Publishes the result to [`read_item`](Self::read_item). `send_sync`
+    /// frees the channel as soon as `read_item` returns, which it can do the
+    /// moment the lock release inside this call lands, so the channel is taken
+    /// by pointer and that release is the last access to it (a `&self` would
+    /// still assert the allocation live while `send_sync` frees it).
+    ///
+    /// # Safety
+    /// `this` must be the live channel `send_sync` registered; nothing may
+    /// touch it after this returns.
+    unsafe fn write_item(this: *const Self, item: HTTPClientResult<'static>) {
+        // SAFETY: `*this` is live until the release inside `with_lock_raw` (fn
+        // contract); the signal is inside the closure so it happens while the
+        // lock, and therefore the channel, is still held.
+        unsafe {
+            bun_threading::Guarded::with_lock_raw(&raw const (*this).slot, |slot| {
+                *slot = Some(item);
+                (*this).cv.notify_one();
+            });
+        }
     }
+    /// The owner's side: `send_sync` frees the channel only after this returns,
+    /// so `&self` is fine here.
     fn read_item(&self) -> HTTPClientResult<'static> {
         let mut g = self.slot.lock();
         loop {
@@ -595,12 +612,14 @@ fn send_sync_callback(
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
     }
-    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`;
-    // `response_buffer` is the caller's `&mut MutableString` which outlives
-    // `read_item`.
+    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`, live
+    // until `write_item` publishes the result (`send_sync` may free it the
+    // moment that lands, so `write_item` is the last thing here that touches
+    // it); `response_buffer` is the caller's `&mut MutableString`, which
+    // outlives `read_item`, and it is filled in before the result is published.
     unsafe {
         result.body_into(&mut (*(*this).response_buffer).list);
-        (*this).write_item(result.detach_lifetime());
+        SingleHTTPChannel::write_item(this, result.detach_lifetime());
     }
 }
 
@@ -624,13 +643,18 @@ impl<'a> AsyncHTTP<'a> {
         self.schedule(&mut batch);
         crate::HTTPThread::schedule(batch);
 
-        // `ctx` is a live heap allocation we own; the HTTP thread only touches
-        // it inside `send_sync_callback`, whose final action is `write_item`,
-        // so by the time `read_item` returns the callback has finished and no
-        // other reference remains. `read_item` takes `&self` (channel internals
-        // are interior-mutable), so a `ParentRef` shared deref is sufficient.
+        // `ctx` is a live heap allocation we own. The HTTP thread touches it
+        // only inside `send_sync_callback`, which ends by publishing the result
+        // through `write_item`; `read_item` cannot return before the lock
+        // release inside that publish, and that release is the HTTP thread's
+        // last access to the channel (it keeps no reference into it past that
+        // point), so once `read_item` returns nothing but `ctx` refers to the
+        // allocation. `read_item` takes `&self` (channel internals are
+        // interior-mutable), so a `ParentRef` shared deref is sufficient; the
+        // borrow ends before the free below.
         let result = bun_ptr::ParentRef::from(ctx).read_item();
-        // SAFETY: see above — sole owner, callback completed.
+        // SAFETY: see above; `ctx` is the sole remaining pointer to the
+        // allocation `Box::new` produced above.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
             return Err(err);

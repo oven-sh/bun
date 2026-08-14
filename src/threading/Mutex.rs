@@ -64,7 +64,24 @@ impl Mutex {
     /// Releases the mutex which was previously acquired with `lock()` or `try_lock()`.
     /// It is undefined behavior if the mutex is unlocked from a different thread that it was locked from.
     pub fn unlock(&self) {
-        self.impl_.unlock()
+        // SAFETY: `self` is held by this thread (fn contract) and live for the
+        // whole call.
+        unsafe { Self::unlock_raw(self) }
+    }
+
+    /// [`unlock`](Self::unlock) for a critical section whose exit is what lets
+    /// another thread free the mutex's owner (`WaitGroup::finish_raw`). A `&self`
+    /// argument would assert the mutex's storage, padding included, until this
+    /// returns; here the store that releases the lock is the last access to
+    /// `*this`, and the futex wake that may follow it goes by address only
+    /// ([`Futex::wake_raw`](crate::futex::wake_raw)).
+    ///
+    /// # Safety
+    /// `this` must point to a mutex this thread holds. It stays valid until the
+    /// lock is released; from then on another thread may free it.
+    pub(crate) unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        unsafe { Impl::unlock_raw(&raw const (*this).impl_) }
     }
 
     /// Debug-only check that the calling thread already holds this mutex.
@@ -185,11 +202,15 @@ impl DebugImpl {
         self.locking_thread.store(current_id, Ordering::Relaxed);
     }
 
+    /// See [`Mutex::unlock_raw`] for the contract.
     #[inline]
-    fn unlock(&self) {
-        debug_assert!(self.locking_thread.load(Ordering::Relaxed) == current_thread_id());
-        self.locking_thread.store(0, Ordering::Relaxed);
-        self.impl_.unlock();
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        unsafe {
+            debug_assert!((*this).locking_thread.load(Ordering::Relaxed) == current_thread_id());
+            (*this).locking_thread.store(0, Ordering::Relaxed);
+            ReleaseImpl::unlock_raw(&raw const (*this).impl_);
+        }
     }
 }
 
@@ -242,10 +263,15 @@ impl WindowsImpl {
         AcquireSRWLockExclusive(&self.srwlock)
     }
 
-    fn unlock(&self) {
-        // SAFETY: caller acquired the lock on this thread (`Mutex::unlock`
-        // contract); releasing without ownership is documented UB on Windows.
-        unsafe { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: this thread holds the lock (fn contract), so `*this` is live
+        // up to the release inside the call; releasing without ownership is
+        // documented UB on Windows.
+        unsafe {
+            let srwlock = core::cell::UnsafeCell::raw_get(&raw const (*this).srwlock);
+            bun_sys::windows::kernel32::ReleaseSRWLockExclusive(srwlock)
+        }
     }
 }
 
@@ -277,12 +303,15 @@ pub(crate) struct OsUnfairLock {
 // The type encodes the only pointer-validity precondition, and Apple's runtime
 // detects misuse (recursive lock / unowned unlock) by aborting — which is safe
 // — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
+// `os_unfair_lock_unlock` is the exception: a reference would assert the word
+// live until the call returns, but once it releases the lock another thread
+// may free the word (`Mutex::unlock_raw`), so it takes the address.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
     #[cfg(debug_assertions)]
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
-    safe fn os_unfair_lock_unlock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
+    fn os_unfair_lock_unlock(lock: *mut OsUnfairLock);
 }
 
 #[cfg(target_vendor = "apple")]
@@ -302,8 +331,11 @@ impl DarwinImpl {
         os_unfair_lock_lock(&self.oul)
     }
 
-    fn unlock(&self) {
-        os_unfair_lock_unlock(&self.oul)
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: this thread holds the lock (fn contract), so `*this` is live
+        // up to the release inside the call, which is its last access.
+        unsafe { os_unfair_lock_unlock(core::cell::UnsafeCell::raw_get(&raw const (*this).oul)) }
     }
 }
 
@@ -382,7 +414,8 @@ impl FutexImpl {
         }
     }
 
-    fn unlock(&self) {
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
         // Unlock the mutex and wake up a waiting thread if any.
         //
         // A waiting thread will acquire with `contended` instead of `locked`
@@ -390,11 +423,17 @@ impl FutexImpl {
         //
         // Release barrier ensures the critical section happens before we let go of the lock
         // and that our critical section happens before the next lock holder grabs the lock.
-        let state = self.state.swap(Self::UNLOCKED, Ordering::Release);
+        //
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        let state_ptr = unsafe { &raw const (*this).state };
+        // SAFETY: as above; the swap is what releases the lock, and the last
+        // access to `*this`. The wake below goes by address because the thread
+        // the swap releases may have freed the mutex by the time it runs.
+        let state = unsafe { (*state_ptr).swap(Self::UNLOCKED, Ordering::Release) };
         debug_assert!(state != Self::UNLOCKED);
 
         if state == Self::CONTENDED {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 }
@@ -410,7 +449,7 @@ unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
-    unsafe { (*ptr).unlock() }
+    unsafe { ReleaseImpl::unlock_raw(ptr) }
 }
 
 #[unsafe(no_mangle)]

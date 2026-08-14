@@ -260,8 +260,7 @@ macro_rules! single_property {
     }};
 }
 
-// The ltr/rtl rules are appended after this rule and override it, so a direction whose physical
-// corner was declared later (`$ltr_declared` / `$rtl_declared`) gets nothing.
+// The ltr/rtl rules override this rule: a direction whose corner was declared later gets nothing.
 macro_rules! logical_property {
     (
         $d:expr, $ctx:expr, $bump:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr,

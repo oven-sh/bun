@@ -963,8 +963,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    /// The ltr/rtl rules are appended after this rule and override it, so a direction in which a
-    /// side maps onto one of the later `declared` sides gets nothing.
+    /// The ltr/rtl rules override this rule, so the direction of a `declared` side is left out.
     fn flush_compiled_inline(
         inline_start: Option<&Property>,
         inline_end: Option<&Property>,

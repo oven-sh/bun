@@ -610,11 +610,9 @@ pub struct BorderHandler {
     border_block_end: BorderShorthand,
     border_inline_start: BorderShorthand,
     border_inline_end: BorderShorthand,
-    /// Unparsed inline declarations, held back like the parsed ones while logical borders are
-    /// compiled away.
+    /// Unparsed inline declarations, held back like the parsed ones while logical borders compile.
     unparsed_inline: Vec<UnparsedProperty>,
-    /// Left/right sub-properties written out by `flush_before_unparsed` while the inline values
-    /// stayed buffered.
+    /// Sub-properties `flush_before_unparsed` wrote out while the inline values stayed buffered.
     declared_after_inline: BorderProperty,
     category: PropertyCategory,
     border_image_handler: BorderImageHandler,
@@ -1225,8 +1223,7 @@ mod border_handler_body {
     }};
 }
 
-    /// The ltr/rtl rules are appended after this rule and override it: a value mapping onto a
-    /// later `declared` side is taken away from `flush_category!` and only gets the other one.
+    /// The ltr/rtl rules override this rule, so the direction of a `declared` side is left out.
     #[inline(never)]
     fn flush_overridden_inline(
         f: &mut FlushContext,
@@ -1250,8 +1247,7 @@ mod border_handler_body {
                             }
                         }
                         (start, end) => {
-                            // inline-start is left in ltr text and right in rtl text, inline-end
-                            // the other way around; one of the two sides was declared later.
+                            // One side was declared later, so at most one direction is left.
                             if let Some(value) = start {
                                 if !left_declared {
                                     ctx_add_directional_with(f.ctx, Direction::Ltr, || {
@@ -1325,8 +1321,7 @@ mod border_handler_body {
         })
     }
 
-    /// As `flush_overridden_inline`, for a declaration held back by `flush_unparsed`. It cannot be
-    /// split, so a direction is only left out when everything it sets there was declared later.
+    /// Unsplittable: a direction is only left out if everything it sets there was declared later.
     #[inline(never)]
     fn flush_unparsed_inline(
         unparsed: &UnparsedProperty,
@@ -1646,7 +1641,7 @@ mod border_handler_body {
             declared
         }
 
-        /// For an unparsed declaration setting `declared`, which then overrides like a buffered one.
+        /// For an unparsed declaration setting `declared`; it then overrides like a buffered one.
         fn flush_before_unparsed(
             &mut self,
             declared: BorderProperty,
@@ -1686,8 +1681,7 @@ mod border_handler_body {
 
             self.has_any = false;
 
-            // Logical values first: any physical value buffered with them was declared later, and
-            // `flush_logical` needs to see it before `flush_physical` takes it.
+            // Logical first: the physical values came later, and `flush_logical` reads them.
             self.flush_logical(declared_after_inline, dest, context);
             self.flush_physical(dest, context);
 

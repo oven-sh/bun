@@ -11,6 +11,7 @@ RES=$OUT/http.txt; : > "$RES"
 DUR=${DUR:-5s}
 # run <label> <scheme> <cwd> <cmd...>   -- the server must print "... port <n>" once listening
 run() { local label=$1 scheme=$2 dir=$3; shift 3
+  : > "$TMP/http.log"
   ( cd "$dir" && PORT=0 "$@" > "$TMP/http.log" 2>&1 ) & local SRV=$!
   local PORT=""; for i in $(seq 1 60); do PORT=$(sed -nE 's/.* port ([0-9]+).*/\1/p' "$TMP/http.log" | head -1); [ -n "$PORT" ] && [ "$PORT" != 0 ] && break; sleep 0.25; done
   # the subshell above is $SRV; the runtime is its child, which is what /proc accounting must look at

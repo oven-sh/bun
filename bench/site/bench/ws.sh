@@ -7,14 +7,19 @@ source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 W=$BENCH_DIR/websocket-server; cd "$W"
 K=${K:-4}; TOTAL=32; PER=$((TOTAL/K))
 RES=$OUT/ws.txt; : > "$RES"
+# every server prints "Waiting for <n> clients to connect" once it is listening
 run() { local name="$1"; shift
+  : > "$TMP/ws-srv.log"
   CLIENTS_COUNT=$TOTAL "$@" > "$TMP/ws-srv.log" 2>&1 & local SRV=$!
-  sleep 3
-  local CP=""; for i in $(seq 1 $K); do CLIENTS_COUNT=$PER TOTAL_CLIENTS=$TOTAL $BUN_RELEASE ./chat-client.mjs > "$TMP/ws-c$i.log" 2>&1 & CP="$CP $!"; done
+  local up=""; for i in $(seq 1 60); do grep -q "Waiting for" "$TMP/ws-srv.log" && up=1 && break; kill -0 $SRV 2>/dev/null || break; sleep 0.25; done
+  if [ -z "$up" ]; then echo "$name FAILED_TO_START: $(head -3 "$TMP/ws-srv.log" | tr '\n' ' ')" | tee -a "$RES"; kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; return; fi
+  sleep 1
+  local CP=""; for i in $(seq 1 $K); do CLIENTS_COUNT=$PER TOTAL_CLIENTS=$TOTAL timeout 120 $BUN_RELEASE ./chat-client.mjs > "$TMP/ws-c$i.log" 2>&1 & CP="$CP $!"; done
   sleep 2
   local c0=$(cpu_ticks $SRV) t0=$(date +%s.%N); sleep 8; local c1=$(cpu_ticks $SRV) t1=$(date +%s.%N)
   local cpu=$(awk -v a=$c0 -v b=$c1 -v t0=$t0 -v t1=$t1 'BEGIN{printf "%.0f", (b-a)/100/(t1-t0)*100}')
-  for p in $CP; do wait $p 2>/dev/null; done
+  local timed_out=""; for p in $CP; do wait $p 2>/dev/null; [ $? = 124 ] && timed_out=1; done
+  [ -n "$timed_out" ] && echo "$name CLIENTS_TIMED_OUT (server: $(tail -1 "$TMP/ws-srv.log"))" | tee -a "$RES"
   local hwm=$(peak_rss_mb $SRV) sum=0 n=0
   for i in $(seq 1 $K); do m=$(sed -n "s/ messages per second.*//p" "$TMP/ws-c$i.log" | sed -n "2,10p" | awk '{s+=$1;n++} END {if(n) printf "%d", s/n; else print 0}'); sum=$((sum+m)); n=$((n+$(sed -n "s/ messages per second.*//p" "$TMP/ws-c$i.log" | wc -l))); done
   printf "%-40s msgs/s=%9d   server_cpu=%3s%%   peak_rss=%sMB   (client_samples=%s)\n" "$name" "$sum" "$cpu" "$hwm" "$n" | tee -a "$RES"

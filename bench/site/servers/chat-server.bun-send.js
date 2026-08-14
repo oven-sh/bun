@@ -31,3 +31,4 @@ Bun.serve({
     return new Response("Error");
   },
 });
+console.log(`Waiting for ${CLIENTS_TO_WAIT_FOR} clients to connect...`);

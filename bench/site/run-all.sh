@@ -10,6 +10,7 @@ mkdir -p "$OUT"; ln -sfn "$OUT" "$S/results/latest"
 export BUN
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 BENCHES=${@:-bundler http ws postgres install}
+cd "$S"
 {
   echo "date_utc=$STAMP host=$(hostname) cpu=\"$(lscpu | sed -n 's/Model name: *//p')\" cores=$(nproc) mem_gb=$(free -g | awk '/Mem/{print $2}') kernel=$(uname -r)"
   echo "BUN=$BUN version=$($BUN --version) revision=$($BUN --revision)"
@@ -23,7 +24,8 @@ cat "$OUT/versions.txt"
 for b in $BENCHES; do
   echo "############ $b  $(date -u +%H:%M:%S)"
   t0=$(date +%s)
-  bash "$SITE_DIR/bench/$b.sh" > "$OUT/$b.log" 2>&1; rc=$?
+  timeout -k 30 "${BENCH_TIMEOUT:-3600}" bash "$SITE_DIR/bench/$b.sh" > "$OUT/$b.log" 2>&1; rc=$?
+  [ $rc = 124 ] && echo "$b TIMED_OUT after ${BENCH_TIMEOUT:-3600}s" | tee -a "$OUT/$b.log"
   t1=$(date +%s)
   echo "$b  ${rc}  $((t1-t0))s" | tee -a "$OUT/timings.txt"
 done

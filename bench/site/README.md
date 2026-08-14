@@ -24,7 +24,7 @@ RUNS=1 BUN=... bench/site/run-all.sh                # quick smoke run
   PostgreSQL server binary (`pg_ctl`/`initdb`, or `SITEBENCH_PG_EXTERNAL=1` + `PG*` variables for a running server) must
   already be on `PATH`.
 - `RUNS` (default 3) is the number of repetitions for http, ws, postgres and install. The bundler harness always does
-  hyperfine's 10 runs per tool.
+  hyperfine's 10 runs per tool. Each benchmark script is killed after `BENCH_TIMEOUT` seconds (default 3600).
 
 Results land in `$SITEBENCH_HOME/results/<UTC stamp>-<dir of $BUN>-<bun version>/` (symlinked as `results/latest`):
 

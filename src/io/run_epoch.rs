@@ -11,7 +11,9 @@
 //! (a spawned child's pipes, a connection it opens) carries a newer epoch and
 //! dispatches normally.
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
+#[cfg(not(windows))]
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 static RUN_EPOCH: AtomicU32 = AtomicU32::new(1);

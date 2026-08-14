@@ -837,8 +837,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let len = bun_sys::getcwd(&mut *outbuf)?;
             &outbuf[..len]
         };
-        // argv may not fit the thread-local buffer behind `join_abs`; `chdir`
-        // itself rejects a path longer than the OS limit with ENAMETOOLONG.
         let mut spill = Vec::new();
         let out =
             resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
@@ -969,8 +967,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
-        // argv may not fit the thread-local buffer behind `join_abs_string`;
-        // the resolver reports an over-long path when it fails to open it.
         let mut spill = Vec::new();
         Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
             ctx.args.absolute_working_dir.as_deref().unwrap(),

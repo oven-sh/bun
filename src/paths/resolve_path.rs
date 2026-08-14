@@ -1383,9 +1383,8 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
-/// [`join_abs_string`] (thread-local buffer) when the result is sure to fit,
-/// otherwise into `spill` (grown as needed), for `parts` of arbitrary length
-/// such as argv. `spill` is untouched in the common case.
+/// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
 pub fn join_abs_string_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     spill: &'a mut Vec<u8>,
@@ -1614,10 +1613,9 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Buffer length that holds both `_join_abs_string_buf`'s unnormalized
-/// concatenation (`cwd`, the separator a bare Windows root gains, and each part
-/// behind a separator) and its normalized output, which on Windows can be one
-/// byte longer than its input (see [`normalize_string_spill`]).
+/// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and
+/// `parts` (one separator each, plus the one a bare Windows root gains) as well
+/// as its normalized output.
 #[inline]
 fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2

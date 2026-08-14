@@ -5411,8 +5411,7 @@ impl Num {
         generic::implement_hash(self, hasher)
     }
 
-    /// `int_value` unless it saturated and no longer describes `value`. Print
-    /// from this, not `value`: an f32 cannot hold every i32.
+    /// `int_value`, unless it saturated and no longer describes `value`.
     pub(crate) fn exact_int(&self) -> Option<i32> {
         self.int_value.filter(|&int| int as f32 == self.value)
     }
@@ -5789,8 +5788,6 @@ pub mod serializer {
         serialize_dimension_num(&num, unit, dest)
     }
 
-    /// Prints `num` without a redundant `+` or `.0`, from its own integer when
-    /// it has one (see `Num::exact_int`).
     pub(crate) fn serialize_dimension_num(
         num: &Num,
         unit: &'static [u8],

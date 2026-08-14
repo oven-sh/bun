@@ -10,13 +10,17 @@ export const maxResponsesAlive = 5;
 // Returns how many objects of each type in `limits` survive a GC, once every
 // count is within its limit and has stopped falling (the same reading in two
 // consecutive rounds), or throws once a count is still over its limit after five
-// seconds. The objects of a settled fetch() stay reachable until the native side
-// lets go of them on a later event-loop turn, and what they were holding on to
-// only goes away in the GC pass after that (measured: a batch's promise count
-// comes down in two or three steps), so a single reading right after the
-// requests is meaningless; re-checking once per turn until two rounds agree gets
-// the settled count without sleeping for a fixed time, and leaked objects are
-// the ones that never come down.
+// seconds. The objects of a settled fetch() stay reachable until the HTTP thread
+// is done with the request and the main thread has picked that up, and what they
+// were holding on to only goes away in the GC pass after that (measured: a
+// batch's promise count comes down in two or three steps), so a single reading
+// right after the requests is meaningless; re-checking until two rounds agree
+// gets the settled count without sleeping for a fixed time, and leaked objects
+// are the ones that never come down. The rounds are spaced by a timer rather
+// than setImmediate: a loop kept busy with immediates and full GCs was seen not
+// to pick up the HTTP thread's hand-off at all (the x64-asan lane sat at a whole
+// batch of Responses for the full five seconds, for every body type), whereas
+// idling for a millisecond lets it through.
 export async function expectCollected(limits, context) {
   const types = Object.keys(limits);
   const deadline = Date.now() + 5_000;
@@ -35,6 +39,6 @@ export async function expectCollected(limits, context) {
       throw new Error(`still alive after ${context}: ${alive.join(", ")}`);
     }
     previous = counts;
-    await new Promise(resolve => setImmediate(resolve));
+    await Bun.sleep(1);
   }
 }

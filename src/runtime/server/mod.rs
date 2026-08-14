@@ -2866,7 +2866,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(h3_app) = this_ref.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(bun_core::ZStr::from_cstr(sni_name), &sni_opts)
+                            .add_server_name_with_options(
+                                bun_core::ZStr::from_cstr(sni_name),
+                                &sni_opts,
+                            )
                             .is_err()
                         {
                             if !global.has_exception() {

@@ -1969,12 +1969,12 @@ c {
       "/url-fragments/002/style.css": `@import url("./a.css#1"); @import url("./b.css#2"); @import url("./a.css#3");`,
     },
     entryPoints: files,
-    outputPaths: files,
+    outputPaths: files.map(file => join("/out", file)),
     outdir: "/out",
     onAfterBundle(api) {
       for (const file of files) {
         console.log("Checking snapshot:", file);
-        api.expectFile(join(file)).toMatchSnapshot(file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
       }
     },
   });
@@ -2141,10 +2141,11 @@ c {
     entryPoints: ["/a.js", "/b.js", "/c.css", "/d.css"],
     format: "esm",
     splitting: true,
+    chunkNaming: "chunk.[ext]",
     onAfterBundle(api) {
-      const files = ["/a.js", "/b.js", "/c.css", "/d.css"];
+      const files = ["/a.js", "/b.js", "/chunk.js", "/c.css", "/d.css"];
       for (const file of files) {
-        api.expectFile(file).toMatchSnapshot(file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
       }
     },
   });

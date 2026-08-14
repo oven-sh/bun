@@ -292,7 +292,9 @@ pub fn link_into_macho(
         return Err(LinkError::NotStandaloneExecutable);
     }
 
-    let existing = &macho.data[bun_section.file_offset as usize..][..bun_section.size as usize];
+    let existing = macho
+        .section_bytes(bun_section)
+        .ok_or(LinkError::NotStandaloneExecutable)?;
     let graph_len = u64::from_le_bytes(existing[0..8].try_into().unwrap());
     if graph_len == 0 {
         return Err(LinkError::NotStandaloneExecutable);
@@ -334,14 +336,15 @@ pub fn link_into_macho(
     if slot_section.size < size_of::<Slot>() as u64 {
         return Err(LinkError::SlotTableMissing);
     }
-    let n_slots = (slot_section.size as usize) / size_of::<Slot>();
-    let table_off = slot_section.file_offset as usize;
-    let picked = (0..n_slots)
-        .find(|i| {
-            let off = table_off + i * size_of::<Slot>();
-            let magic = u64::from_le_bytes(macho.data[off..off + 8].try_into().unwrap());
-            let offset = u64::from_le_bytes(macho.data[off + 8..off + 16].try_into().unwrap());
-            let length = u64::from_le_bytes(macho.data[off + 16..off + 24].try_into().unwrap());
+    let table = macho
+        .section_bytes_mut(slot_section)
+        .ok_or(LinkError::SlotTableMissing)?;
+    let picked = table
+        .chunks_exact(size_of::<Slot>())
+        .position(|raw| {
+            let magic = u64::from_le_bytes(raw[0..8].try_into().unwrap());
+            let offset = u64::from_le_bytes(raw[8..16].try_into().unwrap());
+            let length = u64::from_le_bytes(raw[16..24].try_into().unwrap());
             (magic & 0x00FF_FFFF_FFFF_FFFF) == Slot::MAGIC_BASE && offset == 0 && length == 0
         })
         .ok_or(LinkError::NoFreeSlot)?;
@@ -349,18 +352,16 @@ pub fn link_into_macho(
     // Slot offsets are measured from the start of the section (the u64
     // header), so account for the 8-byte header `write_section_with_header`
     // places before `new_payload`.
-    let mut path_buf = [0u8; 224];
-    path_buf[..virtual_path.len()].copy_from_slice(virtual_path);
-    let dest_off = table_off + picked * size_of::<Slot>();
     let magic = Slot::MAGIC_BASE | ((picked as u64) << 56);
     let offset = size_of::<u64>() as u64 + addon_off_in_payload as u64;
     let hash = bun_wyhash::hash(addon_bytes);
-    macho.data[dest_off..dest_off + 8].copy_from_slice(&magic.to_le_bytes());
-    macho.data[dest_off + 8..dest_off + 16].copy_from_slice(&offset.to_le_bytes());
-    macho.data[dest_off + 16..dest_off + 24]
-        .copy_from_slice(&(addon_bytes.len() as u64).to_le_bytes());
-    macho.data[dest_off + 24..dest_off + 32].copy_from_slice(&hash.to_le_bytes());
-    macho.data[dest_off + 32..dest_off + 256].copy_from_slice(&path_buf);
+    let dest = &mut table[picked * size_of::<Slot>()..][..size_of::<Slot>()];
+    dest[0..8].copy_from_slice(&magic.to_le_bytes());
+    dest[8..16].copy_from_slice(&offset.to_le_bytes());
+    dest[16..24].copy_from_slice(&(addon_bytes.len() as u64).to_le_bytes());
+    dest[24..32].copy_from_slice(&hash.to_le_bytes());
+    dest[32..].fill(0);
+    dest[32..][..virtual_path.len()].copy_from_slice(virtual_path);
 
     let mut out: Vec<u8> = Vec::new();
     macho

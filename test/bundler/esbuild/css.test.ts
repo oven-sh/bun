@@ -416,10 +416,25 @@ describe("bundler", () => {
     },
   });
 
-  // The location of a "never appears" error is the `composes` declaration that
-  // asked for the name, whether the name was looked up in another file or in
-  // the same one. The cross-file error used to be attached to the other file,
+  // Errors about the names listed in a `composes` declaration are located on
+  // that declaration, whether the name was looked up in another file or in the
+  // same one. The cross-file variants used to be attached to the other file,
   // with an offset that only made sense in the composing file.
+  // `notes` (missing from the type declarations) holds a message's notes, each a BuildMessage.
+  function composesDiagnostics(build: Bun.BuildOutput) {
+    expect(build.success).toBe(false);
+    const locate = ({ message, position }: BuildMessage | ResolveMessage) => ({
+      message,
+      file: basename(position!.file),
+      line: position!.line,
+      column: position!.column,
+      lineText: position!.lineText,
+    });
+    return build.logs
+      .map(log => ({ ...locate(log), notes: (log as unknown as { notes: BuildMessage[] }).notes.map(locate) }))
+      .sort((a, b) => a.line - b.line || a.message.localeCompare(b.message));
+  }
+
   itBundled("css/ImportCSSFromJSComposesFromMissingImportLocation", {
     files: {
       "/entry.js": `
@@ -450,37 +465,92 @@ describe("bundler", () => {
       ],
     },
     onAfterApiBundle(build) {
-      expect(build.success).toBe(false);
-      const errors = build.logs
-        .map(log => ({
-          message: log.message.slice(0, log.message.indexOf(" as a CSS modules")),
-          file: basename(log.position!.file),
-          line: log.position!.line,
-          column: log.position!.column,
-          lineText: log.position!.lineText,
-        }))
-        .sort((a, b) => a.line - b.line || a.message.localeCompare(b.message));
-      expect(errors).toEqual([
+      const suffix =
+        ' as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.';
+      const composesLine = {
+        file: "styles.module.css",
+        line: 5,
+        column: 12,
+        lineText: '  composes: missing alsoMissing from "./other.module.css";',
+      };
+      expect(composesDiagnostics(build)).toEqual([
+        { message: `The name "alsoMissing" never appears in "other.module.css"${suffix}`, ...composesLine, notes: [] },
+        { message: `The name "missing" never appears in "other.module.css"${suffix}`, ...composesLine, notes: [] },
         {
-          message: 'The name "alsoMissing" never appears in "other.module.css"',
-          file: "styles.module.css",
-          line: 5,
-          column: 12,
-          lineText: '  composes: missing alsoMissing from "./other.module.css";',
-        },
-        {
-          message: 'The name "missing" never appears in "other.module.css"',
-          file: "styles.module.css",
-          line: 5,
-          column: 12,
-          lineText: '  composes: missing alsoMissing from "./other.module.css";',
-        },
-        {
-          message: 'The name "missingHere" never appears in "styles.module.css"',
+          message: `The name "missingHere" never appears in "styles.module.css"${suffix}`,
           file: "styles.module.css",
           line: 8,
           column: 12,
           lineText: "  composes: missingHere;",
+          notes: [],
+        },
+      ]);
+    },
+  });
+
+  // The composed name exists in the other file but is an id, not a class. The
+  // error belongs on the `composes` declaration; its note on the definition.
+  itBundled("css/ImportCSSFromJSComposesNonClassNameLocation", {
+    files: {
+      "/entry.js": `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/styles.module.css": [
+        "#localId {",
+        "  color: red;",
+        "}",
+        ".foo {",
+        '  composes: otherId from "./other.module.css";',
+        "}",
+        ".bar {",
+        "  composes: localId;",
+        "}",
+      ].join("\n"),
+      "/other.module.css": [".x {", "  color: blue;", "}", "#otherId {", "  color: green;", "}"].join("\n"),
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    backend: "api",
+    bundleErrors: {
+      "/styles.module.css": [
+        'The composes property cannot be used with "otherId", because it is not a single class name.',
+        'The composes property cannot be used with "localId", because it is not a single class name.',
+      ],
+    },
+    onAfterApiBundle(build) {
+      expect(composesDiagnostics(build)).toEqual([
+        {
+          message: 'The composes property cannot be used with "otherId", because it is not a single class name.',
+          file: "styles.module.css",
+          line: 5,
+          column: 12,
+          lineText: '  composes: otherId from "./other.module.css";',
+          notes: [
+            {
+              message: 'The definition of "otherId" is here.',
+              file: "other.module.css",
+              line: 4,
+              column: 1,
+              lineText: "#otherId {",
+            },
+          ],
+        },
+        {
+          message: 'The composes property cannot be used with "localId", because it is not a single class name.',
+          file: "styles.module.css",
+          line: 8,
+          column: 12,
+          lineText: "  composes: localId;",
+          notes: [
+            {
+              message: 'The definition of "localId" is here.',
+              file: "styles.module.css",
+              line: 1,
+              column: 1,
+              lineText: "#localId {",
+            },
+          ],
         },
       ]);
     },

@@ -959,8 +959,9 @@ impl RewriterPipe {
         }
         let cell = self.cell.get();
         cell.is_cell()
-            && js_HTMLRewriterTransform::output_stream_get_cached(cell)
-                .is_some_and(|stream| webcore::readable_stream::is_locked_value(stream, &self.global))
+            && js_HTMLRewriterTransform::output_stream_get_cached(cell).is_some_and(|stream| {
+                webcore::readable_stream::is_locked_value(stream, &self.global)
+            })
     }
 
     /// An observed reader has fallen behind: hold the input until its drain
@@ -1297,10 +1298,11 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut().enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-            core::ptr::from_ref(self).cast_mut(),
-            Self::run_background_pull,
-        ));
+        vm.as_mut()
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+                core::ptr::from_ref(self).cast_mut(),
+                Self::run_background_pull,
+            ));
     }
 
     fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
@@ -1800,7 +1802,9 @@ impl lol_html::OutputSink for PipeOutput {
         if chunk.is_empty() {
             return;
         }
-        self.0.output_buffer.with_mut(|v| v.extend_from_slice(chunk));
+        self.0
+            .output_buffer
+            .with_mut(|v| v.extend_from_slice(chunk));
     }
 }
 

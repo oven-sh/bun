@@ -1697,9 +1697,12 @@ describe("css tests", () => {
         ["border-inline-end-width:3px", "border-width:0"],
         ["border-inline-width:3px", "border-width:0"],
         ["border-block-start-width:3px", "border-width:0"],
+        ["border-block-end-width:3px", "border-width:0"],
         ["border-inline-start-style:dotted", "border-style:solid"],
+        ["border-block-end-style:dotted", "border-style:solid"],
         ["border-inline-start-color:red", "border-color:#00f"],
         ["border-inline-color:red", "border-color:#00f"],
+        ["border-block-end-color:red", "border-color:#00f"],
       ]) {
         minify_test(`.a{${logical};${shorthand}}`, `.a{${shorthand}}`);
         prefix_test(`.a{${logical};${shorthand}}`, `.a{${shorthand};}`, { safari: 8 << 16 });

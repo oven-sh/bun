@@ -1043,6 +1043,25 @@ describe("Bun.Image", () => {
         const meta = await new Bun.Image(out).metadata();
         expect(meta).toEqual({ width: 4, height: 3, format: "avif" });
       });
+
+      // Negative companion to the round-trip test above, preserving the
+      // pre-AVIF assertion that `.avif()` on a Linux host WITHOUT libavif
+      // rejects with FORMAT_UNSUPPORTED (the "install a package" signal,
+      // distinct from ENCODE_FAILED's "encoder choked"). `hasAvifRuntime`
+      // is false only when the decode probe exited 2 — a clean
+      // FORMAT_UNSUPPORTED rejection, i.e. libavif.so.16 genuinely absent
+      // — so this runs exactly on the shards the positive test skips. The
+      // encode probe can't stand in for this assertion: it treats both
+      // error codes as "skip", so a regression that mapped AVIF_UNAVAILABLE
+      // to EncodeFailed would otherwise ship green.
+      test.skipIf(hasAvifRuntime)(
+        "encode .avif() rejects ERR_IMAGE_FORMAT_UNSUPPORTED when libavif absent",
+        async () => {
+          await expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toMatchObject({
+            code: "ERR_IMAGE_FORMAT_UNSUPPORTED",
+          });
+        },
+      );
     } else {
       // HEIC/AVIF encode availability is *machine*-specific, not platform:
       //   • macOS: HEVC ships unconditionally; AV1 encode goes through

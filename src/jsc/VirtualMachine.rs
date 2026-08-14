@@ -2160,8 +2160,9 @@ pub struct RuntimeHooks {
     /// right after `close_all_socket_groups`.
     pub stop_dns_for_vm_teardown: fn() -> SweepResult,
     /// Stop every registered native handle behind a JS object (servers,
-    /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
-    /// with the VM alive right after the WebCore stop phase.
+    /// listeners, fs watchers) plus the per-VM `process.on("memoryPressure")`
+    /// watcher — the stop phase for Rust-side JS classes, run with the VM
+    /// alive right after the WebCore stop phase.
     ///
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.

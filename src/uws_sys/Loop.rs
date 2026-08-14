@@ -283,9 +283,19 @@ impl PosixLoop {
     /// tick; at process/Worker teardown the loop has stopped, so
     /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
     /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
+    ///
+    /// Teardown only. A connecting socket closed while its DNS result was
+    /// already queued on `dns_ready_head` (`us_connecting_socket_close` could
+    /// not cancel it) is only released by `us_internal_socket_after_resolve`,
+    /// which the next tick would have run; run that queue first so those land
+    /// on `closed_connecting_head` too. Every entry is closed by now, so this
+    /// frees and never starts a connection.
     pub fn drain_closed_sockets(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        unsafe {
+            c::us_internal_handle_dns_results(self);
+            c::us_internal_free_closed_sockets(self);
+        }
     }
 
     /// `us_socket_group_close_all()` on every group currently linked to this
@@ -521,9 +531,13 @@ impl WindowsLoop {
         self.dec();
     }
 
+    /// See `PosixLoop::drain_closed_sockets`.
     pub fn drain_closed_sockets(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        unsafe {
+            c::us_internal_handle_dns_results(self);
+            c::us_internal_free_closed_sockets(self);
+        }
     }
 
     pub fn close_all_groups(&mut self) -> bool {
@@ -633,6 +647,7 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_internal_handle_dns_results(loop_: *mut Loop) -> c_int;
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

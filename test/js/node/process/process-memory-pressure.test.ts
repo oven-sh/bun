@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux } from "harness";
+import { join } from "node:path";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
@@ -108,3 +109,36 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A listener that is never removed leaves the watcher armed when the process
+// exits; VM teardown has to disarm it or the watcher box leaks. Checked with
+// LeakSanitizer the way CI runs the ASAN build (the watcher is main-thread
+// only, so process exit is the only teardown that can find it armed).
+test.skipIf(!isASAN || !isLinux)(
+  "a listener left registered at exit does not leak the watcher",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { isMemoryPressureWatcherInstalled } = require("bun:internal-for-testing");
+          process.on("memoryPressure", () => {});
+          process.stdout.write(String(isMemoryPressureWatcherInstalled()));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+  },
+  // On a failure LSan symbolizes the report, which takes a while with the debug binary.
+  90_000,
+);

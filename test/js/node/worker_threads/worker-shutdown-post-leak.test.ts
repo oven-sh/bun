@@ -46,4 +46,48 @@ test.skipIf(!isASAN || isWindows)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   },
+  // Spawning a worker VM under debug+ASAN and then running LSan takes several
+  // seconds on a loaded machine; on a failure symbolizing the report adds more.
+  90_000,
+);
+
+// A connect to a hostname with several addresses goes through a
+// us_connecting_socket_t whose resolve completion is queued on the loop and
+// acted on by the next tick. When the worker exits first, closing the
+// connecting socket cannot cancel the already-queued completion and leaves the
+// struct to that tick, which never comes, so teardown has to run the queue
+// itself. The seeded cache makes the completion queued by the time connect()
+// returns, so exiting right away hits this every time.
+test.skipIf(!isASAN || isWindows)(
+  "a worker exiting with a multi-address Bun.connect() in flight does not leak the connecting socket",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const w = new Worker(
+            'const { dnsCacheSeed } = require("bun:internal-for-testing");' +
+            'dnsCacheSeed("connect-teardown.test", ["127.0.0.1", "::1"]);' +
+            'Bun.connect({ hostname: "connect-teardown.test", port: 9, socket: { open() {}, data() {}, close() {}, error() {}, connectError() {} } });' +
+            'process.exit(0);',
+            { eval: true },
+          );
+          w.on("exit", code => console.log("worker exit " + code));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "worker exit 0\n", stderr: "", exitCode: 0 });
+  },
+  90_000,
 );

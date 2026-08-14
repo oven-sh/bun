@@ -1743,7 +1743,9 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
-    stop_active_handles(vm, StopReason::VmTeardown)
+    let result = stop_active_handles(vm, StopReason::VmTeardown);
+    // Not in the registry: one per VM, armed by process.on("memoryPressure").
+    result.and(crate::node::memory_pressure::stop_for_vm_teardown(vm))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -24,9 +24,9 @@ int get_magic() {
 import { cc } from "bun:ffi";
 import path from "path";
 
-const {
-  symbols: { get_magic },
-} = cc({
+// Closed at the end: a library that is never close()d stays loaded on purpose,
+// which CI's leak check would otherwise report.
+const lib = cc({
   source: path.join(import.meta.dir, "test.c"),
   symbols: {
     get_magic: {
@@ -35,7 +35,8 @@ const {
   },
 });
 
-console.log(get_magic());
+console.log(lib.symbols.get_magic());
+lib.close();
 `,
   });
 
@@ -83,9 +84,7 @@ int get_sum() {
 import { cc } from "bun:ffi";
 import path from "path";
 
-const {
-  symbols: { get_sum },
-} = cc({
+const lib = cc({
   source: path.join(import.meta.dir, "test.c"),
   symbols: {
     get_sum: {
@@ -94,7 +93,8 @@ const {
   },
 });
 
-console.log(get_sum());
+console.log(lib.symbols.get_sum());
+lib.close();
 `,
   });
 

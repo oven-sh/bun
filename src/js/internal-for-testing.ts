@@ -667,6 +667,17 @@ export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunc
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+/**
+ * Leaks one malloc'd block (ASAN builds only; a no-op elsewhere). LSan attributes it
+ * to `jsFunction_lsanIntentionalLeak`. Used to check that test/leaksan.supp does not
+ * hide leaks made by the JS context calling it.
+ */
+export const lsanIntentionalLeak: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_lsanIntentionalLeak",
+  0,
+);
+
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",

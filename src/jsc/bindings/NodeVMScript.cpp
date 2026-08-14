@@ -341,12 +341,10 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     {
         NodeVMRunTermination termination(vm, options.timeout, options.breakOnSigint ? script : nullptr);
-        if (options.breakOnSigint) {
-            auto holder = SigintWatcher::hold(globalObject, script);
-            run();
-        } else {
-            run();
-        }
+        std::optional<SigintWatcher::GlobalObjectHolder> sigint;
+        if (options.breakOnSigint)
+            sigint.emplace(SigintWatcher::hold(globalObject, script));
+        run();
         if (termination.finish(globalObject, scope, globalObject))
             return {};
     }
@@ -394,13 +392,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     {
         NodeVMRunTermination termination(vm, options.timeout, options.breakOnSigint ? script : nullptr);
-        if (options.breakOnSigint) {
-            auto holder = SigintWatcher::hold(globalObject, script);
-            vm.ensureTerminationException();
-            run();
-        } else {
-            run();
-        }
+        std::optional<SigintWatcher::GlobalObjectHolder> sigint;
+        if (options.breakOnSigint)
+            sigint.emplace(SigintWatcher::hold(globalObject, script));
+        run();
         if (termination.finish(globalObject, scope, nullptr))
             return {};
     }

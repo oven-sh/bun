@@ -88,7 +88,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
-            NodeVMRunTermination termination(vm, timeout ? std::optional<double>(timeout) : std::nullopt, this);
+            NodeVMRunTermination termination(vm, timeout ? std::optional<double>(timeout) : std::nullopt, breakOnSigint ? this : nullptr);
             nodeVmGlobalObject->drainOwnMicrotasks();
             // The drain may legitimately leave the termination exception pending (fired
             // mid-checkpoint); observe it so the exception-check validator is satisfied.
@@ -200,21 +200,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     {
         NodeVMRunTermination termination(vm, timeout ? std::optional<double>(timeout) : std::nullopt, breakOnSigint ? this : nullptr);
-        if (breakOnSigint) {
-            auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
-            run();
-            drainAfterEvaluate();
-        } else {
-            run();
-            drainAfterEvaluate();
-        }
-        // Evaluation (or the afterEvaluate drain) may leave an exception pending — a regular one is
-        // rethrown by VM_RETURN_IF_EXCEPTION below, this run's own termination is converted to
-        // ERR_SCRIPT_EXECUTION_* by finish(). Observe it so the exception-check validator is
-        // satisfied.
+        std::optional<SigintWatcher::GlobalObjectHolder> sigint;
+        if (breakOnSigint)
+            sigint.emplace(SigintWatcher::hold(nodeVmGlobalObject, this));
+        run();
+        drainAfterEvaluate();
+        // Evaluation (or the afterEvaluate drain) may leave an exception pending. Observe it so the
+        // exception-check validator is satisfied; then this run's own termination is converted to
+        // ERR_SCRIPT_EXECUTION_* by finish(), and that error, like a regular one, marks the module
+        // errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
         std::ignore = scope.exception();
-        if (termination.finish(globalObject, scope, nodeVmGlobalObject))
-            return {};
+        termination.finish(globalObject, scope, nodeVmGlobalObject);
     }
 
     VM_RETURN_IF_EXCEPTION(scope, {});

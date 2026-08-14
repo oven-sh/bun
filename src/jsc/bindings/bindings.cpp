@@ -3046,9 +3046,12 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM*)
+extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
-    return Bun::NodeVMRunTermination::timeoutArmedOnCurrentThread();
+    if (Bun::NodeVMRunTermination::timeoutArmedOnCurrentThread())
+        return true;
+    JSC::JSLockHolder locker(vm);
+    return vm->watchdog() && vm->watchdog()->hasTimeLimit();
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)

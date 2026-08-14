@@ -67,8 +67,11 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     dotSlashes: { exitCode: 0, stderr: "", created: true },
     // An absolute operand is not normalized (`..` through a symlink means
     // something else to the kernel), so like the kernel and coreutils, mkdir
-    // bounds it as written. On Windows it fits the buffer and the OS decides.
-    absoluteDotSlashes: isWindows ? expect.anything() : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
+    // bounds it as written. On Windows it fits the much larger buffer and the
+    // fs layer normalizes it while converting it to a wide path, so it works.
+    absoluteDotSlashes: isWindows
+      ? { exitCode: 0, stderr: "", created: true }
+      : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
   });
   expect(exitCode).toBe(0);
 });

@@ -2607,8 +2607,18 @@ impl PackageManifest {
                         }
 
                         if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
-                            package_version.integrity =
-                                Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
+                            match Integrity::parse_sha_sum(shasum_str) {
+                                Ok(integrity) => package_version.integrity = integrity,
+                                Err(_) => log.add_warning_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Malformed shasum in registry metadata for {}@{}; its tarball will not be verified",
+                                        bstr::BStr::new(expected_name),
+                                        bstr::BStr::new(version_name),
+                                    ),
+                                ),
+                            }
                         }
                     }
                 }

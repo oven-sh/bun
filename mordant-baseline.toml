@@ -5,7 +5,6 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_install]
-"defaulted_failure:src/install/npm.rs" = 1
 "unread_none:src/install/PackageInstall.rs" = 1
 
 [bun_jsc]

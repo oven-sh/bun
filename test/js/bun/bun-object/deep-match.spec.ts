@@ -1,4 +1,8 @@
+import vm from "node:vm";
+
 type TestCase = [a: unknown, b: unknown];
+
+const fn = () => {};
 
 // @ts-ignore
 if (typeof Bun === "undefined")
@@ -55,6 +59,16 @@ describe("Bun.deepMatch", () => {
       [{}, "foo", 1],
       [{}, "foo", 1],
     ],
+    [{}, []], // an object subset may be satisfied by an array, but not vice-versa
+    [{ 0: 1 }, [1]],
+    [[1, { a: 1 }], vm.runInNewContext("[1, { a: 1 }]")],
+    [{ a: [1] }, vm.runInNewContext("({ a: [1] })")],
+
+    // Functions match themselves only
+    [{ a: fn }, { a: fn }],
+    [{ a: fn, b: fn }, { a: fn, b: fn }],
+    [{ a: { b: fn } }, { a: { b: fn } }],
+    [[fn], [fn]],
 
     // Maps
     [new Map(), new Map()],
@@ -99,6 +113,18 @@ describe("Bun.deepMatch", () => {
     [[null], [undefined]],
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
+    [[], {}], // an array subset is only satisfied by an array
+    [[1], { 0: 1, length: 1 }],
+    [[1], new Uint8Array([1])],
+
+    // Functions match themselves only
+    [{ a: () => {} }, { a: () => {} }],
+    [{ a: Object }, { a: Array }],
+    [{ a: Object.assign(() => {}, { x: 1 }) }, { a: Object.assign(() => {}, { x: 1 }) }],
+    [{ a: fn }, { a: {} }],
+    [{ a: { b: fn } }, { a: { b: () => {} } }],
+    [[fn], [() => {}]],
+    [{ a: fn, b: fn }, { a: fn, b: () => {} }], // the reused subset function is checked under both keys
 
     // Maps
     // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
@@ -193,16 +219,16 @@ describe("Bun.deepMatch", () => {
     });
   });
 
-  it("does not work on functions", () => {
+  it("compares functions by identity", () => {
     function foo() {}
     function bar() {}
     function baz(a) {
       return a;
     }
     expect(Bun.deepMatch(foo, foo)).toBe(true);
-    expect(Bun.deepMatch(foo, bar)).toBe(true);
-    // FIXME
-    // expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch(foo, bar)).toBe(false);
+    expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch(foo, {})).toBe(false);
   });
 
   describe("Invalid arguments", () => {

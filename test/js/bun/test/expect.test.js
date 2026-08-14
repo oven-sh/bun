@@ -3558,6 +3558,37 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    test("functions are compared by identity", () => {
+      const fn = () => {};
+      const other = () => {};
+
+      expect({ fn }).toMatchObject({ fn });
+      expect({ fn, a: 1 }).toMatchObject({ fn });
+      expect({ a: { fn } }).toMatchObject({ a: { fn } });
+      expect([fn]).toMatchObject([fn]);
+      expect({ fn }).toMatchObject({ fn: expect.any(Function) });
+      expect({ a: fn, b: fn }).toMatchObject({ a: fn, b: fn });
+
+      expect({ fn }).not.toMatchObject({ fn: other });
+      expect({ a: { fn } }).not.toMatchObject({ a: { fn: other } });
+      expect([fn]).not.toMatchObject([other]);
+      expect({ fn: Array }).not.toMatchObject({ fn: Object });
+      expect({ fn: jest.fn() }).not.toMatchObject({ fn: jest.fn() });
+      expect({ fn: Object.assign(() => {}, { x: 1 }) }).not.toMatchObject({ fn: Object.assign(() => {}, { x: 1 }) });
+      expect({ fn: {} }).not.toMatchObject({ fn });
+      expect({ fn: { x: 1 } }).not.toMatchObject({ fn: Object.assign(() => {}, { x: 1 }) });
+      // a function used under several keys is checked under each of them
+      expect({ a: fn, b: other }).not.toMatchObject({ a: fn, b: fn });
+
+      expect({ fn }).toEqual(expect.objectContaining({ fn }));
+      expect({ fn }).not.toEqual(expect.objectContaining({ fn: other }));
+      expect({ fn: Array }).not.toEqual(expect.objectContaining({ fn: Object }));
+
+      // a function is not a pattern at the top level either
+      expect(() => expect(fn).toMatchObject(other)).toThrow();
+      expect(() => expect({}).toMatchObject(fn)).toThrow();
+    });
   });
 
   describe("toMatch()", () => {

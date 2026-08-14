@@ -133,6 +133,10 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
     chunk_order_array: &[Order],
 ) {
     visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value());
+    let browser_runtime_source_index = visitor.c.graph.browser_runtime_source_index;
+    if browser_runtime_source_index.is_valid() {
+        visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(browser_runtime_source_index.value());
+    }
     for order in chunk_order_array {
         visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(order.source_index);
     }
@@ -220,7 +224,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
                         && self.c.should_include_part(source_index, part)
                     {
-                        let js_parts = if source_index == Index::RUNTIME.value() {
+                        let js_parts = if self.c.graph.is_runtime_source(source_index) {
                             &mut self.parts_prefix
                         } else {
                             &mut self.part_ranges

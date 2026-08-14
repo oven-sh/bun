@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
@@ -106,11 +106,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-sjg7egv9.js",
+                "path": "./client-n6nsv5xk.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "efKwB-6QGwk",
+                  "etag": "NYY12TsFXfM",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -120,7 +120,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "sJJm55rxM4I",
+                  "etag": "n-UhEHjBQQc",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -393,6 +393,169 @@ console.log("About manifest:", aboutHtml);
     expect(jsA.path).not.toBe(jsB.path);
     expect(htmlA.path).toBe(htmlB.path);
     expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
+  });
+
+  // The server side and the browser side of a build each need their own copy of
+  // the bundler runtime (`__toESM`, `__require`, ...): the two are built for
+  // different targets and must not share output files. These tests build
+  // browser code that needs runtime helpers and check that what the server
+  // serves never contains server code, and vice versa.
+  //
+  // Output files, manifest entries and import specifiers are all matched up by
+  // file name, so nothing here depends on how the manifest spells its paths.
+  type ManifestFile = { name: string; loader: string; isEntry: boolean };
+
+  async function buildServerWithHtmlImport(dir: string, options: Partial<Parameters<typeof Bun.build>[0]> = {}) {
+    const result = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      ...options,
+    });
+    expect(result.logs).toBeEmpty();
+    expect(result.success).toBe(true);
+
+    // JS output file name -> contents
+    const outputs = new Map<string, string>();
+    for (const output of result.outputs) {
+      if (output.path.endsWith(".js")) {
+        outputs.set(basename(output.path), await output.text());
+      }
+    }
+    const server = outputs.get("server.js")!;
+    // One manifest per HTML import, in import order.
+    const manifests: ManifestFile[][] = [...server.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(m =>
+      (JSON.parse(JSON.parse('"' + m[1] + '"')).files as { path: string; loader: string; isEntry: boolean }[]).map(
+        f => ({ name: basename(f.path), loader: f.loader, isEntry: f.isEntry }),
+      ),
+    );
+    return { outputs, server, manifests };
+  }
+
+  // File names of the chunks `code` imports with static imports or import().
+  function importedChunks(code: string): string[] {
+    return [...code.matchAll(/^import[^;]*?"(\.\/[^"]+\.js)"/gm)].map(m => basename(m[1]));
+  }
+
+  // Browser runtime: `__require` is a shim around a global `require`. Server
+  // runtime: `__require = import.meta.require`, and the chunk is tagged `// @bun`.
+  const browserRequireShim = "Dynamic require of";
+
+  const runtimeUsers = {
+    // A CommonJS dependency makes the importer need `__toESM` and `__commonJS`;
+    // a `require()` of something that is not bundled makes it need `__require`.
+    "client.html": `<!doctype html><script type="module" src="./client.js"></script>`,
+    "client.js": `
+      import dep from "./dep.cjs";
+      globalThis.load = name => require(name);
+      console.log(dep);
+    `,
+    "dep.cjs": `module.exports = "dep";`,
+  };
+
+  test("html-import/browser-chunks-get-the-browser-runtime", async () => {
+    await using dir = tempDir("html-import-runtime", {
+      "server.ts": `import html from "./client.html"; console.log(JSON.stringify(html));`,
+      ...runtimeUsers,
+    });
+    const { outputs, server, manifests } = await buildServerWithHtmlImport(String(dir));
+
+    const [manifest] = manifests;
+    const jsEntries = manifest.filter(f => f.loader === "js" && f.isEntry);
+    expect(jsEntries).toHaveLength(1);
+    const client = outputs.get(jsEntries[0].name)!;
+
+    // Browser output is built from the browser runtime.
+    expect(client).toContain(browserRequireShim);
+    expect(client).not.toContain("import.meta.require");
+    expect(client).not.toContain("// @bun");
+    // Helpers only the server uses do not leak into the browser output.
+    expect(client).not.toContain("__jsonParse");
+
+    // The server entry keeps its own runtime, and does not carry the browser's helpers.
+    expect(server).toStartWith("// @bun\n");
+    expect(server).toContain("var __jsonParse");
+    expect(server).not.toContain("__commonJS");
+    expect(server).not.toContain(browserRequireShim);
+    expect(importedChunks(server)).toEqual([]);
+  });
+
+  test("html-import/splitting-does-not-share-the-runtime-chunk-between-server-and-browser", async () => {
+    await using dir = tempDir("html-import-runtime-splitting", {
+      "server.ts": `import html from "./client.html"; console.log(JSON.stringify(html));`,
+      ...runtimeUsers,
+      // A second browser entry point that needs the runtime too, so the browser
+      // side's runtime goes into a chunk shared by the two browser entries.
+      "client.js": runtimeUsers["client.js"] + `import("./lazy.js").then(m => console.log(m.default));`,
+      "lazy.js": `import other from "./other.cjs"; export default other;`,
+      "other.cjs": `module.exports = "other";`,
+    });
+    const { outputs, server, manifests } = await buildServerWithHtmlImport(String(dir), { splitting: true });
+
+    const [manifest] = manifests;
+    const browserFiles = manifest.filter(f => f.loader === "js").map(f => f.name);
+    const sharedChunks = manifest.filter(f => f.loader === "js" && !f.isEntry).map(f => f.name);
+    expect(sharedChunks).toHaveLength(1);
+    const [runtimeChunk] = sharedChunks;
+
+    // Everything the manifest tells the server to serve is browser code.
+    for (const name of browserFiles) {
+      const code = outputs.get(name)!;
+      expect(code).not.toContain("// @bun");
+      expect(code).not.toContain("import.meta.require");
+      expect(code).not.toContain("__jsonParse");
+      for (const imported of importedChunks(code)) {
+        expect(browserFiles).toContain(imported);
+      }
+    }
+    expect(outputs.get(runtimeChunk)!).toContain(browserRequireShim);
+
+    // The server entry is the only server-side file: its runtime helper is
+    // inlined, and it imports nothing the browser uses.
+    expect(server).toStartWith("// @bun\n");
+    expect(server).toContain("var __jsonParse");
+    expect(server).not.toContain("__commonJS");
+    expect(importedChunks(server)).toEqual([]);
+
+    // No output file straddles the two sides.
+    expect([...outputs.keys()].filter(name => name !== "server.js").sort()).toEqual([...browserFiles].sort());
+  });
+
+  test("html-import/runtime-chunk-shared-by-several-html-imports-stays-browser-only", async () => {
+    const page = (script: string) => `<!doctype html><script type="module" src="./${script}"></script>`;
+    const usesCjs = (dep: string) => `import dep from "./${dep}"; console.log(dep);`;
+    await using dir = tempDir("html-import-runtime-multi", {
+      "server.ts": `
+        import home from "./home.html";
+        import about from "./about.html";
+        console.log(JSON.stringify([home, about]));
+      `,
+      "home.html": page("home.js"),
+      "about.html": page("about.js"),
+      "home.js": usesCjs("home-dep.cjs"),
+      "about.js": usesCjs("about-dep.cjs"),
+      "home-dep.cjs": `module.exports = "home";`,
+      "about-dep.cjs": `module.exports = "about";`,
+    });
+    const { outputs, server, manifests } = await buildServerWithHtmlImport(String(dir), { splitting: true });
+    expect(manifests).toHaveLength(2);
+
+    // Both pages need `__toESM`/`__commonJS`, so the browser runtime is a chunk
+    // shared by the two pages and listed in both manifests.
+    const [homeShared, aboutShared] = manifests.map(m =>
+      m.filter(f => f.loader === "js" && !f.isEntry).map(f => f.name),
+    );
+    expect(homeShared).toHaveLength(1);
+    expect(aboutShared).toEqual(homeShared);
+    const runtimeChunk = outputs.get(homeShared[0])!;
+    expect(runtimeChunk).toContain("__commonJS");
+    expect(runtimeChunk).not.toContain("// @bun");
+    expect(runtimeChunk).not.toContain("__jsonParse");
+
+    // The server's two manifests are parsed with the server's own `__jsonParse`.
+    expect(server).toStartWith("// @bun\n");
+    expect(server).toContain("var __jsonParse");
+    expect(importedChunks(server)).toEqual([]);
   });
 
   // Test that import with {type: 'file'} still works as a file import

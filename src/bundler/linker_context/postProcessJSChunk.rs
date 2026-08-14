@@ -10,7 +10,7 @@ use crate::{
     ThreadPool,
 };
 use bun_alloc::Arena;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -71,27 +71,8 @@ pub(crate) fn post_process_js_chunk(
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
-    let runtime_members = &mut runtime_scope.members;
-    let to_common_js_ref = c
-        .graph
-        .symbols
-        .follow(runtime_members.get(&b"__toCommonJS"[..]).unwrap().ref_);
-    let to_esm_ref = c
-        .graph
-        .symbols
-        .follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
-        None
-    } else {
-        Some(
-            c.graph
-                .symbols
-                .follow(runtime_members.get(&b"__require"[..]).unwrap().ref_),
-        )
-    };
+    // Every file in a chunk is on the same side of the build as the file the chunk was created for.
+    let runtime_refs = c.runtime_print_refs_for(chunk.entry_point.source_index());
 
     // The chunk's module record, assembled in output order: the printer records
     // the cross-chunk prefix imports below, then the per-part-range results
@@ -117,7 +98,7 @@ pub(crate) fn post_process_js_chunk(
             indent: Default::default(),
             has_run_symbol_renamer: true,
 
-            require_ref: runtime_require_ref,
+            require_ref: runtime_refs.require_ref,
             minify_whitespace: c.options.minify_whitespace,
             minify_identifiers: c.options.minify_identifiers,
             minify_syntax: c.options.minify_syntax,
@@ -258,8 +239,8 @@ pub(crate) fn post_process_js_chunk(
         if chunk.is_entry_point() {
             break 'brk generate_entry_point_tail_js(
                 c,
-                to_common_js_ref,
-                to_esm_ref,
+                runtime_refs.to_common_js_ref,
+                runtime_refs.to_esm_ref,
                 chunk.entry_point.source_index(),
                 worker_arena,
                 &arena,
@@ -398,7 +379,7 @@ pub(crate) fn post_process_js_chunk(
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
-            if source_index != Index::RUNTIME.value() {
+            if !c.graph.is_runtime_source(source_index) {
                 break;
             }
             line_offset.advance(compile_result.code());
@@ -457,12 +438,13 @@ pub(crate) fn post_process_js_chunk(
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
-        let is_runtime = source_index == Index::RUNTIME.value();
+        let is_runtime = c.graph.is_runtime_source(source_index);
 
         // TODO: extracated legal comments
 
         // Add a comment with the file path before the file contents
         if show_comments
+            && !is_runtime
             && source_index != prev_filename_comment
             && !compile_result.code().is_empty()
         {

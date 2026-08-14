@@ -78,6 +78,9 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: HtmlImports,
 
+    /// Runtime copy parsed for the browser side of a server build (HTML imports); invalid if none.
+    pub(crate) browser_runtime_source_index: Index,
+
     pub(crate) estimated_file_loader_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
@@ -175,6 +178,7 @@ impl<'a> Graph<'a> {
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
+            browser_runtime_source_index: Index::INVALID,
             estimated_file_loader_count: 0,
             css_file_count: 0,
             additional_output_files: Vec::new(),
@@ -221,6 +225,16 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The runtime copy that files parsed for `target` import their helpers from.
+    #[inline]
+    pub(crate) fn runtime_source_index_for_target(&self, target: options::Target) -> Index {
+        if target == options::Target::Browser && self.browser_runtime_source_index.is_valid() {
+            self.browser_runtime_source_index
+        } else {
+            Index::RUNTIME
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

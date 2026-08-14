@@ -568,7 +568,7 @@ impl LinkerContext<'_> {
         // "__export(exports, { foo: () => foo })"
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
-            export_ref = self.runtime_function(b"__export");
+            export_ref = self.runtime_function_for(id, b"__export");
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.
@@ -605,7 +605,7 @@ impl LinkerContext<'_> {
             ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: bun_ast::Index::RUNTIME,
+                    source_index: bun_ast::Index::source(export_ref.source_index()),
                     part_index,
                 });
             }
@@ -620,7 +620,7 @@ impl LinkerContext<'_> {
         // bundle (including the entry point module) may do "import * as" to get
         // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
-            let to_common_js_ref = self.runtime_function(b"__toCommonJS");
+            let to_common_js_ref = self.runtime_function_for(id, b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
                 Expr::allocate(
                     arena,

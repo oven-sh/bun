@@ -45,7 +45,7 @@ use bun_ast::ImportRecordFlags;
 
 use crate::chunk::Content as ChunkContent;
 use crate::options::Loader;
-use crate::{Chunk, Index, LinkerContext};
+use crate::{Chunk, LinkerContext};
 
 #[inline]
 fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
@@ -89,7 +89,7 @@ pub(crate) fn generate_chunk_json(
         if file_source_index as usize >= sources.len() {
             continue;
         }
-        if file_source_index == Index::RUNTIME.get() {
+        if c.graph.is_runtime_source(file_source_index) {
             continue;
         }
 
@@ -242,7 +242,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
 
         // Skip runtime and other special files
-        if source_index == Index::RUNTIME.get() {
+        if c.graph.is_runtime_source(source_index) {
             continue;
         }
 
@@ -298,7 +298,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 // `source_index` without rewriting the path. Externals/chunk refs fall through.
                 let import_path: &[u8] = 'path: {
                     if record.source_index.is_valid()
-                        && record.source_index.get() != Index::RUNTIME.get()
+                        && !c.graph.is_runtime_source(record.source_index.get())
                     {
                         let idx = record.source_index.get() as usize;
                         if idx < sources.len() {

@@ -76,6 +76,8 @@ pub struct Options<'a> {
 
     pub tree_shaking: bool,
     pub bundle: bool,
+    /// The source is a copy of the bundler runtime (a bundle can contain more than one).
+    pub source_is_runtime: bool,
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
@@ -123,6 +125,7 @@ impl<'a> Default for Options<'a> {
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
+            source_is_runtime: false,
             code_splitting: false,
             package_version: b"",
             macro_context: None,
@@ -206,6 +209,7 @@ impl<'a> Options<'a> {
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
+            source_is_runtime: self.source_is_runtime,
             code_splitting: self.code_splitting,
             package_version: self.package_version,
             macro_context: None,
@@ -274,6 +278,7 @@ impl<'a> Options<'a> {
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
+            source_is_runtime: false,
             code_splitting: false,
             package_version: b"",
             // Materializing an invalid `&mut T` is immediate UB regardless of

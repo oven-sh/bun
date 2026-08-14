@@ -10,6 +10,7 @@ use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayLi
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
+use crate::options::Target;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
@@ -212,6 +213,9 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
+    /// `Graph::browser_runtime_source_index`, copied in `LinkerContext::load`.
+    pub(crate) browser_runtime_source_index: Index,
+
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
@@ -228,6 +232,7 @@ pub struct LinkerGraph<'a> {
 // - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
 //   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
 //   before fan-out and only read by workers.
+// - `browser_runtime_source_index` is set in `load`, before fan-out, and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns
@@ -275,6 +280,7 @@ impl Default for LinkerGraph<'_> {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
+            browser_runtime_source_index: Index::INVALID,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
         }
     }
@@ -291,8 +297,12 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
-    named_exports[Index::RUNTIME.get() as usize]
+fn runtime_function(
+    named_exports: &[bundled_ast::NamedExports],
+    runtime_source_index: index::Int,
+    name: &[u8],
+) -> Ref {
+    named_exports[runtime_source_index as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
         .ref_
@@ -477,8 +487,29 @@ pub(crate) fn generate_symbol_import_and_use(
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
-        runtime_function(self.ast.items_named_exports(), name)
+    /// The runtime copy that file `source_index` takes its helpers from.
+    pub(crate) fn runtime_source_index_for(&self, source_index: index::Int) -> index::Int {
+        if self.browser_runtime_source_index.is_valid()
+            && self.ast.items_target()[source_index as usize] == Target::Browser
+        {
+            return self.browser_runtime_source_index.get();
+        }
+        Index::RUNTIME.get()
+    }
+
+    pub(crate) fn is_runtime_source(&self, source_index: index::Int) -> bool {
+        source_index == Index::RUNTIME.get()
+            || (self.browser_runtime_source_index.is_valid()
+                && source_index == self.browser_runtime_source_index.get())
+    }
+
+    /// Helper `name` from the runtime copy `source_index` uses; the ref lives in that copy.
+    pub(crate) fn runtime_function_for(&self, source_index: index::Int, name: &[u8]) -> Ref {
+        runtime_function(
+            self.ast.items_named_exports(),
+            self.runtime_source_index_for(source_index),
+            name,
+        )
     }
 
     /// Shared-ref view of a symbol that is known to exist (the `Ref` was
@@ -551,13 +582,13 @@ impl<'a> LinkerGraph<'a> {
             source_index
         );
 
-        let ref_ = self.runtime_function(name);
+        let ref_ = self.runtime_function_for(source_index, name);
         self.generate_symbol_import_and_use(
             source_index,
             entry_point_part_index.get(),
             ref_,
             count,
-            Index::RUNTIME,
+            Index::source(ref_.source_index()),
         )
     }
 

@@ -1,15 +1,12 @@
-use crate::mal_prelude::*;
 use core::sync::atomic::Ordering;
 
-use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::linker_context_mod::LinkerContext;
-use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
-use crate::{Chunk, CompileResult, Index, PartRange};
+use crate::{Chunk, CompileResult, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 
@@ -99,28 +96,7 @@ fn generate_compile_result_for_js_chunk_impl(
         .expect("Worker.stmt_list set in create()");
     stmt_list.reset();
 
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()
-        [c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
-    let runtime_members = &runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(
-        runtime_members
-            .get(b"__toCommonJS".as_slice())
-            .unwrap()
-            .ref_,
-    );
-    let to_esm_ref = c
-        .graph
-        .symbols
-        .follow(runtime_members.get(b"__toESM".as_slice()).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == OutputFormat::Cjs {
-        None
-    } else {
-        Some(
-            c.graph
-                .symbols
-                .follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_),
-        )
-    };
+    let runtime_refs = c.runtime_print_refs_for(part_range.source_index.get());
 
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
@@ -146,9 +122,9 @@ fn generate_compile_result_for_js_chunk_impl(
         unsafe { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,
-        to_common_js_ref,
-        to_esm_ref,
-        runtime_require_ref,
+        runtime_refs.to_common_js_ref,
+        runtime_refs.to_esm_ref,
+        runtime_refs.require_ref,
         stmt_list,
         worker_alloc,
         &**arena,
@@ -161,7 +137,7 @@ fn generate_compile_result_for_js_chunk_impl(
         PrintResult::Result(r) => r.code.len(),
         _ => 0,
     };
-    if code_len > 0 && !part_range.source_index.is_runtime() {
+    if code_len > 0 && !c.graph.is_runtime_source(part_range.source_index.get()) {
         // CONCURRENCY: the map's key set is frozen before parallel codegen; we
         // only need a shared `&AtomicUsize` to RMW the counter. Using `get`
         // (not `get_ptr_mut`) avoids materializing an aliased `&mut` to a slot

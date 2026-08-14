@@ -792,12 +792,13 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       }
     });
 
-    // The parent of `dangling//file` is derived as `dangling/`, and that name
-    // used to go to mkdir(2) as is. With the trailing separator, mkdir(2) on
-    // macOS and FreeBSD follows the symlink and creates its target, so the
-    // write created `missing` and landed in it; Linux fails the mkdir with
-    // EEXIST for either spelling, so on Linux these pass with or without the
-    // fix. Skipped on Windows, where the path is normalized before mkdir.
+    // The parent of `dangling//file` is derived as `dangling/`, and the
+    // recursive mkdir used to hand that name to mkdir(2) as is. With the
+    // trailing separator, mkdir(2) on macOS and FreeBSD follows the symlink and
+    // creates its target, so the write created `missing` and landed in it.
+    // Linux fails that mkdir with EEXIST for either spelling, so there these
+    // cases pass regardless. Skipped on Windows, where the path is normalized
+    // before mkdir and the reported code differs.
     describe.skipIf(isWindows)("destination parent is a dangling symlink", () => {
       for (const [name, source] of Object.entries(sources)) {
         for (const dest of ["dangling/file", "dangling//file"]) {

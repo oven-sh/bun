@@ -4327,25 +4327,6 @@ pub enum Retry {
     No,
 }
 
-/// The directory `createPath` creates for a destination that does not exist.
-///
-/// `dirname` keeps a separator run (`a//f` -> `a/`), and `mkdir_recursive`
-/// begins by handing its argument to mkdir(2) as is. With a trailing
-/// separator, mkdir(2) on macOS and FreeBSD follows a symlink at that name and
-/// creates the link's target (Linux fails with EEXIST for both spellings), so
-/// the parent is named without the run, `a`, which every kernel treats alike.
-/// Windows normalizes the path inside `mkdir_recursive`, and its roots (`C:\`)
-/// keep their separator.
-fn parent_dir_to_create(path: &[u8]) -> Option<&[u8]> {
-    let mut dir = bun_core::dirname(path)?;
-    if cfg!(not(windows)) {
-        while dir.len() > 1 && bun_paths::is_sep_native(dir[dir.len() - 1]) {
-            dir = &dir[..dir.len() - 1];
-        }
-    }
-    Some(dir)
-}
-
 // TODO: move this to bun_sys?
 // we choose not to inline this so that the path buffer is not on the stack unless necessary.
 #[inline(never)]
@@ -4356,7 +4337,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        if let Some(dirname) = parent_dir_to_create(path_string.as_bytes()) {
+        if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                 path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
@@ -4479,7 +4460,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
                                 let dirpath: &[u8] = match &file.pathlike {
                                     PathOrFileDescriptor::Path(path) => {
-                                        match parent_dir_to_create(path.slice()) {
+                                        match bun_core::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }

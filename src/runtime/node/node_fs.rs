@@ -437,6 +437,27 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
+/// Length of the name the recursive mkdir hands to mkdir(2) for `path`: the
+/// path without its trailing separator run (a lone `/` stays).
+///
+/// Given `link/`, mkdir(2) on macOS and FreeBSD resolves the symlink and
+/// creates its target, where `link` fails with EEXIST (Linux fails both), so
+/// `mkdir -p dangling/`, or a `Bun.write` to `dangling//f` (whose parent is
+/// derived as `dangling/`), would create the link's target. Only the names
+/// given to mkdir(2) are trimmed; everything the walk reports (the stat of an
+/// existing entry, the returned first directory, error paths, `on_create_dir`)
+/// keeps the caller's spelling, as node does. On Windows a trailing separator
+/// has no such effect.
+fn mkdir_name_len(path: &OSPathSliceZ) -> usize {
+    let mut len = path.len();
+    if cfg!(not(windows)) {
+        while len > 1 && bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[len - 1]) {
+            len -= 1;
+        }
+    }
+    len
+}
+
 /// Check whether a directory exists at `(fd, path)` — dispatches on path element width. On
 /// Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide overload
 /// instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
@@ -5657,11 +5678,24 @@ impl NodeFS {
         path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
-        let len: u16 = path.len() as u16;
+        // The walk below works on the name without its trailing separators (see
+        // `mkdir_name_len`); `path` itself is what gets reported.
+        let len: u16 = mkdir_name_len(path) as u16;
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
-        match mkdir_os_path(path, mode) {
+        let first_attempt = if len as usize == path.len() {
+            mkdir_os_path(path, mode)
+        } else {
+            let mut name_buf = paths::os_path_buffer_pool::get();
+            name_buf[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
+            name_buf[len as usize] = 0;
+            // SAFETY: `name_buf[..len]` was just copied from `path` and
+            // `name_buf[len]` set to NUL; the slice is in-bounds.
+            let name = unsafe { OSPathSliceZ::from_raw(name_buf.as_ptr(), len as usize) };
+            mkdir_os_path(name, mode)
+        };
+        match first_attempt {
             Err(err) => match err.get_errno() {
                 // `mkpath_np` in macOS also checks for `EISDIR`.
                 // it is unclear if macOS lies about if the existing item is
@@ -5701,9 +5735,7 @@ impl NodeFS {
                     }
                 }
                 _ => {
-                    return Err(err.with_path(
-                        self.os_path_into_sync_error_buf(&(&path[..])[..len as usize]),
-                    ));
+                    return Err(err.with_path(self.os_path_into_sync_error_buf(&path[..])));
                 }
             },
             Ok(_) => {
@@ -5859,8 +5891,8 @@ impl NodeFS {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
-        // SAFETY: `working_mem[..len]` is the full input path and `working_mem[len]`
-        // was just set to NUL; the slice is in-bounds.
+        // SAFETY: `working_mem[..len]` is the input path (minus trailing separators)
+        // and `working_mem[len]` was just set to NUL; the slice is in-bounds.
         let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
@@ -5877,7 +5909,7 @@ impl NodeFS {
             Ok(_) => {}
         }
 
-        ctx.on_create_dir(final_);
+        ctx.on_create_dir(path);
         if !RETURN_PATH {
             return Ok(StringOrUndefined::None);
         }

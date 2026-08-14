@@ -367,6 +367,12 @@ describe("color() predefined color spaces", () => {
     );
   });
 
+  test("an unknown color space is not a color", () => {
+    // a99-rgb is the misspelling the parser used to accept in place of a98-rgb.
+    expect(color("color(a99-rgb 1 0 0)", "css")).toBeNull();
+    expect(color("color(a98rgb 1 0 0)", "css")).toBeNull();
+  });
+
   test("a98-rgb converts to sRGB", () => {
     expect(color("rgb(from color(a98-rgb .5 .25 .125) r g b)", "hex")).toBe("#923e17");
     expect(color("color-mix(in srgb, color(a98-rgb .5 .25 .125), white)", "hex")).toBe("#c89e8b");

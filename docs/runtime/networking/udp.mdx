@@ -22,6 +22,21 @@ const socket = await Bun.udpSocket({
 console.log(socket.port); // 41234
 ```
 
+Specify the address to bind (the default is `0.0.0.0`):
+
+```ts
+const socket = await Bun.udpSocket({
+  hostname: "localhost", // [!code ++]
+});
+
+console.log(socket.address.address); // 127.0.0.1
+```
+
+`hostname` can be an IP address or a hostname. A hostname that resolves to both an IPv4 and an IPv6 address, like `localhost`,
+is bound on its IPv4 address. `connect.hostname` (see [Connections](#connections)) follows the same rule, so a server bound to a
+hostname and a client connected to that hostname end up on the same address. To use IPv6, pass an IPv6 address such as `::1`,
+or `::` to accept both.
+
 ### Send a datagram
 
 Specify the data to send, the destination port, and the destination address.

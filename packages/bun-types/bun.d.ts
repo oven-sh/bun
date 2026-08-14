@@ -6760,6 +6760,14 @@ declare module "bun" {
     }
 
     export interface SocketOptions<DataBinaryType extends BinaryType> {
+      /**
+       * Local address to bind: an IP address or a hostname. A hostname that
+       * resolves to both an IPv4 and an IPv6 address (such as `"localhost"`)
+       * binds the IPv4 one; use an IPv6 literal (`"::1"`, or `"::"` for a
+       * dual-stack socket) to bind IPv6.
+       *
+       * @default "0.0.0.0"
+       */
       hostname?: string;
       port?: number;
       binaryType?: DataBinaryType;
@@ -6767,11 +6775,25 @@ declare module "bun" {
     }
 
     export interface ConnectSocketOptions<DataBinaryType extends BinaryType> {
+      /**
+       * Local address to bind, see {@link SocketOptions.hostname}. It also
+       * decides which of the peer's addresses can be connected to: the
+       * default IPv4 socket cannot connect to an IPv6 address.
+       *
+       * @default "0.0.0.0"
+       */
       hostname?: string;
       port?: number;
       binaryType?: DataBinaryType;
       socket?: ConnectedSocketHandler<DataBinaryType>;
       connect: {
+        /**
+         * Peer address: an IP address or a hostname. Like the bind side, a
+         * hostname with both an IPv4 and an IPv6 address connects to the IPv4
+         * one when the local socket can carry it, so a server bound to a
+         * hostname and a client connected to the same hostname meet on the
+         * same address.
+         */
         hostname: string;
         port: number;
       };

@@ -85,6 +85,7 @@ pub const DEDICATED_COMPRESSOR: i32 = 248;
 pub use bun_uws_sys::{
     LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_EXCLUSIVE_PORT, LIBUS_LISTEN_REUSE_ADDR,
     LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_IPV6_ONLY,
+    LIBUS_UDP_PREFER_IPV4,
 };
 
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`

@@ -685,7 +685,9 @@ impl UDPSocket {
                 on_recv_error,
                 hostname_z.as_ptr(),
                 config.port,
-                config.flags,
+                // "localhost" binds 127.0.0.1, not ::1: the default socket
+                // here is IPv4, so that is where this API's peers send.
+                config.flags | uws::LIBUS_UDP_PREFER_IPV4,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

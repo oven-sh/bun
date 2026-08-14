@@ -86,6 +86,8 @@ pub mod security_scanner;
 pub mod update_package_json_and_install;
 #[path = "PackageManager/UpdateRequest.rs"]
 pub mod update_request;
+#[path = "PackageManager/workspace_manifests.rs"]
+pub mod workspace_manifests;
 #[path = "PackageManager/WorkspacePackageJSONCache.rs"]
 pub mod workspace_package_json_cache;
 #[path = "PackageManager/workspace_selection.rs"]
@@ -424,10 +426,17 @@ pub struct PackageManager {
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
-    pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+    pub update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
+
+    // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
+    pub(crate) kept_patched: Vec<PackageID>,
+    pub kept_patched_text: Vec<u8>,
+
+    // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
+    pub(crate) dedupe_report: Option<crate::dedupe::Report>,
 
     // add/remove/update --filter: only these importers are linked; None = every importer.
     pub(crate) filtered_link_targets: Option<workspace_selection::LinkTargets>,
@@ -567,21 +576,6 @@ impl WorkspaceFilter {
         );
         workspace_selection::warn_unmatched(filter_patterns, &selection.unmatched_patterns);
         selection.ids
-    }
-
-    /// `select_workspaces` without the warning, for callers that report the selection themselves.
-    pub fn select_workspaces_quietly(
-        lockfile: &crate::Lockfile,
-        filter_patterns: &[&[u8]],
-        original_cwd: &[u8],
-    ) -> Vec<PackageID> {
-        workspace_selection::select_lockfile_workspaces(
-            lockfile,
-            filter_patterns,
-            original_cwd,
-            workspace_selection::RootSelection::Implicit,
-        )
-        .ids
     }
 }
 
@@ -1377,15 +1371,6 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
-fn registry_has_credentials(registry: &Api::NpmRegistry) -> bool {
-    !registry.token.is_empty() || !registry.username.is_empty() || !registry.password.is_empty()
-}
-
-/// bunfig beats npmrc per field; a credential-less bunfig registry left at the same URL is kept since npmrc attached credentials to it.
-fn bunfig_registry_wins(current: Option<&Api::NpmRegistry>, bunfig: &Api::NpmRegistry) -> bool {
-    current.is_none_or(|current| current.url != bunfig.url) || registry_has_credentials(bunfig)
-}
-
 fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall) {
     let Api::BunInstall {
         default_registry,
@@ -1424,16 +1409,16 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     } = bunfig;
 
     if let Some(registry) = default_registry {
-        if bunfig_registry_wins(install.default_registry.as_ref(), &registry) {
-            install.default_registry = Some(registry);
-        }
+        install.default_registry = Some(registry);
     }
 
     if let Some(bunfig_scopes) = scoped {
-        let scopes = &mut install.scoped.get_or_insert_with(Default::default).scopes;
-        for (name, registry) in bunfig_scopes.scopes.iter() {
-            if bunfig_registry_wins(scopes.get(name), registry) {
-                scopes.insert(name, registry.clone());
+        match install.scoped.as_mut().filter(|m| !m.scopes.is_empty()) {
+            None => install.scoped = Some(bunfig_scopes),
+            Some(existing) => {
+                for (name, registry) in bunfig_scopes.scopes.iter() {
+                    existing.scopes.insert(name, registry.clone());
+                }
             }
         }
     }
@@ -1914,21 +1899,12 @@ pub fn init(
     initialize_store();
 
     {
-        // npmrc < bunfig < CLI; seeding registries lets npmrc `//host/:_authToken` attach to bunfig registries.
-        let bunfig_install = ctx
+        // npmrc < bunfig < CLI
+        let mut bunfig_install = ctx
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
-        let mut install = Api::BunInstall {
-            default_registry: bunfig_install.default_registry.clone(),
-            scoped: match &bunfig_install.scoped {
-                Some(map) => Some(Api::NpmRegistryMap {
-                    scopes: map.scopes.clone()?,
-                }),
-                None => None,
-            },
-            ..Default::default()
-        };
+        let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
@@ -1953,17 +1929,18 @@ pub fn init(
             }
         }
 
-        if global_len > 0 {
+        let registry_auth = if global_len > 0 {
             ini::load_npmrc_config(
                 &mut install,
                 env,
                 true,
                 &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            );
+            )
         } else {
-            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local]);
-        }
+            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
+        };
 
+        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
     }
@@ -2137,6 +2114,9 @@ pub fn init(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
+        wr!(kept_patched, Vec::new());
+        wr!(kept_patched_text, Vec::new());
+        wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
@@ -2583,6 +2563,9 @@ fn init_with_runtime_once(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
+        wr!(kept_patched, Vec::new());
+        wr!(kept_patched_text, Vec::new());
+        wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());

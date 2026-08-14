@@ -60,7 +60,14 @@ async function gitRepo(manifest: Record<string, unknown>) {
   return repoDir;
 }
 
-const EMPTY_TEXT = "No packages found\n";
+const emptyText = (checked: number) => `No packages to list (checked ${checked} packages in bun.lock)`;
+
+function expectEmptyText(stdout: string, checked: number) {
+  expect(normalizeBunSnapshot(stdout)).toBe(emptyText(checked));
+  expect(stdout).toMatch(/^No packages to list \(checked \d+ packages in bun\.lock\) \[\d+\.\d+m?s\]\n$/);
+}
+
+const MISSING_NOTE = "note: run 'bun install' first";
 
 const fixturePackageJson = JSON.stringify({
   name: "licenses-fixture",
@@ -215,6 +222,9 @@ function patchInstalledManifest(dir: string, pkg: string, fields: Record<string,
 
 const pathParseDescription = "Node.js path.parse() ponyfill";
 const resolveDescription = "resolve like require.resolve() on behalf of files asynchronously and synchronously";
+const resolveAuthor = "James Halliday <mail@substack.net> (http://substack.net)";
+// resolve@1.9.0's manifest has no `homepage`; the link falls back to its `repository.url`.
+const resolveHomepage = "git://github.com/browserify/resolve.git";
 
 const fullJson = {
   MIT: [
@@ -222,16 +232,17 @@ const fullJson = {
       name: "path-parse",
       versions: ["1.0.6"],
       license: "MIT",
-      homepage: "https://github.com/jbgutierrez/path-parse#readme",
       author: "Javier Blanco <http://jbgutierrez.info>",
       description: pathParseDescription,
+      homepage: "https://github.com/jbgutierrez/path-parse#readme",
     },
     {
       name: "resolve",
       versions: ["1.9.0"],
       license: "MIT",
-      author: "James Halliday <mail@substack.net> (http://substack.net)",
+      author: resolveAuthor,
       description: resolveDescription,
+      homepage: resolveHomepage,
     },
   ],
   Unknown: [u("a-dep", "1.0.1"), u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")],
@@ -292,12 +303,17 @@ describe("bun pm licenses", () => {
         { ...u("one-dep", "1.0.0"), paths: [nm(hoistedDir, "one-dep")] },
       ],
     });
-    expect(Object.keys(parsed.MIT[0]).slice(0, 4)).toStrictEqual(["name", "versions", "paths", "license"]);
+    // Same field order as the lines --long prints under an entry.
+    const keyOrder = ["name", "versions", "paths", "license", "author", "description", "homepage"];
+    expect(Object.keys(parsed.MIT[0])).toStrictEqual(keyOrder);
+    expect(Object.keys(parsed.MIT[1])).toStrictEqual(keyOrder);
+    expect(Object.keys(parsed.Unknown[0])).toStrictEqual(["name", "versions", "paths", "license"]);
     expect(stripPaths(structuredClone(parsed))).toStrictEqual(fullJson);
     expect(Object.keys(parsed)).toStrictEqual(["MIT", "Unknown"]);
     expect(parsed.MIT[0].description).toBe(pathParseDescription);
-    expect(parsed.MIT[1]).not.toHaveProperty("homepage");
+    expect(parsed.MIT[1].homepage).toBe(resolveHomepage);
     expect(parsed.Unknown[0]).not.toHaveProperty("description");
+    expect(parsed.Unknown[0]).not.toHaveProperty("homepage");
     for (const [key, entries] of Object.entries(parsed as Record<string, LicenseEntry[]>)) {
       expect(entries.map(entry => entry.license)).toStrictEqual(entries.map(() => key));
     }
@@ -313,7 +329,7 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "no-deps", { licenses: { type: "ISC" } });
 
     const parsed = await licensesJson(dir);
-    expect(Object.keys(parsed)).toStrictEqual(["(MIT OR Apache-2.0)", "BSD-3-Clause", "ISC", "MIT", "Unknown"]);
+    expect(Object.keys(parsed)).toStrictEqual(["BSD-3-Clause", "ISC", "MIT", "(MIT OR Apache-2.0)", "Unknown"]);
     expect(parsed["ISC"]).toStrictEqual([{ name: "no-deps", versions: ["1.0.0"], license: "ISC" }]);
     expect(parsed["Unknown"]).toStrictEqual([u("no-deps", "1.0.1")]);
     expect(parsed["(MIT OR Apache-2.0)"]).toStrictEqual([
@@ -321,6 +337,65 @@ describe("bun pm licenses", () => {
     ]);
     expect(parsed["BSD-3-Clause"]).toStrictEqual([{ name: "a-dep", versions: ["1.0.1"], license: "BSD-3-Clause" }]);
     expect(parsed["MIT"].map(entry => entry.name)).toStrictEqual(["path-parse", "resolve"]);
+  });
+
+  test.concurrent("groups are ordered case-insensitively, ignoring a leading parenthesis, Unknown last", async () => {
+    const dir = await setup("hoisted", {
+      "package.json": pkg({
+        dependencies: { "resolve": "1.9.0", "no-deps": "1.0.0", "one-dep": "1.0.0", "uses-a-dep-9": "1.0.0" },
+        devDependencies: { "a-dep": "1.0.1" },
+      }),
+    });
+    patchInstalledManifest(dir, "a-dep", { license: "mit" });
+    patchInstalledManifest(dir, "no-deps", { license: "ISC" });
+    patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { license: "BSD-3-Clause" });
+    patchInstalledManifest(dir, "one-dep", { licenses: [{ type: "MIT" }, { type: "Apache-2.0" }] });
+    patchInstalledManifest(dir, "resolve", { license: "SEE LICENSE IN LICENSE.txt" });
+    patchInstalledManifest(dir, "uses-a-dep-9/node_modules/a-dep", { license: "zlib" });
+
+    const [stdout, stderr, exitCode] = await licenses(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "BSD-3-Clause (1)
+      └── no-deps@1.0.1
+
+      ISC (1)
+      └── no-deps@1.0.0
+
+      MIT (1)
+      └── path-parse@1.0.6
+
+      mit (1)
+      └── a-dep@1.0.1 (dev)
+
+      (MIT OR Apache-2.0) (1)
+      └── one-dep@1.0.0
+
+      SEE LICENSE IN LICENSE.txt (1)
+      └── resolve@1.9.0
+
+      zlib (1)
+      └── a-dep@1.0.9
+
+      Unknown (1)
+      └── uses-a-dep-9@1.0.0"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const parsed = await licensesJson(dir);
+    expect(Object.keys(parsed)).toStrictEqual([
+      "BSD-3-Clause",
+      "ISC",
+      "MIT",
+      "mit",
+      "(MIT OR Apache-2.0)",
+      "SEE LICENSE IN LICENSE.txt",
+      "zlib",
+      "Unknown",
+    ]);
+    expect(parsed.mit).toStrictEqual([{ name: "a-dep", versions: ["1.0.1"], license: "mit" }]);
+    expect(parsed.zlib).toStrictEqual([{ name: "a-dep", versions: ["1.0.9"], license: "zlib" }]);
+    expect(parsed.Unknown).toStrictEqual([u("uses-a-dep-9", "1.0.0")]);
   });
 
   // pnpm license-resolver/test/parseLicenseFromManifest.test.ts, replayed against installed manifests.
@@ -359,19 +434,7 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "resolve", { license: undefined, licenses: [{ type: 42 }, { type: "MIT" }] });
 
     const parsed = await licensesJson(dir);
-    expect(parsed).toStrictEqual({
-      MIT: [
-        fullJson.MIT[0],
-        {
-          name: "resolve",
-          versions: ["1.9.0"],
-          license: "MIT",
-          author: fullJson.MIT[1].author,
-          description: resolveDescription,
-        },
-      ],
-      Unknown: fullJson.Unknown,
-    });
+    expect(parsed).toStrictEqual(fullJson);
   });
 
   test.concurrent("repeated legacy entries are not deduplicated", async () => {
@@ -410,13 +473,15 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { license: "0BSD", description: "newer" });
     patchInstalledManifest(dir, "a-dep", { licenses: [{ type: "MIT" }, { type: "Apache-2.0" }] });
 
-    expect(await licensesJson(dir)).toStrictEqual({
+    const parsed = await licensesJson(dir);
+    expect(parsed).toStrictEqual({
       "(MIT OR Apache-2.0)": [{ name: "a-dep", versions: ["1.0.1"], license: "(MIT OR Apache-2.0)" }],
       "0BSD": [{ name: "no-deps", versions: ["1.0.1"], license: "0BSD", description: "newer" }],
       "ISC": [{ name: "no-deps", versions: ["1.0.0"], license: "ISC" }],
       "MIT": fullJson.MIT,
       "Unknown": [u("one-dep", "1.0.0")],
     });
+    expect(Object.keys(parsed)).toStrictEqual(["0BSD", "ISC", "MIT", "(MIT OR Apache-2.0)", "Unknown"]);
   });
 
   test.concurrent("versions are ordered by semver, names bytewise", async () => {
@@ -531,7 +596,7 @@ describe("bun pm licenses", () => {
     });
 
     const bar = join(monoDir, "packages", "bar");
-    expect(await licensesText(bar, "--dev")).toBe(EMPTY_TEXT);
+    expectEmptyText(await licensesText(bar, "--dev"), 0);
     expect(await licensesJson(bar, "--dev")).toStrictEqual({});
   });
 
@@ -543,7 +608,7 @@ describe("bun pm licenses", () => {
     ]) {
       const [stdout, stderr, exitCode] = await licenses(hoistedDir, ...args);
       expect(stdout).toBe("");
-      expect(stderr).toContain("error: --dev cannot be combined with --prod or --omit=dev");
+      expect(normalizeBunSnapshot(stderr)).toBe("error: --dev cannot be combined with --prod or --omit=dev");
       expect(exitCode).toBe(1);
     }
   });
@@ -612,6 +677,7 @@ describe("bun pm licenses", () => {
       └── resolve@1.9.0
           James Halliday <mail@substack.net> (http://substack.net)
           resolve like require.resolve() on behalf of files asynchronously and synchronously
+          git://github.com/browserify/resolve.git
 
       Unknown (4)
       ├── a-dep@1.0.1 (dev)
@@ -668,6 +734,57 @@ describe("bun pm licenses", () => {
       description: "newest wins\nline two",
     });
     expect(JSON.stringify(parsed)).not.toContain("only a description");
+  });
+
+  test.concurrent("`repository` stands in for a missing `homepage`; `homepage` wins when both are set", async () => {
+    const dir = await setup();
+    patchInstalledManifest(dir, "a-dep", { repository: "https://github.com/example/a-dep.git" });
+    patchInstalledManifest(dir, "one-dep", {
+      repository: { type: "git", url: "git+ssh://git@github.com/example/one-dep.git" },
+    });
+    patchInstalledManifest(dir, "no-deps", {
+      homepage: "https://no-deps.example",
+      repository: { type: "git", url: "https://github.com/example/no-deps.git" },
+    });
+    patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { repository: { type: "git" } });
+    patchInstalledManifest(dir, "resolve", { repository: undefined });
+
+    expect(await licensesJson(dir)).toStrictEqual({
+      MIT: [
+        fullJson.MIT[0],
+        {
+          name: "resolve",
+          versions: ["1.9.0"],
+          license: "MIT",
+          author: resolveAuthor,
+          description: resolveDescription,
+        },
+      ],
+      Unknown: [
+        { ...u("a-dep", "1.0.1"), homepage: "https://github.com/example/a-dep.git" },
+        u("no-deps", "1.0.0", "1.0.1"),
+        { ...u("one-dep", "1.0.0"), homepage: "git+ssh://git@github.com/example/one-dep.git" },
+      ],
+    });
+    expect(normalizeBunSnapshot(await licensesText(dir, "--long"))).toMatchInlineSnapshot(`
+      "MIT (2)
+      ├── path-parse@1.0.6
+      │   Javier Blanco <http://jbgutierrez.info>
+      │   Node.js path.parse() ponyfill
+      │   https://github.com/jbgutierrez/path-parse#readme
+      └── resolve@1.9.0
+          James Halliday <mail@substack.net> (http://substack.net)
+          resolve like require.resolve() on behalf of files asynchronously and synchronously
+
+      Unknown (4)
+      ├── a-dep@1.0.1 (dev)
+      │   https://github.com/example/a-dep.git
+      ├── no-deps@1.0.0
+      │   https://no-deps.example
+      ├── no-deps@1.0.1
+      └── one-dep@1.0.0
+          git+ssh://git@github.com/example/one-dep.git"
+    `);
   });
 
   test.concurrent(
@@ -978,7 +1095,7 @@ describe("bun pm licenses", () => {
     expect(glob).toStrictEqual(barJson);
     expect(parentGlob).toStrictEqual(monoJson);
     expect(packagesGlob).toStrictEqual(monoJson);
-    expect(rootOnly).toBe(EMPTY_TEXT);
+    expectEmptyText(rootOnly, 0);
     expect(normalizeBunSnapshot(fooText)).toMatchInlineSnapshot(`
       "Unknown (2)
       ├── a-dep@1.0.1 (dev)
@@ -1020,6 +1137,34 @@ describe("bun pm licenses", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("--filter patterns that match nothing are reported when other patterns match", async () => {
+    const [stdout, stderr, exitCode] = await licenses(monoDir, "--filter", "foo", "--filter", "nomatch", "--json");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
+      `"warn: No workspace packages matched the filter "nomatch""`,
+    );
+    expect(stripPaths(JSON.parse(stdout))).toStrictEqual(fooJson);
+    expect(exitCode).toBe(0);
+
+    const [text, textStderr, textExit] = await licenses(
+      monoDir,
+      "--filter",
+      "nomatch",
+      "--filter",
+      "alsonone",
+      "-F",
+      "bar",
+    );
+    expect(normalizeBunSnapshot(textStderr)).toMatchInlineSnapshot(
+      `"warn: No workspace packages matched the filters "nomatch", "alsonone""`,
+    );
+    expect(normalizeBunSnapshot(text)).toMatchInlineSnapshot(`
+      "MIT (2)
+      ├── path-parse@1.0.6
+      └── resolve@1.9.0"
+    `);
+    expect(textExit).toBe(0);
+  });
+
   test.concurrent("--filter is rejected by other pm subcommands and works outside a monorepo", async () => {
     const [stdout, stderr, exitCode] = await pm(hoistedDir, "ls", "--filter", "foo");
     expect(stdout).toBe("");
@@ -1029,11 +1174,11 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(hoistedDir, "--filter", "licenses-fixture")).toStrictEqual(fullJson);
   });
 
-  test.concurrent('nothing to list prints "No packages found" / {}', async () => {
+  test.concurrent("nothing to list prints what was checked and how long it took / {}", async () => {
     const dir = await setup("hoisted", { "package.json": pkg({ devDependencies: { "no-deps": "1.0.0" } }) });
 
     const [stdout, stderr, exitCode] = await licenses(dir, "--prod");
-    expect(stdout).toBe(EMPTY_TEXT);
+    expectEmptyText(stdout, 0);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const [json, jsonStderr, jsonExit] = await licenses(dir, "--prod", "--json");
@@ -1041,6 +1186,90 @@ describe("bun pm licenses", () => {
     expect(jsonStderr).toBe("");
     expect(jsonExit).toBe(0);
     expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
+  });
+
+  test.concurrent("nothing to list counts the lockfile packages that were checked but not installed", async () => {
+    const dir = await setup();
+    for (const name of ["a-dep", "no-deps", "one-dep", "path-parse", "resolve"])
+      rmSync(nm(dir, name), { recursive: true });
+
+    const [stdout, stderr, exitCode] = await licenses(dir);
+    expectEmptyText(stdout, 6);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "warn: 6 packages in bun.lock are not installed and were skipped
+      note: run 'bun install' first"
+    `);
+    expect(exitCode).toBe(0);
+
+    const [json, jsonStderr, jsonExit] = await licenses(dir, "--json");
+    expect(json).toBe("{}\n");
+    expect(normalizeBunSnapshot(jsonStderr)).toBe(
+      `warn: 6 packages in bun.lock are not installed and were skipped\n${MISSING_NOTE}`,
+    );
+    expect(jsonExit).toBe(0);
+  });
+
+  test.concurrent("--silent still prints the listing but no diagnostics", async () => {
+    const dir = await setup();
+    rmSync(nm(dir, "path-parse"), { recursive: true });
+    const [[loud, loudStderr, loudExit], [quiet, quietStderr, quietExit]] = await Promise.all([
+      licenses(dir),
+      licenses(dir, "--silent"),
+    ]);
+    expect(normalizeBunSnapshot(loudStderr)).toBe(
+      `warn: 1 package in bun.lock is not installed and was skipped\n${MISSING_NOTE}`,
+    );
+    expect(quietStderr).toBe("");
+    expect(quiet).toBe(loud);
+    expect(normalizeBunSnapshot(quiet)).toMatchInlineSnapshot(`
+      "MIT (1)
+      └── resolve@1.9.0
+
+      Unknown (4)
+      ├── a-dep@1.0.1 (dev)
+      ├── no-deps@1.0.0
+      ├── no-deps@1.0.1
+      └── one-dep@1.0.0"
+    `);
+    expect([loudExit, quietExit]).toStrictEqual([0, 0]);
+
+    const [json, jsonStderr, jsonExit] = await licenses(dir, "--silent", "--json");
+    expect(jsonStderr).toBe("");
+    expect(stripPaths(JSON.parse(json))).toStrictEqual({ MIT: [fullJson.MIT[1]], Unknown: fullJson.Unknown });
+    expect(jsonExit).toBe(0);
+
+    const [partial, partialStderr, partialExit] = await licenses(
+      monoDir,
+      "--silent",
+      "-F",
+      "foo",
+      "-F",
+      "nomatch",
+      "--json",
+    );
+    expect(partialStderr).toBe("");
+    expect(stripPaths(JSON.parse(partial))).toStrictEqual(fooJson);
+    expect(partialExit).toBe(0);
+  });
+
+  test.concurrent("--silent suppresses every error but keeps the exit code", async () => {
+    const noNodeModules = await setup();
+    rmSync(nm(noNodeModules), { recursive: true });
+    const noLockfile = (await registry.createTestDir({ files: { "package.json": fixturePackageJson } })).packageDir;
+
+    const cases: [string, string[]][] = [
+      [noNodeModules, []],
+      [noLockfile, []],
+      [hoistedDir, ["--dev", "--prod"]],
+      [monoDir, ["--filter", "nomatch"]],
+      [monoDir, ["--filter", "nomatch", "--filter", "alsonone", "--json"]],
+      [hoistedDir, ["bogus"]],
+      [hoistedDir, ["list", "extra"]],
+    ];
+    for (const [cwd, args] of cases) {
+      const [stdout, stderr, exitCode] = await licenses(cwd, "--silent", ...args);
+      expect({ args, stdout, stderr, exitCode }).toStrictEqual({ args, stdout: "", stderr: "", exitCode: 1 });
+    }
   });
 
   test.concurrent("licenses list / ls aliases", async () => {
@@ -1056,15 +1285,28 @@ describe("bun pm licenses", () => {
 
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "bogus");
     expect(stdout).toBe("");
-    expect(stderr).toContain("Unknown subcommand: bogus");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "error: unknown subcommand "bogus" for bun pm licenses
+      note: did you mean 'bun pm licenses list'?"
+    `);
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("licenses list / ls reject extra arguments", async () => {
+    for (const subcommand of ["list", "ls"]) {
+      const [stdout, stderr, exitCode] = await licenses(hoistedDir, subcommand, "extra");
+      expect(stdout).toBe("");
+      expect(normalizeBunSnapshot(stderr)).toBe(`error: bun pm licenses ${subcommand} does not take arguments`);
+      expect(exitCode).toBe(1);
+    }
   });
 
   test.concurrent("missing lockfile", async () => {
     const { packageDir } = await registry.createTestDir({ files: { "package.json": fixturePackageJson } });
     const [stdout, stderr, exitCode] = await licenses(packageDir);
     expect(stdout).toBe("");
-    expect(stderr).toContain("Lockfile not found");
+    expect(stderr).toContain("error: missing lockfile");
+    expect(stderr).toContain(MISSING_NOTE);
     expect(exitCode).toBe(1);
   });
 
@@ -1072,10 +1314,12 @@ describe("bun pm licenses", () => {
     const { packageDir } = await registry.createTestDir({ files: { "package.json": fixturePackageJson } });
     await install(packageDir, "hoisted", "--lockfile-only");
 
-    const [stdout, stderr, exitCode] = await licenses(packageDir);
-    expect(stdout).toBe("");
-    expect(stderr).toContain("node_modules not found");
-    expect(exitCode).toBe(1);
+    for (const args of [[], ["--json"], ["list"]]) {
+      const [stdout, stderr, exitCode] = await licenses(packageDir, ...args);
+      expect(stdout).toBe("");
+      expect(normalizeBunSnapshot(stderr)).toBe(`error: node_modules not found, nothing to list\n${MISSING_NOTE}`);
+      expect(exitCode).toBe(1);
+    }
   });
 
   // pnpm#5702: a package that cannot be read must not fail the whole listing; the omission is reported instead of silent.
@@ -1087,9 +1331,10 @@ describe("bun pm licenses", () => {
       rmSync(join(dir, "node_modules", "one-dep"), { recursive: true, force: true });
 
       const [stdout, stderr, exitCode] = await licenses(dir, "--json");
-      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
-        `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
-      );
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "warn: 2 packages in bun.lock are not installed and were skipped
+        note: run 'bun install' first"
+      `);
       expect(stripPaths(JSON.parse(stdout))).toStrictEqual({
         MIT: [fullJson.MIT[0]],
         Unknown: [u("a-dep", "1.0.1"), u("no-deps", "1.0.0"), u("resolve", "1.9.0")],
@@ -1122,9 +1367,10 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "a-dep", { license: "MIT" });
 
     const [stdout, stderr, exitCode] = await licenses(dir, "--json");
-    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
-      `"warn: omitted 2 packages from the lockfile not found in node_modules"`,
-    );
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "warn: 2 packages in bun.lock are not installed and were skipped
+      note: run 'bun install' first"
+    `);
     expect(stripPaths(JSON.parse(stdout))).toStrictEqual({
       MIT: [{ name: "a-dep", versions: ["1.0.10"], license: "MIT" }],
       Unknown: [u("uses-a-dep-10", "1.0.0")],
@@ -1267,7 +1513,7 @@ describe("bun pm licenses", () => {
       "Unknown (1)
       └── no-deps@1.0.0"
     `);
-    expect(await licensesText(dir, "--omit=peer")).toBe(EMPTY_TEXT);
+    expectEmptyText(await licensesText(dir, "--omit=peer"), 0);
     expect(await licensesJson(dir, "--omit=peer")).toStrictEqual({});
 
     const transitive = await setup("hoisted", { "package.json": pkg({ dependencies: { "has-peer": "1.0.0" } }) });
@@ -1328,9 +1574,10 @@ describe("bun pm licenses", () => {
     rmSync(nm(dir, "a-dep"), { recursive: true });
 
     const [stdout, stderr, exitCode] = await licenses(dir, "--json");
-    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
-      `"warn: omitted 1 package from the lockfile not found in node_modules"`,
-    );
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "warn: 1 package in bun.lock is not installed and was skipped
+      note: run 'bun install' first"
+    `);
     expect(stripPaths(JSON.parse(stdout))).toStrictEqual(prodJson);
     expect(exitCode).toBe(0);
   });
@@ -1370,7 +1617,16 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "resolve", { author: {} });
 
     expect(await licensesJson(dir)).toStrictEqual({
-      MIT: [fullJson.MIT[0], { name: "resolve", versions: ["1.9.0"], license: "MIT", description: resolveDescription }],
+      MIT: [
+        fullJson.MIT[0],
+        {
+          name: "resolve",
+          versions: ["1.9.0"],
+          license: "MIT",
+          homepage: resolveHomepage,
+          description: resolveDescription,
+        },
+      ],
       Unknown: [
         { ...u("a-dep", "1.0.1"), author: "Ann <ann@example.com> (https://ann.example)" },
         { ...u("no-deps", "1.0.0", "1.0.1"), author: "(https://nd.example)" },
@@ -1385,6 +1641,7 @@ describe("bun pm licenses", () => {
       │   https://github.com/jbgutierrez/path-parse#readme
       └── resolve@1.9.0
           resolve like require.resolve() on behalf of files asynchronously and synchronously
+          git://github.com/browserify/resolve.git
 
       Unknown (4)
       ├── a-dep@1.0.1 (dev)
@@ -1401,7 +1658,7 @@ describe("bun pm licenses", () => {
     const [stdout, stderr, exitCode] = await licenses(monoDir, "--filter", "nope", "--filter", "nada");
     expect(stdout).toBe("");
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
-      `"error: No workspace packages matched the filter "nope", "nada""`,
+      `"error: No workspace packages matched the filters "nope", "nada""`,
     );
     expect(exitCode).toBe(1);
   });
@@ -1419,9 +1676,9 @@ describe("bun pm licenses", () => {
             "versions": ["1.0.6"],
             "paths": ["<dir>/node_modules/path-parse"],
             "license": "MIT",
-            "homepage": "https://github.com/jbgutierrez/path-parse#readme",
             "author": "Javier Blanco <http://jbgutierrez.info>",
-            "description": "Node.js path.parse() ponyfill"
+            "description": "Node.js path.parse() ponyfill",
+            "homepage": "https://github.com/jbgutierrez/path-parse#readme"
           },
           {
             "name": "resolve",
@@ -1429,7 +1686,8 @@ describe("bun pm licenses", () => {
             "paths": ["<dir>/node_modules/resolve"],
             "license": "MIT",
             "author": "James Halliday <mail@substack.net> (http://substack.net)",
-            "description": "resolve like require.resolve() on behalf of files asynchronously and synchronously"
+            "description": "resolve like require.resolve() on behalf of files asynchronously and synchronously",
+            "homepage": "git://github.com/browserify/resolve.git"
           }
         ],
         "Unknown": [

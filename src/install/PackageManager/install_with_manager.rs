@@ -11,9 +11,12 @@ use bun_semver::String as SemverString;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
-use crate::lockfile::{self, Lockfile};
+use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
-use crate::update_transitive::{DirectDependencies, TransitiveUpdate, redirect_moved_edges};
+use crate::update_transitive::{
+    DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
+    plannable_peer_rows, print_kept_patched, redirect_moved_edges,
+};
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
     invalid_package_id,
@@ -299,7 +302,7 @@ pub fn install_with_manager(
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
                     if bare_update {
-                        transitive = TransitiveUpdate::plan(manager)?;
+                        transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         transitive.enqueue(manager)?;
                     }
                 } else {
@@ -516,7 +519,7 @@ pub fn install_with_manager(
                         || manager.summary.catalogs_changed;
                     let mut pinned_rows = DynamicBitSet::default();
                     if bare_update {
-                        transitive = TransitiveUpdate::plan(manager)?;
+                        transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
 
@@ -629,7 +632,11 @@ pub fn install_with_manager(
     let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
         if named_update {
-            named = enqueue_named_updates(manager);
+            named = enqueue_named_updates(
+                manager,
+                &direct_deps_before,
+                loaded_lockfile_name(&load_result),
+            )?;
         }
         if !manager.audit_fix_pins.is_empty() {
             crate::audit_fix::enqueue_planned_fixes(manager)?;
@@ -640,6 +647,7 @@ pub fn install_with_manager(
         if named_update {
             reject_unknown_update_requests(
                 manager,
+                loaded_lockfile_name(&load_result),
                 |_, request| request.e_string.is_none(),
                 |_| false,
             );
@@ -672,13 +680,15 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved);
-    transitive.print_dry_run(&direct_deps_before, &manager.lockfile);
+    transitive.print_plan(manager, &direct_deps_before, &named.moved);
+    print_kept_patched(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
         .log_mut()
         .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
+    super::add_catalog::refuse_declared_positionals(manager);
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later
@@ -703,6 +713,15 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
+        Output::flush();
+        crate::update_transitive::warn_orphaned_patches(manager);
+    }
+    let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
+        count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
+    } else {
+        0
+    };
 
     if manager.lockfile.packages.len() > 0 {
         root = *manager.lockfile.packages.get(0);
@@ -721,7 +740,13 @@ pub fn install_with_manager(
         super::package_json_write_back::edit_after_resolve(manager)?;
 
         if manager.options.security_scanner.is_some() {
-            run_security_scanner(manager, ctx, original_cwd);
+            run_security_scanner(
+                manager,
+                ctx,
+                original_cwd,
+                &lockfile_before_clean,
+                &named.moved,
+            );
         }
     }
 
@@ -791,7 +816,7 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            let changed_section = frozen_changed_section(manager);
+            let changed_section = frozen_changed_section(manager, root_package_json_path);
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -820,8 +845,9 @@ pub fn install_with_manager(
                 );
                 if let Some(section) = changed_section {
                     bun_core::note!(
-                        "\"{}\" in package.json changed since the lockfile was saved",
-                        section
+                        "{} in package.json changed since {} was saved",
+                        section,
+                        loaded_lockfile_name(&load_result)
                     );
                 }
                 bun_core::note!(
@@ -884,7 +910,7 @@ pub fn install_with_manager(
                 },
 
                 NodeLinker::Hoisted => {
-                    break 'install_summary install_hoisted_packages(
+                    let summary = install_hoisted_packages(
                         manager,
                         ctx,
                         &workspace_filters,
@@ -892,6 +918,15 @@ pub fn install_with_manager(
                         log_level,
                         None,
                     )?;
+                    if summary.fail == 0
+                        && matches!(
+                            manager.subcommand,
+                            Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+                        )
+                    {
+                        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+                    }
+                    break 'install_summary summary;
                 }
 
                 NodeLinker::Isolated => {
@@ -977,6 +1012,7 @@ pub fn install_with_manager(
             ctx,
             &install_summary,
             did_meta_hash_change,
+            requests_removed_from_lockfile,
             log_level,
         )?;
     }
@@ -1118,14 +1154,30 @@ fn print_install_summary(
     ctx: Command::Context,
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
+    requests_removed_from_lockfile: u32,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     let _flush_guard = Output::flush_guard();
 
     let mut printed_timestamp = false;
     if this.options.do_.summary() {
-        if this.subcommand != Subcommand::Dedupe {
-            print_summary_tree(this, install_summary, log_level)?;
+        if this.subcommand == Subcommand::Dedupe {
+            crate::dedupe::print_dedupe_summary(this, install_summary.success, ctx.start_time);
+            if install_summary.fail > 0 {
+                print_summary_failed(install_summary);
+            }
+            return Ok(());
+        }
+        if this.subcommand == Subcommand::Update && this.options.dry_run {
+            return Ok(());
+        }
+        print_summary_tree(this, install_summary, log_level)?;
+
+        let print_removed = this.subcommand == Subcommand::Remove
+            && this.summary.remove > 0
+            && install_summary.success == 0;
+        if this.subcommand == Subcommand::Remove {
+            this.summary.remove = requests_removed_from_lockfile;
         }
 
         if !did_meta_hash_change {
@@ -1134,33 +1186,35 @@ fn print_install_summary(
             this.summary.update = 0;
         }
 
+        if print_removed {
+            print_removed_rows(this);
+        }
+
         if install_summary.success > 0 {
             print_summary_installed(this, ctx.start_time, install_summary);
             printed_timestamp = true;
         } else if this.summary.remove > 0 {
             print_summary_removed(this, ctx.start_time, install_summary);
             printed_timestamp = true;
-        } else if install_summary.skipped > 0
+        } else if (install_summary.skipped > 0 || !this.options.filter_patterns.is_empty())
             && install_summary.fail == 0
-            && this.update_requests.is_empty()
+            && (this.update_requests.is_empty() || this.subcommand == Subcommand::Update)
         {
             // Hot no-op path (install/fastify bench): kept inline.
             let count = this.lockfile.packages.len() as PackageID;
             if count != install_summary.skipped {
-                if !this.options.enable.only_missing() {
-                    bun_core::pretty!(
-                        "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
-                        install_summary.skipped,
-                        if install_summary.skipped == 1 {
-                            ""
-                        } else {
-                            "s"
-                        },
-                        count,
-                        if count == 1 { "" } else { "s" },
-                    );
-                    Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-                }
+                bun_core::pretty!(
+                    "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
+                    install_summary.skipped,
+                    if install_summary.skipped == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                    count,
+                    if count == 1 { "" } else { "s" },
+                );
+                Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
                 print_blocked_packages_info(install_summary, this.options.global);
             } else {
@@ -1198,14 +1252,7 @@ fn print_summary_tree(
     install_summary: &PackageInstallSummary,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Printer` borrows
-    // `this.lockfile` / `this.options` while `this` (the
-    // PackageManager) is also passed to `Tree::print`. Route through a single `*mut
-    // PackageManager` provenance root and reborrow disjoint fields
-    // through it: `Tree::print` only reads
-    // `manager.{updating_packages, workspace_name_hash}` and writes
-    // `manager.track_installed_bin`, none of which overlap `lockfile` /
-    // `options` / `update_requests`.
+    // `Tree::print` reads `manager.{subcommand, workspace_name_hash, update_target_workspaces, updating_packages}` and writes `manager.{track_installed_bin, kept_patched_text, manifests}`, none overlapping the `Printer`'s `lockfile` / `options` / `update_requests` borrows.
     let mgr: *mut PackageManager = this;
     // `mgr` is the sole provenance root from here through the `Tree::print`
     // call; the `Printer` reborrows shared `lockfile` / `options` /
@@ -1259,10 +1306,14 @@ fn print_summary_installed(
     start_time: i128,
     install_summary: &PackageInstallSummary,
 ) {
-    // it's confusing when it shows 3 packages and says it installed 1
-    let pkgs_installed = install_summary
-        .success
-        .max(this.update_requests.len() as u32);
+    // bun add: it's confusing when it shows 3 packages and says it installed 1
+    let pkgs_installed = if this.subcommand == Subcommand::Add {
+        install_summary
+            .success
+            .max(this.update_requests.len() as u32)
+    } else {
+        install_summary.success
+    };
     bun_core::pretty!(
         "<green>{}<r> package{}<r> installed ",
         pkgs_installed,
@@ -1278,17 +1329,34 @@ fn print_summary_installed(
 
 #[cold]
 #[inline(never)]
+fn print_removed_rows(this: &PackageManager) {
+    for request in &this.update_requests {
+        bun_core::prettyln!("<r><red>-<r> {}", bstr::BStr::new(request.name));
+    }
+}
+
+/// The differ's `summary.remove` counts names removed from a package.json; the removed count line only counts the requests that left bun.lock.
+#[cold]
+#[inline(never)]
+fn count_requests_removed_from_lockfile(manager: &PackageManager, before_clean: &Lockfile) -> u32 {
+    let before = before_clean.packages.items_name_hash();
+    let after = manager.lockfile.packages.items_name_hash();
+    manager
+        .update_requests
+        .iter()
+        .filter(|request| {
+            before.contains(&request.name_hash) && !after.contains(&request.name_hash)
+        })
+        .count() as u32
+}
+
+#[cold]
+#[inline(never)]
 fn print_summary_removed(
     this: &PackageManager,
     start_time: i128,
     install_summary: &PackageInstallSummary,
 ) {
-    if this.subcommand == Subcommand::Remove {
-        for request in &this.update_requests {
-            bun_core::prettyln!("<r><red>-<r> {}", bstr::BStr::new(request.name));
-        }
-    }
-
     bun_core::pretty!(
         "<r><b>{}<r> package{} removed ",
         this.summary.remove,
@@ -1366,14 +1434,45 @@ pub(crate) fn get_workspace_filters(
     Ok((filters, install_root_dependencies))
 }
 
-fn frozen_changed_section(manager: &PackageManager) -> Option<&'static str> {
-    let summary = &manager.summary;
-    if summary.overrides_changed {
-        Some("overrides")
-    } else if summary.catalogs_changed {
-        Some("catalogs")
+fn frozen_changed_section(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+) -> Option<&'static str> {
+    if manager.summary.overrides_changed {
+        Some(overrides_field_name(manager, root_package_json_path))
+    } else if manager.summary.catalogs_changed {
+        Some("the catalog")
     } else {
         None
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn overrides_field_name(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+) -> &'static str {
+    let log = manager.log_mut();
+    let WorkspacePackageJsonCacheResult::Entry(entry) = manager
+        .workspace_package_json_cache
+        .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
+    else {
+        return "overrides";
+    };
+    let root = entry.root;
+    if root.as_property(b"overrides").is_none() && root.as_property(b"resolutions").is_some() {
+        "resolutions"
+    } else {
+        "overrides"
+    }
+}
+
+pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
+    if load_result.loaded_from_binary_lockfile() {
+        "bun.lockb"
+    } else {
+        "bun.lock"
     }
 }
 
@@ -1432,7 +1531,9 @@ fn report_lockfile_load_error(
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    if log_level != Options::LogLevel::Silent {
+    if log_level != Options::LogLevel::Silent
+        && !crate::migration::reported_unsupported_lockfile_version(cause)
+    {
         match cause.step {
             lockfile::LoadStep::OpenFile => Output::err(
                 cause.value,
@@ -1497,16 +1598,22 @@ struct NamedUpdates {
     latest_rows: Vec<DependencyID>,
 }
 
-/// bun update <name>…: every in-scope row resolving to <name> (see update_scope) re-resolves within its own range; rows the differ re-enqueued are left to it, peers/bundled rows only follow via redirect_moved_edges.
+/// bun update <name>…: every in-scope row resolving to <name> (see update_scope) re-resolves within its own range; rows the differ re-enqueued are left to it, peers with a provider and bundled rows only follow via redirect_moved_edges.
 #[cold]
 #[inline(never)]
-fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
+fn enqueue_named_updates(
+    manager: &mut PackageManager,
+    direct: &DirectDependencies,
+    lockfile_name: &'static str,
+) -> crate::Result<NamedUpdates> {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
+    let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
     let collect_latest_rows = manager.options.do_.update_to_latest();
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut named = NamedUpdates::default();
+    let mut peer_rows: Vec<DependencyID> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
         let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
@@ -1522,10 +1629,13 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
         if collect_latest_rows {
             named.latest_rows.push(dependency_i as DependencyID);
         }
-        if package_id == invalid_package_id
-            || dependency.behavior.is_peer()
-            || dependency.behavior.is_bundled()
-        {
+        if package_id == invalid_package_id || dependency.behavior.is_bundled() {
+            continue;
+        }
+        if dependency.behavior.is_peer() {
+            if plannable_peers.is_set(dependency_i) {
+                peer_rows.push(dependency_i as DependencyID);
+            }
             continue;
         }
         manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
@@ -1543,10 +1653,12 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
 
     reject_unknown_update_requests(
         manager,
+        lockfile_name,
         |i, _| !matched.is_set(i) && !matched_elsewhere.is_set(i),
         |i| !matched.is_set(i) && matched_elsewhere.is_set(i),
     );
-    named
+    enqueue_peer_rows(manager, &peer_rows, &mut named.moved)?;
+    Ok(named)
 }
 
 fn index_of_named_update(
@@ -1580,14 +1692,15 @@ fn index_of_named_update(
 #[inline(never)]
 fn reject_unknown_update_requests(
     manager: &PackageManager,
+    lockfile_name: &'static str,
     is_unknown: impl Fn(usize, &UpdateRequest) -> bool,
     is_out_of_scope: impl Fn(usize) -> bool,
 ) {
     let requests = &manager.update_requests;
-    let out_of_scope: Vec<&UpdateRequest> = requests
+    let out_of_scope: Vec<(usize, &UpdateRequest)> = requests
         .iter()
         .enumerate()
-        .filter_map(|(i, request)| is_out_of_scope(i).then_some(request))
+        .filter(|&(i, _)| is_out_of_scope(i))
         .collect();
     let unknown: Vec<&UpdateRequest> = requests
         .iter()
@@ -1597,31 +1710,92 @@ fn reject_unknown_update_requests(
     if out_of_scope.is_empty() && unknown.is_empty() {
         return;
     }
-    for request in &out_of_scope {
-        Output::err_generic(
-            "\"{}\" is only a dependency of other workspaces, so there is nothing to update here",
-            (bstr::BStr::new(request.get_name()),),
-        );
+    if manager.options.log_level == Options::LogLevel::Silent {
+        Global::exit(1);
+    }
+    Output::flush();
+    let scope = crate::update_scope::UpdateScope::of(manager);
+    let of_what = if scope.targets.is_some() {
+        "the selected workspaces"
+    } else {
+        "this workspace"
+    };
+    for &(i, request) in &out_of_scope {
+        let name = bstr::BStr::new(request.get_name());
+        Output::err_generic("\"{}\" is not a dependency of {}", (name, of_what));
+        bun_core::pretty_errorln!("    <cyan>bun update -r {}<r>", name);
+        for workspace in workspaces_reaching_request(manager, &scope, i) {
+            bun_core::pretty_errorln!(
+                "    <cyan>bun update --filter {} {}<r>",
+                bstr::BStr::new(workspace),
+                name
+            );
+        }
     }
     for request in &unknown {
-        Output::err_generic(
-            "\"{}\" is not in the lockfile, so there is nothing to update",
-            (bstr::BStr::new(request.get_name()),),
-        );
-    }
-    if let Some(request) = out_of_scope.first() {
         let name = bstr::BStr::new(request.get_name());
-        bun_core::note!(
-            "run bun update -r {} to update it in every workspace, or run bun update {} inside a workspace that depends on it",
-            name,
-            name
-        );
-    }
-    if !unknown.is_empty() {
-        bun_core::note!("to add a dependency, use bun add");
+        Output::err_generic("\"{}\" is not in {}", (name, lockfile_name));
+        bun_core::pretty_errorln!("    <cyan>bun add {}<r>", name);
     }
     Output::flush();
     Global::exit(1);
+}
+
+fn workspaces_reaching_request<'a>(
+    manager: &'a PackageManager,
+    scope: &crate::update_scope::UpdateScope<'_>,
+    request_index: usize,
+) -> Vec<&'a [u8]> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let packages = &lockfile.packages;
+    let package_resolutions = packages.items_resolution();
+    let names = packages.items_name();
+    let name_hashes = packages.items_name_hash();
+    let dep_lists = packages.items_dependencies();
+    let res_lists = packages.items_resolutions();
+
+    let mut owners = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    let all_deps = lockfile.buffers.dependencies.as_slice();
+    let all_resolutions = lockfile.buffers.resolutions.as_slice();
+    for (pkg_id, (dep_list, res_list)) in dep_lists.iter().zip(res_lists).enumerate() {
+        if dep_list
+            .get(all_deps)
+            .iter()
+            .zip(res_list.get(all_resolutions))
+            .any(|(dep, &res)| index_of_named_update(manager, dep, res) == Some(request_index))
+        {
+            owners.set(pkg_id);
+        }
+    }
+    if owners.count() == 0 {
+        return Vec::new();
+    }
+
+    let mut workspaces: Vec<&'a [u8]> = Vec::new();
+    for importer in 0..packages.len() {
+        let tag = package_resolutions[importer].tag;
+        if !matches!(tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+            continue;
+        }
+        let name = names[importer].slice(buf);
+        if name.is_empty()
+            || scope.contains_workspace(tag == ResolutionTag::Root, name_hashes[importer], name)
+        {
+            continue;
+        }
+        let reached = reachable::packages_from(
+            lockfile,
+            all_resolutions,
+            &[importer as PackageID],
+            false,
+            reachable::Options::all(0),
+        );
+        if (0..packages.len()).any(|pkg_id| owners.is_set(pkg_id) && reached.is_set(pkg_id)) {
+            workspaces.push(name);
+        }
+    }
+    workspaces
 }
 
 #[cold]
@@ -1635,40 +1809,81 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     let updating_packages = &mut manager.updating_packages;
     let packages = lockfile.packages.slice();
     let resolutions = packages.items_resolution();
-    let workspace_package_id = manager
-        .root_package_id
-        .get(lockfile, manager.workspace_name_hash);
-    let workspace_dep_list = packages.items_dependencies()[workspace_package_id as usize];
-    let workspace_res_list = packages.items_resolutions()[workspace_package_id as usize];
-    let workspace_deps = workspace_dep_list.get(&lockfile.buffers.dependencies);
-    let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
-    debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
-    for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-        if dep.version.tag != DependencyVersionTag::Npm
-            && dep.version.tag != DependencyVersionTag::DistTag
-        {
-            continue;
+    // Bare `-r`/`--filter` edits the targets' package.json files only after resolve (`package_json_write_back`), so their rows are registered here instead.
+    let register_rows =
+        manager.update_target_workspaces.is_some() && manager.update_requests.is_empty();
+    let update_to_latest = manager
+        .options
+        .do_
+        .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST);
+    let mut workspaces = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    match manager.update_target_workspaces.as_deref() {
+        None => workspaces.set(
+            manager
+                .root_package_id
+                .get(lockfile, manager.workspace_name_hash) as usize,
+        ),
+        Some(targets) => {
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            let names = packages.items_name();
+            let name_hashes = packages.items_name_hash();
+            for (id, resolution) in resolutions.iter().enumerate() {
+                let is_root = resolution.tag == ResolutionTag::Root;
+                if (is_root || resolution.tag == ResolutionTag::Workspace)
+                    && targets.iter().any(|target| {
+                        target.matches(is_root, name_hashes[id], names[id].slice(buf))
+                    })
+                {
+                    workspaces.set(id);
+                }
+            }
         }
-        if package_id == invalid_package_id {
-            continue;
-        }
+    }
+    let mut selected = workspaces.iterator::<true, true>();
+    while let Some(workspace_package_id) = selected.next() {
+        let workspace_dep_list = packages.items_dependencies()[workspace_package_id];
+        let workspace_res_list = packages.items_resolutions()[workspace_package_id];
+        let workspace_deps = workspace_dep_list.get(&lockfile.buffers.dependencies);
+        let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
+        debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
+        for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
+            if dep.version.tag != DependencyVersionTag::Npm
+                && dep.version.tag != DependencyVersionTag::DistTag
+            {
+                continue;
+            }
+            if package_id == invalid_package_id {
+                continue;
+            }
 
-        if let Some(entry_ptr) =
-            updating_packages.get_mut(dep.name.slice(&lockfile.buffers.string_bytes))
-        {
+            let name = dep.name.slice(&lockfile.buffers.string_bytes);
+            let entry_ptr = if register_rows {
+                if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
+                    continue;
+                }
+                let entry = updating_packages.get_or_put(name).unwrap_or_oom();
+                if !entry.found_existing {
+                    entry.value_ptr.original_version_literal =
+                        Box::from(dep.version.literal.slice(&lockfile.buffers.string_bytes));
+                }
+                entry.value_ptr
+            } else {
+                let Some(entry_ptr) = updating_packages.get_mut(name) else {
+                    continue;
+                };
+                entry_ptr
+            };
+            if entry_ptr.original_version.is_some() {
+                continue;
+            }
             let original_resolution: Resolution = resolutions[package_id as usize];
-            // Just in case check if the resolution is `npm`. It should always be `npm` because the dependency version
-            // is `npm` or `dist_tag`.
             if original_resolution.tag != ResolutionTag::Npm {
                 continue;
             }
 
-            // SAFETY: `original_resolution.tag == ResolutionTag::Npm` was checked
-            // immediately above, so the `.npm` arm of the value union is active.
             let mut original = original_resolution.npm().version;
             let tag_total = original.tag.pre.len() + original.tag.build.len();
             if tag_total > 0 {
-                // clone because don't know if lockfile buffer will reallocate
                 let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
                 let mut ptr = &mut tag_buf[..];
                 original.tag = original_resolution
@@ -1900,7 +2115,13 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
 
 #[cold]
 #[inline(never)]
-fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, original_cwd: &[u8]) {
+fn run_security_scanner(
+    manager: &mut PackageManager,
+    ctx: Command::Context,
+    original_cwd: &[u8],
+    before_clean: &Lockfile,
+    moved: &[(DependencyID, PackageID)],
+) {
     let is_subcommand_to_run_scanner = matches!(
         manager.subcommand,
         Subcommand::Add
@@ -1914,7 +2135,13 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
         return;
     }
 
-    match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
+    let seeds = moved_targets_after_clean(before_clean, &manager.lockfile, moved);
+    match security_scanner::perform_security_scan_after_resolution(
+        manager,
+        ctx,
+        original_cwd,
+        &seeds,
+    ) {
         Err(err) => {
             match err {
                 crate::Error::SecurityScannerInWorkspace => {
@@ -2005,8 +2232,9 @@ fn save_lockfile_only(
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    if manager.options.enable.frozen_lockfile()
-        && !saves_migrated_lockfile(load_result, save_format)
+    if (manager.options.enable.frozen_lockfile()
+        && !saves_migrated_lockfile(load_result, save_format))
+        || (manager.subcommand == Subcommand::Dedupe && manager.dedupe_report.is_none())
     {
         Output::flush();
         return Ok(());
@@ -2018,7 +2246,7 @@ fn save_lockfile_only(
         packages_len_before_install,
     )?;
 
-    save_lockfile(
+    let saved = save_lockfile(
         manager,
         load_result,
         save_format,
@@ -2028,22 +2256,32 @@ fn save_lockfile_only(
         log_level,
     )?;
 
-    if manager.options.do_.summary() {
-        // TODO(dylan-conway): packages aren't installed but we can still print
-        // added/removed/updated direct dependencies.
-        bun_core::pretty!(
-            "\nSaved <green>{}<r> ({} package{}) ",
-            match save_format {
-                lockfile::Format::Text => "bun.lock",
-                lockfile::Format::Binary => "bun.lockb",
-            },
-            manager.lockfile.packages.len(),
-            if manager.lockfile.packages.len() == 1 {
-                ""
-            } else {
-                "s"
-            },
-        );
+    if manager.subcommand == Subcommand::Dedupe {
+        if manager.options.do_.summary() {
+            crate::dedupe::print_dedupe_summary(manager, 0, ctx.start_time);
+        }
+    } else if manager.options.do_.summary() {
+        let count = manager.lockfile.packages.len();
+        let plural = if count == 1 { "" } else { "s" };
+        if saved {
+            // TODO(dylan-conway): packages aren't installed but we can still print
+            // added/removed/updated direct dependencies.
+            bun_core::pretty!(
+                "\nSaved <green>{}<r> ({} package{}) ",
+                match save_format {
+                    lockfile::Format::Text => "bun.lock",
+                    lockfile::Format::Binary => "bun.lockb",
+                },
+                count,
+                plural,
+            );
+        } else {
+            bun_core::pretty!(
+                "\n<r><green>Done<r>! Checked <b>{}<r> package{} <d>(no changes)<r> ",
+                count,
+                plural
+            );
+        }
         Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
         bun_core::pretty!("\n");
     }

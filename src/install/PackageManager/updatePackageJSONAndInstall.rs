@@ -19,8 +19,9 @@ use super::add_remove_with_filter::WorkspaceTarget;
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
+use super::workspace_selection;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest, WorkspaceFilter,
+    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
@@ -219,11 +220,14 @@ fn update_package_json_and_install_with_manager_with_updates(
             crate::lockfile::LoadResult::NotFound => {
                 if log_level != LogLevel::Silent {
                     Output::err_generic("missing lockfile, nothing to update", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             crate::lockfile::LoadResult::Err(cause) => {
-                if log_level != LogLevel::Silent {
+                if log_level != LogLevel::Silent
+                    && !crate::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     let what: &str = match cause.step {
                         crate::lockfile::LoadStep::OpenFile => "open",
                         crate::lockfile::LoadStep::ReadFile => "read",
@@ -240,11 +244,23 @@ fn update_package_json_and_install_with_manager_with_updates(
                 Global::crash();
             }
         }
-        let selected = WorkspaceFilter::select_workspaces(
+        let filter_patterns = manager.options.filter_patterns;
+        let workspace_selection::LockfileSelection {
+            ids: selected,
+            unmatched_patterns,
+        } = workspace_selection::select_lockfile_workspaces(
             &manager.lockfile,
-            manager.options.filter_patterns,
+            filter_patterns,
             original_cwd,
+            workspace_selection::RootSelection::Implicit,
         );
+        if selected.is_empty() && !filter_patterns.is_empty() {
+            if log_level == LogLevel::Silent {
+                Global::crash();
+            }
+            workspace_selection::error_unmatched(filter_patterns);
+        }
+        workspace_selection::warn_unmatched(filter_patterns, &unmatched_patterns);
         let name_hashes = manager.lockfile.packages.items_name_hash();
         let names = manager.lockfile.packages.items_name();
         let resolutions = manager.lockfile.packages.items_resolution();
@@ -259,14 +275,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                 })
                 .collect(),
         );
-        if !manager.options.filter_patterns.is_empty() {
-            manager.filtered_link_targets =
-                Some(super::workspace_selection::LinkTargets::from_importers(
-                    selected.iter().map(|&id| {
-                        (resolutions[id as usize].tag != crate::resolution::Tag::Root)
-                            .then(|| name_hashes[id as usize])
-                    }),
-                ));
+        if !filter_patterns.is_empty() {
+            manager.filtered_link_targets = Some(workspace_selection::LinkTargets::from_importers(
+                selected.iter().map(|&id| {
+                    (resolutions[id as usize].tag != crate::resolution::Tag::Root)
+                        .then(|| name_hashes[id as usize])
+                }),
+            ));
         }
     }
 

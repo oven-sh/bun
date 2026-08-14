@@ -98,6 +98,8 @@ _bun_completions() {
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
     PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
@@ -121,7 +123,7 @@ _bun_completions() {
         --server-bunfile) _file_arguments "!*.server.bun" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|install|i|dedupe)
+                a|add|remove|rm|install|i|dedupe|update|up)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
             esac
@@ -131,7 +133,7 @@ _bun_completions() {
             return;;
         -F|--filter)
             case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|i|install|prune) return;;
+                a|add|remove|rm|i|install|prune|update|up) return;;
             esac
             ;;
         --linker)
@@ -165,6 +167,11 @@ _bun_completions() {
             _long_short_completion \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        update|up)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
             return;;
         link|unlink)
             _long_short_completion \

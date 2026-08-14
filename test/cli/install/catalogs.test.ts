@@ -663,8 +663,36 @@ describe("errors", () => {
     );
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain("no-deps@catalog: failed to resolve");
-    expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
+    expect(err).toContain(
+      'error: a-dep@catalog:aaaaaaaaaaaaaaaaa: there is no catalog named "aaaaaaaaaaaaaaaaa" in the root package.json\n',
+    );
+    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("a package missing from an existing named catalog suggests bun add --catalog=<name>", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "catalog-error-3",
+          workspaces: {
+            catalog: { "a-dep": "1.0.1" },
+            catalogs: { tools: { "a-dep": "1.0.1" } },
+          },
+          dependencies: {
+            "no-deps": "catalog:tools",
+            "left-pad": "catalog:default",
+          },
+        }),
+      },
+    });
+
+    const { err, exitCode } = await failingInstall(packageDir);
+    expect(err).toContain(
+      'error: no-deps@catalog:tools is not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
+    );
+    expect(err).toContain("error: left-pad@catalog:default is not in the catalog\n  bun add --catalog left-pad\n");
+    expect(err).not.toContain("there is no catalog named");
     expect(exitCode).not.toBe(0);
   });
 
@@ -686,7 +714,8 @@ describe("errors", () => {
     );
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain("no-deps@catalog: failed to resolve");
+    expect(err).toContain("error: Invalid dependency version\n");
+    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
     expect(exitCode).not.toBe(0);
   });
 

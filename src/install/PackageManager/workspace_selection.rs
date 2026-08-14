@@ -30,9 +30,9 @@ pub struct Selection {
     pub unmatched_patterns: Vec<usize>,
 }
 
-pub(crate) struct LockfileSelection {
-    pub(crate) ids: Vec<PackageID>,
-    pub(crate) unmatched_patterns: Vec<usize>,
+pub struct LockfileSelection {
+    pub ids: Vec<PackageID>,
+    pub unmatched_patterns: Vec<usize>,
 }
 
 /// Importers a filtered add/remove/update selected; None is the root. Only their dependencies get linked.
@@ -276,6 +276,21 @@ pub fn select(
 }
 
 impl WorkspaceGraph {
+    pub(crate) fn from_edges(
+        candidate_count: usize,
+        edges: impl IntoIterator<Item = (u32, u32)>,
+    ) -> WorkspaceGraph {
+        let mut graph = WorkspaceGraph {
+            dependencies: vec![Vec::new(); candidate_count],
+            dependents: vec![Vec::new(); candidate_count],
+        };
+        for (from, to) in edges {
+            graph.dependencies[from as usize].push(to);
+            graph.dependents[to as usize].push(from);
+        }
+        graph
+    }
+
     pub(crate) fn from_lockfile(
         lockfile: &Lockfile,
         candidate_name_hashes: &[Option<PackageNameHash>],
@@ -370,7 +385,7 @@ impl WorkspaceGraph {
     }
 }
 
-pub(crate) fn select_lockfile_workspaces(
+pub fn select_lockfile_workspaces(
     lockfile: &Lockfile,
     patterns: &[&[u8]],
     original_cwd: &[u8],
@@ -450,7 +465,7 @@ pub(crate) fn select_lockfile_workspaces(
     }
 }
 
-pub(crate) fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
+pub fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();
     for (i, pattern) in patterns.iter().enumerate() {
         if i > 0 {
@@ -463,15 +478,30 @@ pub(crate) fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-pub(crate) fn warn_unmatched(patterns: &[&[u8]], unmatched_patterns: &[usize]) {
+/// `No workspace packages matched the filter "a"` / `... the filters "a", "b"`; the one sentence every --filter command prints.
+pub fn unmatched_message(patterns: &[&[u8]]) -> Vec<u8> {
+    let mut out: Vec<u8> = if patterns.len() == 1 {
+        b"No workspace packages matched the filter ".to_vec()
+    } else {
+        b"No workspace packages matched the filters ".to_vec()
+    };
+    out.extend_from_slice(&quote_patterns(patterns));
+    out
+}
+
+pub fn warn_unmatched(patterns: &[&[u8]], unmatched_patterns: &[usize]) {
     if unmatched_patterns.is_empty() {
         return;
     }
     let unmatched: Vec<&[u8]> = unmatched_patterns.iter().map(|&i| patterns[i]).collect();
-    bun_core::pretty_errorln!(
-        "<r><yellow>warn<r><d>:<r> No workspace packages matched the filter {}",
-        BStr::new(&quote_patterns(&unmatched)),
-    );
+    bun_core::warn!("{}", BStr::new(&unmatched_message(&unmatched)));
+}
+
+/// The nothing-selected case: `error: No workspace packages matched the filter(s) ...`, exit 1.
+pub fn error_unmatched(patterns: &[&[u8]]) -> ! {
+    Output::flush();
+    Output::err_generic("{}", (BStr::new(&unmatched_message(patterns)),));
+    Global::crash();
 }
 
 impl LinkTargets {

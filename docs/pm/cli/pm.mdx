@@ -187,7 +187,11 @@ Unknown (4)
 └── one-dep@1.0.0
 ```
 
-License groups are printed in name order with `Unknown` always last, and packages within a group are sorted by name and then version. Packages that are only reached through `devDependencies` are marked `(dev)`. When nothing is listed, the text output is the single line `No packages found` and `--json` prints `{}`.
+License groups are printed in name order with `Unknown` always last, and packages within a group are sorted by name and then version. Packages that are only reached through `devDependencies` are marked `(dev)`. When nothing is listed (for example `--filter` selecting a workspace with no dependencies), the text output is a single line showing how many packages were checked and how long it took, and `--json` prints `{}`:
+
+```txt
+No packages to list (checked 0 packages in bun.lock) [1.20ms]
+```
 
 Pass `--prod` (or `-P`, `-p`, `--production`) to skip `devDependencies`, and `--json` to get a machine-readable object keyed by license, where each entry has `name`, `versions` (in semver order), `paths` (the directory each of those versions was read from, in the same order — under `node_modules` for hoisted installs, inside `node_modules/.bun` for isolated installs), `license` (the same string as the key, `Unknown` included) and, when the newest listed version declares them, its `homepage`, `author` and `description`:
 

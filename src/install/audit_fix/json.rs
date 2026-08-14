@@ -45,12 +45,13 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
         s(&mut out, &blocked.name);
         out.extend_from_slice(b",\"from\":");
         s(&mut out, &blocked.from);
-        out.extend_from_slice(b",\"needs\":");
+        out.extend_from_slice(b",\"to\":");
         s(&mut out, &blocked.needs);
         let _ = write!(
             out,
-            ",\"downgrade\":{},\"blockers\":[",
-            blocked.needs_is_downgrade
+            ",\"downgrade\":{},\"latestFixes\":{},\"blockers\":[",
+            blocked.needs_is_downgrade,
+            blocked.blockers.iter().any(|blocker| blocker.latest_fixes)
         );
         for (j, blocker) in blocked.blockers.iter().enumerate() {
             comma(&mut out, j);
@@ -66,19 +67,35 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
     out.extend_from_slice(b"],\"unfixable\":[");
     for (i, unfixable) in plan.unfixable.iter().enumerate() {
         comma(&mut out, i);
-        name_pair(&mut out, b"from", &unfixable.name, &unfixable.from);
+        name_advisories(
+            &mut out,
+            b"from",
+            &unfixable.name,
+            &unfixable.from,
+            &unfixable.ignore_tokens,
+        );
     }
 
     out.extend_from_slice(b"],\"manifestUnavailable\":[");
     for (i, unavailable) in plan.manifest_unavailable.iter().enumerate() {
         comma(&mut out, i);
-        name_pair(&mut out, b"from", &unavailable.name, &unavailable.from);
+        out.extend_from_slice(b"{\"name\":");
+        s(&mut out, &unavailable.name);
+        out.extend_from_slice(b",\"from\":");
+        s(&mut out, &unavailable.from);
+        out.extend_from_slice(b",\"error\":");
+        s(&mut out, &unavailable.error);
+        out.push(b'}');
     }
 
     out.extend_from_slice(b"],\"unmatched\":[");
     for (i, unmatched) in plan.unmatched.iter().enumerate() {
         comma(&mut out, i);
-        name_pair(&mut out, b"range", &unmatched.name, &unmatched.range);
+        out.extend_from_slice(b"{\"name\":");
+        s(&mut out, &unmatched.name);
+        out.extend_from_slice(b",\"range\":");
+        s(&mut out, &unmatched.range);
+        out.push(b'}');
     }
 
     out.extend_from_slice(b"],\"unaudited\":[");
@@ -91,14 +108,26 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
             comma(&mut out, j);
             s(&mut out, package);
         }
-        out.extend_from_slice(b"]}");
+        out.extend_from_slice(b"],\"reason\":");
+        if group.reason.is_empty() {
+            out.extend_from_slice(b"null");
+        } else {
+            s(&mut out, &group.reason);
+        }
+        out.push(b'}');
     }
 
     out.extend_from_slice(b"],\"vulnerableAfterInstall\":[");
     if let Some(outcome) = outcome {
-        for (i, (name, version)) in outcome.still_vulnerable.iter().enumerate() {
+        for (i, item) in outcome.still_vulnerable.iter().enumerate() {
             comma(&mut out, i);
-            name_pair(&mut out, b"version", name, version);
+            name_advisories(
+                &mut out,
+                b"version",
+                &item.name,
+                &item.version,
+                &item.advisories,
+            );
         }
     }
     out.extend_from_slice(b"]}\n");
@@ -110,9 +139,11 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
 fn write_edit(out: &mut Vec<u8>, edit: &PackageJsonEdit) {
     out.extend_from_slice(b"{\"file\":");
     s(out, &edit.file);
-    if let Some(catalog) = &edit.catalog {
-        out.extend_from_slice(b",\"catalog\":");
-        s(out, catalog);
+    out.extend_from_slice(b",\"catalog\":");
+    match edit.catalog.as_deref() {
+        None => out.extend_from_slice(b"null"),
+        Some(b"") => out.extend_from_slice(b"\"default\""),
+        Some(catalog) => s(out, catalog),
     }
     out.extend_from_slice(b",\"key\":");
     s(out, &edit.key);
@@ -123,14 +154,25 @@ fn write_edit(out: &mut Vec<u8>, edit: &PackageJsonEdit) {
     out.push(b'}');
 }
 
-fn name_pair(out: &mut Vec<u8>, second_key: &[u8], name: &[u8], second: &[u8]) {
+fn name_advisories(
+    out: &mut Vec<u8>,
+    second_key: &[u8],
+    name: &[u8],
+    second: &[u8],
+    advisories: &[Box<[u8]>],
+) {
     out.extend_from_slice(b"{\"name\":");
     s(out, name);
     out.extend_from_slice(b",\"");
     out.extend_from_slice(second_key);
     out.extend_from_slice(b"\":");
     s(out, second);
-    out.push(b'}');
+    out.extend_from_slice(b",\"advisories\":[");
+    for (j, token) in advisories.iter().enumerate() {
+        comma(out, j);
+        s(out, token);
+    }
+    out.extend_from_slice(b"]}");
 }
 
 #[inline]

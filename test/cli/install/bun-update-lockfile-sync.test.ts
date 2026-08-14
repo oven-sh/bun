@@ -1,7 +1,7 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFile, exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
 import { join } from "path";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
@@ -474,11 +474,11 @@ describe.concurrent("named update is scoped to the invoking workspace", () => {
     await reinstall(dir, member("pkg1", { dependencies: { "no-deps": "~1.0.0" } }), PKG1);
     const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir, PKG1), lockText(dir)]);
     const { stderr, exitCode } = await tryRun(dir, "", "update", "no-deps");
-    expect(stderr).toContain(
-      'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
-    );
-    expect(stderr).toContain("bun update -r no-deps");
-    expect(stderr).not.toContain("is not in the lockfile");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "error: "no-deps" is not a dependency of this workspace
+          bun update -r no-deps
+          bun update --filter pkg1 no-deps"
+    `);
     expect(await pkgText(dir, PKG1)).toBe(pkgBefore);
     expect(await lockText(dir)).toBe(lockBefore);
     expect(exitCode).toBe(1);
@@ -551,7 +551,10 @@ describe.concurrent("npm: aliases", () => {
     const dir = await setup({ "package.json": root({ dependencies: { "a-dep": "1.0.1" } }) });
     const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
     const { stderr, exitCode } = await tryRun(dir, "", "update", "new-alias@npm:@types/no-deps@^1.0.0");
-    expect(stderr).toContain('error: "new-alias" is not in the lockfile, so there is nothing to update');
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "error: "new-alias" is not in bun.lock
+          bun add new-alias"
+    `);
     expect(exitCode).toBe(1);
     expect(await pkgText(dir)).toBe(pkgBefore);
     expect(await lockText(dir)).toBe(lockBefore);

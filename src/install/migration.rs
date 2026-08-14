@@ -7,7 +7,7 @@ use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::install::{self as Install, PackageManager};
+use crate::install::{self as Install, PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
 };
@@ -65,14 +65,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
-            if log.warnings > 0 && !log.has_errors() {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                log.reset();
-            }
-            Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            bun_core::pretty_error!(" ");
-            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>package-lock.json<r>");
-            Output::flush();
+            report_migrated(manager, log, &timer, "package-lock.json");
         }
 
         return migrate_result;
@@ -96,14 +89,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
-            if log.warnings > 0 && !log.has_errors() {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                log.reset();
-            }
-            Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            bun_core::pretty_error!(" ");
-            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>yarn.lock<r>");
-            Output::flush();
+            report_migrated(manager, log, &timer, "yarn.lock");
         }
 
         return migrate_result;
@@ -116,42 +102,48 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
         let migrate_result = match pnpm::migrate_pnpm_lockfile(this, manager, log, &data, dir) {
             Ok(r) => r,
+            Err(MigratePnpmLockfileError::PnpmLockfileTooOld) => {
+                report_unsupported_lockfile_version(
+                    manager,
+                    "pnpm-lock.yaml",
+                    &bstr::BStr::new(pnpm_lockfile_version(&data)),
+                    "pnpm install --lockfile-only",
+                );
+                log.reset();
+                return LoadResult::Err(LoadResultErr {
+                    step: LoadStep::Migrating,
+                    value: Error::UnexpectedLockfileVersion,
+                    lockfile_path: zstr!("pnpm-lock.yaml"),
+                    format: LockfileFormat::Text,
+                });
+            }
             Err(e) => {
-                match e {
-                    MigratePnpmLockfileError::PnpmLockfileTooOld => {
-                        bun_core::pretty_errorln!(
-                            "<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (\\< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.",
-                        );
+                if !manager.options.log_level.is_silent() {
+                    if log.has_errors() {
+                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     }
-                    MigratePnpmLockfileError::NonExistentWorkspaceDependency => {
-                        bun_core::warn!(
-                            "Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
-                        );
-                    }
-                    MigratePnpmLockfileError::RelativeLinkDependency => {
-                        bun_core::warn!(
-                            "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
-                        );
-                    }
-                    MigratePnpmLockfileError::WorkspaceNameMissing => {
-                        if log.has_errors() {
-                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    match e {
+                        MigratePnpmLockfileError::NonExistentWorkspaceDependency => {
+                            bun_core::warn!(
+                                "Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
+                            );
                         }
-                        bun_core::warn!(
-                            "pnpm-lock.yaml migration failed due to missing workspace name.",
-                        );
-                    }
-                    MigratePnpmLockfileError::YamlParseError => {
-                        if log.has_errors() {
-                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        MigratePnpmLockfileError::RelativeLinkDependency => {
+                            bun_core::warn!(
+                                "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
+                            );
                         }
-                        bun_core::warn!("Failed to parse pnpm-lock.yaml.");
-                    }
-                    _ => {
-                        if log.has_errors() {
-                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        MigratePnpmLockfileError::WorkspaceNameMissing => {
+                            bun_core::warn!(
+                                "pnpm-lock.yaml migration failed due to missing workspace name.",
+                            );
                         }
+                        MigratePnpmLockfileError::YamlParseError => {
+                            bun_core::warn!("Failed to parse pnpm-lock.yaml.");
+                        }
+                        _ => {}
                     }
+                    Output::flush();
                 }
                 log.reset();
                 return LoadResult::Err(LoadResultErr {
@@ -164,20 +156,92 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
-            if log.warnings > 0 && !log.has_errors() {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                log.reset();
-            }
-            Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            bun_core::pretty_error!(" ");
-            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
-            Output::flush();
+            report_migrated(manager, log, &timer, "pnpm-lock.yaml");
         }
 
         return migrate_result;
     }
 
     LoadResult::NotFound
+}
+
+/// True when the migrator already printed the version warn/error + upgrade note, so lockfile-load reporters must stay quiet.
+pub fn reported_unsupported_lockfile_version(err: &LoadResultErr) -> bool {
+    err.step == LoadStep::Migrating && matches!(err.value, Error::UnexpectedLockfileVersion)
+}
+
+fn falls_back_to_package_json(manager: &PackageManager) -> bool {
+    matches!(
+        manager.subcommand,
+        Subcommand::Install
+            | Subcommand::Update
+            | Subcommand::Add
+            | Subcommand::Remove
+            | Subcommand::Link
+            | Subcommand::Unlink
+    ) && !manager.options.enable.fail_early()
+}
+
+fn report_unsupported_lockfile_version(
+    manager: &PackageManager,
+    lockfile_name: &str,
+    version: &dyn core::fmt::Display,
+    upgrade_command: &str,
+) {
+    if manager.options.log_level.is_silent() {
+        return;
+    }
+    Output::flush();
+    if falls_back_to_package_json(manager) {
+        bun_core::warn!(
+            "{} is lockfileVersion {}, which bun cannot migrate; resolving from package.json instead",
+            lockfile_name,
+            version,
+        );
+    } else {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> {} is lockfileVersion {}, which bun cannot migrate",
+            lockfile_name,
+            version,
+        );
+    }
+    bun_core::note!("{}", upgrade_command);
+    Output::flush();
+}
+
+fn pnpm_lockfile_version(data: &[u8]) -> &[u8] {
+    for line in strings::split(data, b"\n") {
+        let Some(rest) = strings::without_prefix_if_possible_comptime(line, b"lockfileVersion:")
+        else {
+            continue;
+        };
+        let mut version = rest.trim_ascii();
+        for quote in *b"'\"" {
+            version = version.strip_prefix(&[quote]).unwrap_or(version);
+            version = version.strip_suffix(&[quote]).unwrap_or(version);
+        }
+        return version;
+    }
+    b"< 7"
+}
+
+fn report_migrated(
+    manager: &PackageManager,
+    log: &mut bun_ast::Log,
+    timer: &std::time::Instant,
+    lockfile_name: &str,
+) {
+    if manager.options.log_level.is_silent() {
+        log.reset();
+        return;
+    }
+    if log.warnings > 0 && !log.has_errors() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        log.reset();
+    }
+    Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
+    bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
+    Output::flush();
 }
 
 fn migrate_npm_lockfile<'a>(
@@ -205,17 +269,13 @@ fn migrate_npm_lockfile<'a>(
     match root_obj.get(b"lockfileVersion") {
         Some(E::JsonValue::Number(n)) if (2.0..=4.0).contains(&n.value()) => {}
         Some(E::JsonValue::Number(n)) => {
-            if n.value() == 1.0 {
-                bun_core::warn!(
-                    "package-lock.json uses lockfileVersion 1, which bun cannot migrate. Run 'npm install --package-lock-only --lockfile-version=3' to upgrade it."
-                );
-            } else {
-                bun_core::warn!(
-                    "package-lock.json uses lockfileVersion {}, which this version of bun cannot migrate.",
-                    n.value() as i64
-                );
-            }
-            return Err(crate::Error::NPMLockfileVersionMismatch);
+            report_unsupported_lockfile_version(
+                manager,
+                "package-lock.json",
+                &(n.value() as i64),
+                "npm install --package-lock-only --lockfile-version=3",
+            );
+            return Err(crate::Error::UnexpectedLockfileVersion);
         }
         Some(_) | None => return Err(crate::Error::InvalidNPMLockfile),
     }

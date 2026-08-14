@@ -10,7 +10,7 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -266,50 +266,20 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
 
 /// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
 fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
-    let mut scratch = Lockfile::default();
-    let mut log = bun_ast::Log::init();
-    let mut resolver: () = ();
-
-    // Always parsed: it fills `scratch.workspace_paths`, which `workspace:` rows in every file resolve through.
-    let (root_source, root_json) = {
-        let entry = fetch_entry(manager, &root_target());
-        (entry.source.clone(), entry.root)
-    };
-    let mut root_pkg = Package::default();
-    root_pkg.parse_with_json::<()>(
-        &mut scratch,
-        manager,
-        &mut log,
-        &root_source,
-        root_json,
-        &mut resolver,
-        Features::main(),
-    )?;
-
-    let mut root_pkg = Some(root_pkg);
+    let mut scratch = super::workspace_manifests::ScratchManifests::new();
+    scratch.parse_root(manager)?;
+    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
     for (i, e) in edited.iter().enumerate() {
         if e.target.name_hash.is_none() {
             parsed.extend(root_pkg.take().map(|pkg| (i, pkg)));
             continue;
         }
-        let (source, json) = {
-            let entry = fetch_entry(manager, &e.target);
-            (bun_ptr::ParentRef::new(&entry.source), entry.root)
-        };
-        let mut pkg = Package::default();
-        // Unlike the root's workspaces walk, a `Features::WORKSPACE` parse never grows the cache, so the entry stays put.
-        pkg.parse_with_json::<()>(
-            &mut scratch,
-            manager,
-            &mut log,
-            source.get(),
-            json,
-            &mut resolver,
-            Features::WORKSPACE,
-        )?;
-        parsed.push((i, pkg));
+        parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
+    let super::workspace_manifests::ScratchManifests {
+        lockfile: scratch, ..
+    } = scratch;
 
     let target_ids = target_package_ids(&manager.lockfile, edited);
     let sbuf = scratch.buffers.string_bytes.as_slice();

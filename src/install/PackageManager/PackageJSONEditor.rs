@@ -12,7 +12,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::Do;
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -78,9 +78,35 @@ fn with_alias_of<'a>(
     }
 }
 
-fn skip_ascii_digits(s: &[u8]) -> Option<&[u8]> {
+fn split_ascii_digits(s: &[u8]) -> Option<(&[u8], &[u8])> {
     let n = s.iter().take_while(|b| b.is_ascii_digit()).count();
-    (n > 0).then(|| &s[n..])
+    (n > 0).then(|| s.split_at(n))
+}
+
+fn skip_ascii_digits(s: &[u8]) -> Option<&[u8]> {
+    split_ascii_digits(s).map(|(_, rest)| rest)
+}
+
+fn is_all_zeros(component: &[u8]) -> bool {
+    strings::index_of_any(component, b"123456789").is_none()
+}
+
+/// `~1`, `^0` and `^0.0` take their ceiling from the components they omit, so refilling them to x.y.z would narrow the range.
+fn short_range_keeps_ceiling(op: u8, tail: &[u8]) -> bool {
+    let Some((major, rest)) = split_ascii_digits(tail) else {
+        return false;
+    };
+    let Some((minor, rest)) = rest.strip_prefix(b".").and_then(split_ascii_digits) else {
+        return op == b'^' && !is_all_zeros(major);
+    };
+    if rest
+        .strip_prefix(b".")
+        .and_then(skip_ascii_digits)
+        .is_some()
+    {
+        return true;
+    }
+    op == b'~' || !(is_all_zeros(major) && is_all_zeros(minor))
 }
 
 /// A plain `bun update` only rewrites `^x…`, `~x…` and exact versions; every other range is kept as written.
@@ -93,10 +119,10 @@ fn keeps_declared_range(version_literal: &[u8]) -> bool {
     {
         rest = tail;
     }
-    if let [b'^' | b'~', tail @ ..] = rest {
+    if let [op @ (b'^' | b'~'), tail @ ..] = rest {
         let tail = strings::trim(tail, &strings::WHITESPACE_CHARS);
-        return !tail.first().is_some_and(u8::is_ascii_digit)
-            || strings::index_of_any(tail, b" \t|<>").is_some();
+        return strings::index_of_any(tail, b" \t|<>").is_some()
+            || !short_range_keeps_ceiling(*op, tail);
     }
     let Some(rest) = skip_ascii_digits(rest)
         .and_then(|r| r.strip_prefix(b"."))
@@ -953,7 +979,7 @@ pub(crate) fn edit(
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
-    let only_add_missing = manager.options.enable.contains(Enable::ONLY_MISSING);
+    let only_add_missing = manager.options.enable.only_missing();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty

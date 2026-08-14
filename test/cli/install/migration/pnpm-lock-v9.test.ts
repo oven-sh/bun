@@ -192,7 +192,7 @@ describe("pnpm-lock.yaml v9", () => {
     expect(stderr).toContain(
       "pnpm-lock.yaml has no package entry 'no-deps@1.0.0' for dependency 'no-deps' of importer '.'",
     );
-    expect(stderr).toContain("Error loading lockfile");
+    expect(stderr).toContain("error: failed to migrate lockfile: InvalidLockfile");
     expect(exitCode).toBe(1);
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
   });
@@ -229,7 +229,7 @@ describe("pnpm-lock.yaml v9", () => {
     expect(stderr).toContain(
       "pnpm-lock.yaml lists importer 'packages/gone' but 'packages/gone/package.json' does not exist",
     );
-    expect(stderr).toContain("Error loading lockfile");
+    expect(stderr).toContain("error: failed to migrate lockfile: InvalidLockfile");
     expect(exitCode).toBe(1);
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
   });
@@ -247,7 +247,7 @@ describe("pnpm-lock.yaml v9", () => {
     const { stderr, exitCode } = await migrate(packageDir);
 
     expect(stderr).toContain(
-      "pnpm-lock.yaml packages from pnpm registry 'work' are not in namedRegistries of pnpm-workspace.yaml, resolving them from the configured registry instead",
+      'warn: skipped pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -272,7 +272,7 @@ describe("pnpm-lock.yaml v9", () => {
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        "pnpm-lock.yaml packages from pnpm registry 'npmjs' will be fetched from https://registry.npmjs.org/; add that registry to bunfig.toml or .npmrc if it needs authentication",
+        'warn: fetching pnpm registry "npmjs" packages from https://registry.npmjs.org/; add it to bunfig.toml or .npmrc if it needs authentication',
       );
       expect(stderr).not.toContain("not in namedRegistries");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -360,9 +360,9 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        `pnpm-lock.yaml packages from pnpm registry 'work' will be fetched from ${named}; add that registry to bunfig.toml or .npmrc if it needs authentication`,
+        `warn: fetching pnpm registry "work" packages from ${named}; add it to bunfig.toml or .npmrc if it needs authentication`,
       );
-      expect(stderr.split("pnpm registry 'work'").length - 1).toBe(1);
+      expect(stderr.split('pnpm registry "work"').length - 1).toBe(1);
       expect(stderr).not.toContain("not in namedRegistries");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -429,7 +429,10 @@ snapshots:
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr.split("pnpm registry 'work'").length - 1).toBe(1);
+      expect(stderr).toContain(
+        'warn: skipped pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
+      );
+      expect(stderr.split('pnpm registry "work"').length - 1).toBe(1);
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -451,7 +454,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        "pnpm-lock.yaml packages from pnpm registry 'gh' will be fetched from https://npm.pkg.github.com/; add that registry to bunfig.toml or .npmrc if it needs authentication",
+        'warn: fetching pnpm registry "gh" packages from https://npm.pkg.github.com/; add it to bunfig.toml or .npmrc if it needs authentication',
       );
       expect(stderr).not.toContain("not in namedRegistries");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -604,7 +607,7 @@ importers:
 
     const { stderr, exitCode } = await migrate(String(dir));
 
-    expect(stderr).toContain("lockfileVersion 10 is newer than the supported 9.0");
+    expect(stderr).toContain("warn: pnpm-lock.yaml is lockfileVersion 10; migrating it as 9.0");
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
   });
@@ -652,7 +655,9 @@ importers:
 
     const { stderr, exitCode } = await migrate(String(dir));
 
-    expect(stderr).toContain("pnpm-lock.yaml runtime dependency 'node@runtime:22.0.0' is not migrated");
+    expect(stderr).toContain(
+      'warn: skipped "node@runtime:22.0.0" from pnpm-lock.yaml: runtime dependencies are not supported',
+    );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
 
@@ -689,7 +694,9 @@ importers:
 
       const { stderr, exitCode } = await migrate(String(dir));
 
-      expect(stderr).toContain("pnpm-lock.yaml patch for 'is-positive@3.1.0' is not in patchedDependencies");
+      expect(stderr).toContain(
+        'warn: skipped patch "is-positive@3.1.0" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml',
+      );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -1762,7 +1769,7 @@ ${snapshots}`;
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr).not.toContain("does not record peer dependency");
+      expect(stderr).not.toContain("skipped peer");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -1968,7 +1975,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        "pnpm-lock.yaml does not record peer dependency 'no-deps' of importer 'packages/project-1'; the next bun install will resolve it",
+        'warn: skipped peer "no-deps" of workspace "packages/project-1": not recorded in pnpm-lock.yaml (bun install will resolve it)',
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -2043,7 +2050,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        "pnpm-lock.yaml does not record peer dependency 'has-peer' of importer '.'; the next bun install will resolve it",
+        'warn: skipped peer "has-peer" of the root package: not recorded in pnpm-lock.yaml (bun install will resolve it)',
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -2209,7 +2216,7 @@ snapshots:
     const { stderr, exitCode } = await migrate(packageDir);
 
     expect(stderr).toContain(
-      "pnpm-lock.yaml omits linked dependency 'linked' of importer '.' (excludeLinksFromLockfile); it is not migrated",
+      'warn: skipped "linked" from the root package: excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -2241,9 +2248,9 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).toContain(
-        "pnpm-lock.yaml omits linked dependency 'x' of importer 'packages/a' (excludeLinksFromLockfile); it is not migrated",
+        'warn: skipped "x" from workspace "packages/a": excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
       );
-      expect(stderr).not.toContain("of importer '.'");
+      expect(stderr).not.toContain("from the root package");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -2433,10 +2440,18 @@ importers:
       return bunLock.slice(start, end + "\n  },".length);
     }
 
-    // pnpm/pnpm#5928 (`-` removes the dependency) warns; pnpm/pnpm#6774 (`name@range` keys) now migrates as ranged rules
-    test.concurrent("removal values warn; name@range keys migrate as ranged rules", async () => {
+    // pnpm/pnpm#5928 (`-` removes the dependency) is warned once, with a location, when bun install reads the moved package.json overrides; pnpm/pnpm#6774 (`name@range` keys) migrates as ranged rules
+    test.concurrent("removal values are dropped; name@range keys migrate as ranged rules", async () => {
+      const overrides = {
+        "left-pad": "-",
+        "semver@<7.5.2": "7.5.2",
+        "foo>bar": "2.0.0",
+        "@scope/pkg@^1": "1.9.0",
+        "@scope/plain": "3.0.0",
+        "plain": "1.0.0",
+      };
       using dir = tempDir("pnpm-v9-overrides-unsupported", {
-        "package.json": JSON.stringify({ name: "overrides-unsupported" }),
+        "package.json": JSON.stringify({ name: "overrides-unsupported", pnpm: { overrides } }),
         "pnpm-lock.yaml": overridesLockfile(`  left-pad: '-'
   semver@<7.5.2: 7.5.2
   foo>bar: 2.0.0
@@ -2447,14 +2462,15 @@ importers:
 
       const { stderr, exitCode } = await migrate(String(dir));
 
-      expect(stderr).toContain("pnpm-lock.yaml override 'left-pad' removes the dependency ('-')");
-      expect(stderr).not.toContain("override 'semver@<7.5.2'");
-      expect(stderr).not.toContain("override '@scope/pkg@^1'");
-      expect(stderr).not.toContain("override 'foo>bar'");
-      expect(stderr).not.toContain("override '@scope/plain'");
-      expect(stderr).not.toContain("override 'plain'");
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("moved pnpm.overrides to overrides in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "overrides-unsupported",
+        overrides,
+      });
 
       const bunLock = await bunLockOf(String(dir));
       expect(bunLock).toContain(`"lockfileVersion": 3`);
@@ -2474,6 +2490,13 @@ importers:
             },
           },"
       `);
+
+      const install = await run(String(dir), "install");
+
+      expect(install.stderr).toContain(`warn: Removing "left-pad" with "-" is not supported`);
+      expect(install.stderr).toMatch(/package\.json:\d+:\d+/);
+      expect(install.stderr.split("warn:").length - 1).toBe(1);
+      expect(install.exitCode).toBe(0);
     });
 
     test.concurrent("parent selectors become nested rules", async () => {
@@ -2484,13 +2507,13 @@ importers:
   '@s/a>@t/b': 3.0.0`),
       });
       using tooDeep = tempDir("pnpm-v9-overrides-too-deep", {
-        "package.json": JSON.stringify({ name: "overrides-too-deep" }),
+        "package.json": JSON.stringify({ name: "overrides-too-deep", pnpm: { overrides: { "a>b>c": "1.0.0" } } }),
         "pnpm-lock.yaml": overridesLockfile("  a>b>c: 1.0.0"),
       });
 
       const nested = await migrate(String(dir));
 
-      expect(nested.stderr).not.toContain("does not support");
+      expect(nested.stderr).not.toContain("warn:");
       expect(nested.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(nested.exitCode).toBe(0);
 
@@ -2512,12 +2535,18 @@ importers:
 
       const deep = await migrate(String(tooDeep));
 
-      expect(deep.stderr).toContain(
-        "pnpm-lock.yaml override 'a>b>c' uses a selector bun does not support; it will not apply",
-      );
+      expect(deep.stderr).not.toContain("warn:");
+      expect(deep.stderr).toContain("moved pnpm.overrides to overrides in package.json");
       expect(deep.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(deep.exitCode).toBe(0);
       expect(await bunLockOf(String(tooDeep))).not.toContain("a>b");
+
+      const install = await run(String(tooDeep), "install");
+
+      expect(install.stderr).toContain(`warn: Bun currently only supports one level of nested "overrides"`);
+      expect(install.stderr).toMatch(/package\.json:\d+:\d+/);
+      expect(install.stderr.split("warn:").length - 1).toBe(1);
+      expect(install.exitCode).toBe(0);
     });
 
     test.concurrent("an unparsable value names the override", async () => {

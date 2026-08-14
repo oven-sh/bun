@@ -2063,9 +2063,10 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
-    // Like update_transitive/dedupe, a patched package is pinned: the row stays on it instead of moving.
-    if should_update && !this.update_requests.is_empty() && !behavior.is_peer() {
+    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
+    if should_update && !behavior.is_peer() {
         if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+            this.kept_patched.push(id);
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(id as usize),
@@ -2581,14 +2582,17 @@ fn get_or_put_resolved_package(
             let find_result = if version_was_replaced {
                 find_result
             } else {
-                keep_locked_if_ahead(
-                    this,
-                    dependency,
-                    dependency_id,
-                    version,
-                    manifest,
-                    find_result,
-                )
+                let locked = if latest_for_target {
+                    locked_version_in_lockfile(this, name_hash, version)
+                } else {
+                    locked_version_of_invoking_workspace_row(
+                        this,
+                        dependency,
+                        dependency_id,
+                        version,
+                    )
+                };
+                keep_locked_if_ahead(manifest, find_result, &locked)
             };
 
             // reshaped for borrowck — `manifest`/`find_result`
@@ -2836,15 +2840,32 @@ fn get_or_put_resolved_package(
     }
 }
 
-/// Only the invoking workspace's own row that --latest rewrote to a dist-tag is held back when its locked version (e.g. a prerelease) is ahead of the tag.
+/// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
 fn keep_locked_if_ahead<'m>(
-    this: &PackageManager,
+    manifest: &'m Npm::PackageManifest,
+    found: Npm::FindResult<'m>,
+    locked: &Option<(Semver::Version, &[u8])>,
+) -> Npm::FindResult<'m> {
+    let &Some((locked, locked_buf)) = locked else {
+        return found;
+    };
+    if found
+        .version
+        .order(locked, &manifest.string_buf, locked_buf)
+        != core::cmp::Ordering::Less
+    {
+        return found;
+    }
+    manifest.find_by_version(locked).unwrap_or(found)
+}
+
+/// Bare `bun update --latest` in a workspace: the row was rewritten to a dist-tag before install, so its locked version lives in `updating_packages`; rows that were dist-tag literals in package.json follow the tag.
+fn locked_version_of_invoking_workspace_row<'a>(
+    this: &'a PackageManager,
     dependency: &Dependency,
     dependency_id: DependencyID,
     version: &dependency::Version,
-    manifest: &'m Npm::PackageManifest,
-    found: Npm::FindResult<'m>,
-) -> Npm::FindResult<'m> {
+) -> Option<(Semver::Version, &'a [u8])> {
     if version.tag != dependency::version::Tag::DistTag
         || !this.to_update
         || !this
@@ -2852,37 +2873,49 @@ fn keep_locked_if_ahead<'m>(
             .do_
             .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
     {
-        return found;
+        return None;
     }
-    let Some(own_rows) = this.root_package_id.id else {
-        return found;
-    };
+    let own_rows = this.root_package_id.id?;
     if !this.lockfile.packages.items_dependencies()[own_rows as usize].contains(dependency_id) {
-        return found;
+        return None;
     }
-    let Some(entry) = this
+    let entry = this
         .updating_packages
-        .get(this.lockfile.str(&dependency.name))
-    else {
-        return found;
-    };
+        .get(this.lockfile.str(&dependency.name))?;
     if dependency::version::Tag::infer(&entry.original_version_literal)
         == dependency::version::Tag::DistTag
     {
-        return found;
+        return None;
     }
-    let Some(locked) = entry.original_version else {
-        return found;
+    Some((entry.original_version?, &entry.original_version_string_buf))
+}
+
+/// `bun update -r/--filter --latest`: the row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.
+fn locked_version_in_lockfile<'a>(
+    this: &'a PackageManager,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<(Semver::Version, &'a [u8])> {
+    if version.tag != dependency::version::Tag::Npm {
+        return None;
+    }
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
+        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+        PackageIndexEntry::Ids(ids) => ids.as_slice(),
     };
-    if found.version.order(
-        locked,
-        &manifest.string_buf,
-        &entry.original_version_string_buf,
-    ) != core::cmp::Ordering::Less
-    {
-        return found;
-    }
-    manifest.find_by_version(locked).unwrap_or(found)
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let range = &version.npm().version;
+    candidates
+        .iter()
+        .copied()
+        .filter(|&id| id < lockfile.loaded_package_count)
+        .map(|id| &pkg_res[id as usize])
+        .filter(|res| res.tag == ResolutionTag::Npm)
+        .map(|res| res.npm().version)
+        .find(|&locked| range.satisfies(locked, buf, buf))
+        .map(|locked| (locked, buf))
 }
 
 fn resolution_satisfies_dependency(

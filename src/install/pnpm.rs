@@ -572,14 +572,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         return Err(MigratePnpmLockfileError::PnpmLockfileTooOld);
     }
 
-    if lockfile_version_num >= 10.0 {
-        log.add_warning_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "pnpm-lock.yaml lockfileVersion {} is newer than the supported 9.0, migrating as 9.0",
-                lockfile_version_num
-            ),
+    let silent = manager.options.log_level.is_silent();
+
+    if lockfile_version_num >= 10.0 && !silent {
+        bun_core::warn!(
+            "pnpm-lock.yaml is lockfileVersion {}; migrating it as 9.0",
+            lockfile_version_num
         );
     }
 
@@ -628,31 +626,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     return Err(invalid_pnpm_lockfile());
                 };
 
+                // Unsupported rules are warned once, with a location, when OverrideMap parses the package.json the migration writes.
                 if version_str == b"-" {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "pnpm-lock.yaml override '{}' removes the dependency ('-'), which bun does not support",
-                            bstr::BStr::new(name_str)
-                        ),
-                    );
                     continue;
                 }
 
-                let sel = match crate::lockfile_real::override_selector::parse_selector(name_str) {
-                    Ok(sel) => sel,
-                    Err(_) => {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "pnpm-lock.yaml override '{}' uses a selector bun does not support; it will not apply",
-                                bstr::BStr::new(name_str)
-                            ),
-                        );
-                        continue;
-                    }
+                let Ok(sel) = crate::lockfile_real::override_selector::parse_selector(name_str)
+                else {
+                    continue;
                 };
 
                 let ok = crate::lockfile_real::OverrideMap::put_lockfile_rule(
@@ -708,14 +689,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         config.get(bare).map(|path| (path, bare))
                     });
                     let Some((path, config_key)) = found else {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "pnpm-lock.yaml patch for '{}' is not in patchedDependencies of package.json or pnpm-workspace.yaml, skipping",
+                        if !silent {
+                            bun_core::warn!(
+                                "skipped patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
                                 bstr::BStr::new(key_str)
-                            ),
-                        );
+                            );
+                        }
                         continue;
                     };
                     (hash_str, &**path, config_key)
@@ -1330,15 +1309,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                     )) =>
                                 {
                                     if !warned_registries.get_or_put(registry_name)?.found_existing
+                                        && !silent
                                     {
-                                        log.add_warning_fmt(
-                                            None,
-                                            bun_ast::Loc::EMPTY,
-                                            format_args!(
-                                                "pnpm-lock.yaml packages from pnpm registry '{}' will be fetched from {}; add that registry to bunfig.toml or .npmrc if it needs authentication",
-                                                bstr::BStr::new(registry_name),
-                                                bstr::BStr::new(url)
-                                            ),
+                                        bun_core::warn!(
+                                            "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
+                                            bstr::BStr::new(registry_name),
+                                            bstr::BStr::new(url)
                                         );
                                     }
                                     &**url
@@ -1346,14 +1322,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 Some(_) => scope_registry,
                                 None => {
                                     if !warned_registries.get_or_put(registry_name)?.found_existing
+                                        && !silent
                                     {
-                                        log.add_warning_fmt(
-                                            None,
-                                            bun_ast::Loc::EMPTY,
-                                            format_args!(
-                                                "pnpm-lock.yaml packages from pnpm registry '{}' are not in namedRegistries of pnpm-workspace.yaml, resolving them from the configured registry instead",
-                                                bstr::BStr::new(registry_name)
-                                            ),
+                                        bun_core::warn!(
+                                            "skipped pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
+                                            bstr::BStr::new(registry_name)
                                         );
                                     }
                                     scope_registry
@@ -2119,6 +2092,18 @@ fn collect_manifest_peers(
     Ok(peers)
 }
 
+struct ImporterName<'a>(&'a [u8]);
+
+impl std::fmt::Display for ImporterName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == b"." {
+            f.write_str("the root package")
+        } else {
+            write!(f, "workspace \"{}\"", bstr::BStr::new(self.0))
+        }
+    }
+}
+
 fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
@@ -2132,6 +2117,7 @@ fn parse_append_importer_dependencies(
     importer_versions: &mut StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     let manifest_peers = collect_manifest_peers(manifest)?;
+    let silent = manager.options.log_level.is_silent();
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -2178,15 +2164,13 @@ fn parse_append_importer_dependencies(
                 };
 
                 if strings::has_prefix_comptime(version_str, b"runtime:") {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "pnpm-lock.yaml runtime dependency '{}@{}' is not migrated",
+                    if !silent {
+                        bun_core::warn!(
+                            "skipped \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
                             bstr::BStr::new(name_str),
                             bstr::BStr::new(version_str)
-                        ),
-                    );
+                        );
+                    }
                     continue;
                 }
 
@@ -2217,15 +2201,11 @@ fn parse_append_importer_dependencies(
 
     for (peer_name, (range, optional)) in manifest_peers.iter() {
         let peer_name: &[u8] = peer_name;
-        if !*optional && !importer_versions.contains(peer_name) {
-            log.add_warning_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "pnpm-lock.yaml does not record peer dependency '{}' of importer '{}'; the next bun install will resolve it",
-                    bstr::BStr::new(peer_name),
-                    bstr::BStr::new(importer_path)
-                ),
+        if !*optional && !importer_versions.contains(peer_name) && !silent {
+            bun_core::warn!(
+                "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
+                bstr::BStr::new(peer_name),
+                ImporterName(importer_path)
             );
         }
         let mut behavior = dependency::Behavior::PEER;
@@ -2233,7 +2213,7 @@ fn parse_append_importer_dependencies(
         append_manifest_dependency(lockfile, log, peer_name, *range, behavior)?;
     }
 
-    if exclude_links_from_lockfile {
+    if exclude_links_from_lockfile && !silent {
         for (group_name, _) in IMPORTER_DEPENDENCY_GROUPS {
             let Some(group) = manifest.get_object(group_name) else {
                 continue;
@@ -2249,14 +2229,10 @@ fn parse_append_importer_dependencies(
                 {
                     continue;
                 }
-                log.add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "pnpm-lock.yaml omits linked dependency '{}' of importer '{}' (excludeLinksFromLockfile); it is not migrated",
-                        bstr::BStr::new(name_str),
-                        bstr::BStr::new(importer_path)
-                    ),
+                bun_core::warn!(
+                    "skipped \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
+                    bstr::BStr::new(name_str),
+                    ImporterName(importer_path)
                 );
             }
         }
@@ -2369,6 +2345,7 @@ fn update_package_json_after_migration(
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
     let bump = bun_alloc::Arena::new();
+    let silent = manager.options.log_level.is_silent();
 
     let root_pkg_json = match manager
         .workspace_package_json_cache
@@ -2394,13 +2371,14 @@ fn update_package_json_after_migration(
     let mut needs_update = false;
     let mut moved_overrides = false;
     let mut moved_patched_deps = false;
+    let mut moved: Vec<&'static str> = Vec::new();
 
     if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
         if pnpm_prop.expr.is_object() {
             let pnpm_obj = e_object_mut(&mut pnpm_prop.expr);
 
             if let Some(overrides_field) = pnpm_obj.get(b"overrides") {
-                if overrides_field.is_object() {
+                if is_non_empty_object(&overrides_field) {
                     if let Some(mut existing_prop) = json.as_property(b"overrides") {
                         if existing_prop.expr.is_object() {
                             let existing_overrides = e_object_mut(&mut existing_prop.expr);
@@ -2422,11 +2400,12 @@ fn update_package_json_after_migration(
                     }
                     moved_overrides = true;
                     needs_update = true;
+                    moved.push("pnpm.overrides to overrides");
                 }
             }
 
             if let Some(mut patched_field) = pnpm_obj.get(b"patchedDependencies") {
-                if patched_field.is_object() {
+                if is_non_empty_object(&patched_field) {
                     rewrite_bare_patch_keys(&mut patched_field, patches)?;
                     if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
                         if existing_prop.expr.is_object() {
@@ -2453,6 +2432,7 @@ fn update_package_json_after_migration(
                     }
                     moved_patched_deps = true;
                     needs_update = true;
+                    moved.push("pnpm.patchedDependencies to patchedDependencies");
                 }
             }
 
@@ -2574,21 +2554,12 @@ fn update_package_json_after_migration(
                 }
             }
 
-            if let Some(catalog_expr) = ws_root.get_object(b"catalog") {
-                catalog_obj = Some(catalog_expr);
-            }
-
-            if let Some(catalogs_expr) = ws_root.get_object(b"catalogs") {
-                catalogs_obj = Some(catalogs_expr);
-            }
-
-            if let Some(overrides_expr) = ws_root.get_object(b"overrides") {
-                workspace_overrides_obj = Some(overrides_expr);
-            }
-
-            if let Some(patched_deps_expr) = ws_root.get_object(b"patchedDependencies") {
-                workspace_patched_deps_obj = Some(patched_deps_expr);
-            }
+            catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
+            catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
+            workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
+            workspace_patched_deps_obj = ws_root
+                .get_object(b"patchedDependencies")
+                .filter(is_non_empty_object);
         }
         Err(_) => {}
     }
@@ -2596,6 +2567,7 @@ fn update_package_json_after_migration(
     let has_workspace_data =
         workspace_paths.is_some() || catalog_obj.is_some() || catalogs_obj.is_some();
 
+    let mut wrote_workspaces = false;
     if has_workspace_data {
         let use_array_format =
             workspace_paths.is_some() && catalog_obj.is_none() && catalogs_obj.is_none();
@@ -2608,76 +2580,34 @@ fn update_package_json_after_migration(
 
         if use_array_format {
             let paths = workspace_paths.as_ref().unwrap();
-            let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
-            for path in paths {
-                VecExt::append(
-                    &mut items,
-                    Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
-                );
-            }
-            let array = Expr::init(
-                E::Array {
-                    items,
-                    ..Default::default()
-                },
-                bun_ast::Loc::EMPTY,
-            );
-            e_object_mut(&mut json).put(&bump, b"workspaces", array)?;
-            needs_update = true;
+            e_object_mut(&mut json).put(&bump, b"workspaces", paths_array(paths))?;
+            wrote_workspaces = true;
         } else if is_object_workspaces {
             let mut existing_workspaces = existing_workspaces.unwrap();
             let ws_obj = e_object_mut(&mut existing_workspaces);
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
-                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
-                    for path in paths {
-                        VecExt::append(
-                            &mut items,
-                            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
-                        );
-                    }
-                    let array = Expr::init(
-                        E::Array {
-                            items,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                    ws_obj.put(&bump, b"packages", array)?;
-
-                    needs_update = true;
+                    ws_obj.put(&bump, b"packages", paths_array(paths))?;
+                    wrote_workspaces = true;
                 }
             }
 
             if let Some(catalog) = catalog_obj {
                 ws_obj.put(&bump, b"catalog", catalog)?;
-                needs_update = true;
+                wrote_workspaces = true;
             }
 
             if let Some(catalogs) = catalogs_obj {
                 ws_obj.put(&bump, b"catalogs", catalogs)?;
-                needs_update = true;
+                wrote_workspaces = true;
             }
         } else if !use_array_format {
             let mut ws_props = bun_alloc::AstAlloc::vec();
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
-                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
-                    for path in paths {
-                        VecExt::append(
-                            &mut items,
-                            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
-                        );
-                    }
-                    let value = Expr::init(
-                        E::Array {
-                            items,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
+                    let value = paths_array(paths);
                     let key = Expr::init(E::EString::init(b"packages"), bun_ast::Loc::EMPTY);
 
                     VecExt::append(
@@ -2724,9 +2654,13 @@ fn update_package_json_after_migration(
                     bun_ast::Loc::EMPTY,
                 );
                 e_object_mut(&mut json).put(&bump, b"workspaces", workspace_obj)?;
-                needs_update = true;
+                wrote_workspaces = true;
             }
         }
+    }
+    if wrote_workspaces {
+        needs_update = true;
+        moved.push("pnpm-workspace.yaml to workspaces");
     }
 
     // Handle overrides from pnpm-workspace.yaml
@@ -2752,6 +2686,7 @@ fn update_package_json_after_migration(
                 e_object_mut(&mut json).put(&bump, b"overrides", *ws_overrides)?;
             }
             needs_update = true;
+            moved.push("pnpm-workspace.yaml overrides to overrides");
         }
     }
 
@@ -2779,6 +2714,7 @@ fn update_package_json_after_migration(
                 e_object_mut(&mut json).put(&bump, b"patchedDependencies", *ws_patched)?;
             }
             needs_update = true;
+            moved.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
         }
     }
 
@@ -2815,12 +2751,40 @@ fn update_package_json_after_migration(
         );
 
         // Write the updated package.json
-        let _ = sys::File::write_file(
+        if sys::File::write_file(
             dir,
             bun_core::zstr!("package.json"),
             root_pkg_json.source.contents(),
-        );
+        )
+        .is_ok()
+            && !moved.is_empty()
+            && !silent
+        {
+            bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+        }
     }
 
     Ok(())
+}
+
+fn is_non_empty_object(expr: &Expr) -> bool {
+    matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
+}
+
+fn paths_array(paths: &[&'static [u8]]) -> Expr {
+    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
+    for path in paths {
+        VecExt::append(
+            &mut items,
+            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
+        );
+    }
+    Expr::init(
+        E::Array {
+            items,
+            is_single_line: paths.len() == 1,
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    )
 }

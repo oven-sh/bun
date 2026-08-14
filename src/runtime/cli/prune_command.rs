@@ -19,11 +19,14 @@ impl PruneCommand {
             Global::exit(1);
         }
 
+        let silent = cli.log_level.is_silent();
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Prune)
         {
             Ok(v) => v,
             Err(bun_install::Error::MissingPackageJSON) => {
-                Output::err_generic("missing package.json, nothing to prune", ());
+                if !silent {
+                    Output::err_generic("missing package.json, nothing to prune", ());
+                }
                 Global::exit(1);
             }
             Err(err) => return Err(err.into()),
@@ -31,7 +34,7 @@ impl PruneCommand {
 
         if manager.options.should_print_command_name() {
             bun_core::prettyln!(
-                "<r><b>bun prune <r><d>v{}<r>\n",
+                "<r><b>bun prune <r><d>v{}<r>\n\n",
                 Global::package_json_version_with_sha,
             );
             Output::flush();

@@ -158,6 +158,8 @@ describe("bun", () => {
       ["install", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
       ["audit", "--ignore", "Ignore advisories by GHSA or numeric advisory ID (repeatable)"],
       ["audit", "-L, --latest", "Also apply fixes your declared ranges exclude, rewriting package.json"],
+      ["update", "-p, --production", "Only update dependencies and optionalDependencies (alias: --prod)"],
+      ["install", "-p, --production", "Don't install devDependencies"],
     ];
     test.concurrent.each(flags)("bun %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });

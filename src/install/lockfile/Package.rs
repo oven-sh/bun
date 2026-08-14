@@ -966,7 +966,33 @@ impl Diff {
         from: &Package,
         to: &Package,
         update_requests: Option<&[UpdateRequest]>,
+        id_mapping: Option<&mut [PackageID]>,
+    ) -> crate::Result<DiffSummary> {
+        let mut removed_names: Vec<PackageNameHash> = Vec::new();
+        Self::generate_inner(
+            pm,
+            log,
+            from_lockfile,
+            to_lockfile,
+            from,
+            to,
+            update_requests,
+            id_mapping,
+            &mut removed_names,
+        )
+    }
+
+    // The root summary's `remove` is the count of distinct names removed across root + workspaces.
+    fn generate_inner(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        from: &Package,
+        to: &Package,
+        update_requests: Option<&[UpdateRequest]>,
         mut id_mapping: Option<&mut [PackageID]>,
+        removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
@@ -1022,7 +1048,7 @@ impl Diff {
             }
         }
 
-        let mut catalog_entries_skipped: usize = 0;
+        let mut catalog_entries_skipped: Vec<Box<[u8]>> = Vec::new();
         if is_root {
             let tolerate_catalog_subset = pm.options.enable.frozen_lockfile();
             'catalogs: {
@@ -1380,21 +1406,14 @@ impl Diff {
                         && !summary.overrides_changed
                         && !summary.catalogs_changed
                     {
-                        if pm.options.log_level.is_verbose() {
-                            bun_core::note!(
-                                "skipping workspace \"{}\": listed in bun.lock but not on disk",
-                                bstr::BStr::new(
-                                    from_dep
-                                        .name
-                                        .slice(from_lockfile.buffers.string_bytes.as_slice())
-                                ),
-                            );
-                        }
                         summary.pruned_workspaces.push(from_dep.name_hash);
                         continue;
                     }
                 }
                 summary.remove += 1;
+                if !removed_names.contains(&from_dep.name_hash) {
+                    removed_names.push(from_dep.name_hash);
+                }
                 continue;
             }
             // defer to_i += 1; — applied at end of iteration body
@@ -1494,7 +1513,7 @@ impl Diff {
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
-                        let diff = Self::generate(
+                        let diff = Self::generate_inner(
                             pm,
                             log,
                             from_lockfile,
@@ -1503,6 +1522,7 @@ impl Diff {
                             &workspace_pkg,
                             update_requests,
                             None,
+                            removed_names,
                         )?;
 
                         if pm.options.log_level.is_verbose()
@@ -1578,6 +1598,9 @@ impl Diff {
                 .len()
                 .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
         )) as u32;
+        if is_root {
+            summary.remove = removed_names.len() as u32;
+        }
 
         if !missing_workspaces.is_empty() {
             lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
@@ -1592,22 +1615,32 @@ impl Diff {
 
         if !summary.pruned_workspaces.is_empty() && !pm.options.log_level.is_silent() {
             let count = summary.pruned_workspaces.len();
+            let from_buf = from_lockfile.buffers.string_bytes.as_slice();
             bun_core::note!(
-                "skipped {} workspace{} listed in bun.lock but not on disk",
+                "skipped {} workspace{} listed in bun.lock but not on disk: {}",
                 count,
                 if count == 1 { "" } else { "s" },
+                lockfile::pruned_workspaces::quoted_names(
+                    &mut from_deps
+                        .iter()
+                        .filter(|dep| {
+                            dep.behavior.is_workspace()
+                                && summary.pruned_workspaces.contains(&dep.name_hash)
+                        })
+                        .map(|dep| dep.name.slice(from_buf)),
+                ),
             );
         }
 
-        if catalog_entries_skipped > 0 && !pm.options.log_level.is_silent() {
+        if !catalog_entries_skipped.is_empty() && !pm.options.log_level.is_silent() {
+            let count = catalog_entries_skipped.len();
             bun_core::note!(
-                "skipped {} catalog entr{} missing from bun.lock that no remaining workspace uses",
-                catalog_entries_skipped,
-                if catalog_entries_skipped == 1 {
-                    "y"
-                } else {
-                    "ies"
-                },
+                "skipped {} catalog entr{} not in bun.lock (unused by the workspaces on disk): {}",
+                count,
+                if count == 1 { "y" } else { "ies" },
+                lockfile::pruned_workspaces::quoted_names(
+                    &mut catalog_entries_skipped.iter().map(|name| &**name),
+                ),
             );
         }
 

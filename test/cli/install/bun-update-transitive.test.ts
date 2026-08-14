@@ -1,6 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { exists } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
@@ -69,6 +70,88 @@ const packageJsonText = (dir: string, rel = "") => file(join(dir, rel, "package.
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 const lock = async (dir: string): Promise<Json> => Bun.JSONC.parse(await lockText(dir)) as Json;
 
+// Every moved package, transitive, named or bare, is one `^ name old -> new` row (piped form) in the summary block, whether it was installed, planned (--dry-run) or only saved (--lockfile-only); a row carries ` (vX available)` when a newer version is out of range.
+const movedRows = (stdout: string) =>
+  (stdout.match(/^\^ .+$/gm) ?? []).map(row => row.replace(/ \(v\S+ available\)$/, ""));
+const movedRow = (name: string, from: string, to: string, available?: string) =>
+  `^ ${name} ${from} -> ${to}${available ? ` (v${available} available)` : ""}`;
+
+const NO_DEPS_ROW = movedRow("no-deps", "1.0.0", "1.1.0");
+const NO_DEPS_ROW_HINTED = movedRow("no-deps", "1.0.0", "1.1.0", "2.0.0");
+const A_DEP_ROW = movedRow("a-dep", "1.0.1", "1.0.10");
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const installed = (n: number) => `${plural(n, "package")} installed [duration]`;
+const wouldUpdate = (n: number) => `${plural(n, "package")} would be updated [duration]`;
+const noChanges = (installs: number, packages: number) =>
+  `Checked ${plural(installs, "install")} across ${plural(packages, "package")} (no changes) [duration]`;
+const nothingToUpdate = (packages: number) => `Checked ${plural(packages, "package")}, nothing to update [duration]`;
+const noneSelected = (dependencies: number, by: string) =>
+  `Checked ${dependencies} ${dependencies === 1 ? "dependency" : "dependencies"}, none ${by} (no changes) [duration]`;
+const keptPatched = (name: string, version: string, available: string) =>
+  `kept ${name}@${version} (patched, v${available} available)`;
+
+// The header's version and the `[12.00ms]` durations are the only unstable parts of update's stdout.
+const normalize = (stdout: string) =>
+  stdout.replace(/^bun update v.*$/m, "bun update <version>").replace(/\[[\d.]+m?s\]/g, "[duration]");
+const summary = (...lines: string[]) => ["bun update <version>", "", ...lines, ""].join("\n");
+
+function expectSummary(stdout: string, ...lines: string[]) {
+  expect(normalize(stdout)).toBe(summary(...lines));
+}
+
+// Several rows in one real run: the rows are asserted as a list and the count line by itself.
+function expectRowsAnd(stdout: string, rows: string[], countLine: string) {
+  expect(movedRows(stdout)).toStrictEqual(rows);
+  expect(normalize(stdout)).toEndWith(`\n\n${countLine}\n`);
+  expect(stdout).not.toMatch(/^installed /m);
+}
+
+function expectMoved(stdout: string, name: string, from: string, to: string) {
+  expect(movedRows(stdout)).toContain(movedRow(name, from, to));
+  expect(stdout).not.toMatch(/^installed /m);
+}
+
+function expectNoMoves(stdout: string) {
+  expect(movedRows(stdout)).toStrictEqual([]);
+  expect(stdout).not.toMatch(/^installed /m);
+}
+
+// A no-op prints what it checked and how long it took, and nothing else.
+function expectNoChangesLine(stdout: string) {
+  expectNoMoves(stdout);
+  expect(normalize(stdout)).toMatch(/^Checked \d+ installs? across \d+ packages? \(no changes\) \[duration\]$/m);
+  expect(stdout).not.toContain(" done");
+}
+
+function expectDryRun(stdout: string, ...rows: string[]) {
+  expectSummary(stdout, ...rows, "", wouldUpdate(rows.length));
+}
+
+const NOT_IN_LOCKFILE = (name: string, lockfile = "bun.lock") =>
+  `error: "${name}" is not in ${lockfile}\n    bun add ${name}\n`;
+// `scope` is "the selected workspaces" once -r/--filter picked the scope, "this workspace" when the cwd did; one --filter hint per other workspace that reaches the name.
+const notADependencyOf = (scope: string, name: string, ...workspaces: string[]) =>
+  [
+    `error: "${name}" is not a dependency of ${scope}`,
+    `    bun update -r ${name}`,
+    ...workspaces.map(workspace => `    bun update --filter ${workspace} ${name}`),
+    "",
+  ].join("\n");
+const NOT_A_DEPENDENCY_HERE = (name: string, ...workspaces: string[]) =>
+  notADependencyOf("this workspace", name, ...workspaces);
+const NOT_A_DEPENDENCY_OF_SELECTION = (name: string, ...workspaces: string[]) =>
+  notADependencyOf("the selected workspaces", name, ...workspaces);
+const notCheckedWarning = (server: Bun.Server, name: string, version: string, status: number) =>
+  `warn: ${name}@${version} was not checked for updates: GET ${server.url.origin}/${name} - ${status}\n`;
+
+// The manifest-cache progress bar must never leak its `Resolving... ` fragment into a piped stderr.
+function expectCleanStderr(stderr: string) {
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("Resolving...");
+  expect(stderr).not.toContain("warn:");
+}
+
 // Every version of `name` resolved anywhere in bun.lock, rows installed under an alias included.
 async function lockedVersions(dir: string, name: string) {
   const { packages } = await lock(dir);
@@ -105,7 +188,7 @@ async function expectTransitiveBump(
   ...args: string[]
 ) {
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args, ...linkerArgs(layout));
-  expect(stderr).not.toContain("error:");
+  expectCleanStderr(stderr);
   expect(stderr).toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await installedVersion(dir, ...noDeps)).toBe("1.1.0");
@@ -136,9 +219,11 @@ async function staleSiblings(groups: Groups = {}) {
   return { dir, packageJson, groups };
 }
 
+// The named path prints the same rows as a bare update: the entry that moved gets a `^` row, the one that did not prints nothing and is not counted.
 async function expectOnlyADepMoved({ dir, groups }: Awaited<ReturnType<typeof staleSiblings>>, ...args: string[]) {
-  const { stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
+  expectSummary(stdout, A_DEP_ROW, "", installed(1));
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(grouped({ "no-deps": "^1.0.0", "a-dep": "^1.0.10" }, groups));
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
@@ -157,11 +242,12 @@ async function expectRejected(dir: string, message: string, ...args: string[]) {
   return { stdout, stderr };
 }
 
-async function expectNothingToUpdate(dir: string, ...args: string[]) {
+async function expectNothingToUpdate(dir: string, line: string, ...args: string[]) {
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stdout).toContain("No packages to update");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, line);
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(0);
 }
@@ -172,57 +258,93 @@ const member = (name: string, dependencies: Json = {}) => ({ name, version: "1.0
 test.concurrent.each<[string, Layout]>([
   ["text lockfile", { text: true }],
   ["binary lockfile", { text: false }],
-  ["text lockfile + isolated linker", { text: true, linker: "isolated" }],
 ])("`bun update` moves a transitive dependency within its dependent's range (%s)", async (_, layout) => {
   const fixture = await stale(layout);
   const stdout = await expectTransitiveBump(fixture, layout);
-  expect(normalizeBunSnapshot(stdout.split("\n").slice(0, 3).join("\n"))).toMatchInlineSnapshot(`
-    "bun update <version> (<revision>)
-    updating:
-      no-deps@1.0.0 → 1.1.0"
-  `);
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
 });
+
+// The isolated linker re-links one-range-dep's store entry onto the moved no-deps, and a re-linked entry counts as installed like a fresh one.
+test.concurrent(
+  "`bun update` moves a transitive dependency within its dependent's range (isolated linker)",
+  async () => {
+    const layout: Layout = { text: true, linker: "isolated" };
+    const fixture = await stale(layout);
+    const stdout = await expectTransitiveBump(fixture, layout);
+    expectSummary(stdout, NO_DEPS_ROW_HINTED, "", "+ one-range-dep@1.0.0", "", installed(2));
+  },
+);
 
 test.concurrent("`bun update --latest` still moves transitive dependencies only within their ranges", async () => {
   const fixture = await stale();
   const stdout = await expectTransitiveBump(fixture, {}, "--latest");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
 });
 
-test.concurrent("`bun update <name>` reaches a package that is only a transitive dependency", async () => {
+// The move is reported the same way whether the name was given or found, and naming it again is the same no-op as a bare rerun.
+test.concurrent.each([
+  ["no-deps", ["no-deps"]],
+  ["--latest no-deps", ["--latest", "no-deps"]],
+])("`bun update %s` reaches a package that is only a transitive dependency", async (_, args) => {
   const fixture = await stale();
-  const stdout = await expectTransitiveBump(fixture, {}, "no-deps");
-  expect(stdout).not.toContain("updating:");
+  const stdout = await expectTransitiveBump(fixture, {}, ...args);
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+
+  const again = await run(fixture.dir, "update", ...args);
+  expectSummary(again.stdout, noChanges(2, 3));
+  expectCleanStderr(again.stderr);
+  expect(again.stderr).not.toContain("Saved lockfile");
+  expect(again.exitCode).toBe(0);
 });
 
+// one-range-dep is named too but has nothing newer: no row, and it is not counted.
 test.concurrent.each([
   ["a pattern", ["no-*"]],
+  ["a bare `*`", ["*"]],
+  ["a negated name", ["!one-range-dep"]],
   ["a pattern alongside a direct name", ["no-d*", "one-range-dep"]],
 ])("`bun update` with %s reaches a package that is only a transitive dependency", async (_, args) => {
   const fixture = await stale();
   const stdout = await expectTransitiveBump(fixture, {}, ...args);
-  expect(stdout).not.toContain("updating:");
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
 });
 
-test.concurrent("`bun update <name>` naming a package with nothing newer changes nothing", async () => {
-  const { dir, packageJson } = await stale();
-  const before = await lock(dir);
-  const { stderr, exitCode } = await run(dir, "update", "one-range-dep");
-  expect(stderr).not.toContain("error:");
-  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
-  expect(await lock(dir)).toStrictEqual(before);
-  expect(exitCode).toBe(0);
-});
+test.concurrent(
+  "`bun update <name>` naming a package with nothing newer is the same no-op as a bare rerun",
+  async () => {
+    const { dir, packageJson } = await stale();
+    const before = await lock(dir);
+    const { stdout, stderr, exitCode } = await run(dir, "update", "one-range-dep");
+    expectSummary(stdout, noChanges(2, 3));
+    expectCleanStderr(stderr);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    expect(await lock(dir)).toStrictEqual(before);
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent("`bun update <name>` rejects a name that is not in the lockfile", async () => {
-  const { dir, packageJson } = await stale();
-  const before = await lockText(dir);
-  const { stderr, exitCode } = await run(dir, "update", "does-not-exist");
-  expect(stderr).toContain('error: "does-not-exist" is not in the lockfile, so there is nothing to update');
-  expect(stderr).toContain("note: to add a dependency, use bun add");
+// Both errors name the lockfile that was actually loaded; the remedy is a bare command line, not a note.
+test.concurrent.each<[string, Layout]>([
+  ["bun.lock", { text: true }],
+  ["bun.lockb", { text: false }],
+])("`bun update <name>` and a pattern that match nothing in %s name that file", async (lockfile, layout) => {
+  const { dir, packageJson } = await stale(layout);
+  const before = await file(join(dir, lockfile)).bytes();
+  const named = await run(dir, "update", "does-not-exist", ...linkerArgs(layout));
+  expect(named.stderr).toContain(NOT_IN_LOCKFILE("does-not-exist", lockfile));
+  expect(named.stderr).not.toContain("note:");
+  expect(named.stderr).not.toContain("nothing to update");
+  expect(named.stdout).not.toContain("installed");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
-  expect(await lockText(dir)).toBe(before);
-  expect(exitCode).toBe(1);
+  expect(await file(join(dir, lockfile)).bytes()).toStrictEqual(before);
+  expect(named.exitCode).toBe(1);
+
+  const pattern = await run(dir, "update", "zzz-*", ...linkerArgs(layout));
+  expect(pattern.stderr).toContain(`error: no packages in ${lockfile} match "zzz-*"\n`);
+  expect(pattern.stderr).not.toContain("note:");
+  expect(await file(join(dir, lockfile)).bytes()).toStrictEqual(before);
+  expect(pattern.exitCode).toBe(1);
 });
 
 async function withoutLockfile(dependencies: Json) {
@@ -248,8 +370,8 @@ test.concurrent("without a lockfile, `bun update <declared>` resolves and saves"
 test.concurrent("without a lockfile, `bun update <undeclared>` is rejected and writes no lockfile", async () => {
   const dir = await withoutLockfile({ "no-deps": "^1.0.0" });
   const { stderr, exitCode } = await run(dir, "update", "a-dep");
-  expect(stderr).toContain('error: "a-dep" is not in the lockfile, so there is nothing to update');
-  expect(stderr).toContain("note: to add a dependency, use bun add");
+  expect(stderr).toContain(NOT_IN_LOCKFILE("a-dep"));
+  expect(stderr).not.toContain("note:");
   expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^1.0.0" }));
   expect(await file(join(dir, "bun.lock")).exists()).toBeFalse();
   expect(exitCode).toBe(1);
@@ -258,8 +380,10 @@ test.concurrent("without a lockfile, `bun update <undeclared>` is rejected and w
 test.concurrent("`bun update --lockfile-only` moves the transitive dependency in bun.lock only", async () => {
   const { dir, packageJson, noDeps } = await stale();
   const { stdout, stderr, exitCode } = await run(dir, "update", "--lockfile-only");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-  expect(stderr).not.toContain("error:");
+  expect(movedRows(stdout)).toStrictEqual([NO_DEPS_ROW]);
+  expect(stdout).not.toContain("would be updated");
+  expect(stdout).toContain("Saved bun.lock (");
+  expectCleanStderr(stderr);
   expect(stderr).toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
@@ -302,17 +426,39 @@ test.concurrent("a moved direct dependency is still followed after its row index
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("`bun update --dry-run` prints the transitive plan and writes nothing", async () => {
+// The plan is the same block a real run prints, with a "would be updated" count line in place of "installed"; nothing is installed and no lockfile dump follows.
+test.concurrent.each([
+  ["bare", []],
+  ["--latest", ["--latest"]],
+  ["no-deps", ["no-deps"]],
+  ["a pattern", ["no-*"]],
+])("`bun update --dry-run` (%s) prints the plan as summary rows and writes nothing", async (_, args) => {
   const { dir, packageJson, noDeps } = await stale();
   const before = await lockText(dir);
-  const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-  expect(stdout).toContain("Would update 1 package");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run", ...args);
+  expectDryRun(stdout, NO_DEPS_ROW_HINTED);
+  expectCleanStderr(stderr);
   expect(stderr).not.toContain("Saved lockfile");
   expect(await lockText(dir)).toBe(before);
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await installedVersion(dir, ...noDeps)).toBe("1.0.0");
+  expect(exitCode).toBe(0);
+});
+
+// Packages counted: the root, one-range-dep and no-deps.
+test.concurrent.each([
+  ["bare", []],
+  ["one-range-dep", ["one-range-dep"]],
+  ["--prod", ["--prod"]],
+])("`bun update --dry-run` (%s) says so when nothing would move", async (_, args) => {
+  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  const before = await lockText(dir);
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run", ...args);
+  expectSummary(stdout, nothingToUpdate(3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(0);
 });
 
@@ -328,11 +474,8 @@ test.concurrent(
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
     const before = await lockText(dir);
     const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run");
-    expect(stdout).toContain("  a-dep@1.0.1 → 1.0.10\n");
-    expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-    expect(stdout.match(/^  \S+@\S+ → /gm)).toHaveLength(2);
-    expect(stdout).toContain("Would update 2 packages");
-    expect(stderr).not.toContain("error:");
+    expectDryRun(stdout, A_DEP_ROW, NO_DEPS_ROW_HINTED);
+    expectCleanStderr(stderr);
     expect(stderr).not.toContain("Saved lockfile");
     expect(await lockText(dir)).toBe(before);
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
@@ -356,8 +499,9 @@ test.concurrent("a transitive dependency pinned exactly by its dependent stays p
   const dir = await setup({ "package.json": pkgJson({ "one-fixed-dep": "1.0.0" }) });
   const before = await lock(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).not.toContain("updating:");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, noChanges(2, 3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await lock(dir)).toStrictEqual(before);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(exitCode).toBe(0);
@@ -371,8 +515,8 @@ test.concurrent("dependents with different ranges are resolved independently", a
   await reinstall(dir, packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
   const { packages } = await lock(dir);
@@ -384,14 +528,36 @@ test.concurrent("dependents with different ranges are resolved independently", a
   expect(exitCode).toBe(0);
 });
 
+// The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
+test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
+  await reinstall(dir, pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0" }));
+  await reinstall(dir, pkgJson({ "one-range-dep": "1.0.0", "no-deps": "^1.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  expect(await installedVersion(dir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+  const nested = join(dir, "node_modules", "one-range-dep", "node_modules", "no-deps");
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expect(movedRows(stdout)).toStrictEqual([NO_DEPS_ROW]);
+  expect(stdout).not.toContain("+ no-deps@");
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(Object.keys((await lock(dir)).packages).sort()).toStrictEqual(["no-deps", "one-range-dep"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  expect(await exists(nested)).toBeFalse();
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("an override holds a transitive dependency back", async () => {
   const { dir } = await stale();
   const packageJson = pkgJson({ "one-range-dep": "1.0.0" }, { overrides: { "no-deps": "1.0.0" } });
   await reinstall(dir, packageJson);
   const before = await lock(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).not.toContain("updating:");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, noChanges(2, 3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await lock(dir)).toStrictEqual(before);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(exitCode).toBe(0);
@@ -408,11 +574,12 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
 const PATCHED = { patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" } };
 
-// The `stale()` recipe with the transitive no-deps@1.0.0 patched.
-test.concurrent.each([
-  ["bare", []],
-  ["no-deps", ["no-deps"]],
-])("a patched transitive dependency is left alone (%s)", async (_, args) => {
+// The `stale()` recipe with the transitive no-deps@1.0.0 patched; the kept row sits in the summary block and names the version the patch is holding back.
+test.concurrent.each<[string, string[], string]>([
+  ["bare", [], noChanges(2, 3)],
+  ["no-deps", ["no-deps"], noChanges(2, 3)],
+  ["bare --dry-run", ["--dry-run"], nothingToUpdate(3)],
+])("a patched transitive dependency is left alone (%s)", async (_, args, countLine) => {
   const dir = await setup({
     "package.json": pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0" }, PATCHED),
     "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
@@ -424,8 +591,8 @@ test.concurrent.each([
   expect(await patched.exists()).toBeTrue();
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stdout).not.toContain("no-deps@");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, keptPatched("no-deps", "1.0.0", "1.1.0"), "", countLine);
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockText(dir)).toBe(before);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
@@ -433,6 +600,55 @@ test.concurrent.each([
   await frozen(dir);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each<[string, string[], string]>([
+  ["bare", [], noChanges(1, 2)],
+  ["no-deps", ["no-deps"], noChanges(1, 2)],
+  ["bare --dry-run", ["--dry-run"], nothingToUpdate(2)],
+  ["no-deps --dry-run", ["no-deps", "--dry-run"], nothingToUpdate(2)],
+])("a patched dependency declared in package.json is held within its range (%s)", async (_, args, countLine) => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  const packageJson = pkgJson({ "no-deps": "^1.0.0" }, PATCHED);
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const patched = file(join(dir, "node_modules", "no-deps", "patched.txt"));
+  expect(await patched.exists()).toBeTrue();
+  const before = await lockText(dir);
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
+  expectSummary(stdout, keptPatched("no-deps", "1.0.0", "1.1.0"), "", countLine);
+  expectCleanStderr(stderr);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockText(dir)).toBe(before);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await patched.exists()).toBeTrue();
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// --latest moves past the patch on purpose; the orphaned patchedDependencies entry is pointed out on stderr.
+test.concurrent(
+  "`bun update <name> --latest` moves a patched dependency and warns that its patch no longer applies",
+  async () => {
+    const dir = await setup({
+      "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+      "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+    });
+    await reinstall(dir, pkgJson({ "no-deps": "^1.0.0" }, PATCHED));
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+    const { stdout, stderr, exitCode } = await run(dir, "update", "no-deps", "--latest");
+    expectSummary(stdout, movedRow("no-deps", "1.0.0", "2.0.0"), "", installed(1));
+    expect(stderr).toContain("warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 2.0.0)\n");
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^2.0.0" }, PATCHED));
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
 
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.
 async function overriddenThenEdited(overrides?: Json) {
@@ -453,8 +669,8 @@ test.concurrent.each<[string, Json | undefined, string]>([
   async (_, overrides, to) => {
     const { dir, packageJson } = await overriddenThenEdited(overrides);
     const { stdout, stderr, exitCode } = await run(dir, "update");
-    expect(stdout).toContain(`  no-deps@1.0.0 → ${to}\n`);
-    expect(stdout.match(/^  no-deps@/gm)).toHaveLength(1);
+    expect(movedRows(stdout)).toStrictEqual([movedRow("no-deps", "1.0.0", to)]);
+    expect(stdout).not.toContain("+ no-deps@");
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
     expect((await lock(dir)).overrides).toStrictEqual(overrides);
@@ -466,14 +682,13 @@ test.concurrent.each<[string, Json | undefined, string]>([
 );
 
 test.concurrent(
-  "the plan reports the target an override added since bun.lock was written actually allows",
+  "the summary reports the target an override added since bun.lock was written actually allows",
   async () => {
     const { dir } = await stale();
     const packageJson = pkgJson({ "one-range-dep": "1.0.0" }, { overrides: { "no-deps": "1.0.1" } });
     await write(join(dir, "package.json"), stringify(packageJson));
     const { stdout, stderr, exitCode } = await run(dir, "update");
-    expect(stdout).toContain("  no-deps@1.0.0 → 1.0.1\n");
-    expect(stdout).not.toContain("→ 1.1.0");
+    expect(movedRows(stdout)).toStrictEqual([movedRow("no-deps", "1.0.0", "1.0.1")]);
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
     expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "1.0.1" });
@@ -489,10 +704,26 @@ test.concurrent("a lockfile that already resolves the newest allowed versions is
   const before = await lock(dir);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).not.toContain("updating:");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, noChanges(2, 3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await lock(dir)).toStrictEqual(before);
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --latest` run twice is a no-op that does not claim to have saved bun.lock", async () => {
+  const { dir } = await stale();
+  const first = await run(dir, "update", "--latest");
+  expectSummary(first.stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expect(first.stderr).toContain("Saved lockfile");
+  expect(first.exitCode).toBe(0);
+  const before = await lockText(dir);
+  const second = await run(dir, "update", "--latest");
+  expectSummary(second.stdout, noChanges(2, 3));
+  expectCleanStderr(second.stderr);
+  expect(second.stderr).not.toContain("Saved lockfile");
+  expect(await lockText(dir)).toBe(before);
+  expect(second.exitCode).toBe(0);
 });
 
 test.concurrent("without a lockfile `bun update` resolves everything fresh", async () => {
@@ -501,7 +732,7 @@ test.concurrent("without a lockfile `bun update` resolves everything fresh", asy
     files: { "package.json": stringify(pkgJson({ "one-range-dep": "1.0.0" })) },
   });
   const { stdout, stderr, exitCode } = await run(packageDir, "update");
-  expect(stdout).not.toContain("updating:");
+  expectNoMoves(stdout);
   expect(stderr).not.toContain("error:");
   expect(stderr).toContain("Saved lockfile");
   expect(await lockedVersions(packageDir, "no-deps")).toStrictEqual(["1.1.0"]);
@@ -527,7 +758,8 @@ async function staleMemberTransitive(pkg2Range?: string) {
 test.concurrent("in a workspace, `bun update` from the root moves a member's transitive dependency", async () => {
   const { dir, pkg1 } = await staleMemberTransitive();
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
+  expectMoved(stdout, "no-deps", "1.0.0", "1.1.0");
+  expect(stdout).not.toContain("+ no-deps@");
   expect(stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(ROOT);
   expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(pkg1);
@@ -590,9 +822,8 @@ test.concurrent.each([
   async (_, cwd, args) => {
     const { dir, texts, textsBefore } = await distinctEdges();
     const { stdout, stderr, exitCode } = await runIn(dir, cwd, "update", ...args);
-    expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-    expect(stdout.match(/^  \S+@\S+ → /gm)).toHaveLength(1);
-    expect(stderr).not.toContain("error:");
+    expectRowsAnd(stdout, [NO_DEPS_ROW], installed(1));
+    expectCleanStderr(stderr);
     expect(await noDepsEdges(dir, "one-range-dep", "one-range-dep-too")).toStrictEqual({
       "one-range-dep": "1.1.0",
       "one-range-dep-too": "1.1.0",
@@ -619,8 +850,8 @@ test.concurrent.each([
     const { dir, texts, textsBefore } = await disjointEdges();
     const [rootBefore, , pkg2Before] = textsBefore;
     const { stdout, stderr, exitCode } = await runIn(dir, cwd, "update", ...args);
-    expect(stdout).not.toContain("updating:");
-    expect(stderr).not.toContain("error:");
+    expectRowsAnd(stdout, [A_DEP_ROW], installed(1));
+    expectCleanStderr(stderr);
     expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
     expect(await texts()).toStrictEqual([rootBefore, PKG1_A_DEP_MOVED, pkg2Before]);
@@ -629,7 +860,7 @@ test.concurrent.each([
   },
 );
 
-// Every workspace's transitive rows are planned from the root; a member's own entries only move with -r.
+// Every workspace's transitive rows are planned from the root; a member's own entries only move with -r, and then they get rows like everything else.
 test.concurrent.each<[string, string[], boolean]>([
   ["from the root", [], false],
   ["with -r", ["-r"], true],
@@ -639,8 +870,12 @@ test.concurrent.each<[string, string[], boolean]>([
     const { dir, texts, textsBefore } = await disjointEdges();
     const [rootBefore, pkg1Before, pkg2Before] = textsBefore;
     const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-    expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
-    expect(stderr).not.toContain("error:");
+    if (movesMemberEntries) {
+      expectRowsAnd(stdout, [A_DEP_ROW, NO_DEPS_ROW], installed(2));
+    } else {
+      expectRowsAnd(stdout, [NO_DEPS_ROW], installed(1));
+    }
+    expectCleanStderr(stderr);
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
     expect(await lockedVersions(dir, "a-dep")).toStrictEqual([movesMemberEntries ? "1.0.10" : "1.0.1"]);
     expect(await texts()).toStrictEqual([rootBefore, movesMemberEntries ? PKG1_A_DEP_MOVED : pkg1Before, pkg2Before]);
@@ -649,22 +884,52 @@ test.concurrent.each<[string, string[], boolean]>([
   },
 );
 
-test.concurrent.each([
-  ["from packages/pkg1", "packages/pkg1", []],
-  ["with --filter pkg1", "", ["--filter", "pkg1"]],
+test.concurrent.each<[string, string, string[], string]>([
+  ["from packages/pkg1", "packages/pkg1", [], NOT_A_DEPENDENCY_HERE("no-deps", "pkg2")],
+  ["with --filter pkg1", "", ["--filter", "pkg1"], NOT_A_DEPENDENCY_OF_SELECTION("no-deps", "pkg2")],
 ])(
   "in a workspace, `bun update <name>` %s naming a package only another workspace reaches is an error",
-  async (_, cwd, args) => {
+  async (_, cwd, args, message) => {
     const { dir, texts, textsBefore, lockBefore } = await disjointEdges();
     const { stderr, exitCode } = await runIn(dir, cwd, "update", ...args, "no-deps");
-    expect(stderr).toContain(
-      'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
-    );
+    expect(stderr).toContain(message);
+    expect(stderr).not.toContain("note:");
     expect(await lockText(dir)).toBe(lockBefore);
     expect(await texts()).toStrictEqual(textsBefore);
     expect(exitCode).toBe(1);
   },
 );
+
+// -r plans pkg1's own a-dep entry too and lists it once; --filter pkg1 plans nothing but that entry.
+test.concurrent.each<[string, string[], string[]]>([
+  ["-r", ["-r"], [A_DEP_ROW, NO_DEPS_ROW_HINTED]],
+  ["--filter pkg1", ["--filter", "pkg1"], [A_DEP_ROW]],
+  ["-r --latest", ["-r", "--latest"], [A_DEP_ROW, NO_DEPS_ROW_HINTED]],
+])("in a workspace, `bun update %s --dry-run` prints one row per move and writes nothing", async (_, args, rows) => {
+  const { dir, texts, textsBefore, lockBefore } = await disjointEdges();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run", ...args);
+  expectDryRun(stdout, ...rows);
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await lockText(dir)).toBe(lockBefore);
+  expect(await texts()).toStrictEqual(textsBefore);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([
+  ["bare", []],
+  ["named", ["no-deps"]],
+])("in a workspace, `bun update --filter` matching no workspace is an error (%s)", async (_, args) => {
+  const { dir, texts, textsBefore, lockBefore } = await disjointEdges();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--filter", "zzz", ...args);
+  expect(stderr).toContain('error: No workspace packages matched the filter "zzz"\n');
+  expect(stderr).not.toContain("warn:");
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(stdout).not.toContain("Checked");
+  expect(await lockText(dir)).toBe(lockBefore);
+  expect(await texts()).toStrictEqual(textsBefore);
+  expect(exitCode).toBe(1);
+});
 
 test.concurrent.each([
   ["from packages/pkg2", "packages/pkg2", []],
@@ -736,13 +1001,15 @@ test.concurrent("`bun up --help` prints the update help", async () => {
   expect(stdout).toContain("Only update dependencies and optionalDependencies");
   expect(stdout).toContain("bun update --prod");
   expect(stdout).not.toContain("--transitive");
+  expect(stdout).not.toContain("Don't install devDependencies");
+  expect(stdout).toContain("-p, --production");
   expect(exitCode).toBe(0);
 });
 
 test.concurrent("`bun up` is `bun update`", async () => {
   const { dir, packageJson } = await stale();
   const { stdout, stderr, exitCode } = await run(dir, "up");
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
+  expectMoved(stdout, "no-deps", "1.0.0", "1.1.0");
   expect(stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
@@ -759,15 +1026,26 @@ test.concurrent("`-L` is `--latest`", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("`bun update --silent` prints no plan but still moves the transitive dependency", async () => {
+test.concurrent("`bun update --silent` prints nothing at all but still moves the transitive dependency", async () => {
   const { dir, packageJson, noDeps } = await stale();
   const { stdout, stderr, exitCode } = await run(dir, "update", "--silent");
   expect(stdout).toBe("");
-  expect(stderr).not.toContain("error:");
+  expect(stderr).toBe("");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await installedVersion(dir, ...noDeps)).toBe("1.1.0");
   await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --silent --dry-run` prints nothing and writes nothing", async () => {
+  const { dir, noDeps } = await stale();
+  const before = await lockText(dir);
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--silent", "--dry-run");
+  expect(stdout).toBe("");
+  expect(stderr).toBe("");
+  expect(await lockText(dir)).toBe(before);
+  expect(await installedVersion(dir, ...noDeps)).toBe("1.0.0");
   expect(exitCode).toBe(0);
 });
 
@@ -779,7 +1057,7 @@ test.concurrent.each<[string, Layout]>([
   const packageJsonBefore = await packageJsonText(dir);
   const lockBefore = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "--no-save", ...linkerArgs(layout));
-  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
+  expectMoved(stdout, "no-deps", "1.0.0", "1.1.0");
   expect(stderr).not.toContain("error:");
   expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonText(dir)).toBe(packageJsonBefore);
@@ -792,8 +1070,9 @@ async function expectNoop(dir: string, ...args: string[]) {
   const packageJson = await packageJsonOf(dir);
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stdout).not.toContain("updating:");
-  expect(stderr).not.toContain("error:");
+  expectNoChangesLine(stdout);
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockText(dir)).toBe(before);
   await frozen(dir);
@@ -830,11 +1109,12 @@ test.concurrent("the plan counts packages, not the edges that move onto them", a
   const { dir } = await staleShared();
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run");
-  expect(stdout).toContain("  hoist-lockfile-shared@1.0.1 → 1.0.2\n");
-  expect(stdout).toContain("  hoist-lockfile-shared@1.0.1 → 2.0.2\n");
-  expect(stdout.match(/^  hoist-lockfile-shared@/gm)).toHaveLength(2);
-  expect(stdout).toContain("Would update 2 packages");
-  expect(stderr).not.toContain("error:");
+  expectDryRun(
+    stdout,
+    movedRow("hoist-lockfile-shared", "1.0.1", "1.0.2", "2.0.2"),
+    movedRow("hoist-lockfile-shared", "1.0.1", "2.0.2"),
+  );
+  expectCleanStderr(stderr);
   expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(0);
 });
@@ -850,6 +1130,33 @@ test.concurrent.each([
   await expectNoop(dir, ...args);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+});
+
+// peer-deps-fixed@1.0.0 declares peer `no-deps: ^1.0.0`; the root's exact no-deps@1.0.0 provided it, and dropping that entry leaves the auto-installed peer parked on 1.0.0.
+async function staleAutoInstalledPeer() {
+  const dir = await setup({ "package.json": pkgJson({ "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" }) });
+  const packageJson = pkgJson({ "peer-deps-fixed": "1.0.0" });
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  return { dir, packageJson };
+}
+
+test.concurrent.each<[string, string[], boolean]>([
+  ["bare", [], true],
+  ["--latest peer-deps-fixed", ["--latest", "peer-deps-fixed"], true],
+  ["no-deps", ["no-deps"], false],
+])("an auto-installed peer that nothing else depends on is re-resolved (%s)", async (_, args, planned) => {
+  const { dir, packageJson } = await staleAutoInstalledPeer();
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
+  if (planned) expectMoved(stdout, "no-deps", "1.0.0", "1.1.0");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await lockedVersions(dir, "peer-deps-fixed")).toStrictEqual(["1.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
 });
 
 // peer-deps@1.0.0 has nothing but a `no-deps: *` peer, which the install auto-installs at latest.
@@ -888,7 +1195,7 @@ test.concurrent.each([
   );
   await write(join(dir, "bun.lock"), widened);
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stdout).not.toContain("updating:");
+  expectNoMoves(stdout);
   expect(stderr).not.toContain("error:");
   expect(await lockText(dir)).toBe(widened);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
@@ -970,14 +1277,23 @@ async function setupServed(server: Bun.Server, prefix: string, pinned: Json, pac
   return dir;
 }
 
-async function installServed(server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) {
-  const dir = String(tempDir(prefix, { "package.json": stringify(packageJson) }));
-  await write(
+const servedBunfig = (server: Bun.Server, dir: string, extra: Json = {}) =>
+  write(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
-      install: { cache: join(dir, ".bun-cache"), registry: server.url.href, saveTextLockfile: true, linker: "hoisted" },
+      install: {
+        cache: join(dir, ".bun-cache"),
+        registry: server.url.href,
+        saveTextLockfile: true,
+        linker: "hoisted",
+        ...extra,
+      },
     }),
   );
+
+async function installServed(server: Bun.Server, prefix: string, packageJson: Json, ...args: string[]) {
+  const dir = String(tempDir(prefix, { "package.json": stringify(packageJson) }));
+  await servedBunfig(server, dir);
   await install(dir, ...args);
   return dir;
 }
@@ -1010,7 +1326,8 @@ test.concurrent("`bun update <name>` leaves the named package's own dependencies
   expect(named.exitCode).toBe(0);
 
   const bare = await run(dir, "update");
-  expect(bare.stdout).toContain("  leaf@1.0.0 → 1.1.0\n");
+  expectMoved(bare.stdout, "leaf", "1.0.0", "1.1.0");
+  expect(bare.stdout).not.toContain("+ leaf@");
   expect(bare.stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "^1.1.0" }));
   expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
@@ -1045,8 +1362,9 @@ test.concurrent("`bun update <name>` whose package does not move keeps its depen
   const { dir, packageJson } = await staleChildren(server);
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "parent");
-  expect(stdout).not.toContain("→");
-  expect(stderr).not.toContain("error:");
+  expectSummary(stdout, noChanges(4, 5));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockText(dir)).toBe(before);
   expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
@@ -1059,8 +1377,8 @@ test.concurrent(
     using server = await serveRegistry(STALE_CHILDREN);
     const { dir, packageJson } = await staleChildren(server);
     const { stdout, stderr, exitCode } = await run(dir, "update", "parent", "--latest");
-    expect(stdout).not.toContain("other-leaf@");
-    expect(stderr).not.toContain("error:");
+    expectSummary(stdout, movedRow("leaf", "1.0.0", "1.1.0"), "", installed(1));
+    expectCleanStderr(stderr);
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
     expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.0.0"]);
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
@@ -1076,6 +1394,89 @@ const TAGGED_FREE: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
   leaf: { "1.0.0": {}, "1.1.0": {} },
 };
+
+const LEAF_1_1_0_FATAL_SCANNER = `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("scanned: " + packages.map(p => p.name + "@" + p.version).join(" "));
+    return packages
+      .filter(p => p.name === "leaf" && p.version === "1.1.0")
+      .map(() => ({ package: "leaf", description: "leaf@1.1.0 is bad", level: "fatal", url: "https://example.com/leaf" }));
+  },
+};
+`;
+
+async function withLeafScanner(server: Bun.Server, dir: string) {
+  await write(join(dir, "scanner.ts"), LEAF_1_1_0_FATAL_SCANNER);
+  await servedBunfig(server, dir, { security: { scanner: "./scanner.ts" } });
+  return lockText(dir);
+}
+
+test.concurrent(
+  "`bun update <name>` for a transitive-only name runs the security scanner on what it re-resolved",
+  async () => {
+    using server = await serveRegistry(TAGGED_FREE);
+    const packageJson = pkgJson({ parent: "^1.0.0" });
+    const dir = await setupServed(
+      server,
+      "update-named-scan-",
+      pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+      packageJson,
+    );
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    const before = await withLeafScanner(server, dir);
+    const { stdout, exitCode } = await run(dir, "update", "leaf");
+    expect(stdout).toContain("scanned: leaf@1.1.0");
+    expect(stdout).not.toContain("parent@");
+    expect(stdout).toContain("FATAL: leaf");
+    expect(stdout).toContain("Installation aborted due to fatal security advisories");
+    expect(await lockText(dir)).toBe(before);
+    expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
+    expect(exitCode).toBe(1);
+  },
+);
+
+// The request binds to the root's exact leaf@1.0.0, which stays put; the copy that moves is parent's nested one.
+test.concurrent(
+  "`bun update <name>` also scans the nested copy it re-resolved when the root's own row stays put",
+  async () => {
+    using server = await serveRegistry(TAGGED_FREE);
+    const dir = await installServed(server, "update-named-scan-nested-", pkgJson({ parent: "^1.0.0", leaf: "1.0.0" }));
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    const before = await withLeafScanner(server, dir);
+    const { stdout, exitCode } = await run(dir, "update", "leaf");
+    const scanned = stdout.match(/^scanned: .*$/m)?.[0] ?? "";
+    expect(scanned).toContain("leaf@1.0.0");
+    expect(scanned).toContain("leaf@1.1.0");
+    expect(stdout).toContain("FATAL: leaf");
+    expect(await lockText(dir)).toBe(before);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
+    expect(exitCode).toBe(1);
+  },
+);
+
+test.concurrent("`bun update <name>` for a transitive-only name that the scanner accepts installs it", async () => {
+  using server = await serveRegistry({ ...TAGGED_FREE, leaf: { "1.0.0": {}, "1.0.1": {} } });
+  const packageJson = pkgJson({ parent: "^1.0.0" });
+  const dir = await setupServed(
+    server,
+    "update-named-scan-clean-",
+    pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+    packageJson,
+  );
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  await withLeafScanner(server, dir);
+  const { stdout, stderr, exitCode } = await run(dir, "update", "leaf");
+  expect(stdout).toContain("scanned: leaf@1.0.1");
+  expect(stdout).not.toContain("FATAL:");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.1"]);
+  expect(await installedVersion(dir, "leaf")).toBe("1.0.1");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
 
 const TAGGED: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: "stable" } } },
@@ -1103,7 +1504,7 @@ test.concurrent.each([
   using server = await serveRegistry(TAGGED, tags);
   const { dir, packageJson } = await movedTag(server, tags, from, to);
   const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
-  expect(stdout).toContain(`  leaf@${from} → ${to}\n`);
+  expectMoved(stdout, "leaf", from, to);
   expect(stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "leaf")).toStrictEqual([to]);
@@ -1145,8 +1546,8 @@ test.concurrent(
     expect(await lockedVersions(dir, "tagged")).toStrictEqual(["1.0.0"]);
 
     const { stdout, stderr, exitCode } = await run(dir, "update", "--minimum-release-age", THREE_DAYS_SECONDS);
-    expect(stdout).toContain("  leaf@1.0.0 → 1.1.0\n");
-    expect(stdout).toContain("  tagged@1.0.0 → 1.1.0\n");
+    expectMoved(stdout, "leaf", "1.0.0", "1.1.0");
+    expectMoved(stdout, "tagged", "1.0.0", "1.1.0");
     expect(stdout).not.toContain("1.2.0");
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
@@ -1183,7 +1584,7 @@ test.concurrent(
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.1"]);
 
     const { stdout, stderr, exitCode } = await run(dir, "update");
-    expect(stdout).toContain("  leaf@2.0.1 → 3.0.0\n");
+    expectMoved(stdout, "leaf", "2.0.1", "3.0.0");
     expect(stdout).not.toContain("3.0.1");
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
@@ -1264,7 +1665,7 @@ test.concurrent.each<[string, string, string[], string, string]>([
   expect(await lockedVersions(dir, "pre")).toStrictEqual([from]);
 
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expect(stdout).toContain(`  pre@${from} → ${to}\n`);
+  expectMoved(stdout, "pre", from, to);
   expect(stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockedVersions(dir, "pre")).toStrictEqual([to]);
@@ -1274,6 +1675,18 @@ test.concurrent.each<[string, string, string[], string, string]>([
   expect(await installedVersion(dir, "pre")).toBe(to);
   expect(exitCode).toBe(0);
 });
+
+// A package whose manifest could not be fetched is reported once, as a stderr warning carrying the registry's answer; stdout keeps the summary block only.
+function expectWarnings(stderr: string, ...warnings: string[]) {
+  expect(
+    stderr
+      .split("\n")
+      .filter(line => line.startsWith("warn:"))
+      .map(line => `${line}\n`),
+  ).toStrictEqual(warnings);
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("Resolving...");
+}
 
 // Only leaf is stale; its manifest stops being served between the install and the update.
 test.concurrent.each([404, 500])(
@@ -1292,16 +1705,79 @@ test.concurrent.each([404, 500])(
     const before = await lockText(dir);
     knobs.status!.leaf = status;
     const { stdout, stderr, exitCode } = await run(dir, "update");
-    expect(stdout).not.toContain("updating:");
-    expect(stderr).toContain(`warn: GET ${server.url.origin}/leaf - ${status}`);
-    expect(stderr).not.toContain("error:");
-    expect(stderr).toContain("Saved lockfile");
+    expectSummary(stdout, noChanges(2, 3));
+    expectWarnings(stderr, notCheckedWarning(server, "leaf", "1.0.0", status));
+    expect(stderr).not.toContain("Saved lockfile");
     expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
     expect(await lockText(dir)).toBe(before);
     expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent("a manifest that could not be fetched is warned about while the rest still moves", async () => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(STALE_CHILDREN, {}, knobs);
+  const { dir, packageJson } = await staleChildren(server);
+  knobs.status!.leaf = 404;
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectSummary(stdout, movedRow("other-leaf", "1.0.0", "1.1.0"), "", installed(1));
+  expectWarnings(stderr, notCheckedWarning(server, "leaf", "1.0.0", 404));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "other-leaf")).toStrictEqual(["1.1.0"]);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("several unfetchable manifests are warned about once each, sorted", async () => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(STALE_CHILDREN, {}, knobs);
+  const { dir, packageJson } = await staleChildren(server);
+  const before = await lockText(dir);
+  knobs.status!.leaf = 500;
+  knobs.status!["other-leaf"] = 500;
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectSummary(stdout, noChanges(4, 5));
+  expectWarnings(
+    stderr,
+    notCheckedWarning(server, "leaf", "1.0.0", 500),
+    notCheckedWarning(server, "other-leaf", "1.0.0", 500),
+  );
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await lockText(dir)).toBe(before);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --dry-run` warns about the manifests it could not fetch and prints the plan", async () => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(STALE_CHILDREN, {}, knobs);
+  const { dir, packageJson } = await staleChildren(server);
+  const before = await lockText(dir);
+  knobs.status!.leaf = 404;
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run");
+  expectDryRun(stdout, movedRow("other-leaf", "1.0.0", "1.1.0"));
+  expectWarnings(stderr, notCheckedWarning(server, "leaf", "1.0.0", 404));
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await lockText(dir)).toBe(before);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockedVersions(dir, "other-leaf")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --silent` swallows the unfetchable-manifest warning too", async () => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(STALE_CHILDREN, {}, knobs);
+  const { dir } = await staleChildren(server);
+  knobs.status!.leaf = 500;
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--silent");
+  expect(stdout).toBe("");
+  expect(stderr).toBe("");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "other-leaf")).toStrictEqual(["1.1.0"]);
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("`bun update <name>` from a member leaves a sibling's own entry alone but lets it follow", async () => {
   const { dir, pkg2Text } = await staleMembers("~1.0.0", "^1.0.0");
@@ -1367,10 +1843,8 @@ test.concurrent("`bun update <name>` for a name only other workspaces depend on 
   const rootText = await packageJsonText(dir);
   const lockBefore = await lockText(dir);
   const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update", "no-deps");
-  expect(stderr).toContain(
-    'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
-  );
-  expect(stderr).toContain("bun update -r no-deps");
+  expect(stderr).toContain(NOT_A_DEPENDENCY_HERE("no-deps", "root"));
+  expect(stderr).not.toContain("note:");
   expect(await lockText(dir)).toBe(lockBefore);
   expect(await packageJsonText(dir)).toBe(rootText);
   expect(exitCode).toBe(1);
@@ -1386,8 +1860,9 @@ async function staleScoped() {
 
 test.concurrent("a scoped glob selects only the matching names", async () => {
   const dir = await staleScoped();
-  const { stderr, exitCode } = await run(dir, "update", "--latest", "@types/*");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--latest", "@types/*");
+  expectSummary(stdout, movedRow("@types/no-deps", "1.0.0", "2.0.0"), "", installed(1));
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^1.0.0", "@types/no-deps": "^2.0.0" }));
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(await lockedVersions(dir, "@types/no-deps")).toStrictEqual(["2.0.0"]);
@@ -1397,8 +1872,13 @@ test.concurrent("a scoped glob selects only the matching names", async () => {
 
 test.concurrent("a bare `*` names everything, scoped names included", async () => {
   const dir = await staleScoped();
-  const { stderr, exitCode } = await run(dir, "update", "--latest", "*");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--latest", "*");
+  expectRowsAnd(
+    stdout,
+    [movedRow("@types/no-deps", "1.0.0", "2.0.0"), movedRow("no-deps", "1.0.0", "2.0.0")],
+    installed(2),
+  );
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^2.0.0", "@types/no-deps": "^2.0.0" }));
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
   await frozen(dir);
@@ -1412,30 +1892,34 @@ test.concurrent.each([
   await expectOnlyADepMoved(await staleSiblings(), pattern);
 });
 
-test.concurrent("a pattern that matches nothing is an error", async () => {
-  const { dir } = await staleSiblings();
-  await expectRejected(dir, 'error: no packages in bun.lock match "zzz-*"', "zzz-*");
-});
-
 test.concurrent("a version cannot be combined with a pattern", async () => {
   const dir = await staleScoped();
   await expectRejected(dir, "a version cannot be combined with a pattern: @types/*@2", "@types/*@2");
 });
 
-test.concurrent("excluding every package is a no-op", async () => {
+// The one dependency row was checked; the no-op says which patterns left nothing selected.
+test.concurrent.each([
+  ["a negated name", ["!no-deps"], 'match "!no-deps"'],
+  ["every match negated", ["*", "!*"], 'match "*" "!*"'],
+])("excluding every package is a no-op that shows its work (%s)", async (_, args, by) => {
   const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
-  await expectNothingToUpdate(dir, "!no-deps");
+  await expectNothingToUpdate(dir, noneSelected(1, by), ...args);
 });
 
-test.concurrent("patterns need a lockfile", async () => {
-  const { packageDir } = await registry.createTestDir({
-    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
-    files: { "package.json": stringify(pkgJson({ "no-deps": "^1.0.0" })) },
-  });
-  const { stderr, exitCode } = await run(packageDir, "update", "no-*");
-  expect(stderr).toContain("missing lockfile, nothing to update");
-  expect(exitCode).toBe(1);
-});
+test.concurrent.each([
+  ["a pattern", ["no-*"], '"no-*"'],
+  ["a group selector", ["--dev"], "--dev"],
+])(
+  "without a lockfile, `bun update` with %s names the missing file and the command that creates it",
+  async (_, args, subject) => {
+    const dir = await withoutLockfile({ "no-deps": "^1.0.0" });
+    const { stderr, exitCode } = await run(dir, "update", ...args);
+    expect(stderr).toContain(`error: no bun.lock to match ${subject} against\n    bun install\n`);
+    expect(stderr).not.toContain("missing lockfile");
+    expect(await file(join(dir, "bun.lock")).exists()).toBeFalse();
+    expect(exitCode).toBe(1);
+  },
+);
 
 test.concurrent("several names in one command are matched independently, aliases through their real name", async () => {
   const dir = await setup({
@@ -1445,8 +1929,11 @@ test.concurrent("several names in one command are matched independently, aliases
   expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
 
-  const { stderr, exitCode } = await run(dir, "update", "a-dep", "no-deps");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "a-dep", "no-deps");
+  expect(movedRows(stdout)).toContain(A_DEP_ROW);
+  expect(movedRows(stdout)).toContain(NO_DEPS_ROW);
+  expect(stdout).not.toMatch(/^installed /m);
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(
     pkgJson({ "a-dep": "^1.0.10", aliased: "npm:no-deps@~1.0.1", "one-range-dep": "1.0.0" }),
   );
@@ -1469,8 +1956,9 @@ test.concurrent.each(["--prod", "-P", "--production", "-p"])(
   "`bun update %s` only touches dependencies and still installs devDependencies",
   async flag => {
     const { dir } = await staleSiblings(DEV_A_DEP);
-    const { stderr, exitCode } = await run(dir, "update", flag);
-    expect(stderr).not.toContain("error:");
+    const { stdout, stderr, exitCode } = await run(dir, "update", flag);
+    expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+    expectCleanStderr(stderr);
     expect(await packageJsonOf(dir)).toStrictEqual(grouped({ "no-deps": "^1.1.0", "a-dep": "^1.0.1" }, DEV_A_DEP));
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
     expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
@@ -1483,8 +1971,9 @@ test.concurrent.each(["--prod", "-P", "--production", "-p"])(
 test.concurrent("`bun update --prod` includes optionalDependencies", async () => {
   const groups: Groups = { "a-dep": "optionalDependencies" };
   const { dir } = await staleSiblings(groups);
-  const { stderr, exitCode } = await run(dir, "update", "--prod");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--prod");
+  expectRowsAnd(stdout, [A_DEP_ROW, NO_DEPS_ROW], installed(2));
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(grouped({ "no-deps": "^1.1.0", "a-dep": "^1.0.10" }, groups));
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
@@ -1495,8 +1984,9 @@ test.concurrent("`bun update --prod` includes optionalDependencies", async () =>
 test.concurrent("`bun update --no-optional` leaves optionalDependencies alone", async () => {
   const groups: Groups = { "a-dep": "optionalDependencies" };
   const { dir } = await staleSiblings(groups);
-  const { stderr, exitCode } = await run(dir, "update", "--no-optional");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--no-optional");
+  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(grouped({ "no-deps": "^1.1.0", "a-dep": "^1.0.1" }, groups));
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
@@ -1513,9 +2003,12 @@ test.concurrent("a selector combined with `--latest` only rewrites the selected 
   await expectOnlyADepMoved(await staleSiblings(DEV_A_DEP), "--dev", "--latest");
 });
 
-test.concurrent("a selector matching nothing is a no-op", async () => {
+test.concurrent.each([
+  ["--dev", ["--dev"], "selected by --dev"],
+  ["--dev --no-optional", ["--dev", "--no-optional"], "selected by --dev --no-optional"],
+])("a selector matching nothing (%s) is a no-op that shows its work", async (_, args, by) => {
   const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
-  await expectNothingToUpdate(dir, "--dev");
+  await expectNothingToUpdate(dir, noneSelected(1, by), ...args);
 });
 
 test.concurrent("a version cannot be combined with a selector", async () => {
@@ -1622,7 +2115,7 @@ test.concurrent("`bun update --prod` leaves a stale peerDependencies entry alone
 test.concurrent("`bun update --dev` with only a stale peerDependencies entry has nothing to update", async () => {
   const dir = await stalePeerEntry();
   const packageJsonBefore = await packageJsonText(dir);
-  await expectNothingToUpdate(dir, "--dev");
+  await expectNothingToUpdate(dir, noneSelected(2, "selected by --dev"), "--dev");
   expect(await packageJsonText(dir)).toBe(packageJsonBefore);
 });
 
@@ -1667,8 +2160,9 @@ async function staleMemberGroups() {
 test.concurrent("`bun update --dev -r` rewrites every workspace's devDependencies and nothing else", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore, , pkg2Before] = textsBefore;
-  const { stderr, exitCode } = await run(dir, "update", "--dev", "-r");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--dev", "-r");
+  expectRowsAnd(stdout, [A_DEP_ROW], installed(1));
+  expectCleanStderr(stderr);
   expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.0.0", "^1.0.0", "^1.0.10")), pkg2Before]);
   expect(await locked()).toStrictEqual({ ...stale, "a-dep": ["1.0.10"] });
   await frozen(dir);
@@ -1678,8 +2172,9 @@ test.concurrent("`bun update --dev -r` rewrites every workspace's devDependencie
 test.concurrent("`bun update --prod --filter pkg1` rewrites only pkg1's dependencies", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore, , pkg2Before] = textsBefore;
-  const { stderr, exitCode } = await run(dir, "update", "--prod", "--filter", "pkg1");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--prod", "--filter", "pkg1");
+  expectRowsAnd(stdout, [NO_DEPS_ROW], installed(1));
+  expectCleanStderr(stderr);
   expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.1.0", "^1.0.0", "^1.0.1")), pkg2Before]);
   expect(await locked()).toStrictEqual({ ...stale, "no-deps": ["1.1.0"] });
   await frozen(dir);
@@ -1689,8 +2184,9 @@ test.concurrent("`bun update --prod --filter pkg1` rewrites only pkg1's dependen
 test.concurrent("`bun update '@types/*' --filter pkg1 --latest` rewrites only pkg1's matching entry", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore, , pkg2Before] = textsBefore;
-  const { stderr, exitCode } = await run(dir, "update", "@types/*", "--filter", "pkg1", "--latest");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "@types/*", "--filter", "pkg1", "--latest");
+  expectMoved(stdout, "@types/no-deps", "1.0.0", "2.0.0");
+  expectCleanStderr(stderr);
   expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.0.0", "^2.0.0", "^1.0.1")), pkg2Before]);
   expect(await locked()).toStrictEqual({ ...stale, "@types/no-deps": ["1.0.0", "2.0.0"] });
   const { workspaces } = await lock(dir);
@@ -1699,12 +2195,13 @@ test.concurrent("`bun update '@types/*' --filter pkg1 --latest` rewrites only pk
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.each([
-  ["from the root without -r", ["--dev"]],
-  ["with --filter pkg2", ["--dev", "--filter", "pkg2"]],
-])("`bun update --dev` %s selects no entries and prints No packages to update", async (_, args) => {
+// The root's only rows are its two workspace links, which are not dependencies to check; pkg2 has two.
+test.concurrent.each<[string, string[], number]>([
+  ["from the root without -r", ["--dev"], 0],
+  ["with --filter pkg2", ["--dev", "--filter", "pkg2"], 2],
+])("`bun update --dev` %s selects no entries and says what it checked", async (_, args, checked) => {
   const { dir, texts, textsBefore } = await staleMemberGroups();
-  await expectNothingToUpdate(dir, ...args);
+  await expectNothingToUpdate(dir, noneSelected(checked, "selected by --dev"), ...args);
   expect(await texts()).toStrictEqual(textsBefore);
 });
 
@@ -1725,8 +2222,13 @@ test.concurrent.each([
   ["with -r from the root", "", ["-r"]],
 ])("`bun update <name>` %s re-resolves a range widened since the last install", async (_, cwd, args) => {
   const { dir, rootText, pkg2Text } = await widenedPkg1();
-  const { stderr, exitCode } = await runIn(dir, cwd, "update", ...args, "no-deps");
-  expect(stderr).not.toContain("error:");
+  const { stdout, stderr, exitCode } = await runIn(dir, cwd, "update", ...args, "no-deps");
+  // Two installs: 1.1.0 takes the hoisted slot and pkg2's 1.0.0 is re-installed nested; the one row is the move itself.
+  expectRowsAnd(stdout, [NO_DEPS_ROW], installed(2));
+  expectCleanStderr(stderr);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  expect((await file(join(dir, "packages/pkg2/node_modules/no-deps/package.json")).json()).version).toBe("1.0.0");
+  expect(await exists(join(dir, "packages/pkg1/node_modules/no-deps"))).toBeFalse();
   expect(await packageJsonText(dir)).toBe(rootText);
   expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "^1.1.0" }));
   expect(await packageJsonText(dir, "packages/pkg2")).toBe(pkg2Text);
@@ -1758,9 +2260,8 @@ test.concurrent(
     const { dir, rootText, pkg2Text } = await widenedPkg1();
     const lockBefore = await lockText(dir);
     const { stderr, exitCode } = await run(dir, "update", "no-deps");
-    expect(stderr).toContain(
-      'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
-    );
+    expect(stderr).toContain(NOT_A_DEPENDENCY_HERE("no-deps", "pkg1", "pkg2"));
+    expect(stderr).not.toContain("note:");
     expect(await packageJsonText(dir)).toBe(rootText);
     expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "^1.0.0" }));
     expect(await packageJsonText(dir, "packages/pkg2")).toBe(pkg2Text);
@@ -1796,11 +2297,18 @@ test.concurrent("`bun update -i --dev` only offers and updates devDependencies",
   expect(exitCode).toBe(0);
 });
 
+// `-i --dry-run` answers with the same rows and count line as `bun update --dry-run`; the picker itself is drawn above them.
+function expectInteractiveDryRun(stdout: string, ...rows: string[]) {
+  expect(movedRows(stdout)).toStrictEqual(rows);
+  expect(normalize(stdout)).toContain(`\n${wouldUpdate(rows.length)}\n`);
+  expect(stdout).not.toContain("Would update");
+}
+
 test.concurrent("`bun update -i --prod --dry-run` lists only dependencies", async () => {
   const { dir } = await staleSiblings(DEV_A_DEP);
   const before = await lockText(dir);
   const { stdout, exitCode } = await runInteractive(dir, "a\r", "--prod", "--dry-run");
-  expect(stdout).toContain("Would update no-deps to 1.1.0");
+  expectInteractiveDryRun(stdout, NO_DEPS_ROW);
   expect(stdout).not.toContain("a-dep");
   expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(0);
@@ -1809,26 +2317,29 @@ test.concurrent("`bun update -i --prod --dry-run` lists only dependencies", asyn
 test.concurrent("`bun update -i --no-optional --dry-run` skips optionalDependencies", async () => {
   const { dir } = await staleSiblings({ "a-dep": "optionalDependencies" });
   const { stdout, exitCode } = await runInteractive(dir, "a\r", "--no-optional", "--dry-run");
-  expect(stdout).toContain("Would update no-deps to 1.1.0");
+  expectInteractiveDryRun(stdout, NO_DEPS_ROW);
   expect(stdout).not.toContain("a-dep");
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("`bun update -i` with a selector that matches nothing prints No packages to update", async () => {
-  const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
-  const before = await lockText(dir);
-  const { stdout, exitCode } = await runInteractive(dir, "", "--dev");
-  expect(stdout).toContain("No packages to update");
-  expect(stdout).not.toContain("no-deps");
-  expect(await lockText(dir)).toBe(before);
-  expect(exitCode).toBe(0);
-});
+test.concurrent(
+  "`bun update -i` with a selector that matches nothing prints the same no-op line as `bun update`",
+  async () => {
+    const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
+    const before = await lockText(dir);
+    const { stdout, exitCode } = await runInteractive(dir, "", "--dev");
+    expect(normalize(stdout)).toContain(`\n${noneSelected(1, "selected by --dev")}\n`);
+    expect(stdout).not.toContain("No packages to update");
+    expect(stdout).not.toContain("no-deps");
+    expect(await lockText(dir)).toBe(before);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("`bun update -i` without a selector still offers every group", async () => {
   const { dir } = await staleSiblings(DEV_A_DEP);
   const { stdout, exitCode } = await runInteractive(dir, "a\r", "--dry-run");
-  expect(stdout).toContain("Would update no-deps to 1.1.0");
-  expect(stdout).toContain("Would update a-dep to 1.0.10");
+  expectInteractiveDryRun(stdout, A_DEP_ROW, NO_DEPS_ROW);
   expect(exitCode).toBe(0);
 });
 

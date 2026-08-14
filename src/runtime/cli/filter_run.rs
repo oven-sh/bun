@@ -893,7 +893,15 @@ pub(crate) fn run_scripts_with_filter(
                 (bstr::BStr::new(script_name),),
             );
         } else {
-            Output::err_generic("No packages matched the filter", ());
+            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+            Output::err_generic(
+                "{}",
+                (bstr::BStr::new(
+                    &bun_install::package_manager::workspace_selection::unmatched_message(
+                        &patterns,
+                    ),
+                ),),
+            );
         }
         Global::exit(1);
     }

@@ -591,6 +591,7 @@ function parseGlobalFlags(helpText: string): FlagInfo[] {
 function addCommandAliases(commands: Record<string, CommandInfo>): void {
   const aliasMap: Record<string, string[]> = {
     "install": ["i"],
+    "update": ["up"],
     "add": ["a"],
     "remove": ["rm"],
     "create": ["c"],

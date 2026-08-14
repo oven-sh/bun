@@ -483,6 +483,70 @@ test.concurrent.each([
   },
 );
 
+test.concurrent(
+  "migrated bun.lock with a nested-placed peer of a file: dependency round-trips --frozen-lockfile",
+  async () => {
+    // delta is a regular peer of gamma placed only as "gamma/delta"; listing it in optionalPeers too made reload drop the entry.
+    await using testDir = tempDir("migrate-nested-peer-fixed-point", {
+      "package.json": JSON.stringify({
+        name: "sandbox",
+        version: "1.0.0",
+        workspaces: ["packages/ws-a"],
+        dependencies: { gamma: "file:vendor/gamma" },
+      }),
+      "vendor/gamma/package.json": JSON.stringify({
+        name: "gamma",
+        version: "1.0.0",
+        peerDependencies: { delta: "*" },
+      }),
+      "vendor/delta/package.json": JSON.stringify({ name: "delta", version: "2.0.0" }),
+      "packages/ws-a/package.json": JSON.stringify({
+        name: "ws-a",
+        version: "0.1.0",
+        dependencies: { delta: "file:../../vendor/delta" },
+      }),
+      // What `npm install --package-lock-only` produces for this tree.
+      "package-lock.json": JSON.stringify({
+        name: "sandbox",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "sandbox",
+            version: "1.0.0",
+            dependencies: { gamma: "file:vendor/gamma" },
+            workspaces: ["packages/ws-a"],
+          },
+          "node_modules/gamma": { resolved: "vendor/gamma", link: true },
+          "vendor/gamma": { name: "gamma", version: "1.0.0", peerDependencies: { delta: "*" } },
+          "node_modules/delta": { resolved: "vendor/delta", link: true },
+          "vendor/delta": { name: "delta", version: "2.0.0" },
+          "node_modules/ws-a": { resolved: "packages/ws-a", link: true },
+          "packages/ws-a": { name: "ws-a", version: "0.1.0", dependencies: { delta: "file:../../vendor/delta" } },
+        },
+      }),
+    });
+
+    const first = await install(testDir);
+    expect(first.stderr).toContain("migrated lockfile from package-lock.json");
+    expect(first.exitCode).toBe(0);
+
+    const lock = await Bun.file(join(testDir, "bun.lock")).text();
+    expect(lock).toContain('"gamma/delta"');
+    expect(lock).not.toContain("optionalPeers");
+
+    const frozen = await install(testDir, "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("lockfile had changes");
+    expect(frozen.exitCode).toBe(0);
+
+    // A plain re-install of the unchanged tree must not rewrite the lockfile.
+    const second = await install(testDir);
+    expect(second.exitCode).toBe(0);
+    expect(await Bun.file(join(testDir, "bun.lock")).text()).toBe(lock);
+  },
+);
+
 test.concurrent("package-lock.json migration does not platform-skip a regular file: tarball dependency", async () => {
   // Same divergence as the folder variant, for a `LocalTarball` resolution. npm records
   // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of
@@ -515,6 +579,70 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(exitCode).toBe(0);
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
+
+// npm records a file: link target's own dependencies but never nests them, so a target that reaches its own name resolves through the root link and the hoist tree must cut the cycle.
+function folderLockfile(rootDeps: Record<string, string>, folders: Record<string, Record<string, string>>) {
+  const packages: Record<string, unknown> = { "": { name: "root", dependencies: rootDeps } };
+  const files: Record<string, string> = { "package.json": JSON.stringify({ name: "root", dependencies: rootDeps }) };
+  for (const [name, dependencies] of Object.entries(folders)) {
+    files[`${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", dependencies });
+    packages[name] = { version: "1.0.0", dependencies };
+    packages[`node_modules/${name}`] = { resolved: name, link: true };
+  }
+  files["package-lock.json"] = JSON.stringify({ name: "root", lockfileVersion: 3, requires: true, packages });
+  return files;
+}
+
+test.concurrent.each<[string, Record<string, string>, string[]]>([
+  ["depends on its own name", folderLockfile({ pkg: "file:pkg" }, { pkg: { pkg: "^1.0.0" } }), ["pkg"]],
+  [
+    "aliases its own name via npm:",
+    folderLockfile({ pkg: "file:pkg" }, { pkg: { pkg: "npm:something@^1.0.0" } }),
+    ["pkg"],
+  ],
+  [
+    "and another link target depend on each other",
+    folderLockfile({ a: "file:a", b: "file:b" }, { a: { b: "^1.0.0" }, b: { a: "^1.0.0" } }),
+    ["a", "a/b", "b", "b/a"],
+  ],
+])("package-lock.json migration terminates when a file: link target %s", async (_desc, files, lockPackages) => {
+  await using testDir = tempDir("migrate-folder-cycle", files);
+
+  const first = await install(testDir);
+  expect(first.stderr).toContain("migrated lockfile from package-lock.json");
+  expect(first.exitCode).toBe(0);
+  const lock = Bun.JSONC.parse(await Bun.file(join(testDir, "bun.lock")).text()) as {
+    packages: Record<string, unknown>;
+  };
+  expect(Object.keys(lock.packages).sort()).toStrictEqual(lockPackages);
+  for (const name of Object.keys(JSON.parse(files["package.json"]).dependencies)) {
+    expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toStrictEqual(
+      JSON.parse(files[`${name}/package.json`]),
+    );
+  }
+
+  // The bun.lock the migration wrote must round-trip through bun's own parser.
+  const second = await install(testDir, "--frozen-lockfile");
+  expect(second.stderr).not.toContain("Ignoring lockfile");
+  expect(second.exitCode).toBe(0);
+});
+
+test.concurrent(
+  "bun install terminates when a file: folder dependency declares a workspace:. self-reference (#25202)",
+  async () => {
+    // Same hoist cycle without a foreign lockfile; today a transitive workspace: range is resolved against the root project, so this errors instead of hanging.
+    await using testDir = tempDir("install-folder-self-workspace", {
+      "package.json": JSON.stringify({ name: "consumer", dependencies: { test: "file:dir1" } }),
+      "dir1/package.json": JSON.stringify({ name: "test", version: "1.0.0", devDependencies: { foo: "workspace:." } }),
+    });
+
+    const { stderr, exitCode } = await install(testDir);
+    expect(stderr).toContain('Workspace dependency "foo" not found');
+    expect(stderr).toContain("foo@workspace:. failed to resolve");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(join(testDir, "bun.lock"))).toBeFalse();
+  },
+);
 
 test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
   // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
@@ -822,9 +950,9 @@ describe("package-lock.json migration fixes", () => {
     {
       using dir = fixture("old-package-lock");
       const { stderr, exitCode } = await run(dir, "pm", "migrate");
-      expect(stderr).toContain("lockfileVersion 1");
-      expect(stderr).toContain("--lockfile-version=3");
-      expect(stderr).not.toContain("Please upgrade");
+      expect(stderr).toBe(
+        "error: package-lock.json is lockfileVersion 1, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      );
       expect(exitCode).toBe(1);
     }
     {
@@ -834,7 +962,10 @@ describe("package-lock.json migration fixes", () => {
         "package-lock.json": JSON.stringify({ lockfileVersion: 1, requires: true, dependencies: {} }),
       });
       const { stderr, exitCode } = await run(dir, "install");
-      expect(stderr).toContain("lockfileVersion 1");
+      expect(stderr).toContain(
+        "warn: package-lock.json is lockfileVersion 1, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      );
+      expect(stderr).not.toContain("failed to migrate");
       expect(exitCode).toBe(0);
       expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeTrue();
       expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
@@ -853,7 +984,7 @@ describe("package-lock.json migration fixes", () => {
     });
 
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain("npm patches for 1 package");
+    expect(stderr).toContain('warn: skipped npm patches for "arg" from package-lock.json\nnote: bun patch <pkg>\n');
     expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
     expect(lock.packages.arg[0]).toBe("arg@4.1.3");
     expect(exitCode).toBe(0);
@@ -1413,13 +1544,18 @@ describe("package-lock.json migration fixes", () => {
       "package-lock.json": npmLock("v5", {}, { lockfileVersion: 5 }),
     });
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
-    expect(stderr).toContain("package-lock.json uses lockfileVersion 5, which this version of bun cannot migrate.");
+    expect(stderr).toBe(
+      "error: package-lock.json is lockfileVersion 5, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+    );
     expect(exitCode).toBe(1);
     expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
 
     const install = await run(dir, "install");
-    expect(install.stderr).toContain("lockfileVersion 5");
+    expect(install.stderr).toContain(
+      "warn: package-lock.json is lockfileVersion 5, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+    );
     expect(install.stderr).not.toContain("migrated lockfile");
+    expect(install.stderr).not.toContain("failed to migrate");
     expect(install.exitCode).toBe(0);
     expect((await readLock(dir)).lock.packages["dep-1"]).toStrictEqual(["dep-1@file:dep-1", {}]);
     expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
@@ -1442,7 +1578,7 @@ describe("package-lock.json migration fixes", () => {
     expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
   });
 
-  test.concurrent("several patched entries are reported with a plural", async () => {
+  test.concurrent("several patched entries are listed in one warning", async () => {
     const dependencies = { x: "1.0.0", y: "1.0.0" };
     using dir = synthetic("npm-migrate-patched-plural", {
       "package.json": JSON.stringify({ name: "patched", dependencies }),
@@ -1453,7 +1589,7 @@ describe("package-lock.json migration fixes", () => {
       }),
     });
     const { stderr, lock } = await migrate(dir);
-    expect(stderr).toContain("npm patches for 2 packages; bun does not apply them");
+    expect(stderr).toContain('warn: skipped npm patches for "x", "y" from package-lock.json\nnote: bun patch <pkg>\n');
     expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0", "y@1.0.0"]);
     expect(lock.patchedDependencies).toBeUndefined();
     await frozen(dir);

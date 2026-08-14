@@ -466,7 +466,7 @@ describe("whoami", async () => {
     const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
     const npmrc = `
     //localhost:${port}/:_authToken=${token}
-    registry=http://localhost:${port}/`;
+    registry=http://localhost:${port}`;
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, ".npmrc"), npmrc),
@@ -5444,7 +5444,7 @@ describe("update", () => {
           await runBunUpdate(env, packageDir);
           assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          // bare `1` / `1.0` / `1.1` ranges are kept as written; only bun.lock and node_modules move
+          // bare `1` / `1.0` / `1.1` and `~1` keep their ceiling from the omitted components, so they stay as written
           expect(await file(packageJson).json()).toStrictEqual({
             name: "foo",
             dependencies: {
@@ -5459,7 +5459,7 @@ describe("update", () => {
               "a3": "npm:no-deps@1.1",
               "a4": "npm:no-deps@1.0.1",
               "a5": "npm:no-deps@1.1.0",
-              "a6": "npm:no-deps@~1.1.0",
+              "a6": "npm:no-deps@~1",
               "a7": "npm:no-deps@^1.1.0",
               "a8": "npm:no-deps@~1.1.0",
               "a9": "npm:no-deps@^1.1.0",
@@ -5520,15 +5520,12 @@ describe("update", () => {
       let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(out).toEqual([
+      expect(out).toStrictEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "installed no-deps@1.0.1",
-        "",
-        expect.stringContaining("done"),
-        "",
+        "Checked 2 installs across 3 packages (no changes)",
       ]);
-      expect(await file(packageJson).json()).toEqual({
+      expect(await file(packageJson).json()).toStrictEqual({
         name: "foo",
         dependencies: {
           "a-dep": "1.0.3",
@@ -5540,14 +5537,14 @@ describe("update", () => {
       ({ out } = await runBunUpdate(env, packageDir, ["no-deps", "--latest"]));
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(out).toEqual([
+      expect(out).toStrictEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "installed no-deps@2.0.0",
+        "^ no-deps 1.0.1 -> 2.0.0",
         "",
         "1 package installed",
       ]);
-      expect(await file(packageJson).json()).toEqual({
+      expect(await file(packageJson).json()).toStrictEqual({
         name: "foo",
         dependencies: {
           "a-dep": "1.0.3",
@@ -5880,15 +5877,13 @@ describe("update", () => {
     ]));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([
+    // what-bin and uses-what-bin already resolve to the hoisted 1.5.0, so only the a-dep pin moves
+    expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed what-bin@1.5.0 with binaries:",
-      " - what-bin",
-      "installed uses-what-bin@1.5.0",
-      "installed a-dep@1.0.5",
+      "^ a-dep 1.0.10 -> 1.0.5 (v1.0.10 available)",
       "",
-      "3 packages installed",
+      "1 package installed",
     ]);
     // lockfile = parseLockfile(packageDir);
     // expect(lockfile).toMatchNodeModulesAt(packageDir);
@@ -5927,14 +5922,10 @@ describe("update", () => {
     ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["a-dep@^1.0.5"]));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([
-      expect.stringContaining("bun update v1."),
-      "",
-      "installed a-dep@1.0.10",
-      "",
-      expect.stringMatching(/(\[\d+\.\d+m?s\])/),
-      "",
-    ]);
+    // pkg1's a-dep moves 1.0.5 -> 1.0.10 onto the hoisted copy, so the nested copy goes away and nothing new is installed
+    expect(out).toContain("^ a-dep 1.0.5 -> 1.0.10");
+    expect(await exists(join(packageDir, "packages", "pkg1", "node_modules", "a-dep"))).toBe(false);
+    expect(parseLockfile(packageDir).package_index["a-dep"]).toBeNumber();
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
       name: "a-dep",
       version: "1.0.10",
@@ -5973,14 +5964,14 @@ describe("update", () => {
         const { out } = args ? await runBunUpdate(env, packageDir, ["a-dep"]) : await runBunUpdate(env, packageDir);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-        expect(out).toEqual([
+        expect(out).toStrictEqual([
           expect.stringContaining("bun update v1."),
           "",
-          args ? "installed a-dep@1.0.10" : expect.stringContaining("+ a-dep@1.0.10"),
+          "+ a-dep@1.0.10",
           "",
           "1 package installed",
         ]);
-        expect(await file(packageJson).json()).toEqual({
+        expect(await file(packageJson).json()).toStrictEqual({
           name: "foo",
           [group]: {
             "a-dep": "^1.0.10",
@@ -6046,10 +6037,7 @@ describe("update", () => {
     expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed no-deps@1.0.0",
-      "",
-      expect.stringMatching(/(\[\d+\.\d+m?s\])/),
-      "",
+      "Checked 5 installs across 6 packages (no changes)",
     ]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
@@ -6065,11 +6053,10 @@ describe("update", () => {
         env,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(
-        'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
+      expect(stderr).toBe(
+        'error: "no-deps" is not a dependency of this workspace\n    bun update -r no-deps\n    bun update --filter foo no-deps\n',
       );
-      expect(stderr).toContain("bun update -r no-deps");
-      expect(stdout).not.toContain("installed no-deps");
+      expect(stdout).not.toContain("no-deps");
       expect(exitCode).toBe(1);
     }
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
@@ -6101,7 +6088,7 @@ describe("update", () => {
     expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed no-deps@1.1.0",
+      "^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)",
       "",
       "1 package installed",
     ]);
@@ -6531,7 +6518,7 @@ describe("pm trust", async () => {
       });
 
       let err = await stderr.text();
-      expect(err).toContain("error: Lockfile not found");
+      expect(err).toContain("error: missing lockfile, nothing to trust\nnote: run 'bun install' first\n");
       let out = await stdout.text();
       expect(out).toBeEmpty();
       expect(await exited).toBe(1);

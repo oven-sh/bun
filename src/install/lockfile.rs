@@ -1755,7 +1755,12 @@ impl Lockfile {
         Ok(())
     }
 
-    pub fn save_to_disk(&mut self, load_result: &LoadResult<'_>, options: &PackageManagerOptions) {
+    /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
+    pub fn save_to_disk(
+        &mut self,
+        load_result: &LoadResult<'_>,
+        options: &PackageManagerOptions,
+    ) -> bool {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
@@ -1804,7 +1809,17 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        // defer bun.default_allocator.free(bytes) — Vec drops at scope end.
+        if File::openat(
+            Fd::cwd(),
+            save_format.filename().as_bytes(),
+            sys::O::RDONLY,
+            0,
+        )
+        .and_then(|existing| existing.read_to_end())
+        .is_ok_and(|existing| existing == bytes)
+        {
+            return false;
+        }
 
         let mut tmpname_buf = [0u8; 512];
         let mut base64_bytes = [0u8; 8];
@@ -1884,6 +1899,7 @@ impl Lockfile {
             );
             Global::crash();
         }
+        true
     }
 
     pub(crate) fn root_package(&self) -> Option<Package> {

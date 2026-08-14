@@ -624,13 +624,29 @@ _bun_update_completion() {
         '--config[Load config(bunfig.toml)]: :->config' \
         '-y[Write a yarn.lock file (yarn v1)]' \
         '--yarn[Write a yarn.lock file (yarn v1)]' \
-        '-p[Don'"'"'t install devDependencies]' \
-        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Only update dependencies and optionalDependencies]' \
+        '--production[Only update dependencies and optionalDependencies]' \
+        '-P[Only update dependencies and optionalDependencies]' \
+        '--prod[Only update dependencies and optionalDependencies]' \
+        '-d[Only update devDependencies]' \
+        '--dev[Only update devDependencies]' \
+        '-D[Only update devDependencies]' \
+        '--development[Only update devDependencies]' \
+        '--no-optional[Don'"'"'t update optionalDependencies]' \
+        '-E[Write exact versions to package.json instead of ^ or ~ ranges]' \
+        '--exact[Write exact versions to package.json instead of ^ or ~ ranges]' \
         '--no-save[Don'"'"'t save a lockfile]' \
         '--save[Save to package.json]' \
         '--dry-run[Don'"'"'t install anything]' \
         '--frozen-lockfile[Disallow changes to lockfile]' \
-        '--latest[Updates dependencies to latest version, regardless of compatibility]' \
+        '-L[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '--latest[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '-i[Show an interactive list of outdated packages to select for update]' \
+        '--interactive[Show an interactive list of outdated packages to select for update]' \
+        '-r[Update packages in all workspaces]' \
+        '--recursive[Update packages in all workspaces]' \
+        '*--filter[Update packages for the matching workspaces]:workspace pattern' \
+        '*-F[Update packages for the matching workspaces]:workspace pattern' \
         '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \

@@ -4,14 +4,16 @@ use std::sync::OnceLock;
 use bstr::BStr;
 use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
-use bun_core::{Global, Output, UnwrapOrOom as _, prettyln, strings};
+use bun_core::time::nano_timestamp;
+use bun_core::{Global, Output, UnwrapOrOom as _, pretty, strings};
 use bun_semver::string::Builder as StringBuilder;
 
 use crate::dependency::Behavior;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::{UpdateTargetWorkspace, WorkspaceFilter};
+use crate::package_manager::UpdateTargetWorkspace;
+use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
@@ -248,22 +250,63 @@ fn matches(glob: &[u8], name: &[u8]) -> bool {
     }
 }
 
-fn exit_on_lockfile_load_failure(manager: &mut PackageManager) {
-    fn missing(silent: bool) -> ! {
+fn describe_groups(groups: UpdateGroups) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    for (on, flag) in [
+        (groups.dev, &b"--dev"[..]),
+        (groups.prod, b"--prod"),
+        (groups.no_optional, b"--no-optional"),
+    ] {
+        if on {
+            if !out.is_empty() {
+                out.push(b' ');
+            }
+            out.extend_from_slice(flag);
+        }
+    }
+    out
+}
+
+fn describe_patterns(patterns: &[Pattern]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    for pattern in patterns {
+        if !out.is_empty() {
+            out.push(b' ');
+        }
+        out.push(b'"');
+        out.extend_from_slice(pattern.raw);
+        out.push(b'"');
+    }
+    out
+}
+
+fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -> &'static str {
+    fn missing(silent: bool, subject: &[u8]) -> ! {
         if !silent {
-            Output::err_generic("missing lockfile, nothing to update", ());
+            Output::flush();
+            Output::err_generic("no bun.lock to match {} against", (BStr::new(subject),));
+            bun_core::pretty_errorln!("    <cyan>bun install<r>");
+            Output::flush();
         }
         Global::exit(1);
     }
     let silent = manager.options.log_level == LogLevel::Silent;
     if !manager.options.do_.load_lockfile() {
-        missing(silent);
+        missing(silent, subject);
     }
-    match manager.load_lockfile_from_cwd::<true>() {
-        crate::lockfile::LoadResult::Ok(_) => {}
-        crate::lockfile::LoadResult::NotFound => missing(silent),
+    let load_result = manager.load_lockfile_from_cwd::<true>();
+    let from_binary = load_result.loaded_from_binary_lockfile();
+    match load_result {
+        crate::lockfile::LoadResult::Ok(_) => {
+            if from_binary {
+                "bun.lockb"
+            } else {
+                "bun.lock"
+            }
+        }
+        crate::lockfile::LoadResult::NotFound => missing(silent, subject),
         crate::lockfile::LoadResult::Err(cause) => {
-            if !silent {
+            if !silent && !crate::migration::reported_unsupported_lockfile_version(&cause) {
                 let what: &str = match cause.step {
                     crate::lockfile::LoadStep::OpenFile => "open",
                     crate::lockfile::LoadStep::ReadFile => "read",
@@ -317,28 +360,47 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         }
     }
 
-    exit_on_lockfile_load_failure(manager);
+    let subject = if patterns.is_empty() {
+        describe_groups(groups)
+    } else {
+        describe_patterns(&patterns)
+    };
+    let lockfile_name = exit_on_lockfile_load_failure(manager, &subject);
 
     let selection: Option<Vec<UpdateTargetWorkspace>> = (manager.options.do_.recursive()
         || !manager.options.filter_patterns.is_empty())
     .then(|| {
         let lockfile = &*manager.lockfile;
+        let filter_patterns = manager.options.filter_patterns;
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
         let resolutions = lockfile.packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
-        WorkspaceFilter::select_workspaces_quietly(
+        let selected = workspace_selection::select_lockfile_workspaces(
             lockfile,
-            manager.options.filter_patterns,
+            filter_patterns,
             original_cwd,
-        )
-        .into_iter()
-        .map(|id| UpdateTargetWorkspace {
-            is_root: resolutions[id as usize].tag == ResolutionTag::Root,
-            name_hash: name_hashes[id as usize],
-            name: Box::from(names[id as usize].slice(buf)),
-        })
-        .collect()
+            RootSelection::Implicit,
+        );
+        let silent = manager.options.log_level == LogLevel::Silent;
+        if selected.ids.is_empty() && !filter_patterns.is_empty() {
+            if silent {
+                Global::exit(1);
+            }
+            workspace_selection::error_unmatched(filter_patterns);
+        }
+        if !silent {
+            workspace_selection::warn_unmatched(filter_patterns, &selected.unmatched_patterns);
+        }
+        selected
+            .ids
+            .into_iter()
+            .map(|id| UpdateTargetWorkspace {
+                is_root: resolutions[id as usize].tag == ResolutionTag::Root,
+                name_hash: name_hashes[id as usize],
+                name: Box::from(names[id as usize].slice(buf)),
+            })
+            .collect()
     });
     let scope = UpdateScope::new(
         selection.as_deref(),
@@ -348,6 +410,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     );
 
     let mut names: Vec<Box<[u8]>> = Vec::new();
+    let mut checked: usize = 0;
     {
         let lockfile = &*manager.lockfile;
         let walk = scope.walkable_rows(lockfile);
@@ -388,6 +451,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 {
                     continue;
                 }
+                checked += 1;
                 let dep = &deps[i];
                 if owner_is_ws && !selects(groups, dep.behavior) {
                     continue;
@@ -432,8 +496,8 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             );
         } else {
             Output::err_generic(
-                "no packages in bun.lock match \"{}\"",
-                (BStr::new(pattern.raw),),
+                "no packages in {} match \"{}\"",
+                (lockfile_name, BStr::new(pattern.raw)),
             );
         }
     }
@@ -441,8 +505,25 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         Global::exit(1);
     }
     if names.is_empty() && passthrough.is_empty() {
-        if manager.options.log_level != LogLevel::Silent {
-            prettyln!("No packages to update");
+        if manager.options.should_print_command_name() {
+            pretty!(
+                "\nChecked <green>{}<r> dependenc{}, none ",
+                checked,
+                if checked == 1 { "y" } else { "ies" }
+            );
+            if selecting {
+                pretty!("selected by {}", BStr::new(&describe_groups(groups)));
+            }
+            if !patterns.is_empty() {
+                pretty!(
+                    "{}match {}",
+                    if selecting { " " } else { "" },
+                    BStr::new(&describe_patterns(&patterns))
+                );
+            }
+            pretty!(" <d>(no changes)<r> ");
+            Output::print_start_end_stdout(bun_core::start_time(), nano_timestamp());
+            pretty!("\n");
             Output::flush();
         }
         Global::exit(0);

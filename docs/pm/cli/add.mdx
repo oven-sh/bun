@@ -141,7 +141,7 @@ bun remove zod --filter '*' --filter '!api'
 A few things to know, some of which differ from pnpm:
 
 - The workspace root is only edited when a pattern names it: its name, `--filter .` from the root directory, or `{.}`. `*`, filter sets made only of `!` patterns, and relations that merely reach it through its own dependencies (`...api` when the root depends on `api`) leave it alone (`--filter '*' --filter '<root-name>'` edits everything). A `package.json` without workspaces is still selected by `*`.
-- With a `...` relation, `bun add` and `bun remove` read the workspace links from `bun.lock`, so run `bun install` first in a fresh clone. The closure includes the named package itself unless you write `^` (`api^...`, `...^api`).
+- With a `...` relation, `bun add` and `bun remove` read the workspace links from the workspace `package.json` files as they are on disk, so no `bun.lock` is needed and a dependency you just added by hand counts. The closure includes the named package itself unless you write `^` (`api^...`, `...^api`).
 - A `!` pattern always wins, whatever order the flags are given in: `--filter '!./packages/*' --filter api` selects nothing.
 - Name patterns are globs, and `*` does not cross `/`: `*-utils` does not match `@acme/date-utils`; use `*/*-utils` or `@acme/*`.
 - Path patterns must match a workspace directory exactly, relative to the current directory: `--filter ./packages` selects nothing, `--filter ./packages/*` or `--filter '{packages}'` selects every package in it, and `--filter .` only works from a workspace's own directory.

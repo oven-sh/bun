@@ -5,6 +5,7 @@ use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use bun_collections::{StringArrayHashMap, index_sort};
+use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
@@ -14,7 +15,7 @@ use bun_sys::{Fd, File};
 
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
-use super::options::Do;
+use super::options::{Do, LogLevel};
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
@@ -208,8 +209,12 @@ pub(crate) fn select_targets(
     } else {
         RootSelection::Implicit
     };
-    let graph: Option<WorkspaceGraph> = workspace_selection::first_relational(patterns)
-        .map(|pattern| load_workspace_graph(manager, &candidates, pattern));
+    let graph: Option<WorkspaceGraph> =
+        workspace_selection::first_relational(patterns).map(|pattern| {
+            let targets: Vec<&WorkspaceTarget> =
+                candidates.iter().map(|(target, _)| target).collect();
+            super::workspace_manifests::relation_graph(manager, &targets, pattern)
+        });
     let selection = {
         let subjects: Vec<Candidate<'_>> = candidates
             .iter()
@@ -231,52 +236,14 @@ pub(crate) fn select_targets(
         .collect();
 
     if targets.is_empty() {
-        Output::err_generic(
-            "No workspace packages matched the filter {}",
-            (BStr::new(&workspace_selection::quote_patterns(patterns)),),
-        );
-        Global::crash();
+        if manager.options.log_level == LogLevel::Silent {
+            Global::crash();
+        }
+        workspace_selection::error_unmatched(patterns);
     }
     workspace_selection::warn_unmatched(patterns, &unmatched_patterns);
 
     Ok(targets)
-}
-
-fn load_workspace_graph(
-    manager: &mut PackageManager,
-    candidates: &[(WorkspaceTarget, Box<[u8]>)],
-    pattern: &[u8],
-) -> WorkspaceGraph {
-    use crate::lockfile::LoadResult;
-    let outcome: Result<(), Option<Error>> = if !manager.options.do_.load_lockfile() {
-        Err(None)
-    } else {
-        match manager.load_lockfile_from_cwd::<true>() {
-            LoadResult::Ok(_) => Ok(()),
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value)),
-        }
-    };
-    match outcome {
-        Ok(()) => {}
-        Err(None) => {
-            Output::err_generic(
-                "--filter \"{}\" selects workspaces by their dependency graph, which needs a bun.lock; run bun install first",
-                (BStr::new(pattern),),
-            );
-            Global::crash();
-        }
-        Err(Some(err)) => {
-            Output::err_generic(
-                "failed to load the lockfile needed by --filter \"{}\": {}",
-                (BStr::new(pattern), err.name()),
-            );
-            Global::crash();
-        }
-    }
-    let hashes: Vec<Option<PackageNameHash>> =
-        candidates.iter().map(|(t, _)| t.name_hash).collect();
-    WorkspaceGraph::from_lockfile(&manager.lockfile, &hashes)
 }
 
 pub(crate) fn fetch_entry<'a>(
@@ -489,6 +456,40 @@ fn assign_requests(
     (requests, assigned)
 }
 
+fn join_names<'a>(names: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for name in names {
+        if !out.is_empty() {
+            out.extend_from_slice(b", ");
+        }
+        out.extend_from_slice(if name.is_empty() {
+            b"package.json".as_slice()
+        } else {
+            name
+        });
+    }
+    out
+}
+
+#[cold]
+fn print_nothing_to_remove(start_time: i128, updates: &[UpdateRequest], workspaces: &[Box<[u8]>]) {
+    let names = join_names(updates.iter().map(|request| request.name));
+    let workspaces = join_names(workspaces.iter().map(|name| &name[..]));
+    bun_core::pretty!(
+        "\n<r>{} {} of {} ",
+        BStr::new(&names),
+        if updates.len() == 1 {
+            "is not a dependency"
+        } else {
+            "are not dependencies"
+        },
+        BStr::new(&workspaces),
+    );
+    Output::print_start_end_stdout(start_time, nano_timestamp());
+    bun_core::pretty!("\n");
+    Output::flush();
+}
+
 struct PendingTarget {
     target: WorkspaceTarget,
     received: Box<[PackageNameHash]>,
@@ -624,6 +625,11 @@ pub(super) fn update_filtered_workspaces_and_install(
     } else {
         assign_requests(manager, original_cwd, updates, &targets)
     };
+    let selected_names: Vec<Box<[u8]>> = if subcommand == Subcommand::Remove {
+        targets.iter().map(|target| target.name.clone()).collect()
+    } else {
+        Vec::new()
+    };
 
     let mut changed: Vec<PendingTarget> = Vec::with_capacity(targets.len());
     for (target, wanted) in targets.into_iter().zip(assigned) {
@@ -685,7 +691,12 @@ pub(super) fn update_filtered_workspaces_and_install(
             subcommand != Subcommand::Remove,
         );
     }
-    let any_changed = !changed.is_empty();
+    if subcommand == Subcommand::Remove && changed.is_empty() {
+        if manager.options.log_level != LogLevel::Silent {
+            print_nothing_to_remove(ctx.start_time, &updates, &selected_names);
+        }
+        Global::exit(0);
+    }
 
     if subcommand == Subcommand::Add {
         updates.retain(|r| {
@@ -728,9 +739,6 @@ pub(super) fn update_filtered_workspaces_and_install(
     package_json_write_back::flush(manager)?;
 
     if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        if !any_changed {
-            Global::exit(0);
-        }
         let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
         remove_leftover_node_modules(manager, &updates);
     }

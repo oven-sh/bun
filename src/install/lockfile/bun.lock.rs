@@ -116,7 +116,7 @@ pub enum Version {
     ///   download path has no checkout-time re-validation)
     V2 = 2,
 
-    /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped only while such rules exist
+    /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
     V3 = 3,
 }
 
@@ -197,27 +197,25 @@ impl Stringifier {
     /// v1→v2, by contrast, only added parse-time strictness on identical
     /// content, so v1 is preserved as-is.
     ///
-    /// v3 is stamped whenever parent-scoped overrides exist, whatever version was
-    /// loaded (the writer emits object rows older readers cannot parse, so the
-    /// upgrade is forced like v0→v1); a lockfile without them keeps its loaded
-    /// v1/v2, and a fresh one — or a v3 whose nested rules were removed — is
-    /// walked down to v2, or to v1 when a serialized package violates a v2
-    /// invariant (an off-registry npm tarball without a supported integrity
-    /// hash, or an unsafe git `.bun-tag`), which the writer emits verbatim and a
-    /// v2 reader would reject on the next parse. The v2 decision must not depend
-    /// on the writer's `~/.npmrc` / scoped registries, since the reader may not
-    /// share them.
+    /// Scoped overrides (parent-scoped or `name@range` rules) are stamped v3, but
+    /// only after the same walk: a lockfile the walk holds at v1 stays v1 with the
+    /// override objects written as-is, since the parser reads those at every
+    /// version while its v2+ integrity check is evaluated against the *reader's*
+    /// registries — stamping 3 there would make the file config-dependent again.
+    /// A walk-clean lockfile with scoped rules is stamped v3 whatever version was
+    /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
+    /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
+    /// (off-registry npm tarball without a supported integrity, unsafe git
+    /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
-        if lockfile.overrides.has_scoped() {
-            return Version::V3;
-        }
         let loaded = lockfile.text_lockfile_version;
-        if !loaded.at_least(Version::V3) {
+        let has_scoped = lockfile.overrides.has_scoped();
+        if !has_scoped && !loaded.at_least(Version::V3) {
             return if loaded.at_least(Version::V1) {
                 loaded
             } else {
@@ -285,7 +283,7 @@ impl Stringifier {
                 }
             }
         }
-        Version::V2
+        if has_scoped { Version::V3 } else { Version::V2 }
     }
 
     fn save_from_binary_inner(

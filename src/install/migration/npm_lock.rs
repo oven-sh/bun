@@ -112,7 +112,8 @@ struct Migrator<'a> {
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
     url: Vec<u8>,
-    patched_entries: u32,
+    patched: String,
+    silent: bool,
 }
 
 pub(super) fn migrate_packages(
@@ -131,6 +132,7 @@ pub(super) fn migrate_packages(
     let mut index = StringHashMap::<u32>::default();
     index.reserve(entry_count);
 
+    let silent = manager.options.log_level.is_silent();
     let mut migrator = Migrator {
         this,
         manager,
@@ -144,7 +146,8 @@ pub(super) fn migrate_packages(
         queue: Vec::new(),
         probe: Vec::new(),
         url: Vec::new(),
-        patched_entries: 0,
+        patched: String::new(),
+        silent,
     };
 
     migrator.build_index()?;
@@ -165,16 +168,12 @@ pub(super) fn migrate_packages(
 
     migrator.warn_unreachable();
 
-    if migrator.patched_entries > 0 {
+    if !migrator.patched.is_empty() {
         bun_core::warn!(
-            "package-lock.json records npm patches for {} {}; bun does not apply them",
-            migrator.patched_entries,
-            if migrator.patched_entries == 1 {
-                "package"
-            } else {
-                "packages"
-            },
+            "skipped npm patches for {} from package-lock.json",
+            migrator.patched,
         );
+        bun_core::note!("bun patch \\<pkg\\>");
     }
 
     #[cfg(debug_assertions)]
@@ -290,8 +289,13 @@ impl<'a> Migrator<'a> {
         let name_hash = string_hash(name);
         let name_string = self.this.string_buf().append_with_hash(name, name_hash)?;
 
-        if matches!(pkg.get(b"patched"), Some(p) if !matches!(p, E::JsonValue::Boolean(false))) {
-            self.patched_entries += 1;
+        if !self.silent
+            && matches!(pkg.get(b"patched"), Some(p) if !matches!(p, E::JsonValue::Boolean(false)))
+        {
+            if !self.patched.is_empty() {
+                self.patched.push_str(", ");
+            }
+            let _ = write!(self.patched, "\"{}\"", bstr::BStr::new(name));
         }
 
         let mut meta = lockfile::Meta {
@@ -723,11 +727,13 @@ impl<'a> Migrator<'a> {
                 };
                 let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
                 else {
-                    bun_core::warn!(
-                        "skipped \"{}@{}\" from package-lock.json: unsupported version specifier",
-                        bstr::BStr::new(name),
-                        bstr::BStr::new(spec),
-                    );
+                    if !self.silent {
+                        bun_core::warn!(
+                            "skipped \"{}@{}\" from package-lock.json: unsupported version specifier",
+                            bstr::BStr::new(name),
+                            bstr::BStr::new(spec),
+                        );
+                    }
                     continue;
                 };
 
@@ -829,11 +835,13 @@ impl<'a> Migrator<'a> {
                 .copied()
                 .filter(|&t| !self.link_entries.is_set(t as usize));
             let Some(t) = target else {
-                bun_core::warn!(
-                    "workspace \"{}\" ({}) is not in package-lock.json; it will be resolved from its package.json",
-                    bstr::BStr::new(&ws.name),
-                    bstr::BStr::new(path),
-                );
+                if !self.silent {
+                    bun_core::warn!(
+                        "workspace \"{}\" ({}) is not in package-lock.json; resolving it from package.json",
+                        bstr::BStr::new(&ws.name),
+                        bstr::BStr::new(path),
+                    );
+                }
                 continue;
             };
             let wid = self.build_or_get(t, false, DepTag::Workspace)?;
@@ -927,11 +935,13 @@ impl<'a> Migrator<'a> {
             return;
         }
         self.skipped_external.set(t as usize);
-        bun_core::warn!(
-            "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
-            bstr::BStr::new(name),
-            bstr::BStr::new(self.entries[t as usize].key.slice()),
-        );
+        if !self.silent {
+            bun_core::warn!(
+                "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
+                bstr::BStr::new(name),
+                bstr::BStr::new(self.entries[t as usize].key.slice()),
+            );
+        }
         self.shadow(t);
     }
 
@@ -963,6 +973,9 @@ impl<'a> Migrator<'a> {
     }
 
     fn warn_unreachable(&self) {
+        if self.silent {
+            return;
+        }
         let mut count: usize = 0;
         let mut list = String::new();
         for (j, entry) in self.entries.iter().enumerate() {
@@ -985,7 +998,7 @@ impl<'a> Migrator<'a> {
             return;
         }
         if count > 5 {
-            list.push_str(", ...");
+            let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
             "skipped {} package-lock.json {} not depended on by any package: {}",

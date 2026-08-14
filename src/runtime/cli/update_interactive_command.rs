@@ -6,7 +6,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_alloc::Arena as Bump;
-use bun_collections::StringHashMap;
+use bun_collections::{StringHashMap, index_sort};
 use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
@@ -283,7 +283,7 @@ impl UpdateInteractiveCommand {
             Err(err) => {
                 if !silent {
                     if err == bun_install::Error::MissingPackageJSON {
-                        Output::err_generic("missing package.json, nothing outdated", ());
+                        Output::err_generic("missing package.json, nothing to update", ());
                     }
                     Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
                 }
@@ -510,12 +510,15 @@ impl UpdateInteractiveCommand {
         match manager.load_lockfile_from_cwd::<true>() {
             LoadResult::NotFound => {
                 if not_silent {
-                    Output::err_generic("missing lockfile, nothing outdated", ());
+                    Output::err_generic("missing lockfile, nothing to update", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             LoadResult::Err(cause) => {
-                if not_silent {
+                if not_silent
+                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     match cause.step {
                         LoadStep::OpenFile => Output::err_generic(
                             "failed to open lockfile: {s}",
@@ -574,14 +577,27 @@ impl UpdateInteractiveCommand {
         )?;
 
         // Get outdated packages
-        let mut outdated_packages =
+        let (mut outdated_packages, checked) =
             Self::get_outdated_packages(manager, &workspace_pkg_ids, groups)?;
 
         if outdated_packages.is_empty() {
-            if groups.is_default() {
-                bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
-            } else {
-                bun_core::prettyln!("No packages to update");
+            if not_silent {
+                bun_core::pretty!(
+                    "\nChecked <green>{}<r> dependenc{}, ",
+                    checked,
+                    if checked == 1 { "y" } else { "ies" }
+                );
+                if groups.is_default() {
+                    bun_core::pretty!("nothing to update ");
+                } else {
+                    bun_core::pretty!(
+                        "none selected by {} <d>(no changes)<r> ",
+                        GroupFlags(groups)
+                    );
+                }
+                Output::print_start_end_stdout(ctx.start_time, bun_core::time::nano_timestamp());
+                bun_core::pretty!("\n");
+                Output::flush();
             }
             return Ok(());
         }
@@ -597,6 +613,8 @@ impl UpdateInteractiveCommand {
 
         // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
         let mut positionals: Vec<&'static [u8]> = vec![&b"update"[..]];
+
+        let mut dry_run_rows: Vec<DryRunRow> = Vec::new();
 
         // Process selected packages
         debug_assert_eq!(outdated_packages.len(), selected.len());
@@ -621,6 +639,14 @@ impl UpdateInteractiveCommand {
                 .any(|name| strings::eql(name, &pkg.name))
             {
                 positionals.push(crate::cli::cli_dupe(&pkg.name));
+            }
+
+            if manager.options.dry_run {
+                dry_run_rows.push((
+                    pkg.name.clone(),
+                    pkg.current_version.clone(),
+                    Box::from(target_version),
+                ));
             }
 
             // For catalog dependencies, we need to collect them separately
@@ -686,36 +712,9 @@ impl UpdateInteractiveCommand {
         // Actually update the selected packages
         if has_package_updates || has_catalog_updates {
             if manager.options.dry_run {
-                bun_core::prettyln!("\n<r><yellow>Dry run mode: showing what would be updated<r>");
-
-                // In dry-run mode, just show what would be updated without modifying files
-                for update in &package_updates {
-                    let workspace_display: &[u8] = if !update.workspace_path.is_empty() {
-                        &update.workspace_path
-                    } else {
-                        b"root"
-                    };
-                    bun_core::prettyln!(
-                        "→ Would update {} to {} in {} ({})",
-                        BStr::new(&update.name),
-                        BStr::new(&update.target_version),
-                        BStr::new(workspace_display),
-                        BStr::new(&update.dep_type)
-                    );
+                if not_silent {
+                    print_dry_run_rows(&mut dry_run_rows, ctx.start_time);
                 }
-
-                if has_catalog_updates {
-                    let mut it = catalog_updates.iter();
-                    while let Some((catalog_key, catalog_update)) = it.next() {
-                        bun_core::prettyln!(
-                            "→ Would update catalog {} to {}",
-                            BStr::new(catalog_key),
-                            BStr::new(&catalog_update.version)
-                        );
-                    }
-                }
-
-                bun_core::prettyln!("\n<r><yellow>Dry run complete - no changes made<r>");
             } else {
                 bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
                 Output::flush();
@@ -814,7 +813,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
         groups: UpdateGroups,
-    ) -> crate::Result<Vec<OutdatedPackage>> {
+    ) -> crate::Result<(Vec<OutdatedPackage>, usize)> {
         // Reshaped for borrowck —
         // hoist the four scalars the manifest-lookup path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
@@ -830,6 +829,7 @@ impl UpdateInteractiveCommand {
         let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
+        let mut checked: usize = 0;
 
         let mut version_buf: String = String::new();
 
@@ -841,6 +841,7 @@ impl UpdateInteractiveCommand {
                 if package_id == INVALID_PACKAGE_ID {
                     continue;
                 }
+                checked += 1;
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                 let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                 if !selects(groups, dep.behavior) {
@@ -1011,7 +1012,7 @@ impl UpdateInteractiveCommand {
             strings::order(&a.name, &b.name)
         });
 
-        Ok(grouped_result)
+        Ok((grouped_result, checked))
     }
 
     fn calculate_column_widths(packages: &[OutdatedPackage]) -> ColumnWidths {
@@ -1341,6 +1342,7 @@ impl UpdateInteractiveCommand {
             ($reprint:expr) => {{
                 if !initial_draw {
                     Output::up(total_lines);
+                    Output::print(format_args!("\x1B[1G"));
                 }
                 Output::clear_to_end();
                 if $reprint {
@@ -1893,7 +1895,7 @@ impl UpdateInteractiveCommand {
                 // Show bottom scroll indicator if needed
                 if show_bottom_indicator {
                     bun_core::pretty!(
-                        "  <d>↓ {} more package{} below<r>",
+                        "  <d>↓ {} more package{} below<r>\x1B[0K\n",
                         state.packages.len() - viewport_end,
                         if state.packages.len() - viewport_end == 1 {
                             ""
@@ -2125,6 +2127,62 @@ impl UpdateInteractiveCommand {
                 }
             }
         }
+    }
+}
+
+/// (name, from, to)
+type DryRunRow = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+
+fn print_dry_run_rows(rows: &mut Vec<DryRunRow>, start_time: i128) {
+    index_sort::sort_vec_unstable_by(rows, |a, b| a.cmp(b));
+    rows.dedup();
+    let (glyph, arrow) = if Output::enable_ansi_colors_stdout() {
+        ("↑", "→")
+    } else {
+        ("^", "->")
+    };
+    bun_core::pretty!("\n");
+    for (name, from, to) in rows.iter() {
+        bun_core::prettyln!(
+            "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
+            glyph,
+            BStr::new(name),
+            BStr::new(from),
+            arrow,
+            BStr::new(to)
+        );
+    }
+    let n = rows.len();
+    bun_core::pretty!(
+        "\n<green>{}<r> package{} would be updated ",
+        n,
+        if n == 1 { "" } else { "s" }
+    );
+    Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
+    bun_core::pretty!("\n");
+    Output::flush();
+}
+
+struct GroupFlags(UpdateGroups);
+
+impl fmt::Display for GroupFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (set, flag) in [
+            (self.0.dev, "--dev"),
+            (self.0.prod, "--prod"),
+            (self.0.no_optional, "--no-optional"),
+        ] {
+            if !set {
+                continue;
+            }
+            if !first {
+                f.write_str(" ")?;
+            }
+            first = false;
+            f.write_str(flag)?;
+        }
+        Ok(())
     }
 }
 

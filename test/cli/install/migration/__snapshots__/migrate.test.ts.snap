@@ -3933,8 +3933,8 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures old-package-lock 1`] = `
-"warn: package-lock.json uses lockfileVersion 1, which bun cannot migrate. Run 'npm install --package-lock-only --lockfile-version=3' to upgrade it.
-error: Error loading lockfile: NPMLockfileVersionMismatch
+"error: package-lock.json is lockfileVersion 1, which bun cannot migrate
+note: npm install --package-lock-only --lockfile-version=3
 bun pm migrate exit code: 1"
 `;
 
@@ -4510,7 +4510,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures two-bundled-deps 1`] = `
-"warn: skipped 415 package-lock.json entries not depended on by any package: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity", ...
+"warn: skipped 415 package-lock.json entries not depended on by any package: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -4660,7 +4660,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-need-update 1`] = `
-"error: Error loading lockfile: InstallFailed
+"error: failed to migrate lockfile: InstallFailed
 bun pm migrate exit code: 1"
 `;
 

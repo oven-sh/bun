@@ -325,15 +325,24 @@ fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
     index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
 }
 
+// (name, removed version, surviving version(s) its dependents now resolve to)
+type Row = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+
 #[derive(Default)]
-struct Outcome {
-    removed: Vec<Box<[u8]>>,
+pub(crate) struct Report {
+    rows: Vec<Row>,
     kept: Vec<Box<[u8]>>,
+    checked: usize,
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let checked = pkg_res.len();
     let has_patches = lockfile.patched_dependencies.count() > 0;
 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
@@ -380,7 +389,10 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
     }
 
     if groups.is_empty() {
-        return Outcome::default();
+        return Report {
+            checked,
+            ..Report::default()
+        };
     }
 
     // Re-pointing keeps an edge inside its group, so the initial per-group edge counts bound every pass.
@@ -491,22 +503,72 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
         .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
         .collect();
     if removed.is_empty() {
-        return Outcome {
-            removed: Vec::new(),
+        return Report {
+            rows: Vec::new(),
             kept,
+            checked,
         };
     }
 
     sort_by_name_then_version(lockfile, &mut removed);
-    let labels = removed
+    let mut slot: Vec<u32> = vec![u32::MAX; pkg_res.len()];
+    for (i, &id) in removed.iter().enumerate() {
+        slot[id as usize] = i as u32;
+    }
+    let mut targets: Vec<Vec<PackageID>> = vec![Vec::new(); removed.len()];
+    let original = lockfile.buffers.resolutions.as_slice();
+    for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        if !live.is_set(owner) {
+            continue;
+        }
+        for dep_id in slice.begin() as usize..slice.end() as usize {
+            let Some(&s) = slot.get(original[dep_id] as usize) else {
+                continue;
+            };
+            if s == u32::MAX {
+                continue;
+            }
+            let to = cur[dep_id];
+            if !targets[s as usize].contains(&to) {
+                targets[s as usize].push(to);
+            }
+        }
+    }
+
+    let names = lockfile.packages.items_name();
+    let rows: Vec<Row> = removed
         .iter()
-        .map(|&id| label(lockfile, id).into_boxed_slice())
+        .zip(&targets)
+        .map(|(&id, moved_to)| {
+            let mut from: Vec<u8> = Vec::new();
+            let _ = write!(from, "{}", pkg_res[id as usize].npm().version.fmt(buf));
+            let mut survivors: Vec<PackageID> = moved_to.clone();
+            index_sort::sort_vec_by(&mut survivors, |&a, &b| {
+                pkg_res[a as usize]
+                    .npm()
+                    .version
+                    .order(pkg_res[b as usize].npm().version, buf, buf)
+            });
+            let mut to: Vec<u8> = Vec::new();
+            for &c in &survivors {
+                if !to.is_empty() {
+                    to.extend_from_slice(b", ");
+                }
+                let _ = write!(to, "{}", pkg_res[c as usize].npm().version.fmt(buf));
+            }
+            (
+                Box::from(names[id as usize].slice(buf)),
+                from.into_boxed_slice(),
+                to.into_boxed_slice(),
+            )
+        })
         .collect();
 
     lockfile.buffers.resolutions = cur;
-    Outcome {
-        removed: labels,
+    Report {
+        rows,
         kept,
+        checked,
     }
 }
 
@@ -571,10 +633,14 @@ pub fn dedupe_before_install(
         LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to dedupe", ());
+                bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
         LoadResult::Err(cause) => {
+            if crate::migration::reported_unsupported_lockfile_version(cause) {
+                Global::exit(1);
+            }
             if !quiet {
                 Output::err_generic(
                     "failed to {s} lockfile: {s}",
@@ -595,8 +661,13 @@ pub fn dedupe_before_install(
         if package_json_declares_dependencies(manager)? {
             refuse_out_of_date(manager);
         }
-        report_already_deduplicated(manager, &[]);
-        Global::exit(0);
+        report_already_deduplicated(
+            manager,
+            &Report {
+                checked: manager.lockfile.packages.len(),
+                ..Report::default()
+            },
+        );
     }
     Ok(())
 }
@@ -650,7 +721,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
 fn refuse_out_of_date(manager: &PackageManager) -> ! {
     if manager.options.log_level != LogLevel::Silent {
         Output::err_generic(
-            "the lockfile is out of date with package.json, nothing was deduplicated",
+            "bun.lock does not match package.json, nothing to dedupe",
             (),
         );
         bun_core::note!("run 'bun install' first");
@@ -659,28 +730,109 @@ fn refuse_out_of_date(manager: &PackageManager) -> ! {
     Global::exit(1);
 }
 
-fn report_already_deduplicated(manager: &PackageManager, kept: &[Box<[u8]>]) {
+fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
     if manager.options.log_level != LogLevel::Silent {
-        let packages = manager.lockfile.packages.len().saturating_sub(1);
-        bun_core::pretty!(
-            "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
-            packages,
-            if packages == 1 { "" } else { "s" }
-        );
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
-        bun_core::pretty!("\n");
-        print_kept(kept);
+        print_kept(&report.kept);
+        if manager.options.do_.summary() {
+            if !report.kept.is_empty() {
+                bun_core::pretty!("\n");
+            }
+            bun_core::pretty!(
+                "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
+                report.checked,
+                plural(report.checked)
+            );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+            bun_core::pretty!("\n");
+        }
         Output::flush();
     }
-    if manager.options.dry_run {
-        Global::exit(0);
-    }
+    Global::exit(0);
 }
 
 fn print_kept(kept: &[Box<[u8]>]) {
     for line in kept {
         bun_core::prettyln!("  <d>kept<r> {}", BStr::new(line));
     }
+}
+
+fn print_would_remove(manager: &PackageManager, report: &Report) {
+    print_rows(report);
+    if !manager.options.do_.summary() {
+        return;
+    }
+    let n = report.rows.len();
+    bun_core::pretty!(
+        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{})<r> ",
+        n,
+        plural(n),
+        report.checked,
+        plural(report.checked)
+    );
+    Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+    bun_core::pretty!("\n");
+}
+
+fn print_rows(report: &Report) {
+    let (glyph, arrow) = if Output::enable_ansi_colors_stdout() {
+        ("↳", "→")
+    } else {
+        ("~", "->")
+    };
+    for (name, from, to) in &report.rows {
+        if to.is_empty() {
+            bun_core::prettyln!(
+                "<cyan>{}<r> <b>{}<r> <d>{}<r>",
+                glyph,
+                BStr::new(name),
+                BStr::new(from)
+            );
+        } else {
+            bun_core::prettyln!(
+                "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r>",
+                glyph,
+                BStr::new(name),
+                BStr::new(from),
+                arrow,
+                BStr::new(to)
+            );
+        }
+    }
+    print_kept(&report.kept);
+}
+
+pub(crate) fn print_dedupe_summary(manager: &PackageManager, installed: u32, start_time: i128) {
+    let Some(report) = &manager.dedupe_report else {
+        return;
+    };
+    if manager.options.log_level == LogLevel::Silent {
+        return;
+    }
+    print_rows(report);
+    if !manager.options.do_.summary() {
+        Output::flush();
+        return;
+    }
+    let n = report.rows.len();
+    bun_core::pretty!("\n<b>{}<r> duplicate version{} removed", n, plural(n));
+    if installed > 0 {
+        bun_core::pretty!(
+            ", <b>{}<r> package{} installed",
+            installed,
+            plural(installed as usize)
+        );
+    }
+    bun_core::pretty!(
+        " <d>(checked {} package{})<r> ",
+        report.checked,
+        plural(report.checked)
+    );
+    Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
+    bun_core::pretty!("\n");
+    Output::flush();
 }
 
 pub fn dedupe_after_differ(manager: &mut PackageManager) {
@@ -690,66 +842,48 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let outcome = dedupe_lockfile(&mut manager.lockfile);
-    if outcome.removed.is_empty() {
-        report_already_deduplicated(manager, &outcome.kept);
-        return;
-    }
-    let removed = &outcome.removed;
-
-    let n = removed.len();
-    let plural = if n == 1 { "" } else { "s" };
-    if !quiet {
-        for label in removed {
-            bun_core::prettyln!("<red>-<r> {}", BStr::new(label));
-        }
+    let report = dedupe_lockfile(&mut manager.lockfile);
+    if report.rows.is_empty() {
+        report_already_deduplicated(manager, &report);
     }
 
     if manager.options.dry_run {
         if !quiet {
-            bun_core::pretty!(
-                "<yellow>{}<r> duplicate version{} can be removed ",
-                n,
-                plural
-            );
-            Output::print_start_end_stdout(
-                bun_core::start_time(),
-                bun_core::time::nano_timestamp(),
-            );
-            bun_core::pretty!("\n");
-            print_kept(&outcome.kept);
+            print_would_remove(manager, &report);
             bun_core::prettyln!("  <cyan>bun dedupe<r>");
             Output::flush();
         }
-        Global::exit(1);
+        Global::exit(manager.options.check as u32);
     }
 
     if !manager.options.do_.save_lockfile() {
         if !quiet {
-            let why = if manager.options.enable.frozen_lockfile() {
-                "the lockfile is frozen"
+            let why = if !manager.options.enable.frozen_lockfile() {
+                "--no-save was passed"
+            } else if manager.options.local_package_features.dev_dependencies {
+                "--frozen-lockfile was passed"
             } else {
-                "saving the lockfile is disabled"
+                "--production implies --frozen-lockfile"
             };
+            print_would_remove(manager, &report);
             Output::flush();
+            let n = report.rows.len();
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> {} duplicate version{} can be removed, but {}",
                 n,
-                plural,
+                plural(n),
                 why
             );
-            print_kept(&outcome.kept);
-            bun_core::prettyln!("  <cyan>bun dedupe --check<r>");
+            bun_core::note!(
+                "run 'bun dedupe' to remove {}, or 'bun dedupe --check' in CI",
+                if n == 1 { "it" } else { "them" }
+            );
             Output::flush();
         }
         Global::exit(1);
     }
 
-    if !quiet {
-        bun_core::prettyln!("Removed <green>{}<r> duplicate version{}", n, plural);
-        print_kept(&outcome.kept);
-        Output::flush();
-    }
+    manager.dedupe_report = Some(report);
     manager
         .options
         .enable

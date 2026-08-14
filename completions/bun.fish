@@ -148,7 +148,7 @@ complete -c bun \
 
 for i in (seq (count $bun_install_boolean_flags))
 	complete -c bun \
-		-n "__fish_seen_subcommand_from install add remove update dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
+		-n "__fish_seen_subcommand_from install add remove dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
 complete -c bun \
@@ -230,6 +230,24 @@ complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d 
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -r -d "Set a specific cwd"
 complete -c bun -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "p" -l "production" -d "Only update dependencies and optionalDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "P" -l "prod" -d "Only update dependencies and optionalDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "d" -l "dev" -d "Only update devDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "D" -l "development" -d "Only update devDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "no-optional" -d "Don't update optionalDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "E" -l "exact" -d "Write exact versions to package.json instead of ^ or ~ ranges" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "L" -l "latest" -d "Update packages to their latest versions, ignoring the ranges in package.json" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "i" -l "interactive" -d "Show an interactive list of outdated packages to select for update" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "r" -l "recursive" -d "Update packages in all workspaces" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "F" -l "filter" -r -d "Update packages for the matching workspaces" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "g" -l "global" -d "Update the packages installed globally" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "y" -l "yarn" -d "Write a yarn.lock file (yarn v1)" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "no-save" -d "Don't update package.json or save a lockfile" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "dry-run" -d "Perform a dry run without making changes" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -s "f" -l "force" -d "Always request the latest versions from the registry & reinstall all dependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "no-cache" -d "Ignore manifest cache entirely" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "silent" -d "Don't log anything" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "verbose" -d "Excessively verbose logging" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
 complete -c bun -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f

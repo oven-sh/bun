@@ -61,7 +61,9 @@ fn start_manifest_task(
     if run_tasks::has_created_network_task(manager, task_id, is_optional) {
         return Ok(());
     }
-    manager.start_progress_bar_if_none();
+    if manager.options.log_level.show_progress() {
+        manager.start_progress_bar_if_none();
+    }
 
     // reshaped for borrowck — `get_network_task()`
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything

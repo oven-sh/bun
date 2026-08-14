@@ -32,6 +32,7 @@ pub struct Options {
     pub positionals: &'static [&'static [u8]],
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
+    pub check: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
     pub local_package_features: Features,
@@ -115,6 +116,7 @@ impl Default for Options {
             positionals: &[],
             update: DependencyGroup::default(),
             dry_run: false,
+            check: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
@@ -727,6 +729,7 @@ impl Options {
                 self.do_.set(Do::WRITE_PACKAGE_JSON, false);
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
+            self.check = cli.check;
 
             if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
@@ -793,6 +796,10 @@ impl Options {
             } else {
                 cli.log_level
             };
+            if cli.log_level.is_silent() {
+                log.level = bun_ast::Level::Err;
+                bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+            }
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 

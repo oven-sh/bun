@@ -50,11 +50,17 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-const SHARED_PARAMS: &[ParamType] = &[
+const SHARED_HEAD_PARAMS: &[ParamType] = &[
     clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
+];
+
+const PRODUCTION_PARAMS: &[ParamType] = &[
     clap::param!("-p, --production                      Don't install devDependencies"),
     clap::param!("-P, --prod"),
+];
+
+const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--no-save                             Don't update package.json or save a lockfile"
     ),
@@ -122,6 +128,9 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
+const SHARED_PARAMS: &[ParamType] =
+    concat_params![SHARED_HEAD_PARAMS, PRODUCTION_PARAMS, SHARED_TAIL_PARAMS];
+
 pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
@@ -149,7 +158,14 @@ pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
 ];
 
 pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
+    SHARED_HEAD_PARAMS,
+    &[
+        clap::param!(
+            "-p, --production                      Only update dependencies and optionalDependencies (alias: --prod)"
+        ),
+        clap::param!("-P, --prod"),
+    ],
+    SHARED_TAIL_PARAMS,
     &[
         clap::param!(
             "-L, --latest                          Update packages to their latest versions, ignoring the ranges in package.json"
@@ -390,6 +406,25 @@ static DEDUPE_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
+const DEDUPE_HELP_PARAMS: &[ParamType] = &[
+    clap::param!(
+        "--check                                Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything"
+    ),
+    clap::param!(
+        "--dry-run                              Print the duplicate versions that would be removed without changing anything"
+    ),
+    clap::param!("--lockfile-only                        Rewrite bun.lock without installing"),
+    clap::param!(
+        "--frozen-lockfile                      Fail instead of rewriting bun.lock when duplicate versions can be removed"
+    ),
+    clap::param!(
+        "--linker <STR>                         Install with the given linker (one of \"isolated\" or \"hoisted\")"
+    ),
+    clap::param!("--silent                               Don't log anything"),
+    clap::param!("--cwd <STR>                            Set a specific cwd"),
+    clap::param!("-h, --help                             Print this help menu"),
+];
+
 static PRUNE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
@@ -420,7 +455,7 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
         "--linker <STR>                         Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")"
     ),
     clap::param!(
-        "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces; the shared store / hoisted root folder keeps everything other workspaces use"
+        "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
     ),
     clap::param!("--silent                               Don't log anything"),
     clap::param!("--cwd <STR>                            Set a specific cwd"),
@@ -454,6 +489,7 @@ pub struct CommandLineArguments {
     pub(crate) frozen_lockfile: bool,
     pub(crate) no_save: bool,
     pub(crate) dry_run: bool,
+    pub(crate) check: bool,
     pub(crate) force: bool,
     pub(crate) no_cache: bool,
     pub log_level: Options::LogLevel,
@@ -543,6 +579,7 @@ impl Default for CommandLineArguments {
             frozen_lockfile: false,
             no_save: false,
             dry_run: false,
+            check: false,
             force: false,
             no_cache: false,
             log_level: Options::LogLevel::default(),
@@ -844,6 +881,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
   <d>Remove a dependency<r>
   <b><green>bun remove<r> <blue>ts-node<r>
 
+  <d>Remove a dependency from a specific workspace in a monorepo<r>
+  <b><green>bun remove<r> <blue>zod<r> <cyan>--filter<r> <blue>api<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
                 pretty_help(intro_text);
@@ -1084,6 +1124,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
   <d>Only report removable duplicates; exit code 1 if there are any (for CI)<r>
   <b><green>bun dedupe<r> <cyan>--check<r>
 
+  <d>Show what would be removed without changing anything<r>
+  <b><green>bun dedupe<r> <cyan>--dry-run<r>
+
   <d>Rewrite bun.lock without installing<r>
   <b><green>bun dedupe<r> <cyan>--lockfile-only<r>
 
@@ -1091,7 +1134,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(DEDUPE_PARAMS);
+                clap::simple_help(DEDUPE_HELP_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1317,6 +1360,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if subcommand == Subcommand::Dedupe && args.flag(b"--check") {
+            cli.check = true;
             cli.dry_run = true;
         }
 
@@ -1628,11 +1672,37 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Global::crash();
         }
 
+        if cli.global
+            && (!cli.filters.is_empty() || cli.recursive)
+            && matches!(
+                subcommand,
+                Subcommand::Install | Subcommand::Add | Subcommand::Remove | Subcommand::Update
+            )
+        {
+            Output::err_generic(
+                if cli.filters.is_empty() {
+                    "--recursive cannot be used with --global\n"
+                } else {
+                    "--filter cannot be used with --global\n"
+                },
+                (),
+            );
+            Global::crash();
+        }
+
+        if cli.global && subcommand == Subcommand::Prune {
+            Output::err_generic("--global cannot be used with bun prune\n", ());
+            bun_core::note!(
+                "the global folder is also the 'bun link' registry, and bun.lock does not list linked packages"
+            );
+            Global::crash();
+        }
+
         if cli.add_catalog.is_some()
             && subcommand == Subcommand::Install
             && cli.positionals.len() < 2
         {
-            Output::err_generic("--catalog requires at least one package to add\n", ());
+            Output::err_generic("no package specified to add\n", ());
             Global::crash();
         }
 

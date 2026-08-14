@@ -6,7 +6,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -51,6 +51,15 @@ impl<'a> ByName<'a> {
     }
 }
 
+fn load_step_verb(step: LoadStep) -> &'static str {
+    match step {
+        LoadStep::OpenFile => "open",
+        LoadStep::ReadFile => "read",
+        LoadStep::ParseFile => "parse",
+        LoadStep::Migrating => "migrate",
+    }
+}
+
 pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
@@ -58,20 +67,38 @@ impl PackageManagerCommand {
     // can keep `pm` mutably borrowed by `LoadResult` (which holds
     // `&mut Lockfile` into `pm.lockfile`) across this call.
     pub(crate) fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
+        Self::handle_load_lockfile_errors_for(load_lockfile, log_level, "");
+    }
+
+    pub(crate) fn handle_load_lockfile_errors_for(
+        load_lockfile: &LoadResult<'_>,
+        log_level: LogLevel,
+        nothing_to: &str,
+    ) {
         let not_silent = log_level != LogLevel::Silent;
 
-        if matches!(load_lockfile, LoadResult::NotFound) {
-            if not_silent {
-                Output::err_generic("Lockfile not found", ());
+        match load_lockfile {
+            LoadResult::NotFound => {
+                if not_silent {
+                    if nothing_to.is_empty() {
+                        Output::err_generic("missing lockfile", ());
+                    } else {
+                        Output::err_generic("missing lockfile, nothing to {s}", (nothing_to,));
+                    }
+                    bun_core::note!("run 'bun install' first");
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
-        }
-
-        if let LoadResult::Err(err) = load_lockfile {
-            if not_silent {
-                Output::err_generic("Error loading lockfile: {s}", (err.value.name(),));
+            LoadResult::Err(err) => {
+                if not_silent && !migration::reported_unsupported_lockfile_version(err) {
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (load_step_verb(err.step), err.value.name()),
+                    );
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
+            LoadResult::Ok(_) => {}
         }
     }
 
@@ -103,7 +130,7 @@ impl PackageManagerCommand {
             (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
         };
 
-        Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
         Output::flush();
         Output::disable_buffering();
@@ -157,7 +184,7 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
+  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
@@ -350,7 +377,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -366,7 +393,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             Output::flush();
             Output::disable_buffering();
@@ -376,7 +403,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -511,7 +538,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
 
             Output::flush();
             Output::disable_buffering();

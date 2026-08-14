@@ -9,6 +9,7 @@ use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
 
@@ -1037,7 +1038,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     "<r><red>error<r>: No workspace packages have matching scripts"
                 );
             } else {
-                bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
+                let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+                Output::err_generic(
+                    "{}",
+                    (bstr::BStr::new(&workspace_selection::unmatched_message(
+                        &patterns,
+                    )),),
+                );
             }
             Global::exit(1);
         }

@@ -1052,8 +1052,8 @@ describe.concurrent("bun add --catalog", () => {
 
             const { stderr, exitCode } = await dir.add(dir.pkg1Dir, ...args(), "--catalog");
 
-            expect(stderr).toContain(
-              `error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps; run \`bun add no-deps@${tarball()} --catalog\` to move that declaration into the catalog`,
+            expect(stderr).toEndWith(
+              `error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps\n  bun add no-deps@${tarball()} --catalog\n`,
             );
             expect(await dir.rootText()).toBe(root);
             expect(await dir.pkg1Text()).toBe(pkg1Text);
@@ -1071,7 +1071,9 @@ describe.concurrent("bun add --catalog", () => {
 
           const { stderr, exitCode } = await dir.add(dir.packageDir, tarball(), "--catalog", "--filter", "pkg*");
 
-          expect(stderr).toContain(`error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps;`);
+          expect(stderr).toEndWith(
+            `error: --catalog cannot add "${tarball()}": pkg1 already declares no-deps\n  bun add no-deps@${tarball()} --catalog\n`,
+          );
           expect(await dir.rootText()).toBe(root);
           expect(await dir.pkg1Text()).toBe(pretty(pkg1));
           expect(await dir.pkg2Text()).toBe(pkg2Before);
@@ -2308,9 +2310,10 @@ describe.concurrent("bun add --catalog", () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
       const [rootBefore, pkg1Before] = await Promise.all([dir.rootText(), dir.pkg1Text()]);
 
-      const { stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--catalog"]);
+      const { stdout, stderr, exitCode } = await dir.run(dir.packageDir, ["install", "--catalog"]);
 
-      expect(stderr).toContain("error: --catalog requires at least one package to add");
+      expect(stdout).toBe("");
+      expect(stderr).toBe("error: no package specified to add\n");
       expect(await dir.rootText()).toBe(rootBefore);
       expect(await dir.pkg1Text()).toBe(pkg1Before);
       expect(await dir.lockExists()).toBeFalse();

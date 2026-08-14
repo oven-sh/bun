@@ -112,42 +112,45 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
 pub(crate) fn catalog_entries_missing_from_lockfile(
     from: &Lockfile,
     to: &Lockfile,
-) -> Option<usize> {
+) -> Option<Vec<Box<[u8]>>> {
     let from_buf = from.buffers.string_bytes.as_slice();
     let to_buf = to.buffers.string_bytes.as_slice();
 
-    let mut matched = 0usize;
-    let all_kept = for_each_entry(&from.catalogs, from_buf, &mut |group, entry| match to
-        .catalogs
-        .find(to_buf, group, entry.name.slice(from_buf))
-    {
-        Some(to_entry) if to_entry.version.eql(&entry.version, to_buf, from_buf) => {
-            matched += 1;
-            true
-        }
-        _ => false,
+    let all_kept = for_each_entry(&from.catalogs, from_buf, &mut |group, entry| {
+        to.catalogs
+            .find(to_buf, group, entry.name.slice(from_buf))
+            .is_some_and(|to_entry| to_entry.version.eql(&entry.version, to_buf, from_buf))
     });
     if !all_kept {
         return None;
     }
 
-    let to_total = to.catalogs.default.count()
-        + to.catalogs
-            .groups
-            .values()
-            .iter()
-            .map(|group| group.count())
-            .sum::<usize>();
-    if matched == to_total {
-        return Some(0);
-    }
-
-    for_each_entry(&to.catalogs, to_buf, &mut |group, entry| {
+    let mut skipped: Vec<Box<[u8]>> = Vec::new();
+    let unused = for_each_entry(&to.catalogs, to_buf, &mut |group, entry| {
         let name = entry.name.slice(to_buf);
-        from.catalogs.find(from_buf, group, name).is_some()
-            || !catalog_entry_is_referenced(from, group, StringBuilderNs::string_hash(name))
-    })
-    .then_some(to_total - matched)
+        if from.catalogs.find(from_buf, group, name).is_some() {
+            return true;
+        }
+        skipped.push(Box::from(name));
+        !catalog_entry_is_referenced(from, group, StringBuilderNs::string_hash(name))
+    });
+    if !unused {
+        return None;
+    }
+    bun_collections::index_sort::sort_vec_unstable_by(&mut skipped, |a, b| a.cmp(b));
+    Some(skipped)
+}
+
+pub(crate) fn quoted_names(names: &mut dyn Iterator<Item = &[u8]>) -> std::string::String {
+    use std::fmt::Write as _;
+    let mut list = std::string::String::new();
+    for name in names {
+        if !list.is_empty() {
+            list.push_str(", ");
+        }
+        let _ = write!(list, "\"{}\"", BStr::new(name));
+    }
+    list
 }
 
 fn for_each_entry(

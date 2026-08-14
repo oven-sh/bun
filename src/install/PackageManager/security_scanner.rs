@@ -217,6 +217,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    seeds: &[PackageID],
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
@@ -226,14 +227,13 @@ pub(crate) fn perform_security_scan_after_resolution(
         return Ok(None);
     }
 
-    // For remove/uninstall, scan all remaining packages after removal
-    // For other commands, scan all if no update requests, otherwise scan update packages
     let scan_all =
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
     let result = attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
     )?;
@@ -250,6 +250,7 @@ pub(crate) fn perform_security_scan_after_resolution(
                 manager,
                 security_scanner,
                 scan_all,
+                seeds,
                 command_ctx,
                 original_cwd,
                 true,
@@ -271,7 +272,14 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(
+        manager,
+        security_scanner,
+        true,
+        &[],
+        command_ctx,
+        original_cwd,
+    )?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
@@ -284,6 +292,7 @@ pub fn perform_security_scan_for_all(
                 manager,
                 security_scanner,
                 true,
+                &[],
                 command_ctx,
                 original_cwd,
                 true,
@@ -604,6 +613,46 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
+    fn collect_seeded_packages(&mut self, seeds: &[PackageID]) -> Result<(), Error> {
+        if seeds.is_empty() {
+            return Ok(());
+        }
+
+        let pkgs = self.manager.lockfile.packages.slice();
+        let pkg_dependencies = pkgs.items_dependencies();
+        let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
+
+        let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
+        for &seed in seeds {
+            if (seed as usize) < pkgs.len() {
+                wanted.set(seed as usize);
+            }
+        }
+
+        for (parent_idx, deps) in pkg_dependencies.iter().enumerate() {
+            let parent: PackageID = PackageID::try_from(parent_idx).expect("int cast");
+            for _dep_id in deps.begin()..deps.end() {
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+                let target = resolutions[dep_id as usize];
+                if target == invalid_package_id || !wanted.is_set(target as usize) {
+                    continue;
+                }
+                if self.dedupe.get_or_put(target)?.found_existing {
+                    continue;
+                }
+
+                self.queue.push_back(QueueItem {
+                    pkg_id: target,
+                    dep_id,
+                    pkg_path: vec![parent, target],
+                    dep_path: vec![dep_id],
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
@@ -749,6 +798,7 @@ fn attempt_security_scan(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<ScanAttemptResult, Error> {
@@ -756,6 +806,7 @@ fn attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
         false,
@@ -766,6 +817,7 @@ fn attempt_security_scan_with_retry(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
     is_retry: bool,
@@ -805,6 +857,7 @@ fn attempt_security_scan_with_retry(
         collector.collect_all_packages()?;
     } else {
         collector.collect_update_packages()?;
+        collector.collect_seeded_packages(seeds)?;
     }
 
     collector.process_queue()?;

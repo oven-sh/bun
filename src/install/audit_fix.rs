@@ -15,6 +15,7 @@ use crate::npm::PackageManifest;
 use crate::package_manager::Options::{Do, Enable, LogLevel};
 use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
+use crate::update_transitive::{pretty_update_row, row_glyphs};
 use crate::{
     Dependency, DependencyID, DependencyVersionTag, ManifestLoad, PackageID, PackageManager,
     PackageNameHash, ResolutionTag, dependency, invalid_package_id,
@@ -75,6 +76,9 @@ pub struct UnfixableFix {
 pub struct ManifestUnavailable {
     pub name: Box<[u8]>,
     pub from: Box<[u8]>,
+    /// `404`, the network error name, or `unknown`.
+    pub error: Box<[u8]>,
+    pub detail: Box<[u8]>,
 }
 
 pub struct UnmatchedAdvisory {
@@ -85,6 +89,8 @@ pub struct UnmatchedAdvisory {
 pub struct UnauditedRegistry {
     pub registry: Box<[u8]>,
     pub packages: Vec<Box<[u8]>>,
+    /// Status code or error name; empty when unknown.
+    pub reason: Box<[u8]>,
 }
 
 pub struct FixPlan {
@@ -96,18 +102,64 @@ pub struct FixPlan {
     pub unaudited: Vec<UnauditedRegistry>,
     pub fixed_vulnerabilities: u32,
     pub remaining_vulnerabilities: u32,
+    /// Distinct npm package names in the lockfile, i.e. what the audit request covered (before `unaudited` skips).
+    pub checked_packages: usize,
+    pub quiet: bool,
     pub(crate) advisories: AdvisoryIndex,
     pub(crate) expected_gone: Vec<(PackageNameHash, Box<[u8]>)>,
 }
 
 pub(crate) struct AdvisoryIndex {
     pub(crate) range_buf: Vec<u8>,
+    pub(crate) spans: Vec<(usize, usize)>,
     pub(crate) groups: Vec<Option<Group>>,
     pub(crate) by_name: HashMap<PackageNameHash, Vec<usize>>,
     pub(crate) matched_before_install: DynamicBitSet,
 }
 
 impl AdvisoryIndex {
+    pub(crate) fn build(advisories: &[Advisory]) -> Result<AdvisoryIndex, bun_alloc::AllocError> {
+        let mut range_buf: Vec<u8> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::with_capacity(advisories.len());
+        for advisory in advisories {
+            let range: &[u8] = if advisory.vulnerable_versions.is_empty() {
+                b"*"
+            } else {
+                &advisory.vulnerable_versions
+            };
+            spans.push((range_buf.len(), range.len()));
+            range_buf.extend_from_slice(range);
+        }
+        let groups: Vec<Option<Group>> = spans
+            .iter()
+            .map(|&(start, len)| {
+                let input = &range_buf[start..start + len];
+                Semver::query::parse(input, SlicedString::init(&range_buf, input))
+                    .ok()
+                    .filter(|group| !group.is_empty())
+            })
+            .collect();
+        let mut by_name: HashMap<PackageNameHash, Vec<usize>> = HashMap::new();
+        for (i, advisory) in advisories.iter().enumerate() {
+            by_name
+                .entry(Semver::string::Builder::string_hash(&advisory.package_name))
+                .or_default()
+                .push(i);
+        }
+        Ok(AdvisoryIndex {
+            range_buf,
+            spans,
+            groups,
+            by_name,
+            matched_before_install: DynamicBitSet::init_empty(advisories.len())?,
+        })
+    }
+
+    pub(crate) fn range(&self, i: usize) -> &[u8] {
+        let (start, len) = self.spans[i];
+        &self.range_buf[start..start + len]
+    }
+
     pub(crate) fn matches(&self, i: usize, version: Semver::Version, version_buf: &[u8]) -> bool {
         self.groups[i].as_ref().is_some_and(|group| {
             group.satisfies_including_prerelease(version, &self.range_buf, version_buf)
@@ -115,10 +167,16 @@ impl AdvisoryIndex {
     }
 }
 
+pub struct StillVulnerable {
+    pub name: Box<[u8]>,
+    pub version: Box<[u8]>,
+    pub advisories: Vec<Box<[u8]>>,
+}
+
 pub struct FixOutcome {
     pub fixed_vulnerabilities: u32,
     pub remaining_vulnerabilities: u32,
-    pub still_vulnerable: Vec<(Box<[u8]>, Box<[u8]>)>,
+    pub still_vulnerable: Vec<StillVulnerable>,
 }
 
 struct Edge {
@@ -177,51 +235,195 @@ fn order_name_from(a_name: &[u8], a_from: &[u8], b_name: &[u8], b_from: &[u8]) -
     strings::order(a_name, b_name).then_with(|| strings::order(a_from, b_from))
 }
 
+fn print_elapsed_line() {
+    pretty!(" ");
+    Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+    prettyln!("");
+}
+
+fn print_tokens(tokens: &[Box<[u8]>]) {
+    for (i, token) in tokens.iter().enumerate() {
+        pretty!("{}{}", if i > 0 { ", " } else { "" }, BStr::new(token));
+    }
+}
+
+pub fn exit_unless_lockfile_matches_package_json(
+    manager: &mut PackageManager,
+) -> crate::Result<()> {
+    crate::prune::exit_unless_lockfile_matches_package_json(manager, "fix").map(drop)
+}
+
 pub fn exit_unless_lockfile_writable(manager: &PackageManager) {
     if manager.options.dry_run || manager.options.do_.save_lockfile() {
         return;
     }
     if manager.options.log_level != LogLevel::Silent {
+        Output::flush();
         if manager.options.enable.frozen_lockfile() {
             Output::err_generic(
                 "bun audit fix needs to write bun.lock, but the lockfile is frozen",
                 (),
             );
-            bun_core::note!(
-                "remove --frozen-lockfile / --production (or the bunfig.toml equivalent) and run again"
-            );
+            bun_core::note!("run 'bun audit fix' without --frozen-lockfile / --production");
         } else {
             Output::err_generic(
                 "bun audit fix needs to write bun.lock, but saving the lockfile is disabled",
                 (),
             );
-            bun_core::note!(
-                "remove --no-save (or install.lockfile.save = false in bunfig.toml) and run again"
-            );
+            bun_core::note!("run 'bun audit fix' without --no-save");
         }
         Output::flush();
     }
     Global::exit(1);
 }
 
+pub fn skipped_package_count(groups: &[UnauditedRegistry]) -> usize {
+    groups.iter().map(|group| group.packages.len()).sum()
+}
+
 pub fn print_unaudited(groups: &[UnauditedRegistry]) {
     if groups.is_empty() {
         return;
     }
+    Output::flush();
     for group in groups {
-        pretty!("<d>Skipped<r> ");
+        let mut packages: Vec<u8> = Vec::new();
         for (i, package) in group.packages.iter().enumerate() {
             if i > 0 {
-                pretty!(", ");
+                packages.extend_from_slice(b", ");
             }
-            pretty!("{}", BStr::new(package));
+            packages.extend_from_slice(package);
         }
-        prettyln!(
-            " <d>because {} could not be audited<r>",
-            BStr::new(&group.registry)
+        if group.reason.is_empty() {
+            bun_core::warn!(
+                "{} did not answer the audit request; skipped {}",
+                BStr::new(&group.registry),
+                BStr::new(&packages)
+            );
+        } else {
+            bun_core::warn!(
+                "{} did not answer the audit request ({}); skipped {}",
+                BStr::new(&group.registry),
+                BStr::new(&group.reason),
+                BStr::new(&packages)
+            );
+        }
+    }
+    Output::flush();
+}
+
+fn importer_file(lockfile: &Lockfile, parent: PackageID) -> Option<Box<[u8]>> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let parent_res = &lockfile.packages.items_resolution()[parent as usize];
+    match parent_res.tag {
+        ResolutionTag::Root => Some(Box::from(&b"package.json"[..])),
+        ResolutionTag::Workspace => {
+            let dir = strings::without_trailing_slash(parent_res.workspace().slice(buf));
+            let mut file: Vec<u8> = Vec::with_capacity(dir.len() + b"/package.json".len());
+            if !dir.is_empty() {
+                file.extend_from_slice(dir);
+                file.push(b'/');
+            }
+            file.extend_from_slice(b"package.json");
+            Some(file.into_boxed_slice())
+        }
+        _ => None,
+    }
+}
+
+fn dependent_label(lockfile: &Lockfile, parent: PackageID) -> Box<[u8]> {
+    if parent == invalid_package_id {
+        return Box::from(&b"package.json"[..]);
+    }
+    if let Some(file) = importer_file(lockfile, parent) {
+        return file;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let name = lockfile.packages.items_name()[parent as usize].slice(buf);
+    let res = &lockfile.packages.items_resolution()[parent as usize];
+    if res.tag != ResolutionTag::Npm {
+        return Box::from(name);
+    }
+    let mut label: Vec<u8> = Vec::new();
+    let _ = write!(label, "{}@{}", BStr::new(name), res.npm().version.fmt(buf));
+    label.into_boxed_slice()
+}
+
+fn without_ansi(text: &[u8]) -> Vec<u8> {
+    let mut plain: Vec<u8> = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = strings::index_of_char_usize(rest, 0x1b) {
+        plain.extend_from_slice(&rest[..i]);
+        rest = &rest[i + 1..];
+        rest = match rest.iter().position(|b| b.is_ascii_alphabetic()) {
+            Some(end) => &rest[end + 1..],
+            None => b"",
+        };
+    }
+    plain.extend_from_slice(rest);
+    plain
+}
+
+/// Matches `GET <registry>/<name> - 404` (name may be `%2f`-encoded) or `<Err> downloading package manifest <name>`.
+fn mentions_package(plain: &[u8], name: &[u8], encoded: &[u8]) -> bool {
+    for needle in [encoded, name] {
+        let mut start = 0;
+        while let Some(i) = strings::index_of(&plain[start..], needle) {
+            let at = start + i;
+            let end = at + needle.len();
+            if at > 0
+                && matches!(plain[at - 1], b'/' | b' ')
+                && plain.get(end).is_none_or(|&b| b == b' ')
+            {
+                return true;
+            }
+            start = at + 1;
+        }
+    }
+    false
+}
+
+fn take_manifest_error(msgs: &mut Vec<bun_ast::Msg>, name: &[u8]) -> (Box<[u8]>, Box<[u8]>) {
+    let encoded = strings::replace_owned(name, b"/", b"%2f");
+    for i in 0..msgs.len() {
+        let plain = without_ansi(msgs[i].data.text.trim_ascii());
+        if !mentions_package(&plain, name, &encoded) {
+            continue;
+        }
+        msgs.remove(i);
+        let mut tokens = strings::tokenize(&plain, b" ");
+        let first: &[u8] = tokens.next().unwrap_or(b"unknown");
+        let error = match tokens.last() {
+            Some(last) if last.iter().all(u8::is_ascii_digit) => last,
+            _ => first,
+        };
+        return (Box::from(error), plain.into_boxed_slice());
+    }
+    (
+        Box::from(&b"unknown"[..]),
+        Box::from(&b"manifest not fetched"[..]),
+    )
+}
+
+fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavailable]) {
+    let log = manager.log_mut();
+    if manager.options.log_level == LogLevel::Silent {
+        log.reset();
+        return;
+    }
+    Output::flush();
+    for item in items {
+        bun_core::warn!(
+            "{}@{} was not checked for updates: {}",
+            BStr::new(&item.name),
+            BStr::new(&item.from),
+            BStr::new(&item.detail)
         );
     }
-    prettyln!("");
+    if !log.msgs.is_empty() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    }
+    log.reset();
     Output::flush();
 }
 
@@ -278,21 +480,9 @@ fn pin_for(
             if !latest {
                 dep.version.npm().version.get_exact_version()?;
             }
-            let file: Box<[u8]> = if parent_res.tag == ResolutionTag::Root {
-                Box::from(&b"package.json"[..])
-            } else {
-                let dir = strings::without_trailing_slash(parent_res.workspace().slice(buf));
-                let mut file: Vec<u8> = Vec::with_capacity(dir.len() + b"/package.json".len());
-                if !dir.is_empty() {
-                    file.extend_from_slice(dir);
-                    file.push(b'/');
-                }
-                file.extend_from_slice(b"package.json");
-                file.into_boxed_slice()
-            };
             Some(PackageJsonEdit {
                 owner: parent,
-                file,
+                file: importer_file(lockfile, parent)?,
                 catalog: None,
                 key,
                 old_literal: Box::from(dep.version.literal.slice(buf)),
@@ -306,41 +496,11 @@ fn pin_for(
 pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crate::Result<FixPlan> {
     let latest = manager.options.do_.update_to_latest();
     let exact = manager.options.enable.exact_versions();
-    let mut range_buf: Vec<u8> = Vec::new();
-    let mut range_spans: Vec<(usize, usize)> = Vec::with_capacity(advisories.len());
-    for advisory in advisories {
-        let range: &[u8] = if advisory.vulnerable_versions.is_empty() {
-            b"*"
-        } else {
-            &advisory.vulnerable_versions
-        };
-        range_spans.push((range_buf.len(), range.len()));
-        range_buf.extend_from_slice(range);
-    }
-    let groups: Vec<Option<Group>> = range_spans
-        .iter()
-        .map(|&(start, len)| {
-            let input = &range_buf[start..start + len];
-            Semver::query::parse(input, SlicedString::init(&range_buf, input))
-                .ok()
-                .filter(|group| !group.is_empty())
-        })
-        .collect();
-    let mut by_name: HashMap<PackageNameHash, Vec<usize>> = HashMap::new();
-    for (i, advisory) in advisories.iter().enumerate() {
-        by_name
-            .entry(Semver::string::Builder::string_hash(&advisory.package_name))
-            .or_default()
-            .push(i);
-    }
-    let mut index = AdvisoryIndex {
-        range_buf,
-        groups,
-        by_name,
-        matched_before_install: DynamicBitSet::init_empty(advisories.len())?,
-    };
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    let mut index = AdvisoryIndex::build(advisories)?;
 
     let mut instances: Vec<Instance> = Vec::new();
+    let mut checked_names: HashMap<PackageNameHash, ()> = HashMap::new();
     {
         let lockfile = &*manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -356,6 +516,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             if res[pkg_id].tag != ResolutionTag::Npm {
                 continue;
             }
+            checked_names.insert(name_hashes[pkg_id], ());
             let Some(candidates) = index.by_name.get(&name_hashes[pkg_id]) else {
                 continue;
             };
@@ -404,23 +565,6 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 }
                 let dep = &deps[dep_id];
                 let parent = parent_of[dep_id];
-                let mut dependent: Vec<u8> = Vec::new();
-                if parent != invalid_package_id {
-                    let parent = parent as usize;
-                    if res[parent].tag == ResolutionTag::Npm {
-                        let _ = write!(
-                            dependent,
-                            "{}@{}",
-                            BStr::new(names[parent].slice(buf)),
-                            res[parent].npm().version.fmt(buf)
-                        );
-                    } else {
-                        dependent.extend_from_slice(names[parent].slice(buf));
-                    }
-                }
-                if dependent.is_empty() {
-                    dependent.extend_from_slice(b"package.json");
-                }
                 let mut pin = pin_for(lockfile, dep_id, dep, parent, true);
                 let latest_fixes = !latest && pin.is_some();
                 if latest_fixes {
@@ -435,7 +579,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                         dep,
                     ),
                     literal: Box::from(dep.version.literal.slice(buf)),
-                    dependent: dependent.into_boxed_slice(),
+                    dependent: dependent_label(lockfile, parent),
                     bundled: dep.behavior.is_bundled(),
                     peer: dep.behavior.is_peer(),
                     latest_fixes,
@@ -445,14 +589,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         }
     }
 
-    let mut unmatched: Vec<UnmatchedAdvisory> = advisories
-        .iter()
-        .zip(&range_spans)
-        .enumerate()
-        .filter(|&(i, _)| !index.matched_before_install.is_set(i))
-        .map(|(_, (advisory, &(start, len)))| UnmatchedAdvisory {
-            name: advisory.package_name.clone(),
-            range: Box::from(&index.range_buf[start..start + len]),
+    let mut unmatched: Vec<UnmatchedAdvisory> = (0..advisories.len())
+        .filter(|&i| !index.matched_before_install.is_set(i))
+        .map(|i| UnmatchedAdvisory {
+            name: advisories[i].package_name.clone(),
+            range: Box::from(index.range(i)),
         })
         .collect();
     index_sort::sort_vec_by(&mut unmatched, |a, b| {
@@ -470,6 +611,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             unaudited: Vec::new(),
             fixed_vulnerabilities: 0,
             remaining_vulnerabilities: advisories.len() as u32,
+            checked_packages: checked_names.len(),
+            quiet,
             advisories: index,
             expected_gone: Vec::new(),
         });
@@ -482,10 +625,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         .set(Enable::MANIFEST_CACHE_CONTROL, false);
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
-    manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))?;
-    manager.log_mut().reset();
+    let log_msgs = &mut manager.log_mut().msgs;
 
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let min_age = manager.options.minimum_release_age_ms;
@@ -514,9 +654,12 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             for &a in &inst.advisories {
                 advisory_still_present.set(a);
             }
+            let (error, detail) = take_manifest_error(log_msgs, &inst.name);
             manifest_unavailable.push(ManifestUnavailable {
                 name: inst.name,
                 from: inst.from,
+                error,
+                detail,
             });
             continue;
         };
@@ -759,6 +902,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
     index_sort::sort_vec_by(&mut manifest_unavailable, |a, b| {
         order_name_from(&a.name, &a.from, &b.name, &b.from)
     });
+    print_manifest_unavailable(manager, &manifest_unavailable);
 
     let remaining = advisory_still_present.count() as u32;
     Ok(FixPlan {
@@ -770,6 +914,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         unaudited: Vec::new(),
         fixed_vulnerabilities: advisories.len() as u32 - remaining,
         remaining_vulnerabilities: remaining,
+        checked_packages: checked_names.len(),
+        quiet,
         advisories: index,
         expected_gone,
     })
@@ -777,15 +923,15 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
 
 impl FixPlan {
     pub fn print_sections(&self) {
+        if self.quiet {
+            return;
+        }
+        let glyphs = row_glyphs();
         if !self.fixes.is_empty() {
             prettyln!("fixing:");
             for fix in &self.fixes {
-                pretty!(
-                    "  {}@{} → <green>{}<r>",
-                    BStr::new(&fix.name),
-                    BStr::new(&fix.from),
-                    BStr::new(&fix.to)
-                );
+                pretty!("  ");
+                pretty_update_row(&fix.name, &fix.from, &fix.to, fix.downgrade);
                 if fix.downgrade {
                     pretty!(" <d>(downgrade)<r>");
                 }
@@ -794,33 +940,35 @@ impl FixPlan {
                 }
                 prettyln!("");
                 for edit in &fix.edits {
-                    let file = BStr::new(&edit.file);
-                    let old = BStr::new(&edit.old_literal);
-                    let new = BStr::new(&edit.new_literal);
+                    pretty!("    {}", BStr::new(&edit.file));
                     match edit.catalog.as_deref() {
-                        None => prettyln!("    {}: {} → <green>{}<r>", file, old, new),
-                        Some(b"" | b"default") => {
-                            prettyln!("    {} (catalog): {} → <green>{}<r>", file, old, new)
-                        }
-                        Some(catalog) => prettyln!(
-                            "    {} (catalog {}): {} → <green>{}<r>",
-                            file,
-                            BStr::new(catalog),
-                            old,
-                            new
-                        ),
+                        None => {}
+                        Some(b"" | b"default") => pretty!(" (catalog)"),
+                        Some(catalog) => pretty!(" (catalog {})", BStr::new(catalog)),
                     }
+                    prettyln!(
+                        ": <d>{} {}<r> {}",
+                        BStr::new(&edit.old_literal),
+                        glyphs.arrow,
+                        BStr::new(&edit.new_literal)
+                    );
                 }
             }
             prettyln!("");
         }
         if !self.blocked.is_empty() {
-            prettyln!("<yellow>blocked by a dependent's range:<r>");
+            prettyln!("blocked by a dependent's range:");
             for item in &self.blocked {
                 pretty!(
-                    "  {}@{} → {}",
+                    "  {} <b>{}<r> <d>{} {}<r> <b>{}<r>",
+                    if item.needs_is_downgrade {
+                        glyphs.down
+                    } else {
+                        glyphs.up
+                    },
                     BStr::new(&item.name),
                     BStr::new(&item.from),
+                    glyphs.arrow,
                     BStr::new(&item.needs)
                 );
                 if item.needs_is_downgrade {
@@ -840,37 +988,34 @@ impl FixPlan {
                         BStr::new(&blocker.range)
                     );
                 }
-            }
-            if self
-                .blocked
-                .iter()
-                .any(|item| item.blockers.iter().any(|b| b.latest_fixes))
-            {
-                prettyln!("    <cyan>bun audit fix --latest<r>");
+                if item.blockers.iter().any(|blocker| blocker.latest_fixes) {
+                    prettyln!("    <cyan>bun audit fix --latest<r>");
+                }
             }
             prettyln!("");
         }
         if !self.unfixable.is_empty() {
-            prettyln!("<red>no published version fixes the advisory:<r>");
+            prettyln!("no published version fixes:");
+            let mut all_tokens: Vec<Box<[u8]>> = Vec::new();
             for item in &self.unfixable {
-                prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.from));
-                pretty!("    <cyan>bun audit");
-                for token in &item.ignore_tokens {
-                    pretty!(" --ignore {}", BStr::new(token));
-                }
+                pretty!("  {}@{}  <d>", BStr::new(&item.name), BStr::new(&item.from));
+                print_tokens(&item.ignore_tokens);
                 prettyln!("<r>");
+                for token in &item.ignore_tokens {
+                    if !all_tokens.contains(token) {
+                        all_tokens.push(token.clone());
+                    }
+                }
             }
-            prettyln!("");
-        }
-        if !self.manifest_unavailable.is_empty() {
-            prettyln!("<red>manifest could not be fetched:<r>");
-            for item in &self.manifest_unavailable {
-                prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.from));
+            pretty!("    <cyan>bun audit fix");
+            for token in &all_tokens {
+                pretty!(" --ignore {}", BStr::new(token));
             }
+            prettyln!("<r>");
             prettyln!("");
         }
         if !self.unmatched.is_empty() {
-            prettyln!("<red>not matched to an installed version:<r>");
+            prettyln!("not matched to an installed version:");
             for item in &self.unmatched {
                 prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.range));
             }
@@ -879,9 +1024,20 @@ impl FixPlan {
         Output::flush();
     }
 
-    fn print_summary_lines(&self, verb: &str, fixed: u32, remaining: u32) {
+    fn print_checked(&self) {
+        let skipped = skipped_package_count(&self.unaudited);
+        let checked = self.checked_packages.saturating_sub(skipped);
+        if skipped > 0 {
+            pretty!(" <d>(checked {}, {} skipped)<r>", checked, skipped);
+        } else {
+            pretty!(" <d>(checked {})<r>", checked);
+        }
+    }
+
+    fn print_summary_lines(&self, dry_run: bool, fixed: u32, remaining: u32) {
         if self.fixes.is_empty() {
-            prettyln!("No fixable vulnerabilities");
+            let total = fixed + remaining;
+            pretty!("Fixed <b>0<r> of {} {}", total, vuln_word(total));
         } else {
             let packages = self
                 .fixes
@@ -890,26 +1046,33 @@ impl FixPlan {
                 .filter(|(a, b)| a.name != b.name)
                 .count()
                 + 1;
-            prettyln!(
-                "<green>{}<r> {} {} in {} {}",
-                verb,
-                fixed,
+            if dry_run {
+                pretty!("Would fix <b>{}<r>", fixed);
+            } else if fixed > 0 {
+                pretty!("Fixed <green>{}<r>", fixed);
+            } else {
+                pretty!("Fixed <b>0<r>");
+            }
+            pretty!(
+                " {} in {} {}",
                 vuln_word(fixed),
                 packages,
                 pkg_word(packages)
             );
         }
+        self.print_checked();
+        print_elapsed_line();
         if remaining > 0 {
-            prettyln!("<red>{} {} remaining<r>", remaining, vuln_word(remaining));
+            prettyln!("<red>{}<r> {} remaining", remaining, vuln_word(remaining));
         }
     }
 
     pub fn finish_planned(&self, json: bool, dry_run: bool) -> u32 {
         if json {
             json::write(self, None, dry_run);
-        } else {
+        } else if !self.quiet {
             self.print_summary_lines(
-                if dry_run { "Would fix" } else { "Fixed" },
+                dry_run,
                 self.fixed_vulnerabilities,
                 self.remaining_vulnerabilities,
             );
@@ -918,20 +1081,31 @@ impl FixPlan {
         u32::from(self.remaining_vulnerabilities > 0)
     }
 
-    pub fn finish_installed(&self, lockfile: &Lockfile, json: bool) -> u32 {
-        let outcome = self.outcome(lockfile);
+    pub fn finish_installed(
+        &self,
+        lockfile: &Lockfile,
+        installed_advisories: &[Advisory],
+        json: bool,
+    ) -> u32 {
+        let outcome = self.outcome(lockfile, installed_advisories);
         if json {
             json::write(self, Some(&outcome), false);
-        } else {
+        } else if !self.quiet {
             if !outcome.still_vulnerable.is_empty() {
-                prettyln!("<red>vulnerable after install:<r>");
-                for (name, version) in &outcome.still_vulnerable {
-                    prettyln!("  {}@{}", BStr::new(name), BStr::new(version));
+                prettyln!("vulnerable after install:");
+                for item in &outcome.still_vulnerable {
+                    pretty!(
+                        "  {}@{}  <d>",
+                        BStr::new(&item.name),
+                        BStr::new(&item.version)
+                    );
+                    print_tokens(&item.advisories);
+                    prettyln!("<r>");
                 }
                 prettyln!("");
             }
             self.print_summary_lines(
-                "Fixed",
+                false,
                 outcome.fixed_vulnerabilities,
                 outcome.remaining_vulnerabilities,
             );
@@ -940,15 +1114,16 @@ impl FixPlan {
         u32::from(outcome.remaining_vulnerabilities > 0)
     }
 
-    pub fn outcome(&self, lockfile: &Lockfile) -> FixOutcome {
+    pub fn outcome(&self, lockfile: &Lockfile, installed_advisories: &[Advisory]) -> FixOutcome {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let names = lockfile.packages.items_name();
         let name_hashes = lockfile.packages.items_name_hash();
         let res = lockfile.packages.items_resolution();
-        let index = &self.advisories;
+        let planned = &self.advisories;
+        let installed = AdvisoryIndex::build(installed_advisories).unwrap_or_oom();
 
-        let mut remaining = index.matched_before_install.clone().unwrap_or_oom();
-        remaining.toggle_all();
+        let mut plan_remaining = planned.matched_before_install.clone().unwrap_or_oom();
+        plan_remaining.toggle_all();
         let staying: Vec<(PackageNameHash, &[u8])> = self
             .blocked
             .iter()
@@ -962,26 +1137,33 @@ impl FixPlan {
             .map(|(name, from)| (Semver::string::Builder::string_hash(name), from))
             .collect();
 
-        let mut still_vulnerable: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+        let mut still_vulnerable: Vec<StillVulnerable> = Vec::new();
         for pkg_id in 0..res.len() {
             if res[pkg_id].tag != ResolutionTag::Npm {
                 continue;
             }
             let name_hash = name_hashes[pkg_id];
-            let Some(list) = index.by_name.get(&name_hash) else {
-                continue;
-            };
             let version = res[pkg_id].npm().version;
-            let mut hit = false;
-            for &i in list {
-                if index.matches(i, version, buf) {
-                    remaining.set(i);
-                    hit = true;
+            if let Some(list) = planned.by_name.get(&name_hash) {
+                for &i in list {
+                    if planned.matches(i, version, buf) {
+                        plan_remaining.set(i);
+                    }
                 }
             }
-            if !hit {
+            let Some(list) = installed.by_name.get(&name_hash) else {
+                continue;
+            };
+            let mut advisories: Vec<Box<[u8]>> = list
+                .iter()
+                .filter(|&&i| installed.matches(i, version, buf))
+                .map(|&i| installed_advisories[i].ignore_token.clone())
+                .collect();
+            if advisories.is_empty() {
                 continue;
             }
+            index_sort::sort_vec_unstable_by(&mut advisories, |a, b| a.cmp(b));
+            advisories.dedup();
             let ver = fmt_version(version, buf);
             let planned_gone = self
                 .expected_gone
@@ -991,18 +1173,22 @@ impl FixPlan {
                 .iter()
                 .any(|&(hash, from)| hash == name_hash && *from == *ver);
             if planned_gone || !reported_staying {
-                still_vulnerable.push((Box::from(names[pkg_id].slice(buf)), ver));
+                still_vulnerable.push(StillVulnerable {
+                    name: Box::from(names[pkg_id].slice(buf)),
+                    version: ver,
+                    advisories,
+                });
             }
         }
         index_sort::sort_vec_by(&mut still_vulnerable, |a, b| {
-            order_name_from(&a.0, &a.1, &b.0, &b.1)
+            order_name_from(&a.name, &a.version, &b.name, &b.version)
         });
-        still_vulnerable.dedup();
+        still_vulnerable.dedup_by(|a, b| a.name == b.name && a.version == b.version);
 
-        let remaining_vulnerabilities = remaining.count() as u32;
         FixOutcome {
-            fixed_vulnerabilities: remaining.bit_length() as u32 - remaining_vulnerabilities,
-            remaining_vulnerabilities,
+            fixed_vulnerabilities: plan_remaining.bit_length() as u32
+                - plan_remaining.count() as u32,
+            remaining_vulnerabilities: installed_advisories.len() as u32,
             still_vulnerable,
         }
     }
@@ -1033,9 +1219,7 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
         .cloned()
         .collect();
 
-    if manager.options.json_output {
-        manager.options.do_.set(Do::SUMMARY, false);
-    }
+    manager.options.do_.set(Do::SUMMARY, false);
     Ok(())
 }
 

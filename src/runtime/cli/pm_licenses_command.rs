@@ -7,8 +7,10 @@ use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
+use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
-use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag, WorkspaceFilter};
+use bun_install::package_manager::{LogLevel, workspace_selection};
+use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
 use bun_paths::{AutoAbsPath, resolve_path};
@@ -65,18 +67,37 @@ impl PmLicensesCommand {
         original_cwd: &[u8],
         flags: LicensesFlags,
     ) -> crate::Result<()> {
-        if positionals.len() > 1
-            && !strings::eql_comptime(positionals[1], b"list")
-            && !strings::eql_comptime(positionals[1], b"ls")
-        {
-            Output::err_generic("Unknown subcommand: {s}", (BStr::new(positionals[1]),));
-            Global::exit(1);
+        let log_level = pm.options.log_level;
+        let not_silent = log_level != LogLevel::Silent;
+
+        if positionals.len() > 1 {
+            let subcommand = positionals[1];
+            if !strings::eql_comptime(subcommand, b"list")
+                && !strings::eql_comptime(subcommand, b"ls")
+            {
+                if not_silent {
+                    Output::err_generic(
+                        "unknown subcommand \"{s}\" for bun pm licenses",
+                        (BStr::new(subcommand),),
+                    );
+                    bun_core::note!("did you mean 'bun pm licenses list'?");
+                }
+                Global::exit(1);
+            }
+            if positionals.len() > 2 {
+                if not_silent {
+                    Output::err_generic(
+                        "bun pm licenses {s} does not take arguments",
+                        (BStr::new(subcommand),),
+                    );
+                }
+                Global::exit(1);
+            }
         }
 
-        let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
         let load = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors(&load, log_level);
+        PackageManagerCommand::handle_load_lockfile_errors_for(&load, log_level, "list");
         let isolated = load.node_linker(configured_linker) == NodeLinker::Isolated;
 
         let json_output = pm.options.json_output;
@@ -84,7 +105,9 @@ impl PmLicensesCommand {
         let lockfile: &Lockfile = &pm.lockfile;
 
         if flags.dev_only && !features.dev_dependencies {
-            Output::err_generic("--dev cannot be combined with --prod or --omit=dev", ());
+            if not_silent {
+                Output::err_generic("--dev cannot be combined with --prod or --omit=dev", ());
+            }
             Global::exit(1);
         }
 
@@ -92,7 +115,10 @@ impl PmLicensesCommand {
         let top_len = path.len();
         let _ = path.append(b"node_modules");
         if !bun_sys::exists(path.slice()) {
-            Output::err_generic("node_modules not found. Run \"bun install\" first", ());
+            if not_silent {
+                Output::err_generic("node_modules not found, nothing to list", ());
+                bun_core::note!("run 'bun install' first");
+            }
             Global::exit(1);
         }
         path.set_length(top_len);
@@ -105,16 +131,27 @@ impl PmLicensesCommand {
                 true,
             )
         } else {
-            let roots =
-                WorkspaceFilter::select_workspaces_quietly(lockfile, filter_patterns, original_cwd);
-            if roots.is_empty() {
-                Output::err_generic(
-                    "No workspace packages matched the filter {}",
-                    (BStr::new(&quoted_patterns(filter_patterns)),),
-                );
+            let selection = workspace_selection::select_lockfile_workspaces(
+                lockfile,
+                filter_patterns,
+                original_cwd,
+                workspace_selection::RootSelection::Implicit,
+            );
+            if selection.ids.is_empty() {
+                if not_silent {
+                    Output::err_generic(
+                        "{}",
+                        (BStr::new(&workspace_selection::unmatched_message(
+                            filter_patterns,
+                        )),),
+                    );
+                }
                 Global::exit(1);
             }
-            (roots, false)
+            if not_silent {
+                workspace_selection::warn_unmatched(filter_patterns, &selection.unmatched_patterns);
+            }
+            (selection.ids, false)
         };
 
         let options = reachable::Options {
@@ -164,6 +201,7 @@ impl PmLicensesCommand {
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
+        let mut checked: usize = 0;
 
         for pkg_id in 0..packages.len() {
             if !wanted.is_set(pkg_id) {
@@ -176,6 +214,7 @@ impl PmLicensesCommand {
             ) {
                 continue;
             }
+            checked += 1;
 
             let mut version: Vec<u8> = Vec::new();
             let _ = write!(&mut version, "{}", resolution.fmt(buf, PathSep::Posix));
@@ -246,17 +285,9 @@ impl PmLicensesCommand {
             });
         }
 
-        if missing > 0 {
-            bun_core::warn!(
-                "omitted {} {} from the lockfile not found in node_modules",
-                missing,
-                if missing == 1 { "package" } else { "packages" }
-            );
-        }
-
         index_sort::sort_vec_by(&mut entries, |a, b| {
-            sort_key(a)
-                .cmp(&sort_key(b))
+            license_order(&a.license, &b.license)
+                .then_with(|| a.name.cmp(&b.name))
                 .then_with(|| match (a.semver, b.semver) {
                     (Some(x), Some(y)) => x.order(y, buf, buf),
                     (Some(_), None) => Ordering::Less,
@@ -269,33 +300,39 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long);
+            print_text(&entries, flags.long, checked);
         }
 
         Output::flush();
+        if missing > 0 && not_silent {
+            if missing == 1 {
+                bun_core::warn!("1 package in bun.lock is not installed and was skipped");
+            } else {
+                bun_core::warn!(
+                    "{} packages in bun.lock are not installed and were skipped",
+                    missing
+                );
+            }
+            bun_core::note!("run 'bun install' first");
+            Output::flush();
+        }
         Ok(())
     }
 }
 
-fn sort_key(e: &Entry) -> (bool, &[u8], &[u8]) {
-    (
-        &e.license[..] == UNKNOWN_LICENSE,
-        &e.license[..],
-        &e.name[..],
-    )
-}
-
-fn quoted_patterns(patterns: &[&[u8]]) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
-    for (i, pattern) in patterns.iter().enumerate() {
-        if i > 0 {
-            out.extend_from_slice(b", ");
-        }
-        out.push(b'"');
-        out.extend_from_slice(pattern);
-        out.push(b'"');
-    }
-    out
+/// Unknown last; otherwise case-insensitive ignoring a leading `(`, so identical licenses stay adjacent for grouping.
+fn license_order(a: &[u8], b: &[u8]) -> Ordering {
+    (a == UNKNOWN_LICENSE)
+        .cmp(&(b == UNKNOWN_LICENSE))
+        .then_with(|| {
+            let a_key = a.strip_prefix(b"(").unwrap_or(a);
+            let b_key = b.strip_prefix(b"(").unwrap_or(b);
+            a_key
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .cmp(b_key.iter().map(u8::to_ascii_lowercase))
+        })
+        .then_with(|| a.cmp(b))
 }
 
 fn printable(s: &[u8]) -> Cow<'_, [u8]> {
@@ -366,7 +403,7 @@ fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageIn
                 name: string_field(&json, b"name"),
                 version: string_field(&json, b"version"),
                 license: license_of(&json),
-                homepage: string_field(&json, b"homepage"),
+                homepage: string_field(&json, b"homepage").or_else(|| repository_of(&json)),
                 author: author_of(&json),
                 description: string_field(&json, b"description"),
                 path: platform_dir(dir),
@@ -447,6 +484,14 @@ fn license_of(json: &Expr) -> Box<[u8]> {
         .unwrap_or_else(|| UNKNOWN_LICENSE.into())
 }
 
+fn repository_of(json: &Expr) -> Option<Box<[u8]>> {
+    let repository = json.get(b"repository")?;
+    match str_of(&repository) {
+        Some(s) => Some(s.into()),
+        None => string_field(&repository, b"url"),
+    }
+}
+
 fn author_of(json: &Expr) -> Option<Box<[u8]>> {
     let author = json.get(b"author")?;
     if let Some(s) = str_of(&author) {
@@ -515,21 +560,7 @@ impl BunStore {
         }
 
         let mut key: Vec<u8> = Vec::new();
-        if resolution.tag == ResolutionTag::Folder {
-            let _ = write!(
-                &mut key,
-                "{}@file+{}",
-                pkg_name.fmt_store_path(buf),
-                resolution.fmt_store_path(buf)
-            );
-        } else {
-            let _ = write!(
-                &mut key,
-                "{}@{}",
-                pkg_name.fmt_store_path(buf),
-                resolution.fmt_store_path(buf)
-            );
-        }
+        let _ = write!(&mut key, "{}", fmt_store_key(pkg_name, resolution, buf));
 
         let i = entries.partition_point(|e| e[..] < key[..]);
         let entry = entries.get(i)?;
@@ -650,9 +681,15 @@ impl DiskIndex {
     }
 }
 
-fn print_text(entries: &[Entry], long: bool) {
+fn print_text(entries: &[Entry], long: bool, checked: usize) {
     if entries.is_empty() {
-        bun_core::prettyln!("No packages found");
+        bun_core::pretty!(
+            "No packages to list <d>(checked {} package{} in bun.lock)<r> ",
+            checked,
+            if checked == 1 { "" } else { "s" }
+        );
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("\n");
         return;
     }
 
@@ -776,17 +813,18 @@ fn print_json(entries: &[Entry]) {
             out.extend_from_slice(b"],\n      \"license\": ");
             json_string(&mut out, license);
             let newest = &entries[group_end - 1];
-            if let Some(homepage) = &newest.homepage {
-                out.extend_from_slice(b",\n      \"homepage\": ");
-                json_string(&mut out, homepage);
-            }
-            if let Some(author) = &newest.author {
-                out.extend_from_slice(b",\n      \"author\": ");
-                json_string(&mut out, author);
-            }
-            if let Some(description) = &newest.description {
-                out.extend_from_slice(b",\n      \"description\": ");
-                json_string(&mut out, description);
+            let extra: [(&[u8], &Option<Box<[u8]>>); 3] = [
+                (b"author", &newest.author),
+                (b"description", &newest.description),
+                (b"homepage", &newest.homepage),
+            ];
+            for (key, value) in extra {
+                if let Some(value) = value {
+                    out.extend_from_slice(b",\n      \"");
+                    out.extend_from_slice(key);
+                    out.extend_from_slice(b"\": ");
+                    json_string(&mut out, value);
+                }
             }
             out.extend_from_slice(b"\n    }");
 

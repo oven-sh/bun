@@ -14,10 +14,14 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
 };
 use bun_install_types::DependencyGroup;
+use bun_paths::path_buffer_pool;
+use bun_paths::resolve_path::{join_abs_string_buf, platform};
+
+use crate::bun_fs::FileSystem;
 
 use super::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry_root, load_workspace_members, local_relative_path,
-    root_package_json_path,
+    WorkspaceMembers, WorkspaceTarget, fetch_entry_root, load_workspace_members,
+    local_relative_path, root_package_json_path,
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
@@ -36,6 +40,7 @@ pub(crate) struct State {
     adds: Vec<Add>,
     /// (name, text) of every entry the flag's catalog had before this command; filled by prepare() in --catalog mode.
     root_entries: Vec<RootEntry>,
+    members: Vec<WorkspaceTarget>,
 }
 
 struct Add {
@@ -44,6 +49,8 @@ struct Add {
     group: Box<[u8]>,
     candidate: Candidate,
     outcome: Outcome,
+    /// Labels of the targets that received this add; left out of the "also used by" list when an entry is replaced.
+    targets: Vec<Box<[u8]>>,
 }
 
 enum Candidate {
@@ -128,6 +135,46 @@ fn note_keeps(quiet: bool, name: &[u8], target: &[u8], declared: &[u8], entry: &
         BStr::new(entry),
     );
     Output::flush();
+}
+
+fn note_replaced(name: &[u8], from: &[u8], to: &[u8], also_used_by: &[Box<[u8]>]) {
+    let mut suffix: Vec<u8> = Vec::new();
+    for (i, user) in also_used_by.iter().enumerate() {
+        suffix.extend_from_slice(if i == 0 { b" (also used by " } else { b", " });
+        suffix.extend_from_slice(user);
+    }
+    if !also_used_by.is_empty() {
+        suffix.push(b')');
+    }
+    bun_core::note!(
+        "catalog entry {} changed from \"{}\" to \"{}\"{}",
+        BStr::new(name),
+        BStr::new(from),
+        BStr::new(to),
+        BStr::new(&suffix),
+    );
+    Output::flush();
+}
+
+fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> ! {
+    let mut flag_spelling: Vec<u8> = b"--catalog".to_vec();
+    if !flag.is_empty() {
+        flag_spelling.push(b'=');
+        flag_spelling.extend_from_slice(flag);
+    }
+    Output::flush();
+    Output::err_generic(
+        "--catalog cannot add \"{s}\": {s} already declares {s}\n  bun add {s}@{s} {s}",
+        (
+            BStr::new(literal),
+            BStr::new(target),
+            BStr::new(name),
+            BStr::new(name),
+            BStr::new(literal),
+            BStr::new(&flag_spelling),
+        ),
+    );
+    Global::crash();
 }
 
 fn estring(arena: &bun_alloc::Arena, bytes: &[u8]) -> Expr {
@@ -293,6 +340,29 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
     }
 }
 
+fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let mut buf = path_buffer_pool::get();
+    ws.members
+        .keys()
+        .iter()
+        .zip(ws.members.values())
+        .map(|(rel, entry)| {
+            let rel: &[u8] = rel;
+            WorkspaceTarget {
+                name: entry.name.clone(),
+                name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
+                package_json_path: join_abs_string_buf::<platform::Auto>(
+                    top_level,
+                    &mut buf.0,
+                    &[rel, b"package.json"],
+                )
+                .into(),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
     if manager.subcommand != Subcommand::Add || manager.options.global || updates.is_empty() {
         return;
@@ -302,6 +372,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
             && manager.catalog_add.auto_use.is_empty()
             && manager.catalog_add.adds.is_empty()
             && manager.catalog_add.root_entries.is_empty()
+            && manager.catalog_add.members.is_empty()
     );
 
     if let Some(group) = manager.options.add_catalog {
@@ -360,6 +431,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
             Global::crash();
         }
         collect_root_entries(&root, group, &mut manager.catalog_add.root_entries);
+        manager.catalog_add.members = member_targets(&ws);
         manager.catalog_add.enabled = true;
         return;
     }
@@ -445,6 +517,7 @@ fn record_add(
             group: group.into(),
             candidate,
             outcome: Outcome::Pending,
+            targets: Vec::new(),
         });
     };
 
@@ -455,6 +528,9 @@ fn record_add(
                 Candidate::Explicit(request_literal(request).into()),
             );
         }
+        let add =
+            find_add(&mut state.adds, request.name_hash, group).expect("infallible: pushed above");
+        add.targets.push(target.into());
         return Decision::Convert;
     }
 
@@ -542,7 +618,64 @@ fn keys_named(package_json: &Expr, dependency_list: &[u8], name: &[u8]) -> usize
         })
 }
 
-/// Positional without a name (`bun add <url> --catalog`): the entry is whatever plain add just wrote for the resolved name; a target that declared the name itself is refused here because the install already resolved both rows.
+/// Runs between resolution and `clean_with_logger`, which would otherwise report a nameless positional colliding with the target's own row for the same name as a dependency loop.
+pub(crate) fn refuse_declared_positionals(manager: &PackageManager) {
+    let Some(flag) = manager.options.add_catalog else {
+        return;
+    };
+    if !manager.catalog_add.enabled {
+        return;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    let resolutions = lockfile.packages.items_resolution();
+    let dependency_lists = lockfile.packages.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+
+    for request in manager
+        .update_requests
+        .iter()
+        .filter(|request| !request.is_aliased)
+    {
+        let literal = request_literal(request);
+        for (pkg_id, list) in dependency_lists.iter().enumerate() {
+            if !matches!(
+                resolutions[pkg_id].tag,
+                resolution::Tag::Root | resolution::Tag::Workspace
+            ) {
+                continue;
+            }
+            let deps: &[Dependency] = list.get(dependencies);
+            let Some(row) = deps
+                .iter()
+                .find(|dep| dep.version.literal.slice(buf) == literal)
+            else {
+                continue;
+            };
+            let name = row.name.slice(buf);
+            if name == literal {
+                continue;
+            }
+            let declared_twice = deps
+                .iter()
+                .filter(|dep| dep.name_hash == row.name_hash && dep.behavior == row.behavior)
+                .count()
+                > 1;
+            if declared_twice {
+                let target = names[pkg_id].slice(buf);
+                let target: &[u8] = if target.is_empty() {
+                    b"package.json"
+                } else {
+                    target
+                };
+                refuse_declared(literal, target, name, flag);
+            }
+        }
+    }
+}
+
+/// Positional without a name (`bun add <url> --catalog`): the entry is whatever plain add just wrote for the resolved name.
 fn settle_resolved_positional(
     state: &mut State,
     request: &UpdateRequest,
@@ -560,17 +693,7 @@ fn settle_resolved_positional(
     let literal: &[u8] = unsafe { (*e_string).data }.slice();
 
     if keys_named(package_json, dependency_list, name) > 1 {
-        Output::err_generic(
-            "--catalog cannot add \"{s}\": {s} already declares {s}; run `bun add {s}@{s} --catalog` to move that declaration into the catalog",
-            (
-                BStr::new(literal),
-                BStr::new(target),
-                BStr::new(name),
-                BStr::new(name),
-                BStr::new(literal),
-            ),
-        );
-        Global::crash();
+        refuse_declared(literal, target, name, flag);
     }
 
     let entry: &[u8] = match root_entry(&state.root_entries, name) {
@@ -589,6 +712,7 @@ fn settle_resolved_positional(
                         group: flag.into(),
                         candidate: Candidate::Resolved(literal.into()),
                         outcome: Outcome::Pending,
+                        targets: Vec::new(),
                     });
                     literal
                 }
@@ -762,49 +886,95 @@ pub(crate) fn edit_root_before_install(
     manager: &mut PackageManager,
     root_package_json: &Expr,
 ) -> Result<(), AllocError> {
-    let _guard = ExprDisabler::scope();
-    let arena = &manager.ast_arena;
-    let adds = &mut manager.catalog_add.adds;
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    let mut replaced: Vec<(usize, Box<[u8]>)> = Vec::new();
+    {
+        let _guard = ExprDisabler::scope();
+        let arena = &manager.ast_arena;
+        let adds = &mut manager.catalog_add.adds;
 
-    let mut appended: Vec<usize> = Vec::new();
-    for (i, add) in adds.iter_mut().enumerate() {
-        if !matches!(add.outcome, Outcome::Pending) {
-            continue;
-        }
-        debug_assert!(!matches!(add.candidate, Candidate::Resolved(_)));
-        let entries = entries_object(root_package_json, &add.group, &add.name, Some(arena))
-            .expect("infallible: created on demand");
-        let existing: Option<Box<[u8]>> = entries
-            .as_property(&add.name)
-            .and_then(|q| q.expr.as_utf8_string_literal().map(Box::from));
-        add.outcome = match (existing, &add.candidate) {
-            (Some(entry), Candidate::Explicit(wanted)) if *entry == **wanted => Outcome::Reused,
-            (Some(entry), Candidate::Explicit(wanted)) => {
-                set_property(entries, arena, &add.name, estring(arena, wanted));
-                if exact_within(wanted, &entry) {
-                    Outcome::Moved { entry }
-                } else {
+        let mut appended: Vec<usize> = Vec::new();
+        for (i, add) in adds.iter_mut().enumerate() {
+            if !matches!(add.outcome, Outcome::Pending) {
+                continue;
+            }
+            debug_assert!(!matches!(add.candidate, Candidate::Resolved(_)));
+            let entries = entries_object(root_package_json, &add.group, &add.name, Some(arena))
+                .expect("infallible: created on demand");
+            let existing: Option<Box<[u8]>> = entries
+                .as_property(&add.name)
+                .and_then(|q| q.expr.as_utf8_string_literal().map(Box::from));
+            add.outcome = match (existing, &add.candidate) {
+                (Some(entry), Candidate::Explicit(wanted)) if *entry == **wanted => Outcome::Reused,
+                (Some(entry), Candidate::Explicit(wanted)) => {
+                    set_property(entries, arena, &add.name, estring(arena, wanted));
+                    if exact_within(wanted, &entry) {
+                        Outcome::Moved { entry }
+                    } else {
+                        if !quiet {
+                            replaced.push((i, entry));
+                        }
+                        Outcome::Seeded
+                    }
+                }
+                (Some(_), Candidate::Existing(_) | Candidate::Resolved(_) | Candidate::Latest) => {
+                    Outcome::Reused
+                }
+                (None, candidate) => {
+                    set_property(
+                        entries,
+                        arena,
+                        &add.name,
+                        estring(arena, candidate.literal()),
+                    );
+                    appended.push(i);
                     Outcome::Seeded
                 }
-            }
-            (Some(_), Candidate::Existing(_) | Candidate::Resolved(_) | Candidate::Latest) => {
-                Outcome::Reused
-            }
-            (None, candidate) => {
-                set_property(
-                    entries,
-                    arena,
-                    &add.name,
-                    estring(arena, candidate.literal()),
-                );
-                appended.push(i);
-                Outcome::Seeded
-            }
-        };
+            };
+        }
+
+        alphabetize_appended(root_package_json, adds, &appended);
     }
 
-    alphabetize_appended(root_package_json, adds, &appended);
+    for (i, entry) in replaced {
+        let also_used_by = other_users_of(manager, i, root_package_json);
+        let add = &manager.catalog_add.adds[i];
+        note_replaced(&add.name, &entry, add.candidate.literal(), &also_used_by);
+    }
     Ok(())
+}
+
+/// Labels of the packages whose declaration follows the replaced entry but that were not targets of this add.
+fn other_users_of(
+    manager: &mut PackageManager,
+    add_index: usize,
+    root_package_json: &Expr,
+) -> Vec<Box<[u8]>> {
+    let (name, group, targets): (Box<[u8]>, Box<[u8]>, Vec<Box<[u8]>>) = {
+        let add = &manager.catalog_add.adds[add_index];
+        (add.name.clone(), add.group.clone(), add.targets.clone())
+    };
+    let follows = |package_json: &Expr| {
+        existing_slot(package_json, &name)
+            .is_some_and(|slot| references_flag_group(slot.slice(), &group))
+    };
+    let mut users: Vec<Box<[u8]>> = Vec::new();
+    let root_label = target_label(root_package_json);
+    if !targets.contains(&root_label) && follows(root_package_json) {
+        users.push(root_label);
+    }
+    let members = core::mem::take(&mut manager.catalog_add.members);
+    for member in &members {
+        if targets.contains(&member.name) {
+            continue;
+        }
+        let package_json = fetch_entry_root(manager, member);
+        if follows(&package_json) {
+            users.push(member.name.clone());
+        }
+    }
+    manager.catalog_add.members = members;
+    users
 }
 
 pub(crate) fn edit_root_entry_before_install(

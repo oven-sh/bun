@@ -702,7 +702,7 @@ impl OverrideMap {
                 value_loc_of(ctx.source, expr.loc),
                 format_args!("\"overrides\" must be an object"),
             );
-            return Err(crate::Error::Invalid);
+            return Ok(());
         }
 
         self.map.ensure_unused_capacity(expr.property_count())?;
@@ -734,12 +734,15 @@ impl OverrideMap {
                 return Ok(());
             }
 
-            let parent = match parse_package_segment(k) {
+            let parent_selector = match parse_package_segment(k) {
                 Ok(parent) => parent,
                 Err(err) => {
                     warn_selector_error(ctx, k, key_loc, err);
                     return Ok(());
                 }
+            };
+            let Some(parent) = parse_parent(ctx, key_loc, &parent_selector) else {
+                return Ok(());
             };
 
             value_expr.try_for_each_property(|child_key, child_key_loc, child_value_expr| {
@@ -771,10 +774,7 @@ impl OverrideMap {
                     return self.put_rule(
                         ctx,
                         None,
-                        &PackageSelector {
-                            name: parent.name,
-                            range: parent.range,
-                        },
+                        &parent_selector,
                         key_loc,
                         child_value,
                         child_value_loc,
@@ -837,19 +837,16 @@ impl OverrideMap {
             if is_comment_key(k) {
                 return Ok(());
             }
+            let value_loc =
+                crate::bun_json::value_loc_of_property(&ctx.source.contents, key_loc, &value_expr);
             let Some(value) = value_expr.as_utf8_string_literal() else {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
-                    key_loc,
-                    format_args!(
-                        "Expected string value for resolution \"{}\"",
-                        bstr::BStr::new(k)
-                    ),
+                    value_loc,
+                    format_args!("Invalid resolution value for \"{}\"", bstr::BStr::new(k)),
                 );
                 return Ok(());
             };
-            let value_loc =
-                crate::bun_json::value_loc_of_property(&ctx.source.contents, key_loc, &value_expr);
             self.parse_string_rule(ctx, k, key_loc, value, value_loc)
         })
     }
@@ -869,13 +866,20 @@ impl OverrideMap {
                 return Ok(());
             }
         };
+        let parent = match parent {
+            None => None,
+            Some(selector) => match parse_parent(ctx, key_loc, &selector) {
+                Some(parent) => Some(parent),
+                None => return Ok(()),
+            },
+        };
         self.put_rule(ctx, parent.as_ref(), &target, key_loc, value, value_loc)
     }
 
     fn put_rule(
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
-        parent: Option<&PackageSelector<'_>>,
+        parent: Option<&Dependency>,
         target: &PackageSelector<'_>,
         key_loc: bun_ast::Loc,
         value: &[u8],
@@ -902,20 +906,12 @@ impl OverrideMap {
         else {
             return Ok(());
         };
-        let parent = match parent {
-            None => None,
-            Some(selector) => match parse_parent(ctx, key_loc, selector) {
-                Some(parent) => Some(parent),
-                None => return Ok(()),
-            },
-        };
-
         if parent.is_none() && target_range.tag != VersionTag::Npm {
             self.map.put_assume_capacity(dep.name_hash, dep);
         } else {
             self.push_scoped(
                 ScopedOverride {
-                    parent,
+                    parent: parent.cloned(),
                     target_range,
                     dep,
                 },
@@ -1003,12 +999,7 @@ fn warn_selector_error(
         SelectorError::EmptyRange => ctx.log.add_warning_fmt(
             source,
             key_loc,
-            format_args!(
-                "Bun does not support an empty version selector (a pnpm convergence {}); {} \"{}\" will not apply",
-                ctx.field.label(),
-                ctx.field.label(),
-                bstr::BStr::new(key)
-            ),
+            format_args!("Missing version range after \"{}\"", bstr::BStr::new(key)),
         ),
     }
 }
@@ -1089,8 +1080,7 @@ fn parse_override_value(
             Some(ctx.source),
             loc,
             format_args!(
-                "{} \"{}\" removes the dependency ('-'), which bun does not support",
-                field,
+                "Removing \"{}\" with \"-\" is not supported",
                 bstr::BStr::new(key)
             ),
         );
@@ -1130,8 +1120,7 @@ fn parse_override_value(
                         Some(ctx.source),
                         loc,
                         format_args!(
-                            "Could not resolve {} \"{}\" (you need \"{}\" in your dependencies)",
-                            field,
+                            "Could not resolve \"{}\": \"{}\" is not in dependencies",
                             bstr::BStr::new(value),
                             bstr::BStr::new(ref_name),
                         ),
@@ -1143,8 +1132,7 @@ fn parse_override_value(
                         Some(ctx.source),
                         loc,
                         format_args!(
-                            "Could not resolve {} \"{}\": workspaces declare different versions of \"{}\"",
-                            field,
+                            "Could not resolve \"{}\": workspaces declare different versions of \"{}\"",
                             bstr::BStr::new(value),
                             bstr::BStr::new(ref_name),
                         ),

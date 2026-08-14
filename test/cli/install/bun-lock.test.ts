@@ -217,8 +217,8 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
   }));
 
   [out, err] = await Promise.all([stdout.text(), stderr.text()]);
-  expect(err).toContain("Saved lockfile");
-  expect(out).toContain("Saved bun.lock (69 packages)");
+  expect(err).not.toContain("Saved lockfile");
+  expect(out).toContain("Done! Checked 69 packages (no changes)");
 
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
@@ -808,8 +808,8 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   }));
 
   [out, err] = await Promise.all([stdout.text(), stderr.text()]);
-  expect(err).toContain("Saved lockfile");
-  expect(out).toContain("Saved bun.lock");
+  expect(err).not.toContain("Saved lockfile");
+  expect(out).toContain("Done! Checked");
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   expect(await exited).toBe(0);
 });

@@ -38,7 +38,7 @@ Adding `...` to a pattern also selects the workspaces related to it through work
 
 The middle part is a name glob or a directory selector (`...{./packages/api}`), and `!` still goes first: `--filter '!...foo'` drops `foo` and everything that depends on it.
 
-For the package-manager commands, relations follow the workspace links recorded in `bun.lock`, from any dependency group. `bun run --filter` instead follows the `dependencies`, `devDependencies` and `optionalDependencies` entries of the workspace `package.json` files themselves (the same links Bun uses to order the scripts), so it needs no `bun.lock` and works before the first install. `bun install --filter 'web...'` works on a fresh clone, but `bun add`, `bun remove` and `bun update <pkg>` with a relation need an existing `bun.lock` and ask you to run `bun install` first when it is missing.
+For `bun add`, `bun remove` and `bun update <pkg>`, relations are read from the workspace `package.json` files as they are now: in any dependency group, a `workspace:` entry counts as a link, and so does a plain range that the workspace's current `version` satisfies (see [`linkWorkspacePackages`](/runtime/bunfig#install-linkworkspacepackages)). They work before the first install and pick up a `package.json` you have just edited. `bun install --filter` selects from the tree it has just resolved, and `bun outdated`, `bun prune` and `bun pm licenses` with `--filter` read the links from `bun.lock`. `bun run --filter` instead follows the `dependencies`, `devDependencies` and `optionalDependencies` entries of the workspace `package.json` files themselves (the same links Bun uses to order the scripts), so it needs no `bun.lock` and works before the first install.
 
 ```bash terminal icon="terminal"
 bun install --filter 'web...'
@@ -52,7 +52,7 @@ bun outdated --filter '{./packages/apps}'
 
 By default, `bun install` installs dependencies for every package in the monorepo. To install dependencies for specific packages, use `--filter`.
 
-A set of patterns selects everything matched by a positive pattern, minus everything matched by a `!` pattern, so `bun install --filter api --filter '!web'` installs only `api`. If nothing matches, `bun install` installs nothing and exits 0. A positive pattern that matches nothing prints `warn: No workspace packages matched the filter "<pattern>"` (for `bun install`, `bun outdated` and `bun update` as well as `bun add`/`bun remove`); `!` patterns never warn.
+A set of patterns selects everything matched by a positive pattern, minus everything matched by a `!` pattern, so `bun install --filter api --filter '!web'` installs only `api`. A positive pattern that matches nothing prints `No workspace packages matched the filter "<pattern>"` (`the filters "a", "b"` when several patterns matched nothing); `!` patterns never do. For `bun install` and `bun outdated` this is a warning: if nothing is selected, `bun install` installs nothing and exits 0. For `bun add`, `bun remove` and `bun update` (with `--filter` or `-r`), as well as `bun prune` and `bun pm licenses`, the same sentence is an error and the command exits 1 without editing or installing anything when the filters select no workspace at all; if at least one workspace is selected, the unmatched patterns only warn and the command continues.
 
 Given a monorepo with workspaces `pkg-a`, `pkg-b`, and `pkg-c` under `./packages`:
 
@@ -126,7 +126,7 @@ bun --filter '{./packages/apps}' dev
 bun --filter '*' --filter '!docs' lint
 ```
 
-A `!` pattern removes packages matched by the other patterns, and a `package.json` without a `name` is only selected by a `./path` pattern.
+A `!` pattern removes packages matched by the other patterns, and a `package.json` without a `name` is only selected by a `./path` pattern. If the patterns select no package with the script, `bun run` prints `error: No workspace packages matched the filter "<pattern>"` and exits 1 (pass `--if-present` to exit 0 instead).
 
 ### Running scripts in workspaces
 

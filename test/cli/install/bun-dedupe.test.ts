@@ -37,9 +37,7 @@ function lock(dir: string) {
 
 const HEADER = "bun dedupe <version> (<revision>)";
 
-function firstLines(stdout: string, n: number) {
-  return normalizeBunSnapshot(stdout).split("\n").slice(0, n);
-}
+const lines = (stdout: string) => normalizeBunSnapshot(stdout).split("\n");
 
 function nodeModulesVersion(packageDir: string, ...segments: string[]) {
   return file(join(packageDir, "node_modules", ...segments, "package.json"))
@@ -47,41 +45,107 @@ function nodeModulesVersion(packageDir: string, ...segments: string[]) {
     .then(pkg => pkg.version);
 }
 
-// `packages` is every lockfile entry except the root.
-function noDuplicates(packages: number) {
-  return `🎉 No duplicates — checked ${packages} package${packages === 1 ? "" : "s"}, every one already resolves to a single version`;
+// Every summary counts the lockfile's package entries (root included); `packages` keys are node_modules paths, so one entry can sit under several keys.
+function lockPackageCount(lockfile: string) {
+  const { packages = {} } = Bun.JSONC.parse(lockfile) as { packages?: Record<string, [string, ...unknown[]]> };
+  return 1 + new Set(Object.values(packages).map(([resolution]) => resolution)).size;
 }
 
-// The removed labels and the summary; the install that follows prints its own count line but never the `+ pkg@ver` tree.
-function expectRemoved(stdout: string, ...labels: string[]) {
-  const lines = normalizeBunSnapshot(stdout).split("\n");
-  expect(lines.slice(0, labels.length + 2)).toStrictEqual([
+const packagesWord = (n: number) => `${n} package${n === 1 ? "" : "s"}`;
+const versionsWord = (n: number) => `${n} duplicate version${n === 1 ? "" : "s"}`;
+
+const noDuplicates = (checked: number) =>
+  `🎉 No duplicates — checked ${packagesWord(checked)}, every one already resolves to a single version`;
+const wouldRemove = (removed: number, checked: number) =>
+  `${versionsWord(removed)} can be removed (checked ${packagesWord(checked)})`;
+const HINT = "  bun dedupe";
+
+const row = (label: string) => `~ ${label}`;
+
+// normalizeBunSnapshot strips durations, so the summary line is checked for one on the raw output.
+function expectTimed(stdout: string, summary: RegExp) {
+  const line = stdout.split("\n").find(line => summary.test(line));
+  expect(line).toMatch(/ \[\d+\.\d\d(ms|s)\]\r?$/);
+  expect(stdout.match(/ \[\d+\.\d\d(ms|s)\]\r?$/gm)).toHaveLength(1);
+}
+
+const WOULD_REMOVE = /^\d+ duplicate versions? can be removed /;
+const REMOVED = /^\d+ duplicate versions? removed/;
+const NO_DUPLICATES = /^🎉 /;
+
+function removedSummary(removed: number, checked?: number) {
+  return new RegExp(
+    `^${versionsWord(removed)} removed(, [1-9]\\d* packages? installed)? \\(checked ${
+      checked === undefined ? "[1-9]\\d* packages?" : packagesWord(checked)
+    }\\)$`,
+  );
+}
+
+type Removed = { kept?: string[]; checked?: number };
+
+// The rows, kept lines, a blank line and the summary end stdout; whatever the install printed sits between the header and the first row.
+function expectRemoved(stdout: string, rows: string | string[], { kept = [], checked }: Removed = {}) {
+  rows = [rows].flat();
+  const out = lines(stdout);
+  expect(out[0]).toBe(HEADER);
+  const blockStart = out.length - rows.length - kept.length - 2;
+  expect(out.slice(blockStart, -1)).toStrictEqual([...rows.map(row), ...kept, ""]);
+  expect(out.at(-1)).toMatch(removedSummary(rows.length, checked));
+  expectTimed(stdout, REMOVED);
+  expect(
+    out
+      .slice(1, blockStart)
+      .filter(
+        line =>
+          line.startsWith("~ ") ||
+          line.startsWith("+ ") ||
+          line.includes("duplicate") ||
+          line.includes("kept ") ||
+          line.includes("Checked ") ||
+          line.includes("installed") ||
+          line.includes("no changes"),
+      ),
+  ).toStrictEqual([]);
+}
+
+type Result = Awaited<ReturnType<typeof run>>;
+
+function expectWouldRemove({ stdout, stderr }: Result, rows: string | string[], checked: number, kept: string[] = []) {
+  rows = [rows].flat();
+  expect(lines(stdout)).toStrictEqual([HEADER, ...rows.map(row), ...kept, "", wouldRemove(rows.length, checked), HINT]);
+  expectTimed(stdout, WOULD_REMOVE);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(stderr).not.toContain("error:");
+}
+
+// One line, one duration, nothing saved: the same on `--check` and on a plain `bun dedupe`.
+function expectNoDuplicates({ stdout, stderr, exitCode }: Result, checked?: number, kept: string[] = []) {
+  expect(lines(stdout)).toStrictEqual([
     HEADER,
-    ...labels.map(label => `- ${label}`),
-    `Removed ${labels.length} duplicate version${labels.length === 1 ? "" : "s"}`,
+    ...kept,
+    ...(kept.length ? [""] : []),
+    checked === undefined
+      ? expect.stringMatching(/^🎉 No duplicates — checked [1-9]\d* packages?, /)
+      : noDuplicates(checked),
   ]);
-  expect(lines.filter(line => line.startsWith("+ "))).toStrictEqual([]);
+  expectTimed(stdout, NO_DUPLICATES);
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
 }
 
-async function expectAlreadyDeduplicated(dir: string, packages?: number) {
-  const check = await dedupe(dir, "--check");
-  if (packages === undefined) {
-    expect(firstLines(check.stdout, 2)).toStrictEqual([HEADER, expect.stringContaining("🎉 No duplicates — checked ")]);
-  } else {
-    expect(normalizeBunSnapshot(check.stdout)).toBe(`${HEADER}\n${noDuplicates(packages)}`);
-  }
-  expect(check.stderr).not.toContain("error:");
-  expect(check.exitCode).toBe(0);
+async function expectAlreadyDeduplicated(dir: string, checked?: number, kept: string[] = []) {
+  expectNoDuplicates(await dedupe(dir, "--check"), checked, kept);
+  expectNoDuplicates(await dedupe(dir), checked, kept);
 }
 
 async function expectRefused(dir: string, ...args: string[]) {
   const { stdout, stderr, exitCode } = await dedupe(dir, ...args);
-  expect(normalizeBunSnapshot(stderr)).toContain(
-    "error: the lockfile is out of date with package.json, nothing was deduplicated",
-  );
-  expect(normalizeBunSnapshot(stderr)).toContain("note: run 'bun install' first");
-  expect(stdout).not.toContain("duplicate");
-  expect(stdout).not.toContain("Removed");
+  expect(lines(stderr)).toStrictEqual([
+    "error: bun.lock does not match package.json, nothing to dedupe",
+    "note: run 'bun install' first",
+  ]);
+  expect(lines(stdout)).toStrictEqual([HEADER]);
   expect(exitCode).toBe(1);
 }
 
@@ -143,12 +207,21 @@ test.concurrent("collapses a range onto the exact version that satisfies every e
   const { packageDir, packageJson } = await registry.createTestDir();
   await setupRangeDuplicate(packageDir, packageJson);
   const pkgJsonBefore = await file(packageJson).text();
+  const nested = join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps");
+  expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
-  expect(stderr).toContain("Saved lockfile");
-  expect(stderr).not.toContain("error:");
+  expect(lines(stdout)).toStrictEqual([
+    HEADER,
+    "~ no-deps 1.1.0 -> 1.0.0",
+    "",
+    "1 duplicate version removed (checked 4 packages)",
+  ]);
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
+  expect(lines(stderr)).toStrictEqual(["Saved lockfile"]);
   expect(exitCode).toBe(0);
+  expect(await exists(nested)).toBeFalse();
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
 
   const lockfile = await lock(packageDir);
   expect(lockfile).toContain('"no-deps@1.0.0"');
@@ -174,7 +247,7 @@ test.concurrent("prefers the highest version when several satisfy every edge", a
   expect(lockfile).toContain('"no-deps@1.1.0"');
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.0.0");
+  expectRemoved(stdout, "no-deps 1.0.0 -> 1.1.0", { checked: 4 });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -198,25 +271,63 @@ test.concurrent("--check reports and exits 1 without writing", async () => {
   const nestedPkgJson = join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "package.json");
   expect(await file(nestedPkgJson).json()).toStrictEqual({ name: "no-deps", version: "1.1.0" });
 
+  expect(lockPackageCount(lockBefore)).toBe(4);
+
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
+  expect(lines(check.stdout)).toMatchInlineSnapshot(`
+    [
+      "bun dedupe <version> (<revision>)",
+      "~ no-deps 1.1.0 -> 1.0.0",
+      "",
+      "1 duplicate version can be removed (checked 4 packages)",
+      "  bun dedupe",
+    ]
   `);
-  expect(check.stderr).not.toContain("note:");
-  expect(check.stderr).not.toContain("Saved lockfile");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(check.stderr).toBe("");
   expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(lockBefore);
   expect(await file(packageJson).text()).toBe(pkgJsonBefore);
   expect(await readdirSorted(join(packageDir, "node_modules"))).toStrictEqual(nodeModulesBefore);
   expect(await file(nestedPkgJson).json()).toStrictEqual({ name: "no-deps", version: "1.1.0" });
+});
+
+// `--dry-run` shows the plan and succeeds like `bun prune --dry-run`; only `--check` is the CI gate.
+test.concurrent("--dry-run prints what --check prints and exits 0", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
 
   const dryRun = await dedupe(packageDir, "--dry-run");
-  expect(normalizeBunSnapshot(dryRun.stdout)).toBe(normalizeBunSnapshot(check.stdout));
-  expect(dryRun.stderr).not.toContain("Saved lockfile");
-  expect(dryRun.exitCode).toBe(1);
+  expectWouldRemove(dryRun, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(dryRun.stderr).toBe("");
+  expect(dryRun.exitCode).toBe(0);
+  expect(await lock(packageDir)).toBe(lockBefore);
+
+  const check = await dedupe(packageDir, "--check");
+  expect(normalizeBunSnapshot(check.stdout)).toBe(normalizeBunSnapshot(dryRun.stdout));
+  expect(check.exitCode).toBe(1);
+
+  const both = await dedupe(packageDir, "--dry-run", "--check");
+  expect(normalizeBunSnapshot(both.stdout)).toBe(normalizeBunSnapshot(dryRun.stdout));
+  expect(both.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockBefore);
+  expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+});
+
+test.concurrent("--no-summary keeps the rows and the hint but drops the count line", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
+
+  const check = await dedupe(packageDir, "--check", "--no-summary");
+  expect(lines(check.stdout).filter(Boolean)).toStrictEqual(["~ no-deps 1.1.0 -> 1.0.0", HINT]);
+  expect(check.stdout).not.toMatch(/\[\d+\.\d\d(ms|s)\]/);
+  expect(check.stderr).toBe("");
+  expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockBefore);
+
+  const dryRun = await dedupe(packageDir, "--dry-run", "--no-summary");
+  expect(dryRun.stdout).toBe(check.stdout);
+  expect(dryRun.exitCode).toBe(0);
   expect(await lock(packageDir)).toBe(lockBefore);
 });
 
@@ -230,19 +341,41 @@ test.concurrent("already deduplicated", async () => {
   const lockAfterFirst = await lock(packageDir);
   expect(lockAfterFirst).not.toContain('"no-deps@1.1.0"');
 
+  expect(lockPackageCount(lockAfterFirst)).toBe(3);
+
   const second = await dedupe(packageDir);
-  expect(firstLines(second.stdout, 2)).toStrictEqual([HEADER, noDuplicates(2)]);
-  expect(second.stderr).not.toContain("Saved lockfile");
-  expect(second.exitCode).toBe(0);
+  expect(lines(second.stdout)).toMatchInlineSnapshot(`
+    [
+      "bun dedupe <version> (<revision>)",
+      "🎉 No duplicates — checked 3 packages, every one already resolves to a single version",
+    ]
+  `);
+  expect(second.stderr).toBe("");
+  expectNoDuplicates(second, 3);
   expect(await lock(packageDir)).toBe(lockAfterFirst);
 
-  const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 2 packages, every one already resolves to a single version"
-  `);
-  expect(check.exitCode).toBe(0);
-  expect(await lock(packageDir)).toBe(lockAfterFirst);
+  for (const flag of ["--check", "--dry-run", "--frozen-lockfile", "--production", "--no-save"]) {
+    const rerun = await dedupe(packageDir, flag);
+    expect(normalizeBunSnapshot(rerun.stdout)).toBe(normalizeBunSnapshot(second.stdout));
+    expect(rerun.stderr).toBe("");
+    expect(rerun.exitCode).toBe(0);
+    expect(await lock(packageDir)).toBe(lockAfterFirst);
+  }
+});
+
+test.concurrent.each(["hoisted", "isolated"] as const)("a no-op prints one summary line (%s linker)", async linker => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0" } }));
+  await runBunInstall(installEnv(packageDir), packageDir);
+  const lockBefore = await lock(packageDir);
+  expect(lockPackageCount(lockBefore)).toBe(3);
+
+  for (const args of [[], ["--check"], ["--lockfile-only"]]) {
+    const result = await dedupe(packageDir, ...args, "--linker", linker);
+    expectNoDuplicates(result, 3);
+    expect(result.stderr).toBe("");
+    expect(await lock(packageDir)).toBe(lockBefore);
+  }
 });
 
 test.concurrent("keeps versions that no single version can replace", async () => {
@@ -256,12 +389,7 @@ test.concurrent("keeps versions that no single version can replace", async () =>
   expect(lockBefore).toContain('"no-deps@1.0.0"');
   expect(lockBefore).toContain('"no-deps@1.0.1"');
 
-  await expectAlreadyDeduplicated(packageDir, 4);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(4)]);
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir, 5);
   const lockAfter = await lock(packageDir);
   expect(lockAfter).toContain('"no-deps@1.0.0"');
   expect(lockAfter).toContain('"no-deps@1.0.1"');
@@ -297,7 +425,7 @@ test.concurrent("honours catalog ranges", async () => {
   expect(lockfile).toContain('"no-deps@1.1.0"');
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.0.0");
+  expectRemoved(stdout, "no-deps 1.0.0 -> 1.1.0", { checked: 4 });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -328,15 +456,9 @@ test.concurrent("override range wins over the edge's own range", async () => {
     ),
   ]);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.0.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(1);
+  const check = await dedupe(packageDir, "--check");
+  expectWouldRemove(check, "no-deps 1.0.0 -> 1.1.0", 4);
+  expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(withOverride);
 });
 
@@ -370,9 +492,25 @@ test.concurrent("rejects positional arguments", async () => {
 test.concurrent("--help", async () => {
   const { packageDir } = await registry.createTestDir();
 
-  const { stdout, exitCode } = await dedupe(packageDir, "--help");
-  expect(stdout).toContain("bun dedupe");
-  expect(stdout).toContain("--check");
+  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--help");
+  expect(stdout).toContain("Usage: bun dedupe [flags]");
+  const out = lines(stdout);
+  const flagsStart = out.indexOf("Flags:") + 1;
+  expect(flagsStart).toBeGreaterThan(0);
+  const flagLines = out.slice(flagsStart, out.indexOf("", flagsStart));
+  expect(flagLines.map(line => line.match(/--[\w-]+/)![0])).toStrictEqual([
+    "--check",
+    "--dry-run",
+    "--lockfile-only",
+    "--frozen-lockfile",
+    "--linker",
+    "--silent",
+    "--cwd",
+    "--help",
+  ]);
+  expect(flagLines.find(line => line.includes("--dry-run"))).toContain("without changing anything");
+  expect(flagLines.find(line => line.includes("--help"))).toStartWith("  -h, --help");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -401,8 +539,12 @@ test.concurrent("works with the isolated linker", async () => {
   };
   expect(await nestedNoDeps()).toStrictEqual({ name: "no-deps", version: "1.1.0" });
 
+  const check = await dedupe(packageDir, "--check", "--linker", "isolated");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(check.exitCode).toBe(1);
+
   const { stdout, stderr, exitCode } = await dedupe(packageDir, "--linker", "isolated");
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
   expect(stderr).toContain("Saved lockfile");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
@@ -439,61 +581,81 @@ test.concurrent("duplicate held only by an optional peer edge is deduplicated", 
     .replace('"z-fixed-dep/no-deps": ["no-deps@1.0.0"', '"no-deps": ["no-deps@1.0.0"');
   await write(join(packageDir, "bun.lock"), heldByPeer);
 
+  const checked = lockPackageCount(heldByPeer);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", checked);
   expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(heldByPeer);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
   const after = await lock(packageDir);
   expect(after).toContain('"no-deps@1.0.0"');
   expect(after).not.toContain('"no-deps@1.1.0"');
-  await expectAlreadyDeduplicated(packageDir, 4);
+  expect(lockPackageCount(after)).toBe(checked - 1);
+  await expectAlreadyDeduplicated(packageDir, checked - 1);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
-test.concurrent.each([
-  ["--frozen-lockfile", "the lockfile is frozen"],
-  ["--production", "the lockfile is frozen"],
-  ["--no-save", "saving the lockfile is disabled"],
-])("%s with duplicates errors instead of claiming removal", async (flag, reason) => {
+const REFUSALS: [string, string][] = [
+  ["--frozen-lockfile", "--frozen-lockfile was passed"],
+  ["--production", "--production implies --frozen-lockfile"],
+  ["--no-save", "--no-save was passed"],
+];
+
+function refusalStderr(removed: number, reason: string) {
+  return [
+    `error: ${versionsWord(removed)} can be removed, but ${reason}`,
+    `note: run 'bun dedupe' to remove ${removed === 1 ? "it" : "them"}, or 'bun dedupe --check' in CI`,
+  ];
+}
+
+// The plan is reported exactly like --check; the error and its remedy stay together on stderr so `2>/dev/null` leaves no orphan hint.
+function expectRefusedToWrite(
+  { stdout, stderr, exitCode }: Result,
+  rows: string | string[],
+  checked: number,
+  reason: string,
+  kept: string[] = [],
+) {
+  rows = [rows].flat();
+  expect(lines(stdout)).toStrictEqual([HEADER, ...rows.map(row), ...kept, "", wouldRemove(rows.length, checked)]);
+  expectTimed(stdout, WOULD_REMOVE);
+  expect(lines(stderr)).toStrictEqual(refusalStderr(rows.length, reason));
+  expect(exitCode).toBe(1);
+}
+
+test.concurrent.each(REFUSALS)("%s with duplicates errors instead of claiming removal", async (flag, reason) => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, flag);
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-      bun dedupe --check"
-  `);
-  expect(normalizeBunSnapshot(stderr).split("\n")).toContain(
-    `error: 1 duplicate version can be removed, but ${reason}`,
-  );
-  expect(stderr).not.toContain("note:");
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(exitCode).toBe(1);
+  const result = await dedupe(packageDir, flag);
+  expectRefusedToWrite(result, "no-deps 1.1.0 -> 1.0.0", 4, reason);
+  expect(await lock(packageDir)).toBe(lockBefore);
+  expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+});
+
+test.concurrent("--lockfile-only still refuses under --frozen-lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
+
+  const lockfileOnly = await dedupe(packageDir, "--frozen-lockfile", "--lockfile-only");
+  expectRefusedToWrite(lockfileOnly, "no-deps 1.1.0 -> 1.0.0", 4, "--frozen-lockfile was passed");
   expect(await lock(packageDir)).toBe(lockBefore);
 });
 
-test.concurrent("--frozen-lockfile succeeds when already deduplicated", async () => {
+test.concurrent.each(REFUSALS)("%s succeeds when already deduplicated", async flag => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0" } }));
   await runBunInstall(installEnv(packageDir), packageDir);
   const lockBefore = await lock(packageDir);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--frozen-lockfile");
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(2)]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  const result = await dedupe(packageDir, flag);
+  expectNoDuplicates(result, 3);
+  expect(result.stderr).toBe("");
   expect(await lock(packageDir)).toBe(lockBefore);
 });
 
@@ -510,18 +672,15 @@ test.concurrent("cascading removal lists every unreachable duplicate in name ord
     expect(lockfile).toContain(label);
   }
 
+  const rows = ["no-deps 2.0.0", "one-fixed-dep 2.0.0 -> 1.0.0"];
+  const checked = lockPackageCount(lockfile);
+  expect(checked).toBe(5);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@2.0.0
-    - one-fixed-dep@2.0.0
-    2 duplicate versions can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, rows, checked);
   expect(check.exitCode).toBe(1);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@2.0.0", "one-fixed-dep@2.0.0");
+  expectRemoved(stdout, rows, { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -547,18 +706,19 @@ test.concurrent("multiple names removed in one run are sorted, scoped names firs
     expect(lockfile).toContain(label);
   }
 
+  const rows = ["@types/is-number 2.0.0 -> 1.0.0", "no-deps 1.1.0 -> 1.0.0"];
+  const checked = lockPackageCount(lockfile);
+  expect(checked).toBe(6);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - @types/is-number@2.0.0
-    - no-deps@1.1.0
-    2 duplicate versions can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, rows, checked);
   expect(check.exitCode).toBe(1);
 
+  const frozen = await dedupe(packageDir, "--frozen-lockfile");
+  expectRefusedToWrite(frozen, rows, checked, "--frozen-lockfile was passed");
+  expect(await lock(packageDir)).toBe(lockfile);
+
   const { stdout, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "@types/is-number@2.0.0", "no-deps@1.1.0");
+  expectRemoved(stdout, rows, { checked });
   expect(exitCode).toBe(0);
 
   const after = await lock(packageDir);
@@ -584,7 +744,7 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   expect(lockfile).toContain('"no-deps@1.1.0"');
 
   const { stdout, stderr, exitCode } = await dedupe(workspaceDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -616,30 +776,23 @@ test.concurrent("--check never creates node_modules", async () => {
   const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
   await rm(join(packageDir, "node_modules"), { recursive: true });
 
-  const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
-  expect(check.exitCode).toBe(1);
-  expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
-  expect(await lock(packageDir)).toBe(lockBefore);
+  for (const flag of ["--check", "--dry-run"]) {
+    const check = await dedupe(packageDir, flag);
+    expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+    expect(check.exitCode).toBe(flag === "--check" ? 1 : 0);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    expect(await lock(packageDir)).toBe(lockBefore);
+  }
 
   await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
   const apply = await dedupe(packageDir);
-  expectRemoved(apply.stdout, "no-deps@1.1.0");
+  expectRemoved(apply.stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
   expect(apply.exitCode).toBe(0);
   const lockDeduped = await lock(packageDir);
   await rm(join(packageDir, "node_modules"), { recursive: true });
 
-  const clean = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(clean.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 2 packages, every one already resolves to a single version"
-  `);
-  expect(clean.exitCode).toBe(0);
+  // A no-op exits before the install step, so a plain `bun dedupe` creates nothing either.
+  await expectAlreadyDeduplicated(packageDir, 3);
   expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   expect(await lock(packageDir)).toBe(lockDeduped);
 });
@@ -656,12 +809,7 @@ test.concurrent("never upgrades past the locked version", async () => {
     write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "^1.0.0" } })),
   ]);
 
-  await expectAlreadyDeduplicated(packageDir, 1);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(1)]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir, 2);
   const after = await lock(packageDir);
   expect(after).toContain('"no-deps@1.0.0"');
   expect(after).not.toContain('"no-deps@1.1.0"');
@@ -680,11 +828,34 @@ test.concurrent.each([
   const marker = join(packageDir, "postinstall.txt");
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir, ...flags);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
   expect(await exists(marker)).toBe(runs);
+});
+
+test.concurrent("the report is printed as one block after root lifecycle script output", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await setupRangeDuplicate(packageDir, packageJson);
+  const pkg = await file(packageJson).json();
+  await write(packageJson, JSON.stringify({ ...pkg, scripts: { postinstall: "echo postinstall ran" } }));
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  const out = lines(stdout);
+  const scriptOutput = out.indexOf("postinstall ran");
+  const firstRow = out.findIndex(line => line.startsWith("~ "));
+  expect(scriptOutput).toBeGreaterThan(0);
+  expect(firstRow).toBeGreaterThan(scriptOutput);
+  expect(out.slice(firstRow)).toStrictEqual([
+    "~ no-deps 1.1.0 -> 1.0.0",
+    "",
+    "1 duplicate version removed (checked 4 packages)",
+  ]);
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
 });
 
 // A direct dependency only moves down when that is the only way to drop a version (pnpm would keep both, pnpm/pnpm#4753, #6762).
@@ -702,7 +873,7 @@ test.concurrent("root range collapses onto a transitive exact pin", async () => 
   expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
 
   const { stdout, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "a-dep@1.0.10");
+  expectRemoved(stdout, "a-dep 1.0.10 -> 1.0.3");
   expect(exitCode).toBe(0);
   expect(await file(packageJson).text()).toBe(pkgJsonBefore);
 
@@ -725,7 +896,7 @@ test.concurrent("npm: alias edges are deduplicated by the aliased range", async 
   expect(lockfile).toContain('"no-deps@1.1.0"');
 
   const { stdout, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(exitCode).toBe(0);
 
   expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
@@ -744,12 +915,7 @@ test.concurrent("dist-tag edges keep the version the tag resolved to", async () 
   expect(lockBefore).toContain('"dep-with-tags@1.0.1"');
   expect(lockBefore).toContain('"dep-with-tags@1.0.0"');
 
-  await expectAlreadyDeduplicated(packageDir, 2);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(2)]);
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir, 3);
   expect(await lock(packageDir)).toBe(lockBefore);
   expect(await nodeModulesVersion(packageDir, "dep-with-tags")).toBe("1.0.1");
 });
@@ -764,13 +930,7 @@ test.concurrent("edges pointing at a patched version are never moved", async () 
   expect(patched).not.toBe(lockBefore);
   await write(join(packageDir, "bun.lock"), patched);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 3 packages, every one already resolves to a single version"
-  `);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir, 4);
   expect(await lock(packageDir)).toBe(patched);
 });
 
@@ -781,12 +941,24 @@ test.concurrent("--lockfile-only rewrites bun.lock without installing", async ()
   expect(await nested()).toBe("1.1.0");
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir, "--lockfile-only");
-  expectRemoved(stdout, "no-deps@1.1.0");
-  expect(stderr).toContain("Saved lockfile");
-  expect(stderr).not.toContain("error:");
+  expect(lines(stdout)).toStrictEqual([
+    HEADER,
+    "~ no-deps 1.1.0 -> 1.0.0",
+    "",
+    "1 duplicate version removed (checked 4 packages)",
+  ]);
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
+  expect(lines(stderr)).toStrictEqual(["Saved lockfile"]);
   expect(exitCode).toBe(0);
-  expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
+  const lockDeduped = await lock(packageDir);
+  expect(lockDeduped).not.toContain('"no-deps@1.1.0"');
   expect(await nested()).toBe("1.1.0");
+
+  // Nothing left to remove: one line, and the unchanged lockfile is not saved again.
+  const again = await dedupe(packageDir, "--lockfile-only");
+  expectNoDuplicates(again, 3);
+  expect(again.stderr).toBe("");
+  expect(await lock(packageDir)).toBe(lockDeduped);
 
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -799,6 +971,12 @@ test.concurrent("--silent keeps the exit codes", async () => {
   expect(check.stdout).toBe("");
   expect(check.stderr).toBe("");
   expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockBefore);
+
+  const dryRun = await dedupe(packageDir, "--dry-run", "--silent");
+  expect(dryRun.stdout).toBe("");
+  expect(dryRun.stderr).toBe("");
+  expect(dryRun.exitCode).toBe(0);
   expect(await lock(packageDir)).toBe(lockBefore);
 
   const apply = await dedupe(packageDir, "--silent");
@@ -823,6 +1001,50 @@ async function setupWorkspaceDuplicate(packageDir: string, packageJson: string, 
   return workspaceDir;
 }
 
+test.concurrent(
+  "hoisted: a workspace's collapsed nested copy is removed, foreign directories in the same folder are not",
+  async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const workspaceDir = join(packageDir, "packages", "a");
+    await write(
+      join(workspaceDir, "package.json"),
+      JSON.stringify({ name: "a", dependencies: { "no-deps": "^1.0.0" } }),
+    );
+    const lockfile = await installTwice(
+      packageDir,
+      packageJson,
+      { name: "root", workspaces: ["packages/*"] },
+      { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+    );
+    expect(lockfile).toContain('"no-deps@1.0.0"');
+    expect(lockfile).toContain('"no-deps@1.1.0"');
+    const versions = () =>
+      Promise.all([nodeModulesVersion(packageDir, "no-deps"), nodeModulesVersion(workspaceDir, "no-deps")]);
+    expect(await versions()).toStrictEqual(["1.0.0", "1.1.0"]);
+
+    // Stand-ins for a manual `bun link` inside the workspace and an extraneous root package: bun.lock never placed them.
+    const handLinked = join(workspaceDir, "node_modules", "hand-linked", "package.json");
+    const extraneous = join(packageDir, "node_modules", "extraneous", "package.json");
+    await Promise.all([
+      mkdir(dirname(handLinked), { recursive: true }),
+      mkdir(dirname(extraneous), { recursive: true }),
+    ]);
+    await Promise.all([write(handLinked, '{"name":"hand-linked"}'), write(extraneous, '{"name":"extraneous"}')]);
+
+    const { stdout, stderr, exitCode } = await dedupe(packageDir);
+    expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
+    expect(await exists(join(workspaceDir, "node_modules", "no-deps"))).toBeFalse();
+    expect(await Promise.all([exists(handLinked), exists(extraneous)])).toStrictEqual([true, true]);
+    expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
+    await expectAlreadyDeduplicated(packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+  },
+);
+
 type StaleFixture = { packageDir: string; cwds: string[]; afterRefusal?: () => Promise<void> };
 
 // Every edit is still satisfied by the locked versions, so the refusal is about the ranges, not about re-resolution.
@@ -846,10 +1068,13 @@ test.concurrent.each<[string, () => Promise<StaleFixture>]>([
           // The current range lets root move up onto 1.1.0; the recorded exact range would have removed it instead.
           await runBunInstall(installEnv(packageDir), packageDir);
           const { stdout, stderr, exitCode } = await dedupe(packageDir);
-          expectRemoved(stdout, "no-deps@1.0.0");
+          expectRemoved(stdout, "no-deps 1.0.0 -> 1.1.0");
           expect(stderr).not.toContain("error:");
           expect(exitCode).toBe(0);
           expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+          expect(
+            await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps")),
+          ).toBeFalse();
         },
       };
     },
@@ -875,7 +1100,7 @@ test.concurrent.each<[string, () => Promise<StaleFixture>]>([
           const lockfile = await lock(packageDir);
           expect(lockfile).toContain('"overrides"');
           expect(lockfile).not.toContain('"no-deps@1.0.0"');
-          await expectAlreadyDeduplicated(packageDir, 2);
+          await expectAlreadyDeduplicated(packageDir, 3);
         },
       };
     },
@@ -984,7 +1209,7 @@ test.concurrent.each([
   const packageDir = await setup();
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
@@ -1015,7 +1240,7 @@ test.concurrent("a direct dependency is not moved when its version survives anyw
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.1");
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "dep-with-tags@1.0.1");
+  expectRemoved(stdout, "dep-with-tags 1.0.1 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1029,7 +1254,7 @@ test.concurrent("a direct dependency is not moved when its version survives anyw
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
-// no-deps ends up as: direct ^1.0.0 @1.1.0, `<=1.0.1` @1.0.1, `>=1.0.1` @1.0.1, exact 1.0.0 — {1.0.0, 1.1.0} and {1.0.0, 1.0.1} are equally small covers.
+// no-deps ends up as: direct ^1.0.0 @1.1.0, `<=1.0.1` @1.0.1, `>=1.0.1` @1.0.1, exact 1.0.0 — {1.0.0, 1.1.0} and {1.0.0, 1.0.1} are equally small covers; 1.0.1's two edges land on different survivors.
 test.concurrent.each(["root", "workspace"])(
   "prefers dropping the version that keeps the direct dependency in place (%s)",
   async variant => {
@@ -1064,17 +1289,13 @@ test.concurrent.each(["root", "workspace"])(
     );
     await write(join(packageDir, "bun.lock"), lockfile);
 
+    const checked = lockPackageCount(lockfile);
     const check = await dedupe(packageDir, "--check");
-    expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-      "bun dedupe <version> (<revision>)
-      - no-deps@1.0.1
-      1 duplicate version can be removed
-        bun dedupe"
-    `);
+    expectWouldRemove(check, "no-deps 1.0.1 -> 1.0.0, 1.1.0", checked);
     expect(check.exitCode).toBe(1);
 
     const { stdout, stderr, exitCode } = await dedupe(packageDir);
-    expectRemoved(stdout, "no-deps@1.0.1");
+    expectRemoved(stdout, "no-deps 1.0.1 -> 1.0.0, 1.1.0", { checked });
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -1113,19 +1334,22 @@ test.concurrent("a direct range whose version is dropped moves up, not down", as
   for (const label of ['"a-dep@1.0.3"', '"a-dep@1.0.5"', '"a-dep@1.0.10"']) {
     expect(lockfile).toContain(label);
   }
-  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.5");
+  const nestedVersions = () =>
+    Promise.all([
+      nodeModulesVersion(packageDir, "a-dep"),
+      nodeModulesVersion(packageDir, "uses-a-dep-3", "node_modules", "a-dep"),
+      nodeModulesVersion(join(packageDir, "packages", "b"), "a-dep"),
+    ]);
+  expect(await nestedVersions()).toStrictEqual(["1.0.5", "1.0.3", "1.0.3"]);
+  expect(await nodeModulesVersion(packageDir, "uses-a-dep-10", "node_modules", "a-dep")).toBe("1.0.10");
 
+  const checked = lockPackageCount(lockfile);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - a-dep@1.0.5
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, "a-dep 1.0.5 -> 1.0.10", checked);
   expect(check.exitCode).toBe(1);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "a-dep@1.0.5");
+  expectRemoved(stdout, "a-dep 1.0.5 -> 1.0.10", { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1133,7 +1357,10 @@ test.concurrent("a direct range whose version is dropped moves up, not down", as
   expect(after).toContain('"a-dep@1.0.3"');
   expect(after).toContain('"a-dep@1.0.10"');
   expect(after).not.toContain('"a-dep@1.0.5"');
-  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+  expect(after).not.toContain('"uses-a-dep-10/a-dep"');
+  // uses-a-dep-10 now loads the hoisted 1.0.10, so its nested copy goes; the rows that survived keep their folders.
+  expect(await exists(join(packageDir, "node_modules", "uses-a-dep-10", "node_modules", "a-dep"))).toBeFalse();
+  expect(await nestedVersions()).toStrictEqual(["1.0.10", "1.0.3", "1.0.3"]);
   await expectAlreadyDeduplicated(packageDir);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -1156,10 +1383,19 @@ test.concurrent("removing one name does not downgrade an unrelated direct depend
     expect(lockfile).toContain(label);
   }
   expect(lockfile).not.toContain('"uses-a-dep-10/a-dep"');
-  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+  const versions = () =>
+    Promise.all([
+      nodeModulesVersion(packageDir, "a-dep"),
+      nodeModulesVersion(packageDir, "uses-a-dep-3", "node_modules", "a-dep"),
+      nodeModulesVersion(join(packageDir, "packages", "b"), "a-dep"),
+      nodeModulesVersion(packageDir, "no-deps"),
+    ]);
+  expect(await versions()).toStrictEqual(["1.0.10", "1.0.3", "1.0.3", "1.0.0"]);
+  const nestedNoDeps = join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps");
+  expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1168,7 +1404,8 @@ test.concurrent("removing one name does not downgrade an unrelated direct depend
   expect(after).toContain('"a-dep@1.0.3"');
   expect(after).not.toContain('"uses-a-dep-10/a-dep"');
   expect(after).not.toContain('"no-deps@1.1.0"');
-  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+  expect(await exists(nestedNoDeps)).toBeFalse();
+  expect(await versions()).toStrictEqual(["1.0.10", "1.0.3", "1.0.3", "1.0.0"]);
   await expectAlreadyDeduplicated(packageDir);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -1197,7 +1434,7 @@ test.concurrent("a workspace member's own range moves up when run from the membe
   expect(await nodeModulesVersion(memberDir, "a-dep")).toBe("1.0.5");
 
   const { stdout, stderr, exitCode } = await dedupe(memberDir);
-  expectRemoved(stdout, "a-dep@1.0.5");
+  expectRemoved(stdout, "a-dep 1.0.5 -> 1.0.10");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1224,7 +1461,7 @@ test.concurrent("ranges collapse onto the version a dist-tag resolved to", async
   expect(lockfile).toContain('"dep-with-tags@3.0.1"');
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "dep-with-tags@3.0.1");
+  expectRemoved(stdout, "dep-with-tags 3.0.1 -> 3.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1255,7 +1492,7 @@ test.concurrent("a patched version wins over keeping the direct dependency's hig
   expect(await exists(join(packageDir, "node_modules", "no-deps", "patched.txt"))).toBeTrue();
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1306,21 +1543,32 @@ test.concurrent("a version that is the only way to reach a patched package is ke
     expect(lockfile).toContain(label);
   }
 
+  expect(lockPackageCount(lockfile)).toBe(7);
+  const kept = ["  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)"];
+
+  // Rows first (the kept row belongs with them), then the one summary line, then the hint.
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - dep-with-tags@3.0.1
-    1 duplicate version can be removed
-      kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)
-      bun dedupe"
+  expect(lines(check.stdout)).toMatchInlineSnapshot(`
+    [
+      "bun dedupe <version> (<revision>)",
+      "~ dep-with-tags 3.0.1 -> 3.0.0",
+      "  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)",
+      "",
+      "1 duplicate version can be removed (checked 7 packages)",
+      "  bun dedupe",
+    ]
   `);
-  expect(check.stderr).not.toContain("note:");
+  expectWouldRemove(check, "dep-with-tags 3.0.1 -> 3.0.0", 7, kept);
+  expect(check.stderr).toBe("");
   expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(lockfile);
 
+  const frozen = await dedupe(packageDir, "--frozen-lockfile");
+  expectRefusedToWrite(frozen, "dep-with-tags 3.0.1 -> 3.0.0", 7, "--frozen-lockfile was passed", kept);
+  expect(await lock(packageDir)).toBe(lockfile);
+
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "dep-with-tags@3.0.1");
-  expect(firstLines(stdout, 4)[3]).toBe("  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)");
+  expectRemoved(stdout, "dep-with-tags 3.0.1 -> 3.0.0", { kept, checked: 7 });
   expect(stderr).not.toContain("kept");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
@@ -1333,14 +1581,18 @@ test.concurrent("a version that is the only way to reach a patched package is ke
   expect(await nodeModulesVersion(packageDir, "one-fixed-dep")).toBe("1.0.0");
   expect(await nodeModulesVersion(packageDir, "dep-with-tags")).toBe("3.0.0");
 
+  expect(lockPackageCount(after)).toBe(6);
   const recheck = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(recheck.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 5 packages, every one already resolves to a single version
-      kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)"
+  expect(lines(recheck.stdout)).toMatchInlineSnapshot(`
+    [
+      "bun dedupe <version> (<revision>)",
+      "  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)",
+      "",
+      "🎉 No duplicates — checked 6 packages, every one already resolves to a single version",
+    ]
   `);
-  expect(recheck.stderr).not.toContain("kept");
-  expect(recheck.exitCode).toBe(0);
+  expectNoDuplicates(recheck, 6, kept);
+  expectNoDuplicates(await dedupe(packageDir), 6, kept);
   expect(await lock(packageDir)).toBe(after);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -1379,18 +1631,15 @@ test.concurrent("a version removed by the run does not vote for its own dependen
   }
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
 
+  const rows = ["no-deps 1.0.0", "one-fixed-dep 1.0.0 -> 2.0.0"];
+  const checked = lockPackageCount(lockfile);
+  expect(checked).toBe(7);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.0.0
-    - one-fixed-dep@1.0.0
-    2 duplicate versions can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, rows, checked);
   expect(check.exitCode).toBe(1);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.0.0", "one-fixed-dep@1.0.0");
+  expectRemoved(stdout, rows, { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1403,7 +1652,7 @@ test.concurrent("a version removed by the run does not vote for its own dependen
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
   expect(await nodeModulesVersion(packageDir, "one-fixed-dep")).toBe("2.0.0");
 
-  await expectAlreadyDeduplicated(packageDir, 4);
+  await expectAlreadyDeduplicated(packageDir, 5);
   expect(await lock(packageDir)).toBe(after);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -1426,18 +1675,14 @@ test.concurrent("bundled edges are never re-pointed", async () => {
   );
   await write(join(packageDir, "bun.lock"), widened);
 
+  const checked = lockPackageCount(widened);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", checked);
   expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(widened);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir, "--lockfile-only");
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
   const after = await lock(packageDir);
@@ -1470,23 +1715,17 @@ test.concurrent("does not contact the registry", async () => {
   );
 
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
-  expect(check.stderr).not.toContain("error:");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
   expect(check.exitCode).toBe(1);
 
   const apply = await dedupe(packageDir, "--lockfile-only");
-  expectRemoved(apply.stdout, "no-deps@1.1.0");
+  expectRemoved(apply.stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
   expect(apply.stderr).toContain("Saved lockfile");
   expect(apply.stderr).not.toContain("error:");
   expect(apply.exitCode).toBe(0);
   expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
 
-  await expectAlreadyDeduplicated(packageDir, 2);
+  await expectAlreadyDeduplicated(packageDir, 3);
   expect(requests).toStrictEqual([]);
 });
 
@@ -1526,17 +1765,15 @@ test.concurrent.each<[string, (packageDir: string) => Promise<string>, string]>(
   expect(localEntry).toContain(resolutionSuffix);
   expect(await nodeModulesVersion(packageDir, "nd-local")).toBe("2.0.0");
 
+  // The non-registry copy is checked (it is a lockfile package) but never a candidate.
+  const checked = lockPackageCount(lockfile);
+  expect(checked).toBe(5);
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", checked);
   expect(check.exitCode).toBe(1);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked });
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
@@ -1546,7 +1783,7 @@ test.concurrent.each<[string, (packageDir: string) => Promise<string>, string]>(
   expect(after.split("\n")).toContain(localEntry);
   expect(await nodeModulesVersion(packageDir, "nd-local")).toBe("2.0.0");
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
-  await expectAlreadyDeduplicated(packageDir, 3);
+  await expectAlreadyDeduplicated(packageDir, 4);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
@@ -1568,12 +1805,7 @@ test.concurrent("an npm: alias edge is not subject to the override for the alias
   expect(await nodeModulesVersion(packageDir, "nd")).toBe("1.0.0");
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
 
-  await expectAlreadyDeduplicated(packageDir, 3);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(3)]);
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir, 4);
   expect(await lock(packageDir)).toBe(lockBefore);
   expect(await nodeModulesVersion(packageDir, "nd")).toBe("1.0.0");
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
@@ -1600,20 +1832,20 @@ test.concurrent("a lockfile whose root has no dependencies is reported as dedupl
   ]);
   const lockBefore = emptyRootLockfile;
 
+  // The root itself is the one package checked, like every other summary in the install family counts it.
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 0 packages, every one already resolves to a single version"
+  expect(lines(check.stdout)).toMatchInlineSnapshot(`
+    [
+      "bun dedupe <version> (<revision>)",
+      "🎉 No duplicates — checked 1 package, every one already resolves to a single version",
+    ]
   `);
-  expect(check.stderr).not.toContain("error:");
-  expect(check.exitCode).toBe(0);
+  expectNoDuplicates(check, 1);
   expect(await lock(packageDir)).toBe(lockBefore);
 
   const apply = await dedupe(packageDir);
-  expect(normalizeBunSnapshot(apply.stdout)).toContain(noDuplicates(0));
-  expect(apply.stderr).not.toContain("error:");
-  expect(apply.stderr).not.toContain("Deleted empty lockfile");
-  expect(apply.exitCode).toBe(0);
+  expectNoDuplicates(apply, 1);
+  expect(apply.stderr).toBe("");
   expect(await exists(join(packageDir, "bun.lock"))).toBeTrue();
   expect(await lock(packageDir)).toBe(lockBefore);
 });
@@ -1665,20 +1897,15 @@ test.concurrent("migrates package-lock.json when there is no bun.lock", async ()
   ]);
 
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
   expect(check.stderr).toContain("migrated lockfile from package-lock.json");
-  expect(check.stderr).not.toContain("error:");
-  expect(check.stderr).not.toContain("Saved lockfile");
   expect(check.exitCode).toBe(1);
   expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
 
+  // Nothing was installed before this run, so the summary also carries the install count.
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
+  expect(lines(stdout).at(-1)).toBe("1 duplicate version removed, 2 packages installed (checked 4 packages)");
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).toContain("Saved lockfile");
   expect(stderr).not.toContain("error:");
@@ -1688,7 +1915,7 @@ test.concurrent("migrates package-lock.json when there is no bun.lock", async ()
   expect(after).not.toContain('"no-deps@1.1.0"');
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
   expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps"))).toBeFalse();
-  await expectAlreadyDeduplicated(packageDir, 2);
+  await expectAlreadyDeduplicated(packageDir, 3);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
@@ -1788,7 +2015,7 @@ test.concurrent(
     await write(packageJson, JSON.stringify({ ...pkg, scripts: { dedupe: "echo SCRIPT_RAN" } }));
 
     const { stdout, stderr, exitCode } = await dedupe(packageDir);
-    expectRemoved(stdout, "no-deps@1.1.0");
+    expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0");
     expect(stdout).not.toContain("SCRIPT_RAN");
     expect(stderr).not.toContain("SCRIPT_RAN");
     expect(exitCode).toBe(0);
@@ -1831,7 +2058,9 @@ test.concurrent("exits 1 and keeps bun.lock when the install after deduplicating
   ]);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "no-deps@1.1.0");
+  expect(normalizeBunSnapshot(stdout).split("\n")[0]).toBe(HEADER);
+  // The report is only printed once the install finishes, so a failed run never claims a removal.
+  expect(stdout).not.toContain("Removed");
   expect(stderr).toContain("error:");
   expect(exitCode).toBe(1);
   // A failed install persists nothing: bun.lock still holds both versions and can be deduplicated again.
@@ -1893,35 +2122,22 @@ test.concurrent("several kept versions are listed in name order with their patch
     "  kept optional-peer-hoist-deep-child@1.0.0 (needed to reach patched optional-peer-hoist-leaf@2.0.0, optional-peer-hoist-target@1.0.0)",
   ];
 
+  const checked = lockPackageCount(lockfile);
+
   const check = await dedupe(packageDir, "--check");
-  expect(normalizeBunSnapshot(check.stdout).split("\n")).toStrictEqual([
-    HEADER,
-    "- dep-with-tags@3.0.1",
-    "1 duplicate version can be removed",
-    ...keptLines,
-    "  bun dedupe",
-  ]);
-  expect(check.stderr).not.toContain("kept");
+  expectWouldRemove(check, "dep-with-tags 3.0.1 -> 3.0.0", checked, keptLines);
+  expect(check.stderr).toBe("");
   expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(lockfile);
 
-  const frozen = await dedupe(packageDir, "--frozen-lockfile");
-  expect(normalizeBunSnapshot(frozen.stdout).split("\n")).toStrictEqual([
-    HEADER,
-    "- dep-with-tags@3.0.1",
-    ...keptLines,
-    "  bun dedupe --check",
-  ]);
-  expect(normalizeBunSnapshot(frozen.stderr).split("\n")).toContain(
-    "error: 1 duplicate version can be removed, but the lockfile is frozen",
-  );
-  expect(frozen.stderr).not.toContain("kept");
-  expect(frozen.exitCode).toBe(1);
-  expect(await lock(packageDir)).toBe(lockfile);
+  for (const [flag, reason] of REFUSALS) {
+    const refused = await dedupe(packageDir, flag);
+    expectRefusedToWrite(refused, "dep-with-tags 3.0.1 -> 3.0.0", checked, reason, keptLines);
+    expect(await lock(packageDir)).toBe(lockfile);
+  }
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expectRemoved(stdout, "dep-with-tags@3.0.1");
-  expect(firstLines(stdout, 5).slice(3)).toStrictEqual(keptLines);
+  expectRemoved(stdout, "dep-with-tags 3.0.1 -> 3.0.0", { kept: keptLines, checked });
   expect(stderr).not.toContain("kept");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
@@ -1939,11 +2155,8 @@ test.concurrent("several kept versions are listed in name order with their patch
   expect(after).not.toContain('"dep-with-tags@3.0.1"');
   expect(await nodeModulesVersion(packageDir, "dwt")).toBe("3.0.0");
 
-  const recheck = await dedupe(packageDir, "--check");
-  const recheckLines = normalizeBunSnapshot(recheck.stdout).split("\n");
-  expect(recheckLines[1]).toStartWith("🎉 No duplicates — checked ");
-  expect(recheckLines.slice(2)).toStrictEqual(keptLines);
-  expect(recheck.exitCode).toBe(0);
+  expect(lockPackageCount(after)).toBe(checked - 1);
+  await expectAlreadyDeduplicated(packageDir, checked - 1, keptLines);
   expect(await lock(packageDir)).toBe(after);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
@@ -1952,29 +2165,10 @@ test.concurrent("--check combined with --frozen-lockfile still only reports", as
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check", "--frozen-lockfile");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
-  expect(stderr).not.toContain("error:");
-  expect(stderr).not.toContain("frozen");
-  expect(exitCode).toBe(1);
-  expect(await lock(packageDir)).toBe(lockBefore);
-});
-
-test.concurrent("--production succeeds when already deduplicated", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
-  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0" } }));
-  await runBunInstall(installEnv(packageDir), packageDir);
-  const lockBefore = await lock(packageDir);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--production");
-  expect(firstLines(stdout, 2)).toStrictEqual([HEADER, noDuplicates(2)]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  const check = await dedupe(packageDir, "--check", "--frozen-lockfile");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(check.stderr).toBe("");
+  expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(lockBefore);
 });
 
@@ -1993,15 +2187,14 @@ test.concurrent("isolated: --check ignores peer variants of one version", async 
   const store = await readdirSorted(join(packageDir, "node_modules", ".bun"));
   expect(store.filter(entry => entry.startsWith("peer-deps@1.0.0"))).toHaveLength(2);
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check", "--linker", "isolated");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    🎉 No duplicates — checked 5 packages, every one already resolves to a single version"
-  `);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
-  expect(await lock(packageDir)).toBe(lockBefore);
-  expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
+  expect(lockPackageCount(lockBefore)).toBe(6);
+  for (const args of [["--check"], []]) {
+    const result = await dedupe(packageDir, ...args, "--linker", "isolated");
+    expectNoDuplicates(result, 6);
+    expect(result.stderr).toBe("");
+    expect(await lock(packageDir)).toBe(lockBefore);
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
+  }
 });
 
 test.concurrent("isolated: --check reports duplicates without touching the store", async () => {
@@ -2019,15 +2212,22 @@ test.concurrent("isolated: --check reports duplicates without touching the store
   expect(store).toContain("no-deps@1.0.0");
   expect(store).toContain("no-deps@1.1.0");
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check", "--linker", "isolated");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun dedupe <version> (<revision>)
-    - no-deps@1.1.0
-    1 duplicate version can be removed
-      bun dedupe"
-  `);
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(exitCode).toBe(1);
+  const check = await dedupe(packageDir, "--check", "--linker", "isolated");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(check.exitCode).toBe(1);
   expect(await lock(packageDir)).toBe(lockBefore);
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
+
+  const dryRun = await dedupe(packageDir, "--dry-run", "--linker", "isolated");
+  expectWouldRemove(dryRun, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(dryRun.exitCode).toBe(0);
+  expect(await lock(packageDir)).toBe(lockBefore);
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
+
+  for (const [flag, reason] of REFUSALS) {
+    const refused = await dedupe(packageDir, flag, "--linker", "isolated");
+    expectRefusedToWrite(refused, "no-deps 1.1.0 -> 1.0.0", 4, reason);
+    expect(await lock(packageDir)).toBe(lockBefore);
+  }
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
 });

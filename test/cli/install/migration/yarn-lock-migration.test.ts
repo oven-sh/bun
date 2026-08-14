@@ -952,7 +952,7 @@ is-number@^7.0.0:
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("");
-    expect(stderr).toContain('Could not resolve resolution "$missing" (you need "missing" in your dependencies)');
+    expect(stderr).toContain('warn: Could not resolve "$missing": "missing" is not in dependencies');
     expect(stderr).not.toContain('"$acorn"');
     expect(stderr).not.toContain('"$is-number"');
     expect(stderr).toContain("migrated lockfile from yarn.lock");

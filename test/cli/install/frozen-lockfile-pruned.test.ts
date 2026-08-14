@@ -93,7 +93,8 @@ const patchedMonorepo: Tree = {
   files: { ...monorepo.files, "patches/a-dep@1.0.1.patch": aDepPatch },
 };
 const patchedLockLine = '"a-dep@1.0.1": "patches/a-dep@1.0.1.patch"';
-const changedSectionNote = (section: string) => `"${section}" in package.json changed since the lockfile was saved`;
+const changedSectionNote = (section: "overrides" | "the catalog") =>
+  `note: ${section} in package.json changed since bun.lock was saved`;
 
 const survivorError = (dependent: string, ws = "other") =>
   `workspace "${dependent}" depends on workspace "${ws}" (packages/${ws}), which is listed in bun.lock but not on disk`;
@@ -141,6 +142,28 @@ function trimCatalogLine(lock: string, name: string, spec: string): string {
   return trimmed;
 }
 
+const singleCatalogEntryTree: Tree = {
+  root: { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.1" } } },
+  packages: { "packages/app": { name: "app", version: "1.0.0", dependencies: { "a-dep": "catalog:" } } },
+};
+
+const defaultCatalogBlock = '\n  "catalog": {\n    "a-dep": "1.0.1",\n  },\n';
+
+// A fresh checkout of the whole tree whose bun.lock also lists the one catalog entry under `"catalogs": {"default": ...}`.
+async function doubleListedScenario() {
+  const { full } = await fullInstall("hoisted", singleCatalogEntryTree);
+  expect(full).toContain(defaultCatalogBlock);
+  expect(full).not.toContain('"catalogs"');
+  const doubled = full.replace(
+    defaultCatalogBlock,
+    `${defaultCatalogBlock}  "catalogs": {\n    "default": {\n      "a-dep": "1.0.1",\n    },\n  },\n`,
+  );
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await writeTree(packageDir, singleCatalogEntryTree);
+  await write(join(packageDir, "bun.lock"), doubled);
+  return { packageDir, doubled };
+}
+
 const binFiles = (dir: string, name: string) =>
   isWindows
     ? [join(dir, "node_modules", ".bin", `${name}.exe`), join(dir, "node_modules", ".bin", `${name}.bunx`)]
@@ -163,9 +186,10 @@ async function spawnBun(dir: string, args: string[], cwd = dir, env: Record<stri
 const raw = (dir: string, linker: Linker, args: string[], cwd = dir) =>
   spawnBun(dir, [...args, "--linker", linker], cwd);
 
-const prunedNote = "note: skipped 1 workspace listed in bun.lock but not on disk";
-const catalogNote = (n: number) =>
-  `note: skipped ${n} catalog ${n === 1 ? "entry" : "entries"} missing from bun.lock that no remaining workspace uses`;
+const quoted = (names: string[]) => names.map(name => `"${name}"`).join(", ");
+const prunedNote = 'note: skipped 1 workspace listed in bun.lock but not on disk: "other"';
+const catalogNote = (...names: string[]) =>
+  `note: skipped ${names.length} catalog ${names.length === 1 ? "entry" : "entries"} not in bun.lock (unused by the workspaces on disk): ${quoted(names)}`;
 
 async function run(dir: string, linker: Linker, args: string[], expectedExitCode: number, cwd = dir) {
   const { stdout, stderr, exitCode } = await raw(dir, linker, args, cwd);
@@ -466,8 +490,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 0);
 
-    expect(stderr).toContain(prunedNote);
-    expect(stderr).not.toContain('skipping workspace "other"');
+    expect(stderr).toBe(`${prunedNote}\n`);
   });
 
   // pnpm#6094: `--lockfile-only` must not write under `--frozen-lockfile`; the extra newline is a byte-level canary.
@@ -585,7 +608,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 1);
 
-    expect(stderr).toContain(changedSectionNote("catalogs"));
+    expect(stderr).toContain(changedSectionNote("the catalog"));
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
@@ -629,9 +652,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 0);
 
-    expect(stderr).toContain(prunedNote);
-    expect(stderr).toContain(catalogNote(1));
-    expect(stderr.indexOf(prunedNote)).toBeLessThan(stderr.indexOf(catalogNote(1)));
+    expect(stderr).toBe(`${prunedNote}\n${catalogNote("left-pad")}\n`);
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
@@ -676,8 +697,12 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     });
 
     expect(bodies).toStrictEqual([{ "a-dep": ["1.0.1"], "left-pad": ["1.0.0"], "no-deps": ["1.0.0"] }]);
-    expect(stdout).toBe("No vulnerabilities found\n");
-    expect(stderr).not.toContain("error:");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit <version> (<revision>)
+
+      No vulnerabilities found (checked 3 packages)"
+    `);
+    expect(stderr).toBe("");
     expect(await lockText(packageDir)).toBe(full);
     expect(exitCode).toBe(0);
   });
@@ -798,7 +823,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 0);
 
-    expect(stderr).toContain(catalogNote(1));
+    expect(stderr).toContain(catalogNote("left-pad"));
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
@@ -830,7 +855,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 0);
 
-    expect(stderr).toContain(catalogNote(2));
+    expect(stderr).toContain(catalogNote("left-pad", "no-deps"));
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules", "a-dep", "package.json"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
@@ -925,13 +950,13 @@ describe("hoisted", () => {
     },
   );
 
-  test.concurrent("--verbose names each skipped workspace", async () => {
+  test.concurrent("--verbose prints the same skipped-workspace note and no per-workspace lines", async () => {
     const { packageDir } = await verbatimTree("hoisted");
 
     const { stderr } = await frozen(packageDir, "hoisted", 0, ["install", "--frozen-lockfile", "--verbose"]);
 
-    expect(stderr).toContain('note: skipping workspace "other": listed in bun.lock but not on disk');
-    expect(stderr).toContain(prunedNote);
+    expect(stderr.split(prunedNote)).toHaveLength(2);
+    expect(stderr).not.toContain("skipping workspace");
   });
 
   test.concurrent("--silent suppresses the skipped-workspace note", async () => {
@@ -966,7 +991,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 0);
 
-    expect(stderr).toContain("note: skipped 2 workspaces listed in bun.lock but not on disk");
+    expect(stderr).toBe('note: skipped 2 workspaces listed in bun.lock but not on disk: "other", "other2"\n');
   });
 
   // The one sanctioned frozen write: the bun.lockb -> bun.lock migration recipe from the docs.
@@ -1356,7 +1381,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 1);
 
-    expect(stderr).toContain(changedSectionNote("catalogs"));
+    expect(stderr).toContain(changedSectionNote("the catalog"));
     expect(stderr).not.toContain("catalog entr");
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1382,7 +1407,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 1);
 
-    expect(stderr).toContain(changedSectionNote("catalogs"));
+    expect(stderr).toContain(changedSectionNote("the catalog"));
     expect(stderr).not.toContain("catalog entr");
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1419,7 +1444,7 @@ describe("hoisted", () => {
       const { stderr } = await frozen(packageDir, "hoisted", 0);
 
       expect(stderr).toContain(prunedNote);
-      expect(stderr).toContain(catalogNote(2));
+      expect(stderr).toContain(catalogNote("left-pad", "no-deps"));
       expect(await lockText(packageDir)).toBe(trimmed);
       expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
         version: "1.0.1",
@@ -1438,7 +1463,7 @@ describe("hoisted", () => {
 
     const { stderr } = await frozen(packageDir, "hoisted", 1);
 
-    expect(stderr).toContain(changedSectionNote("catalogs"));
+    expect(stderr).toContain(changedSectionNote("the catalog"));
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
@@ -1472,6 +1497,51 @@ describe("hoisted", () => {
     expect(stderr).toContain("error:");
     expect(await lockText(packageDir)).toBe(trimmed);
     expect(exitCode).toBe(1);
+  });
+
+  // A hand-maintained bun.lock may list the default catalog under both spellings; the loaded side then has more entries than package.json.
+  test.concurrent("a default catalog entry listed under both catalog and catalogs.default in bun.lock", async () => {
+    const { packageDir, doubled } = await doubleListedScenario();
+
+    const { stdout, stderr, exitCode } = await raw(packageDir, "hoisted", ["install", "--frozen-lockfile"]);
+
+    expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      2 packages installed"
+    `);
+    expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(`""`);
+    expect(exitCode).toBe(0);
+    expect(await lockText(packageDir)).toBe(doubled);
+    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toStrictEqual({
+      name: "a-dep",
+      version: "1.0.1",
+    });
+  });
+
+  test.concurrent("the double-listed entry does not count toward the skipped catalog entries", async () => {
+    const { packageDir, doubled } = await doubleListedScenario();
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "mono",
+        workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.1", "left-pad": "1.0.0" } },
+      }),
+    );
+
+    const { stdout, stderr, exitCode } = await raw(packageDir, "hoisted", ["install", "--frozen-lockfile"]);
+
+    expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      2 packages installed"
+    `);
+    expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(
+      `"note: skipped 1 catalog entry not in bun.lock (unused by the workspaces on disk): "left-pad""`,
+    );
+    expect(exitCode).toBe(0);
+    expect(await lockText(packageDir)).toBe(doubled);
+    expect(await exists(join(packageDir, "node_modules", "left-pad"))).toBeFalse();
   });
 
   test.concurrent("a plain install writes the full catalog back", async () => {

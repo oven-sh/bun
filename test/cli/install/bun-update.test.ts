@@ -134,11 +134,10 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     expect(err2).not.toContain("error:");
     expect(err2).toContain("Saved lockfile");
     const out2 = await new Response(stdout2).text();
-    expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      `installed baz@${tilde ? "0.0.5" : "0.0.3"} with binaries:`,
-      ` - ${tilde ? "baz-exec" : "baz-run"}`,
+      tilde ? "^ baz 0.0.3 -> 0.0.5" : "+ baz@0.0.3",
       "",
       "1 package installed",
     ]);
@@ -543,6 +542,83 @@ it("--filter updates only matching workspaces, leaving siblings and root untouch
   expect(root.dependencies.baz).toBe("~0.0.3");
 });
 
+// The exact pin is installed first, then widened to a range its locked resolution satisfies, so the nested copy stays.
+async function nestedBazRepo(rootRange: string, pkgARange: string, rewrite: { root?: string; pkgA?: string }) {
+  setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+  const rootJson = (range: string) =>
+    JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"], dependencies: { baz: range } });
+  const pkgAJson = (range: string) => JSON.stringify({ name: "pkg-a", dependencies: { baz: range } });
+  await writeFile(join(package_dir, "package.json"), rootJson(rootRange));
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(join(package_dir, "packages", "pkg-a", "package.json"), pkgAJson(pkgARange));
+  await runInstall();
+  if (rewrite.root) await writeFile(join(package_dir, "package.json"), rootJson(rewrite.root));
+  if (rewrite.pkgA) await writeFile(join(package_dir, "packages", "pkg-a", "package.json"), pkgAJson(rewrite.pkgA));
+  await runInstall();
+}
+
+const rootBazVersion = async () =>
+  (await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version;
+const pkgABazDir = () => join(package_dir, "packages", "pkg-a", "node_modules", "baz");
+const pkgABazVersion = async () => (await file(join(pkgABazDir(), "package.json")).json()).version;
+
+it("--filter pkg-a removes the nested copy whose row it collapsed", async () => {
+  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3" });
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(await pkgABazVersion()).toBe("0.0.3");
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter", "pkg-a", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect((await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).dependencies).toStrictEqual({
+    baz: "~0.0.5",
+  });
+  expect(await exists(pkgABazDir())).toBeFalse();
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(code).toBe(0);
+});
+
+it("--filter excluding a workspace leaves that workspace's node_modules alone", async () => {
+  await nestedBazRepo("0.0.3", "0.0.5", { root: "~0.0.3" });
+  expect(await rootBazVersion()).toBe("0.0.3");
+  expect(await pkgABazVersion()).toBe("0.0.5");
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "update", "--filter", "root", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, code] = await Promise.all([stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toStrictEqual({ baz: "~0.0.5" });
+    expect(await rootBazVersion()).toBe("0.0.5");
+    expect(await pkgABazVersion()).toBe("0.0.5");
+    expect(code).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "prune", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(await exists(pkgABazDir())).toBeFalse();
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(code).toBe(0);
+});
+
 // Multiple `--filter` patterns select the union of matches (any positive), minus negations.
 it("--filter with multiple patterns selects the union of matching workspaces", async () => {
   const urls: string[] = [];
@@ -670,7 +746,9 @@ it("named update --filter of a workspace that does not depend on the name is an 
   const before = await fanOutRepo();
   const lockBefore = await file(join(package_dir, "bun.lock")).text();
   const { err, exitCode } = await spawnUpdate("baz", "--filter", "pkg-c");
-  expect(err).toContain('"baz" is only a dependency of other workspaces, so there is nothing to update here');
+  expect(err).toBe(
+    'error: "baz" is not a dependency of the selected workspaces\n    bun update -r baz\n    bun update --filter root baz\n    bun update --filter pkg-a baz\n    bun update --filter pkg-b baz\n',
+  );
   expect(exitCode).toBe(1);
   expect(await fanOutTexts()).toStrictEqual(before);
   expect(await file(join(package_dir, "bun.lock")).text()).toBe(lockBefore);
@@ -679,7 +757,7 @@ it("named update --filter of a workspace that does not depend on the name is an 
 it("named update -r with a name missing from the lockfile is an error", async () => {
   const before = await fanOutRepo();
   const { err, exitCode } = await spawnUpdate("nope", "-r");
-  expect(err).toContain('"nope" is not in the lockfile, so there is nothing to update');
+  expect(err).toBe('error: "nope" is not in bun.lock\n    bun add nope\n');
   expect(exitCode).toBe(1);
   expect(await fanOutTexts()).toStrictEqual(before);
 });
@@ -1191,12 +1269,13 @@ it("--recursive is idempotent: a second run changes nothing", async () => {
   expect(await pkgJson("pkg-a")).toEqual(aAfter);
 });
 
-it("--filter matching nothing writes no package.json", async () => {
+it("--filter matching nothing is an error that writes no package.json", async () => {
   await setupWorkspaces({ dependencies: { baz: "~0.0.3" } }, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
   const rootBefore = await file(join(package_dir, "package.json")).text();
   const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
-  const err = await runUpdate(["--filter", "does-not-exist"]);
-  expect(err).toContain('warn: No workspace packages matched the filter "does-not-exist"');
+  const { err, exitCode } = await spawnUpdate("--filter", "does-not-exist");
+  expect(err).toBe('error: No workspace packages matched the filter "does-not-exist"\n');
+  expect(exitCode).toBe(1);
   expect(await file(join(package_dir, "package.json")).text()).toBe(rootBefore);
   expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).text()).toBe(aBefore);
 });
@@ -1541,7 +1620,9 @@ it("bun update <name> updates a package that is only a transitive dependency wit
 it("bun update updates transitive dependencies", async () => {
   const packageJson = await setupTransitiveOnlyShared();
   const out = await runInPackageDir("update");
-  expect(out).toContain("updating:\n  shared@1.0.0 → 1.1.0\n");
+  expect(out).not.toContain("updating:");
+  expect(out).toContain("^ shared 1.0.0 -> 1.1.0\n");
+  expect(out).not.toContain("+ shared@1.1.0");
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
   expect(await lockedSharedResolutions()).toStrictEqual(['"shared@1.1.0"']);
   expect(await file(join(package_dir, "node_modules", "shared", "package.json")).json()).toMatchObject({
@@ -1559,7 +1640,7 @@ it("bun update <name> rejects a name that is not in the lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await stderr.text()).toContain('error: "not-a-dep" is not in the lockfile, so there is nothing to update');
+  expect(await stderr.text()).toBe('error: "not-a-dep" is not in bun.lock\n    bun add not-a-dep\n');
   expect(await exited).toBe(1);
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual(packageJson);
   expect(await file(join(package_dir, "bun.lock")).text()).toBe(lockBefore);
@@ -1764,6 +1845,7 @@ describe("bun update <name> semantics", () => {
     ["*", "2.0.0", []],
     ["1", "1.1.0", []],
     ["1.x", "1.1.0", []],
+    ["~1", "1.1.0", []],
     [">=1.0.0 <2", "1.1.0", []],
     ["1.0.0 - 1.0.1", "1.0.1", []],
     ["^1.0.0 || ^2.0.0", "2.0.0", []],
@@ -1859,8 +1941,10 @@ describe("bun update <name> semantics", () => {
     expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
   });
 
+  // `~1` stays in the preserved table above: `~1.x.y` would lower its ceiling, while these keep theirs.
   it.concurrent.each([
     ["^1", "^1.1.0", "1.1.0"],
+    ["^1.0", "^1.1.0", "1.1.0"],
     ["~1.0", "~1.0.1", "1.0.1"],
   ])("a plain update rewrites the short range %p to %p", async (literal, rewritten, version) => {
     const dir = await stale({ "no-deps": "1.0.0" }, { "no-deps": literal });
@@ -1994,6 +2078,7 @@ describe("bun update <name> semantics", () => {
       const before = await snapshotFiles(dir);
       expect(Object.keys(JSON.parse(before.packageJson).dependencies)).toStrictEqual(["one-range-dep", "no-deps"]);
       const { stdout } = await update(dir, ...names);
+      expect(stdout).not.toContain("->");
       expect(stdout).not.toContain("→");
       await expectUnchanged(dir, before);
       expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -2064,15 +2149,25 @@ describe("bun update <name> semantics", () => {
     }
 
     it.concurrent.each([
-      ["from packages/a", "packages/a", ["no-deps"], '"no-deps" is only a dependency of other workspaces'],
-      ["with --filter a", "", ["no-deps", "--filter", "a"], '"no-deps" is only a dependency of other workspaces'],
-      ["as a pattern from packages/a", "packages/a", ["no-*"], 'no packages in bun.lock match "no-*"'],
+      [
+        "from packages/a",
+        "packages/a",
+        ["no-deps"],
+        'error: "no-deps" is not a dependency of this workspace\n    bun update -r no-deps\n    bun update --filter b no-deps\n',
+      ],
+      [
+        "with --filter a",
+        "",
+        ["no-deps", "--filter", "a"],
+        'error: "no-deps" is not a dependency of the selected workspaces\n    bun update -r no-deps\n    bun update --filter b no-deps\n',
+      ],
+      ["as a pattern from packages/a", "packages/a", ["no-*"], 'error: no packages in bun.lock match "no-*"\n'],
     ])(
       "bun update naming a package the workspace has no path to (%s) is an error that writes nothing",
-      async (_, cwd, args, message) => {
+      async (_, cwd, args, expected) => {
         const { dir, texts, packageJsons, lockBefore } = await unreachableFromA();
         const { stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", ...args);
-        expect(stderr).toContain(`error: ${message}`);
+        expect(stderr).toBe(expected);
         expect(await lockText(dir)).toBe(lockBefore);
         expect(await texts()).toStrictEqual(packageJsons);
         expect(exitCode).toBe(1);
@@ -2141,7 +2236,7 @@ describe("bun update <name> semantics", () => {
     it.concurrent("a name and a pattern that only matches that name update it once", async () => {
       const dir = await stale({ "@types/no-deps": "1.0.0" }, { "@types/no-deps": "^1.0.0" });
       const { stdout } = await update(dir, "@types/no-deps", "@types/*", "--latest");
-      expect(stdout.match(/^installed @types\/no-deps@.*$/gm)).toStrictEqual(["installed @types/no-deps@2.0.0"]);
+      expect(stdout.match(/^.*@types\/no-deps.*$/gm)).toStrictEqual(["^ @types/no-deps 1.0.0 -> 2.0.0"]);
       await expectInSync(dir, { "@types/no-deps": "^2.0.0" });
       expect(await lockedVersions(dir, "@types/no-deps")).toStrictEqual(["2.0.0"]);
       expect(await installedVersion(dir, "@types/no-deps")).toBe("2.0.0");
@@ -2388,14 +2483,14 @@ describe("bun update <name> semantics", () => {
     it.concurrent.each([
       [
         ["no-deps", "--filter", "pkg-b"],
-        '"no-deps" is only a dependency of other workspaces, so there is nothing to update here',
+        'error: "no-deps" is not a dependency of the selected workspaces\n    bun update -r no-deps\n    bun update --filter root no-deps\n    bun update --filter api no-deps\n    bun update --filter pkg-a no-deps\n    bun update --filter web no-deps\n',
       ],
-      [["is-number", "--filter", "api"], '"is-number" is not in the lockfile, so there is nothing to update'],
-      [["no-deps", "--filter", "nope"], 'No workspace packages matched the filter "nope"'],
-    ])("bun update %p is an error that writes nothing", async (args, message) => {
+      [["is-number", "--filter", "api"], 'error: "is-number" is not in bun.lock\n    bun add is-number\n'],
+      [["no-deps", "--filter", "nope"], 'error: No workspace packages matched the filter "nope"\n'],
+    ])("bun update %p is an error that writes nothing", async (args, expected) => {
       const { dir, before, lockBefore } = await fanOut();
       const { stderr, exitCode } = await run(dir, "update", ...args);
-      expect(stderr).toContain(message);
+      expect(stderr).toBe(expected);
       expect(await texts(dir)).toStrictEqual(before);
       expect(await lockText(dir)).toBe(lockBefore);
       expect(exitCode).toBe(1);
@@ -2586,6 +2681,39 @@ describe("bun update <name> semantics", () => {
       expect(workspaces[""].dependencies).toStrictEqual({ "a-dep": "~1.0.10" });
       await install(dir, "--frozen-lockfile");
     });
+
+    // dep-with-tags 3.0.1 is published above its `latest` tag (3.0.0).
+    it.concurrent.each([[""], ["packages/pinned"]])(
+      "-r --latest run from %p does not downgrade a member pinned ahead of `latest` while moving the others",
+      async cwd => {
+        const dir = await createDir({
+          "package.json": { name: "root", workspaces: ["packages/*"] },
+          "packages/pinned/package.json": { name: "pinned", dependencies: { "dep-with-tags": "3.0.1" } },
+          "packages/stale/package.json": { name: "stale", dependencies: { "no-deps": "^1.0.0" } },
+        });
+        await install(dir);
+        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.1"]);
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+        const rootText = await packageJsonText(dir);
+        const pinnedText = await packageJsonText(dir, "packages/pinned");
+
+        const { stdout, stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", "-r", "--latest");
+        expect(stderr).not.toContain("error:");
+        expect(stdout).not.toContain("dep-with-tags@3.0.0");
+        expect(await packageJsonText(dir)).toBe(rootText);
+        expect(await packageJsonText(dir, "packages/pinned")).toBe(pinnedText);
+        expect((await packageJsonOf(dir, "packages/stale")).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+        const { workspaces } = await lock(dir);
+        expect(workspaces["packages/pinned"].dependencies).toStrictEqual({ "dep-with-tags": "3.0.1" });
+        expect(workspaces["packages/stale"].dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.1"]);
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+        expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.1");
+        expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+        await install(dir, "--frozen-lockfile");
+        expect(exitCode).toBe(0);
+      },
+    );
 
     it.concurrent.each([[["-r"]], [["--filter", "api"]]])(
       "a bare update %p without a bun.lock is an error that writes nothing",

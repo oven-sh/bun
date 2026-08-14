@@ -202,8 +202,9 @@ test.concurrent("the orphaned store entry survives the re-link until bun prune",
   const [out, err, exitCode] = await prune(packageDir);
   expect(normalizeBunSnapshot(out).replaceAll("\\", "/")).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
-    - node_modules/.bun/no-deps@1.1.0
-    Removed 1 package (checked 4)"
+
+    - no-deps@1.1.0
+    1 package removed (checked 4)"
   `);
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);

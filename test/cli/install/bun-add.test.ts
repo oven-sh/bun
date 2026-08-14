@@ -191,14 +191,16 @@ it("bun add --only-missing should not install existing package", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
-      env,
     });
-    const out = await stdout.text();
-    expect(out).not.toContain("Saved lockfile");
-    expect(out).not.toContain("Installed");
-    expect(out.split("\n").filter(Boolean)).toStrictEqual([
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).not.toContain("installed");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toStrictEqual([
       expect.stringContaining("bun add v" + Bun.version.replaceAll("-debug", "")),
+      "",
+      "Checked 1 install across 2 packages (no changes)",
     ]);
+    expect(exitCode).toBe(0);
   }
 });
 
@@ -267,12 +269,15 @@ it("bun add --analyze should scan dependencies", async () => {
       stderr: "pipe",
       env,
     });
-    const out = await stdout.text();
-    expect(out).not.toContain("Saved lockfile");
-    expect(out).not.toContain("Installed");
-    expect(out.split("\n").filter(Boolean)).toStrictEqual([
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).not.toContain("installed");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toStrictEqual([
       expect.stringContaining("bun add v" + Bun.version.replaceAll("-debug", "")),
+      "",
+      "Checked 1 install across 2 packages (no changes)",
     ]);
+    expect(exitCode).toBe(0);
   }
 });
 
@@ -2142,8 +2147,8 @@ it("should add dependency without duplication", async () => {
 
   expect(err2).not.toContain("error:");
 
-  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
-  expect(err2).toContain("Saved lockfile");
+  // Nothing changed, so the identical lockfile is not rewritten.
+  expect(err2).not.toContain("Saved lockfile");
 
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
@@ -2257,8 +2262,8 @@ it("should add dependency without duplication (GitHub)", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
 
-  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
-  expect(err2).toContain("Saved lockfile");
+  // Nothing changed, so the identical lockfile is not rewritten.
+  expect(err2).not.toContain("Saved lockfile");
 
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual([
@@ -2570,8 +2575,8 @@ it("should not add duplicate package.json entries when installing the same local
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    // The meta-hash didn't change, but `bun add` re-saves every time.
-    expect(err).toContain("Saved lockfile");
+    // Nothing changed, so the identical lockfile is not rewritten.
+    expect(err).not.toContain("Saved lockfile");
     const out = await stdout.text();
     expect(out).toContain("installed myproject@");
     expect(await exited).toBe(0);
@@ -2642,8 +2647,8 @@ it("should not add duplicate package.json entries when installing the same tarba
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    // The meta-hash didn't change, but `bun add` re-saves every time.
-    expect(err).toContain("Saved lockfile");
+    // Nothing changed, so the identical lockfile is not rewritten.
+    expect(err).not.toContain("Saved lockfile");
     const out = await stdout.text();
     expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);

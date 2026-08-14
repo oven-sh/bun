@@ -29,6 +29,7 @@ afterAll(() => {
 });
 
 const authLine = () => `//localhost:${registry.port}/:_authToken=${authToken}\n`;
+const registryUrlWithoutSlash = () => `http://localhost:${registry.port}`;
 const bunfig = (install: Record<string, unknown>) => Bun.TOML.stringify({ install });
 const packageJson = (dependencies: Record<string, string>, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ name: "config-precedence", version: "1.0.0", dependencies, ...extra });
@@ -217,6 +218,60 @@ describe.concurrent("bun install config precedence", () => {
     expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
       true,
     );
+    expect(exitCode).toBe(0);
+  });
+
+  test("~/.npmrc registry= plus its _authToken still authenticate the registry set in project bunfig", async () => {
+    using dead = deadRegistry();
+    using dir = tempDir("config-precedence", {
+      "home/.npmrc": `registry=${dead.url}\n${authLine()}`,
+      "project/bunfig.toml": bunfig({ registry: registry.registryUrl() }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(dead.hits).toBe(0);
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("project .npmrc _authToken applies when bunfig spells the same registry with a trailing slash", async () => {
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `registry=${registryUrlWithoutSlash()}\n${authLine()}`,
+      "project/bunfig.toml": bunfig({ registry: registry.registryUrl() }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("project .npmrc scoped _authToken applies when bunfig spells the scope registry with a trailing slash", async () => {
+    using dead = deadRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `@needs-auth:registry=${registryUrlWithoutSlash()}\n${authLine()}`,
+      "project/bunfig.toml": bunfig({ registry: dead.url, scopes: { "needs-auth": registry.registryUrl() } }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(dead.hits).toBe(0);
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bunfig registry token beats the _authToken for the same registry in ~/.npmrc", async () => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "home/.npmrc": `//localhost:${capture.port}/:_authToken=token-from-npmrc\n`,
+      "project/bunfig.toml": bunfig({ registry: { url: capture.url, token: authToken } }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
     expect(exitCode).toBe(0);
   });
 

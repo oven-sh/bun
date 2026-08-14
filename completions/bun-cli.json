@@ -1180,7 +1180,7 @@
         {
           "name": "production",
           "shortName": "p",
-          "description": "Don't install devDependencies",
+          "description": "Only update dependencies and optionalDependencies (alias: --prod)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1217,7 +1217,7 @@
         },
         {
           "name": "dry-run",
-          "description": "Don't install anything",
+          "description": "Perform a dry run without making changes",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1342,9 +1342,10 @@
         },
         {
           "name": "concurrent-scripts",
-          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)",
           "hasValue": true,
           "valueType": "val",
+          "defaultValue": "2x",
           "required": false,
           "multiple": false
         },
@@ -1387,6 +1388,30 @@
           "multiple": false
         },
         {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "help",
           "shortName": "h",
           "description": "Print this help menu",
@@ -1396,7 +1421,8 @@
         },
         {
           "name": "latest",
-          "description": "Update packages to their latest versions",
+          "shortName": "L",
+          "description": "Update packages to their latest versions, ignoring the ranges in package.json",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1411,6 +1437,7 @@
         },
         {
           "name": "filter",
+          "shortName": "F",
           "description": "Update packages for the matching workspaces",
           "hasValue": true,
           "valueType": "val",
@@ -1421,6 +1448,29 @@
           "name": "recursive",
           "shortName": "r",
           "description": "Update packages in all workspaces",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dev",
+          "shortName": "d",
+          "description": "Only update devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-optional",
+          "description": "Don't update optionalDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "exact",
+          "shortName": "E",
+          "description": "Write exact versions to package.json instead of ^ or ~ ranges",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1440,7 +1490,16 @@
           "type": "string"
         }
       ],
-      "examples": ["bun update", "bun update --latest", "bun update -i", "bun update zod jquery@3"],
+      "examples": [
+        "bun update",
+        "bun update --latest",
+        "bun update -i",
+        "bun update zod jquery@3",
+        "bun update '@types/*'",
+        "bun update '!webpack'",
+        "bun update --dev",
+        "bun update --prod"
+      ],
       "usage": "Usage: bun update [flags] <name>@<version>",
       "documentationUrl": "https://bun.com/docs/cli/update.",
       "dynamicCompletions": {}

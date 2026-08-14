@@ -2964,9 +2964,18 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
   // https://github.com/oven-sh/bun/issues/30248
   // RFC 9110 §10.1.1: the Expect field value is case-insensitive and is a
   // comma-separated list of tokens with optional parameters.
-  async function rawPost(port: number, expectValue: string, done: (s: string) => boolean) {
+  async function rawPost(
+    port: number,
+    expectValue: string,
+    done: (s: string) => boolean,
+    opts: { bodyAfterContinue?: boolean } = {},
+  ) {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     let received = "";
+    // bodyAfterContinue holds the body back until the interim 100 arrives,
+    // like a real expecting client; if the server were to wait for the body
+    // before writing the interim, the test would deadlock and time out.
+    let bodySent = !opts.bodyAfterContinue;
     const socket = net.connect(port, "127.0.0.1", () => {
       socket.write(
         "POST /test HTTP/1.1\r\n" +
@@ -2974,11 +2983,15 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
           "Content-Length: 5\r\n" +
           `Expect: ${expectValue}\r\n` +
           "\r\n" +
-          "hello",
+          (bodySent ? "hello" : ""),
       );
     });
     socket.on("data", chunk => {
       received += chunk.toString("latin1");
+      if (!bodySent && received.includes("HTTP/1.1 100 Continue\r\n\r\n")) {
+        bodySent = true;
+        socket.write("hello");
+      }
       if (done(received)) socket.end();
     });
     socket.on("error", reject);
@@ -2995,6 +3008,9 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
     "100-continue, 100-continue",
     " 100-continue ",
     "muffins, 100-continue",
+    // Node parity: continueExpression matches 100-continue anywhere in the
+    // value on a \W boundary, so node:http also sends 100 for this form.
+    "muffins; p=100-continue",
   ])("responds with 100 Continue for Expect: %s", async expectValue => {
     // Pin to 127.0.0.1 so the raw TCP client always reaches the right
     // socket family; on darwin CI `localhost` can resolve to ::1 only.
@@ -3006,7 +3022,9 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
       },
     });
 
-    const output = await rawPost(server.port, expectValue, s => s.includes("echo:hello"));
+    const output = await rawPost(server.port, expectValue, s => s.includes("echo:hello"), {
+      bodyAfterContinue: true,
+    });
     expect(output).toStartWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n");
     expect(output).toContain("echo:hello");
   });

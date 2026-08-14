@@ -85,6 +85,64 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(0);
   });
 
+  // `require("./x")` is printed from its own AST node (the parser folds the call
+  // into one), so it needs its own mapping: without one the caller's frame
+  // remapped to whatever was mapped last, usually the `{` opening the enclosing
+  // function or try block. Node reports the `require` token of the call.
+  test("the caller frame of a require() whose module throws points at the require call", async () => {
+    const lines = [
+      /*  1 */ `function stmt() {`,
+      /*  2 */ `  require("./t1.js");`,
+      /*  3 */ `}`,
+      /*  4 */ `function inTry() {`,
+      /*  5 */ `  try {`,
+      /*  6 */ `    require("./t2.js");`,
+      /*  7 */ `  } finally {`,
+      /*  8 */ `  }`,
+      /*  9 */ `}`,
+      /* 10 */ `function decl() {`,
+      /* 11 */ `  const m = require("./t3.js");`,
+      /* 12 */ `  return m;`,
+      /* 13 */ `}`,
+      /* 14 */ `function arg() {`,
+      /* 15 */ `  console.log(1, require("./t4.js"));`,
+      /* 16 */ `}`,
+      /* 17 */ `function ternary(flag: boolean) {`,
+      /* 18 */ `  require(flag ? "./t5.js" : "./t1.js");`,
+      /* 19 */ `}`,
+      /* 20 */ `function viaModule() {`,
+      /* 21 */ `  module.require("./t6.js");`,
+      /* 22 */ `}`,
+      /* 23 */ `for (const fn of [stmt, inTry, decl, arg, () => ternary(true), viaModule]) {`,
+      /* 24 */ `  try {`,
+      /* 25 */ `    fn();`,
+      /* 26 */ `  } catch (e) {`,
+      /* 27 */ `    console.log((e as Error).stack);`,
+      /* 28 */ `  }`,
+      /* 29 */ `}`,
+      ``,
+    ];
+    // One module per call site: a module that threw while loading is not
+    // evaluated again by the next require() of it, which would rethrow the
+    // first call site's error.
+    const files: Record<string, string> = { "index.ts": lines.join("\n") };
+    for (let i = 1; i <= 6; i++) files[`t${i}.js`] = `throw new Error("t${i}");\n`;
+
+    const { stdout, stderr, exited } = await run(files);
+
+    expect(stderr).toBe("");
+    const frames = [...stdout.matchAll(/at (\w+) \(.*index\.ts:(\d+):(\d+)\)/g)].map(m => `${m[1]} ${m[2]}:${m[3]}`);
+    expect(frames).toEqual([
+      "stmt 2:3",
+      "inTry 6:5",
+      "decl 11:13",
+      "arg 15:18",
+      "ternary 18:3",
+      "viaModule 21:10", // the `require` of `module.require`, as for any other method call
+    ]);
+    expect(exited).toBe(0);
+  });
+
   // Source-map columns count UTF-16 code units. A non-ASCII character earlier
   // on the line (Latin-1, astral, CJK) must not shift the remapped columns of
   // the tokens that follow it.

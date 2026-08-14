@@ -72,20 +72,13 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
+  // remove debug-only stack trace frames (bun's own builtins, which have a
+  // position but no file) like "at require (51:24)" or "at require (:1:21)"
+  const debugOnlyFrame = /^\s*at .*\((?:native)?:?\d+(?::\d+)?\)$/;
+  return str
+    .split("\n")
+    .filter(line => !debugOnlyFrame.test(line))
+    .join("\n");
 };
 
 test("Error inside minified file (no color) ", () => {
@@ -111,7 +104,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:86:5)"
     `);
   }
 });
@@ -140,7 +133,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:114:5)"
     `);
   }
 });
@@ -154,7 +147,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:142:19)"
 `);
 });
 

@@ -105,10 +105,7 @@ pub struct ParseUrl {
     pub source_contents: Option<Box<[u8]>>,
 }
 
-pub enum ParseResult {
-    Fail(ParseResultFail),
-    Success(ParsedSourceMap),
-}
+pub type ParseResult = Result<ParsedSourceMap, ParseResultFail>;
 
 pub struct ParseResultFail {
     pub loc: bun_ast::Loc,
@@ -969,8 +966,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
                 sort: true,
             },
         ) {
-            ParseResult::Success(x) => x,
-            ParseResult::Fail(fail) => return Err(fail.err),
+            Ok(x) => x,
+            Err(fail) => return Err(fail.err),
         };
 
         if let ParseUrlResultHint::All {

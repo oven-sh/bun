@@ -1619,8 +1619,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         }
     }
 
-    options.parsingContext->setGlobalScopeExtension(functionScope);
-
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
     RETURN_IF_EXCEPTION(scope, {});

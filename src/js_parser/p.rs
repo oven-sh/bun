@@ -1069,13 +1069,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `loc` is the call target of the `require.resolve(...)` being replaced; the
-    /// replacement is attributed to it (see `transpose_require`).
     #[inline]
     pub(crate) fn transpose_require_resolve_known_string(
         &mut self,
         arg: Expr,
-        loc: bun_ast::Loc,
+        call_target_loc: bun_ast::Loc,
     ) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
 
@@ -1083,7 +1081,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // We don't want to spend time scanning the required files if they will
         // never be used.
         if self.is_control_flow_dead {
-            return self.new_expr(E::Null {}, loc);
+            return self.new_expr(E::Null {}, call_target_loc);
         }
 
         let import_record_index = self.add_import_record(
@@ -1109,25 +1107,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_record_index,
                 // .leading_interior_comments = arg.getString().
             },
-            loc,
+            call_target_loc,
         )
     }
 
     pub(crate) fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        // Whatever replaces the `require(...)` call is attributed to the call target
-        // (`state.loc`: the `require` token), not to the argument. The printer emits
-        // that location as the call's source mapping, so a stack frame for the call
-        // remaps to `require(` the way it does for any other call's callee.
-        let loc = state.loc;
+        // Stack frames for a call are mapped at its callee, so the replacement
+        // takes the `require` token's location rather than the argument's.
+        let call_target_loc = state.loc;
 
         if !self.options.features.allow_runtime {
             return self.new_expr(
                 E::Call {
-                    target: self.value_for_require(loc),
+                    target: self.value_for_require(call_target_loc),
                     args: ExprNodeList::init_one(arg),
                     ..Default::default()
                 },
-                loc,
+                call_target_loc,
             );
         }
 
@@ -1139,7 +1135,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.is_control_flow_dead {
                     return Expr {
                         data: null_expr_data(),
-                        loc,
+                        loc: call_target_loc,
                     };
                 }
 
@@ -1208,7 +1204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ref_: namespace_ref,
                                 ..Default::default()
                             },
-                            loc,
+                            call_target_loc,
                         );
                     }
 
@@ -1220,7 +1216,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             )
                             .expect("int cast"),
                         },
-                        loc,
+                        call_target_loc,
                     );
                 }
 
@@ -1243,7 +1239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_index,
                         ..Default::default()
                     },
-                    loc,
+                    call_target_loc,
                 )
             }
             _ => {
@@ -1251,11 +1247,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.record_usage_of_runtime_require();
                 self.new_expr(
                     E::Call {
-                        target: self.value_for_require(loc),
+                        target: self.value_for_require(call_target_loc),
                         args: ExprNodeList::init_one(arg),
                         ..Default::default()
                     },
-                    loc,
+                    call_target_loc,
                 )
             }
         }

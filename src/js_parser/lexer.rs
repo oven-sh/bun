@@ -2991,8 +2991,6 @@ lexer_impl_header! {
             debug_assert!(self.temp_buffer_u16.is_empty());
             let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
             tmp.reserve(raw_content_slice.len());
-            // Attribute strings keep their whitespace verbatim; only JSX children
-            // text (next_jsx_element_child) gets the line trimming/joining.
             let res = self.decode_jsx_entities(raw_content_slice, &mut tmp);
             if let Err(e) = res {
                 tmp.clear();

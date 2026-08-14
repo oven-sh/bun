@@ -1020,8 +1020,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
 
 // ───────────────────────────── NestedRuleParser ─────────────────────────────
 
-/// Whether the declarations of one block may use `composes`. Fixed when the
-/// block is opened; nested blocks get their own state and never change it.
+/// Whether the declarations of one block may use `composes`; fixed when the block is opened.
 #[derive(Clone, Copy)]
 pub enum ComposesState {
     /// `composes` declarations in the block are recorded against `class`.
@@ -1186,8 +1185,8 @@ mod rule_parsers {
 
     // The borrow checker forbids passing `&mut *this` while also borrowing
     // `this.declarations` / `this.important_declarations`, so split-borrow the
-    // composes fields into a small adaptor that implements the `ComposesCtx`
-    // dispatch trait.
+    // two composes fields into a small adaptor that implements the
+    // `ComposesCtx` dispatch trait.
     struct NestedComposesCtx<'a> {
         state: ComposesState,
         arena: &'a Bump,

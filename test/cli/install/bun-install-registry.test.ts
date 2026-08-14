@@ -9334,8 +9334,7 @@ test.concurrent("rejects package names containing relative path components in bu
   expect(await exited).toBe(0);
 });
 
-// serial: registers a registry user (see "whoami")
-test.serial("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
+test.concurrent("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
   const { packageDir, packageJson, env } = await setupTest();
   // The manifest URL is built by joining the registry URL with the package
   // name. WHATWG URL joining treats "\" like "/" for http(s) schemes, so a
@@ -9353,7 +9352,8 @@ test.serial("rejects npm aliases whose manifest URL resolves to a different host
     },
   });
 
-  const token = await generateRegistryUser("manifest-host-pinning", "manifest-host-pinning");
+  // The request is refused before it is sent, so the token only has to exist, not be valid.
+  const token = "manifest-host-pinning-token";
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),

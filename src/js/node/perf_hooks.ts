@@ -59,31 +59,64 @@ var constants = {
   NODE_PERFORMANCE_MILESTONE_V8_START: 4,
 };
 
-// PerformanceEntry is not a valid constructor, so we have to fake it.
+// Milliseconds since timeOrigin, or -1 until the milestone is reached. Same
+// table performance.measure() resolves these names against.
+const getNodeTimingMilestone = $newCppFunction("JSPerformance.cpp", "jsPerformance_getNodeTimingMilestone", 1) as (
+  name: string,
+) => number;
+
+function milestoneDescriptor(name: string): PropertyDescriptor {
+  return {
+    __proto__: null,
+    enumerable: true,
+    configurable: true,
+    get() {
+      return getNodeTimingMilestone(name);
+    },
+  };
+}
+
+// Ported from node's lib/internal/perf/nodetiming.js: every property is an own
+// enumerable slot (so `{ ...performance.nodeTiming }` copies them), and the
+// milestones are getters because loopStart/loopExit are stamped after this
+// module has loaded. PerformanceEntry is not constructible, so the prototype
+// chain is linked below instead of with `extends`.
 class PerformanceNodeTiming {
-  bootstrapComplete: number = 0;
-  environment: number = 0;
-  idleTime: number = 0;
-  loopExit: number = 0;
-  loopStart: number = 0;
-  nodeStart: number = 0;
-  v8Start: number = 0;
+  declare readonly name: string;
+  declare readonly entryType: string;
+  declare readonly startTime: number;
+  declare readonly duration: number;
+  declare readonly nodeStart: number;
+  declare readonly v8Start: number;
+  declare readonly environment: number;
+  declare readonly loopStart: number;
+  declare readonly loopExit: number;
+  declare readonly bootstrapComplete: number;
+  declare readonly idleTime: number;
 
-  // we have to fake the properties since it's not real
-  get name() {
-    return "node";
-  }
-
-  get entryType() {
-    return "node";
-  }
-
-  get startTime() {
-    return this.nodeStart;
-  }
-
-  get duration() {
-    return performance.now();
+  constructor() {
+    Object.defineProperties(this, {
+      name: { __proto__: null, enumerable: true, configurable: true, value: "node" },
+      entryType: { __proto__: null, enumerable: true, configurable: true, value: "node" },
+      startTime: { __proto__: null, enumerable: true, configurable: true, value: 0 },
+      duration: {
+        __proto__: null,
+        enumerable: true,
+        configurable: true,
+        get() {
+          return performance.now();
+        },
+      },
+      nodeStart: milestoneDescriptor("nodeStart"),
+      v8Start: milestoneDescriptor("v8Start"),
+      environment: milestoneDescriptor("environment"),
+      loopStart: milestoneDescriptor("loopStart"),
+      loopExit: milestoneDescriptor("loopExit"),
+      bootstrapComplete: milestoneDescriptor("bootstrapComplete"),
+      // Bun does not track time parked in the poll, matching the zeros
+      // eventLoopUtilization() reports.
+      idleTime: { __proto__: null, enumerable: true, configurable: true, value: 0 },
+    });
   }
 
   toJSON() {
@@ -92,28 +125,19 @@ class PerformanceNodeTiming {
       entryType: this.entryType,
       startTime: this.startTime,
       duration: this.duration,
-      bootstrapComplete: this.bootstrapComplete,
-      environment: this.environment,
-      idleTime: this.idleTime,
-      loopExit: this.loopExit,
-      loopStart: this.loopStart,
       nodeStart: this.nodeStart,
       v8Start: this.v8Start,
+      bootstrapComplete: this.bootstrapComplete,
+      environment: this.environment,
+      loopStart: this.loopStart,
+      loopExit: this.loopExit,
+      idleTime: this.idleTime,
     };
   }
 }
 if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
-}
-
-function createPerformanceNodeTiming() {
-  const object = Object.create(PerformanceNodeTiming.prototype);
-
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
-  object.loopExit = -1;
-  return object;
 }
 
 function eventLoopUtilization(_utilization1, _utilization2) {
@@ -320,7 +344,7 @@ function processTimerifyComplete(name, start, args, histogram) {
   }
 }
 
-const nodeTiming = createPerformanceNodeTiming();
+const nodeTiming = new PerformanceNodeTiming();
 
 // Node augments the real `performance` object (not a forwarding shim), so
 // timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,

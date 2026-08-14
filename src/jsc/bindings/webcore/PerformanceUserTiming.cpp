@@ -27,17 +27,51 @@
 #include "config.h"
 #include "PerformanceUserTiming.h"
 
+#include "BunClientData.h"
 #include "MessagePort.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
 #include "SerializedScriptValue.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <wtf/SortedArrayMap.h>
+
+// Defined in src/jsc/virtual_machine_exports.rs.
+extern "C" double Bun__getNodeTimingMilestone(void* bunVM, uint32_t milestone);
 
 namespace WebCore {
+
+// Values are `NodeTimingMilestone` discriminants from src/jsc/VirtualMachine.rs.
+static constexpr SortedArrayMap nodeTimingMilestoneIndices { std::to_array<std::pair<ComparableASCIILiteral, uint32_t>>({
+    { "bootstrapComplete"_s, 3 },
+    { "environment"_s, 2 },
+    { "loopExit"_s, 5 },
+    { "loopStart"_s, 4 },
+    { "nodeStart"_s, 0 },
+    { "v8Start"_s, 1 },
+}) };
 
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
     : m_performance(performance)
 {
+}
+
+bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
+{
+    return nodeTimingMilestoneIndices.contains(markName);
+}
+
+Exception PerformanceUserTiming::restrictedMarkNameException(const String& markName)
+{
+    // lib/internal/perf/usertiming.js: `throw new ERR_INVALID_ARG_VALUE('name', name)`.
+    return Exception { InvalidArgValueError, makeString("The argument 'name' is invalid. Received '"_s, markName, '\'') };
+}
+
+std::optional<double> PerformanceUserTiming::nodeTimingMilestone(JSC::VM& vm, const String& name)
+{
+    auto* index = nodeTimingMilestoneIndices.tryGet(name);
+    if (!index)
+        return std::nullopt;
+    return Bun__getNodeTimingMilestone(bunVM(vm), *index);
 }
 
 size_t PerformanceUserTiming::memoryCost() const
@@ -96,10 +130,13 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
     return mark.releaseReturnValue();
 }
 
-void PerformanceUserTiming::clearMarks(const String& markName)
+ExceptionOr<void> PerformanceUserTiming::clearMarks(const String& markName)
 {
+    if (isRestrictedMarkName(markName))
+        return restrictedMarkNameException(markName);
     clearPerformanceEntries(m_marksMap, markName);
     m_markCounter = 0;
+    return {};
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
@@ -112,6 +149,10 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::var
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
 {
+    // Node hands back the milestone even while it is still -1 (loopStart before the loop runs).
+    if (auto milestone = nodeTimingMilestone(m_performance.scriptExecutionContext()->vm(), mark))
+        return *milestone;
+
     auto iterator = m_marksMap.find(mark);
     if (iterator != m_marksMap.end())
         return iterator->value.last()->startTime();

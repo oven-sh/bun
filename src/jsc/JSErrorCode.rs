@@ -68,4 +68,6 @@ pub enum DOMExceptionCode {
     InvalidThisError,
     InvalidURLError,
     CryptoOperationFailedError,
+    EventRecursion,
+    InvalidArgValueError,
 }

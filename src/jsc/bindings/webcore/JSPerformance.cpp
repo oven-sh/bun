@@ -51,6 +51,7 @@
 #include "JSPerformanceMeasureOptions.h"
 // #include "JSPerformanceNavigation.h"
 #include "JSPerformanceTiming.h"
+#include "PerformanceUserTiming.h"
 
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
@@ -138,6 +139,18 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSG
 {
     // TODO:
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPerformance_getNodeTimingMilestone, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto milestone = PerformanceUserTiming::nodeTimingMilestone(vm, name);
+    if (!milestone)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(*milestone));
 }
 
 // -- end copied --

@@ -46,6 +46,9 @@ static double performanceNow(ScriptExecutionContext& scriptExecutionContext)
 
 ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& globalObject, ScriptExecutionContext& scriptExecutionContext, const String& name, std::optional<PerformanceMarkOptions>&& markOptions)
 {
+    if (PerformanceUserTiming::isRestrictedMarkName(name))
+        return PerformanceUserTiming::restrictedMarkNameException(name);
+
     double startTime;
     JSC::JSValue detail;
     if (markOptions) {

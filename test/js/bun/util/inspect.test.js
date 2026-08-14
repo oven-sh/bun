@@ -579,6 +579,59 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+describe("Bun.inspect with a Proxy in the prototype chain", () => {
+  it("skips properties whose get trap throws", () => {
+    const proto = new Proxy(
+      { a: 1, b: 2 },
+      {
+        get(target, key, receiver) {
+          if (key === "a" || key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      },
+    );
+    expect(Bun.inspect(Object.create(proto))).toBe("{}");
+    expect(Bun.inspect(Object.assign(Object.create(proto), { own: 3 }))).toBe("{\n  own: 3,\n}");
+  });
+
+  it("stops walking the prototype chain when the getPrototypeOf trap throws", () => {
+    const proto = new Proxy(
+      { a: 1 },
+      {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      },
+    );
+    expect(Bun.inspect(Object.create(proto))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(Object.create(Object.create(proto)))).toBe("{\n  a: 1,\n}");
+  });
+});
+
+// Bun.$ is built lazily and reads the global `process` while doing so, so clobbering
+// `process` makes that property throw while Bun.inspect enumerates the Bun object. The
+// exception used to stay pending while the next lazy property (Archive) was built, which
+// dropped it from the output in release builds and tripped an assertion in debug builds.
+it("Bun.inspect keeps going when a lazily built property throws", async () => {
+  const code = `
+    globalThis.process = undefined;
+    const out = Bun.inspect(Bun);
+    console.log(typeof out, out.includes("Archive:"), out.includes("version:"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "string true true\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

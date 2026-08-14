@@ -467,6 +467,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "napi_create_bigint_int64: status=0",
         "napi_create_bigint_uint64: status=0",
         "napi_create_symbol: status=0",
+        "napi_create_array_with_length: status=0",
+        "napi_is_array: status=0 is_array=1",
+        "napi_create_string_utf8: status=0",
+        "napi_create_int32: status=0",
         "exception pending after: true",
         "pending exception code: EPENDING",
       ]);

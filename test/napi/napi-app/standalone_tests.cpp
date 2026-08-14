@@ -2921,8 +2921,9 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
 }
 
 // The ungated functions (see test_pending_exception_gate) whose bodies contain
-// an exception check: a bigint, a string and a symbol round trip. Statuses are
-// ignored on purpose.
+// an exception check: a bigint, a string and a symbol round trip, then an
+// array, a string and a typeof/is_array check (implemented separately in
+// Bun). Statuses are ignored on purpose.
 static void ungated_calls_round(napi_env env, napi_value bigint,
                                 napi_value string) {
   int64_t i64 = 0;
@@ -2941,6 +2942,13 @@ static void ungated_calls_round(napi_env env, napi_value bigint,
   napi_create_bigint_int64(env, i64, &out);
   napi_create_bigint_uint64(env, u64, &out);
   napi_create_symbol(env, string, &out);
+
+  bool is = false;
+  napi_create_array_with_length(env, 4, &out);
+  napi_is_array(env, out, &is);
+  napi_create_string_utf8(env, utf8, written, &out);
+  napi_create_int32(env, (int32_t)written, &out);
+  napi_get_boolean(env, is, &out);
 }
 
 // spin(bigint, string): a callback that does nothing but ungated calls, for a
@@ -3029,6 +3037,15 @@ test_ungated_calls_with_engine_exception(const Napi::CallbackInfo &info) {
   printf("napi_create_bigint_uint64: status=%d\n", (int)st);
   st = napi_create_symbol(env, string, &out);
   printf("napi_create_symbol: status=%d\n", (int)st);
+  st = napi_create_array_with_length(env, 4, &out);
+  printf("napi_create_array_with_length: status=%d\n", (int)st);
+  bool is_array = false;
+  st = napi_is_array(env, out, &is_array);
+  printf("napi_is_array: status=%d is_array=%d\n", (int)st, (int)is_array);
+  st = napi_create_string_utf8(env, utf8, NAPI_AUTO_LENGTH, &out);
+  printf("napi_create_string_utf8: status=%d\n", (int)st);
+  st = napi_create_int32(env, 7, &out);
+  printf("napi_create_int32: status=%d\n", (int)st);
 
   bool pending = false;
   napi_is_exception_pending(env, &pending);
@@ -3087,6 +3104,11 @@ ungated_calls_through_timeout(const Napi::CallbackInfo &info) {
     failures += napi_create_bigint_int64(env, i64, &out) != napi_ok;
     failures += napi_create_bigint_uint64(env, u64, &out) != napi_ok;
     failures += napi_create_symbol(env, string, &out) != napi_ok;
+    failures += napi_create_array_with_length(env, 4, &out) != napi_ok;
+    failures += napi_is_array(env, out, &lossless) != napi_ok;
+    failures +=
+        napi_create_string_utf8(env, utf8, NAPI_AUTO_LENGTH, &out) != napi_ok;
+    failures += napi_create_int32(env, 7, &out) != napi_ok;
   } while (std::chrono::steady_clock::now() < deadline);
   printf("ungated call failures: %u\n", failures);
 

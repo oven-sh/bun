@@ -107,17 +107,37 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// NAPI_PREAMBLE for the value constructors/accessors Node gates with CHECK_ENV only: callable with an
-// exception pending (stashed for the call; only then, since the scope's restore is unconditional), and
-// never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the next exception check
-// after the call delivers it, as in Node). No JS or addon code may run under it.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
-    NAPI_LOG_CURRENT_FUNCTION;                                                     \
-    NAPI_CHECK_ARG(_env, _env);                                                    \
-    std::optional<JSC::SuspendExceptionScope> napi_preamble_suspended_exception__; \
-    if (_env->vm().exceptionForInspection()) [[unlikely]]                          \
-        napi_preamble_suspended_exception__.emplace(_env->vm());                   \
-    JSC::DeferTraps napi_preamble_defer_traps__ { _env->vm() };                    \
+// What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
+// here, `ungated!` in napi_body.rs): callable with an exception pending (stashed for the call; only then, since the
+// restore is unconditional) and never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the
+// next exception check after the call delivers it, as in Node). No JS or addon code may run under it.
+struct NapiUngatedScope {
+    explicit NapiUngatedScope(JSC::VM& vm)
+        : deferTraps(vm)
+    {
+        if (vm.exceptionForInspection()) [[unlikely]]
+            suspended.emplace(vm);
+    }
+    std::optional<JSC::SuspendExceptionScope> suspended;
+    JSC::DeferTraps deferTraps;
+};
+
+// Constructed in place in storage owned by the Rust caller (napi_body.rs `UngatedScope`).
+static_assert(sizeof(NapiUngatedScope) <= 80 && alignof(NapiUngatedScope) <= 8, "napi_body.rs UngatedScope storage is 80 bytes, 8-aligned");
+extern "C" void NapiUngatedScope__construct(void* storage, napi_env env)
+{
+    ASSERT(reinterpret_cast<uintptr_t>(storage) % alignof(NapiUngatedScope) == 0);
+    new (storage) NapiUngatedScope(env->vm());
+}
+extern "C" void NapiUngatedScope__destruct(void* storage)
+{
+    static_cast<NapiUngatedScope*>(storage)->~NapiUngatedScope();
+}
+
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                 \
+    NAPI_LOG_CURRENT_FUNCTION;                               \
+    NAPI_CHECK_ARG(_env, _env);                              \
+    NapiUngatedScope napi_preamble_ungated__ { _env->vm() }; \
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());
 
 // Return an error code if arg is null. Only use for input validation.

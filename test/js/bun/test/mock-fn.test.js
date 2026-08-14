@@ -1090,6 +1090,38 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // The mock used to be stored at the index with the Accessor attribute set even though it is
+    // a plain value, so reading the index tripped an engine assertion and assigning to it
+    // segfaulted (the mock was invoked as if it were a getter/setter pair).
+    test("spyOn works with indexed properties that are not functions", () => {
+      const obj = {};
+      obj[213] = obj;
+      const fn = spyOn(obj, 213);
+      expect(obj[213]).toBe(fn);
+      expect(Object.getOwnPropertyDescriptor(obj, 213)).toEqual({
+        value: fn,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[213]()).toBe(obj);
+      expect(fn).toHaveBeenCalledTimes(1);
+      obj[213] = 5;
+      expect(obj[213]).toBe(5);
+      fn.mockRestore();
+      expect(obj[213]).toBe(obj);
+
+      const arr = [];
+      arr[0] = 42;
+      const fn2 = spyOn(arr, 0);
+      expect(arr[0]).toBe(fn2);
+      expect(arr[0]()).toBe(42);
+      arr[0] = 7;
+      expect(arr[0]).toBe(7);
+      fn2.mockRestore();
+      expect(arr[0]).toBe(42);
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

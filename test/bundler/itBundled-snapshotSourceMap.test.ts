@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import { BundlerTestInput, itBundled, MappingSnapshot } from "./expectBundled";
 
 // Every case in this file bundles the same two files. out/entry.js is:
@@ -73,27 +73,32 @@ describe("bundler", () => {
 
   // itBundled() registers nothing on Windows yet: expectBundled's "test/bundler/"
   // stack check never matches backslash paths, so the child would have nothing to fail.
-  test.skipIf(isWindows)("snapshotSourceMap.mappings rejects positions the source map disagrees with", async () => {
-    const env: Record<string, string | undefined> = { ...bunEnv, [CHILD_ENV]: "1" };
-    // bunEnv spreads process.env; an ambient filter would keep the child from registering its cases.
-    delete env.BUN_BUNDLER_TEST_FILTER;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", import.meta.path],
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const output = stdout + stderr;
+  test.skipIf(isWindows)(
+    "snapshotSourceMap.mappings rejects positions the source map disagrees with",
+    async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv, [CHILD_ENV]: "1" };
+      // bunEnv spreads process.env; an ambient filter would keep the child from registering its cases.
+      delete env.BUN_BUNDLER_TEST_FILTER;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout=60000", import.meta.path],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
 
-    for (const [name, { mapping, received }] of Object.entries(rejected)) {
-      expect(output).toContain(`(fail) bundler > harness/SnapshotSourceMap${name}`);
-      expect(output).toContain(`entry.js.map: generated position of ${mapping[0]}`);
-      expect(output).toContain(`Expected: "${mapping[1]}"`);
-      expect(output).toContain(`Received: "${received}"`);
-    }
-    expect(output).toContain(" 0 pass\n");
-    expect(output).toContain(` ${Object.keys(rejected).length} fail\n`);
-    expect(exitCode).toBe(1);
-  });
+      for (const [name, { mapping, received }] of Object.entries(rejected)) {
+        expect(output).toContain(`(fail) bundler > harness/SnapshotSourceMap${name}`);
+        expect(output).toContain(`entry.js.map: generated position of ${mapping[0]}`);
+        expect(output).toContain(`Expected: "${mapping[1]}"`);
+        expect(output).toContain(`Received: "${received}"`);
+      }
+      expect(output).toContain(" 0 pass\n");
+      expect(output).toContain(` ${Object.keys(rejected).length} fail\n`);
+      expect(exitCode).toBe(1);
+    },
+    // A debug build spends a few seconds just starting the child and importing the harness in it.
+    isDebug ? 60_000 : undefined,
+  );
 });

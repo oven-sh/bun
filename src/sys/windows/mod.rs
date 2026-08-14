@@ -1229,17 +1229,12 @@ pub const EXCEPTION_UNWIND: u32 = 0x66;
 /// The address range of Bun's own code and data in the process executable, read
 /// once from the mapped PE header. The crash handler uses this to tell
 /// first-chance exceptions raised inside Bun's own code from those raised inside
-/// foreign modules.
-///
-/// `bun build --compile` appends sections to the exe (`.bun`, and on Windows the
-/// merged `.node` addons as `.bnN` plus their `.bunL` metadata). Code in a merged
-/// addon is foreign code even though it lies inside the exe's `SizeOfImage`, so
-/// the range ends at the first appended section.
+/// foreign code, which includes the `.node` addons `bun build --compile` merges
+/// into the exe as sections after Bun's own (`.bnN`, `.bunL`, then `.bun`): the
+/// range ends at the first of those.
 pub fn exe_image_range() -> core::ops::Range<usize> {
-    // SAFETY: null module name returns the exe's HMODULE, which on Windows is
-    // its mapped base address. The IMAGE_DOS_HEADER at `base`, the
-    // IMAGE_NT_HEADERS at `base + e_lfanew` and the section table after them
-    // are part of the loader-mapped image and remain valid for the process
+    // SAFETY: null module name returns the exe's HMODULE, its mapped base
+    // address; the headers and section table there stay mapped for the process
     // lifetime.
     unsafe {
         let base = bun_windows_sys::kernel32::GetModuleHandleW(ptr::null()) as usize;

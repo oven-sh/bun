@@ -2726,11 +2726,10 @@ fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
     (l, a, b)
 }
 
-const D50: [f32; 3] = [
-    (0.3457f64 / 0.3585f64) as f32,
-    1.00000,
-    ((1.0f64 - 0.3457f64 - 0.3585f64) / 0.3585f64) as f32,
-];
+// Deliberately computed in f32 (as lightningcss does), not in f64 and then cast: the f32 values
+// nearest to the exact quotients are one ulp away from where the f32 XYZd65 -> XYZd50 matrix below
+// puts achromatic colors, which leaves lab(from gray l a b) with a, b around 1e-5 instead of 0 0.
+const D50: [f32; 3] = [0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585];
 
 // ──────────────────────────────────────────────────────────────────────────
 // Handwritten conversions.

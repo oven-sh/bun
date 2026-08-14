@@ -1488,7 +1488,13 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                             bin_str,
                             &mut path_buf,
                         );
-                        if !bin_path_escapes_root(normalized) {
+                        // Every entry is queued for packing, so a file listed
+                        // under several bin names must only appear once here.
+                        if !bin_path_escapes_root(normalized)
+                            && !bins.iter().any(|existing| {
+                                strings::eql_long(existing.path.as_bytes(), normalized, true)
+                            })
+                        {
                             bins.push(BinInfo {
                                 path: ZBox::from_bytes(normalized),
                                 ty: BinType::File,
@@ -1506,11 +1512,20 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
+                    // `normalize_buf` keeps a trailing slash, but this path is
+                    // compared against entry subpaths (which have none) and
+                    // entry names are joined onto it with a slash. "" and "."
+                    // (from ".", "./" and "") would make the package root the
+                    // bin directory and pack the whole tree a second time.
                     let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
                         bin_str,
                         &mut path_buf,
                     );
-                    if !bin_path_escapes_root(normalized) {
+                    let normalized = strings::without_trailing_slash(normalized);
+                    if !normalized.is_empty()
+                        && normalized != b"."
+                        && !bin_path_escapes_root(normalized)
+                    {
                         bins.push(BinInfo {
                             path: ZBox::from_bytes(normalized),
                             ty: BinType::Dir,
@@ -1537,9 +1552,8 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
                 }
             }
             BinType::Dir => {
-                let bin_without_trailing = strings::without_trailing_slash(bin.path.as_bytes());
-                if maybe_bin_path.starts_with(bin_without_trailing) {
-                    let remain = &maybe_bin_path[bin_without_trailing.len()..];
+                if maybe_bin_path.starts_with(bin.path.as_bytes()) {
+                    let remain = &maybe_bin_path[bin.path.as_bytes().len()..];
                     if remain.len() > 1
                         && remain[0] == b'/'
                         && strings::index_of_char(&remain[1..], b'/').is_none()

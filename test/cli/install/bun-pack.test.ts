@@ -1647,6 +1647,93 @@ describe("bins", () => {
       },
     ]);
   });
+
+  test("the same file under several bin names is packed once", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-same-file",
+          version: "1.0.0",
+          bin: {
+            "one": "cli.js",
+            "two": "cli.js",
+            "three": "./cli.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "cli.js"), "console.log('hello')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-same-file-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/cli.js" }]);
+    expect(tarball.entries[1].perm & 0o111).toBe(0o111);
+    expect(out).toContain("Total files: 2");
+  });
+
+  // The bin directory is packed by its own walk, and the walk over the rest of
+  // the package has to skip it. Each `files` value below routes that skip
+  // through a different walk.
+  describe('"directories.bin" with a trailing slash', () => {
+    test.each([
+      [undefined, ["package/index.js", "package/lib/bins/bin.js", "package/lib/index.js"]],
+      [["index.js"], ["package/index.js", "package/lib/bins/bin.js"]],
+      [["lib"], ["package/lib/bins/bin.js", "package/lib/index.js"]],
+      [["lib/bins"], ["package/lib/bins/bin.js"]],
+    ])("files: %p", async (files, expected) => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-bins-dir-trailing-slash",
+            version: "1.0.0",
+            files,
+            directories: {
+              bin: "./lib/bins/",
+            },
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('index')"),
+        write(join(packageDir, "lib", "index.js"), "console.log('lib')"),
+        write(join(packageDir, "lib", "bins", "bin.js"), "console.log('bin')"),
+      ]);
+
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-bins-dir-trailing-slash-1.0.0.tgz"));
+      expect(tarball.entries.map(entry => entry.pathname)).toEqual(["package/package.json", ...expected]);
+      const bin = tarball.entries.find(entry => entry.pathname === "package/lib/bins/bin.js");
+      expect(bin.perm & 0o111).toBe(0o111);
+    });
+  });
+
+  test.each(["", ".", "./"])('"directories.bin" of %p (the package root) is ignored', async bin => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-dir-root",
+          version: "1.0.0",
+          directories: {
+            bin,
+          },
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('index')"),
+      write(join(packageDir, "lib", "a.js"), "console.log('a')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-dir-root-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/index.js" },
+      { pathname: "package/lib/a.js" },
+    ]);
+  });
 });
 
 test("unicode", async () => {

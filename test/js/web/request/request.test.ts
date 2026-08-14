@@ -119,6 +119,34 @@ test("keepalive — truthy/falsy values coerce via Boolean()", () => {
   expect(new Request("https://example.org/", { keepalive: "" as any }).keepalive).toBe(false);
 });
 
+test("keepalive: true with a Request source body does not throw", async () => {
+  // Regression: the init-dict "keepalive + ReadableStream body" TypeError
+  // must not fire when the value is a Request, whose `keepalive` prototype
+  // accessor (added alongside this check's guard) is visible to the generic
+  // fallthrough path taken by subclass and structure-mutated instances.
+  class MySubRequest extends Request {}
+  const sub = new MySubRequest("https://example.org/", { method: "POST", body: "hello", keepalive: true });
+  const fromSub = new Request(sub);
+  expect(fromSub.keepalive).toBe(true);
+  expect(await fromSub.text()).toBe("hello");
+
+  const mutated = new Request("https://example.org/", { method: "POST", body: "hello", keepalive: true });
+  (mutated as any).extra = 1;
+  const fromMutated = new Request(mutated);
+  expect(fromMutated.keepalive).toBe(true);
+  expect(await fromMutated.text()).toBe("hello");
+
+  // The init-dict throw itself is unaffected.
+  expect(
+    () =>
+      new Request("https://example.org/", {
+        method: "POST",
+        body: new ReadableStream(),
+        keepalive: true,
+      } as any),
+  ).toThrow(TypeError);
+});
+
 test("new Request(other) copies referrer, integrity, keepalive", () => {
   const base = new Request("https://example.org/", {
     referrer: "https://foo.example/",

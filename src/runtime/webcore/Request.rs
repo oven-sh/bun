@@ -1306,7 +1306,11 @@ impl Request {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                        // Request sources are exempt: their body is copied, not re-extracted,
+                        // and the `keepalive` prototype accessor would otherwise trip this.
+                        if crate::webcore::ReadableStream::is_readable_stream(body_)
+                            && value.as_::<Request>().is_none()
+                        {
                             match value.get(global_this, "keepalive") {
                                 Ok(Some(keepalive)) if keepalive.to_boolean() => {
                                     bail!(Err(

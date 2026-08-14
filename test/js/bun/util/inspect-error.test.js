@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,21 +10,23 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
-5 |   const err2 = new Error("error 2", { cause: err });
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
+6 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:19)
 "
 `);
 });
@@ -35,15 +38,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"27 | "
-28 | \`);
-29 | });
-30 | 
-31 | test("Error", () => {
-32 |   const err = new Error("my message");
+"30 | "
+31 | \`);
+32 | });
+33 | 
+34 | test("Error", () => {
+35 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:19)
 "
 `);
 });
@@ -71,22 +74,13 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
-const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
-};
+const normalizeError = str =>
+  // remove debug-only stack trace frames of bun's own builtins, which have a
+  // position but no file, like "at require (51:24)"
+  str
+    .split("\n")
+    .filter(line => !/^\s*at \S+ \(:?\d+:\d+\)$/.test(line))
+    .join("\n");
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -111,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
     `);
   }
 });
@@ -140,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
     `);
   }
 });
@@ -154,7 +148,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:143:19)"
 `);
 });
 
@@ -187,4 +181,118 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+// Once error.stack has been read (or assigned), JSC no longer has the frames of
+// the error and the printer parses the "    at ..." lines of that string instead.
+describe("printing the frames parsed back out of error.stack", () => {
+  const printedFrames = text =>
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "));
+
+  const printStack = lines => {
+    const err = new Error("boom");
+    err.stack = lines.join("\n");
+    return printedFrames(Bun.inspect(err));
+  };
+
+  test("frames without a function name, as bun prints module top-level code and native frames", () => {
+    expect(
+      printStack([
+        "Error: boom",
+        "    at thrower (/fake/lib.mjs:2:13)",
+        "    at /fake/lib.mjs:4:1",
+        "    at unknown",
+        "    at load (/fake/main.mjs:4:3)",
+        "    at /fake/main.mjs:7",
+      ]),
+    ).toEqual([
+      "at thrower (/fake/lib.mjs:2:13)",
+      "at /fake/lib.mjs:4:1",
+      expect.stringMatching(/^at unknown\b/),
+      "at load (/fake/main.mjs:4:3)",
+      expect.stringMatching(/^at \/fake\/main\.mjs:7\b/),
+    ]);
+  });
+
+  test("frames without a function name, as node prints ES module top-level code", () => {
+    expect(
+      printStack([
+        "Error: boom",
+        "    at thrower (file:///fake/lib.mjs:2:13)",
+        "    at file:///fake/lib.mjs:4:1",
+        "    at async file:///fake/main.mjs:3:7",
+        "    at node:internal/main/run_main_module:36:49",
+      ]),
+    ).toEqual([
+      "at thrower (file:///fake/lib.mjs:2:13)",
+      "at file:///fake/lib.mjs:4:1",
+      "at file:///fake/main.mjs:3:7",
+      "at node:internal/main/run_main_module:36:49",
+    ]);
+  });
+
+  test("a path containing parentheses is not mistaken for a function name", () => {
+    expect(printStack(["Error: boom", "    at /fake/app/(group)/page.js:5:3"])).toEqual([
+      "at /fake/app/(group)/page.js:5:3",
+    ]);
+  });
+
+  test("CRLF line endings", () => {
+    expect(
+      printStack(["Error: boom\r", "    at thrower (/fake/lib.mjs:2:13)\r", "    at /fake/lib.mjs:4:1\r"]),
+    ).toEqual(["at thrower (/fake/lib.mjs:2:13)", "at /fake/lib.mjs:4:1"]);
+  });
+
+  test.concurrent("Bun.inspect and the uncaught exception printout show every frame of error.stack", async () => {
+    // require() puts the top-level frame of lib.mjs in the middle of the stack,
+    // with load() and the top-level frame of main.mjs below it.
+    using dir = tempDir("inspect-error-stack-string", {
+      "lib.mjs": ["function thrower() {", '  throw new Error("boom");', "}", "thrower();", ""].join("\n"),
+      "main.mjs": [
+        'import { createRequire } from "node:module";',
+        "const require = createRequire(import.meta.url);",
+        "function load() {",
+        '  require("./lib.mjs");',
+        "}",
+        "try {",
+        "  load();",
+        "} catch (e) {",
+        "  console.log(JSON.stringify({ stack: e.stack, inspect: Bun.inspect(e) }));",
+        "  throw e;",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stack, inspect } = JSON.parse(stdout);
+
+    // The frames of require() itself (between lib.mjs and load) are native and
+    // vary between debug and release builds, so only the frames of the two
+    // files are compared.
+    const prefix = String(dir).replaceAll("\\", "/") + "/";
+    const ownFrames = text =>
+      printedFrames(text.replaceAll("\\", "/").replaceAll(prefix, "")).filter(line => line.includes(".mjs"));
+    const expected = [
+      expect.stringMatching(/^at thrower \(lib\.mjs:\d+:\d+\)$/),
+      expect.stringMatching(/^at lib\.mjs:\d+(:\d+)?$/),
+      expect.stringMatching(/^at load \(main\.mjs:\d+:\d+\)$/),
+      expect.stringMatching(/^at main\.mjs:\d+(:\d+)?$/),
+    ];
+    expect({ stack: ownFrames(stack), inspect: ownFrames(inspect), uncaught: ownFrames(stderr) }).toEqual({
+      stack: expected,
+      inspect: expected,
+      uncaught: expected,
+    });
+    expect(exitCode).toBe(1);
+  });
 });

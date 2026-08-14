@@ -286,31 +286,25 @@ public:
             return false;
         }
 
-        StringView line = stack.substring(start, end - start);
+        StringView line = stack.substring(start, end - start).trim(isASCIIWhitespace<char16_t>);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
-
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
-            // Special case: "unknown" frames don't have parentheses but are valid
-            // These appear in stack traces from certain error paths
-            if (line == "unknown"_s) {
-                frame.sourceURL = line;
-                frame.functionName = StringView();
-                return true;
-            }
-
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+        // A frame is either "functionName (location)" or, when the frame has no
+        // function name (module top-level code, "unknown", "native"), a bare
+        // "location". Only the former ends with a parenthesis.
+        StringView functionName;
+        StringView lineInner = line;
+        auto openingParentheses = line.endsWith(')') ? line.reverseFind('(') : WTF::notFound;
+        if (openingParentheses != WTF::notFound) {
+            lineInner = StringView_slice(line, openingParentheses + 1, line.length() - 1);
+            functionName = line.substring(0, openingParentheses);
+            if (functionName.endsWith(' '))
+                functionName = functionName.substring(0, functionName.length() - 1);
+        } else if (line.startsWith("async "_s)) {
+            // V8 prints async module code as "at async file:///path/to/module.mjs:1:2"
+            frame.isAsync = true;
+            lineInner = line.substring(6);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -382,8 +376,6 @@ public:
             }
         }
     done_block:
-
-        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "global code"_s) {
             functionName = StringView();

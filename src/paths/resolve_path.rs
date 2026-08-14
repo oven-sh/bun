@@ -1673,8 +1673,8 @@ enum JoinScratch {
 /// concatenation, the separator Windows adds after a bare share root, and the
 /// byte normalizing can add (see [`normalize_string_spill`]).
 #[inline]
-fn join_abs_needed(base: usize, parts: &[&[u8]]) -> usize {
-    parts.iter().map(|p| p.len() + 1).sum::<usize>() + base + 2
+fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
 impl JoinScratch {

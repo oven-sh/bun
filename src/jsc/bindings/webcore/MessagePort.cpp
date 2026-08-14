@@ -200,7 +200,7 @@ void MessagePort::flushQueuedMessagesBeforeClose()
         if (!message)
             break;
         dispatchOneMessage(*context, WTF::move(*message));
-        if (!globalObject->drainMicrotasksAtEventLoop())
+        if (globalObject->drainMicrotasks())
             break; // termination pending
     }
 }

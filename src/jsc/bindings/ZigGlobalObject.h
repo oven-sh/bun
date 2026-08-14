@@ -359,13 +359,7 @@ public:
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    // 0: drained. 1: the VM is terminating (nothing drained). 2: a non-termination
-    // exception is pending, on its way to the fold that takes it (nothing drained).
     uint8_t drainMicrotasks();
-    // The checkpoint of a top-level C++ dispatch loop (message ports, worker
-    // messaging): reports an exception found pending, since nothing above will.
-    // false: the VM is terminating, stop dispatching.
-    bool drainMicrotasksAtEventLoop();
 
     void handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();

@@ -3281,11 +3281,21 @@ uint8_t GlobalObject::drainMicrotasks()
         if (vm.isTerminationException(exception)) [[unlikely]] {
             return 1;
         }
-        // A frame is leaving with an exception pending, on its way to the fold
-        // that takes it (the dispatcher's, or a host function's caller): this
-        // is not a checkpoint. The fold drains once the exception is taken.
-        return 2;
+
+#if ASSERT_ENABLED
+        (void)scope.tryClearException();
+        // We should not have an exception here.
+        // But it's an easy mistake to make.
+        // Let's log it so that we can debug this.
+        Bun__reportError(this, JSValue::encode(exception));
+
+        // And re-throw it to preserve the production behavior.
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwScope.throwException(this, exception);
+        throwScope.release();
+#endif
     }
+    scope.assertNoExceptionExceptTermination();
 
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);
@@ -3310,32 +3320,19 @@ uint8_t GlobalObject::drainMicrotasks()
     return 0;
 }
 
+// The Rust event loop's checkpoint (`EventLoop::exit()` and the drains between
+// queued items). Unlike the C++ dispatch loops that call drainMicrotasks()
+// directly, a Rust frame can be leaving through here with an exception pending
+// that a fold above it will take: that is not a checkpoint (2), and the fold
+// drains once it has taken the exception. 0: drained; 1: the VM is terminating.
 extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    if (auto* exception = vm.exceptionForInspection()) [[unlikely]] {
+        return vm.isTerminationException(exception) ? 1 : 2;
+    }
     return globalObject->drainMicrotasks();
 }
-
-bool GlobalObject::drainMicrotasksAtEventLoop()
-{
-    switch (drainMicrotasks()) {
-    case 0:
-        return true;
-    case 1:
-        return false;
-    default: {
-        // A top-level dispatch loop with no fold above it: an exception still
-        // pending here escaped whoever produced it. Report it, then this is
-        // the checkpoint.
-        auto& vm = this->vm();
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto* exception = scope.exception();
-        (void)scope.tryClearException();
-        reportUncaughtExceptionAtEventLoop(this, exception);
-        return drainMicrotasks() != 1;
-    }
-    }
-}
-
 extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
 {
     auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);

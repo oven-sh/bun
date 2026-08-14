@@ -318,7 +318,7 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
             dispatch(event.event);
-            if (!globalObject.drainMicrotasksAtEventLoop())
+            if (globalObject.drainMicrotasks())
                 return false; // termination pending
         }
     }

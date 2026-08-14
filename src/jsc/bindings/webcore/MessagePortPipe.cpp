@@ -178,7 +178,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // Node's MakeCallback wraps each emit in an InternalCallbackScope,
         // which drains nextTick + microtasks on exit; match that so
         // queueMicrotask(cb) inside onmessage runs before the next message.
-        if (!globalObject->drainMicrotasksAtEventLoop())
+        if (globalObject->drainMicrotasks())
             break; // termination pending
 
         // Listeners may have been removed mid-drain (port.off()); pause like the

@@ -400,10 +400,10 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  describe("json5 and md loaders", () => {
+  describe("Loader", () => {
     // fixture/loader.ts is also part of the typeTest runs, which debug builds skip; spawning tsc
     // over just that file is cheap enough to run everywhere.
-    test("are members of Loader, and *.md imports are strings", async () => {
+    test("json5 and md are members of the union", async () => {
       const checkDir = join(TEMP_DIR, "loader-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["loader.ts", "utilities.ts"];

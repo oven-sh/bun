@@ -406,6 +406,13 @@ fn load_ca_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str>
     Ok(())
 }
 
+unsafe extern "C" {
+    /// usockets' peer chain verifier (`crypto/openssl.c`): `X509_verify_cert`
+    /// plus the checks bun applies to trust-store certificates. Installed here
+    /// so node:quic verifies chains the way the TCP TLS contexts do.
+    fn us_internal_ssl_ctx_set_chain_verifier(ctx: *mut ssl::SSL_CTX);
+}
+
 impl TlsContext {
     pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
@@ -420,6 +427,7 @@ impl TlsContext {
                 ctx: owned,
                 _alpn: None,
             };
+            us_internal_ssl_ctx_set_chain_verifier(ctx);
 
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
                 if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {

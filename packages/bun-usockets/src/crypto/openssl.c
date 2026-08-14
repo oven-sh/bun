@@ -1133,6 +1133,66 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
   SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+static int us_x509_stack_contains(const STACK_OF(X509) *sk, const X509 *x) {
+  for (size_t i = 0; i < sk_X509_num(sk); i++) {
+    if (sk_X509_value(sk, i) == x) return 1;
+  }
+  return 0;
+}
+
+/* BoringSSL's check_chain_extensions() only covers the untrusted part of the
+ * chain: a certificate taken from the trust store (the anchor, an intermediate
+ * configured via `ca`, a pinned self-signed certificate) is accepted even when
+ * it carries a critical extension BoringSSL does not implement. OpenSSL checks
+ * the whole chain, so node rejects that with
+ * X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION; apply the same check to the
+ * store-sourced certificates of a chain that verified otherwise. Those are
+ * told apart by identity: the chain holds the store's own X509 objects, never
+ * the peer's copies of them. */
+static int us_trusted_chain_certs_error(X509_STORE_CTX *ctx) {
+  const STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  const STACK_OF(X509) *peer_certs = X509_STORE_CTX_get0_untrusted(ctx);
+  const X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
+  for (size_t i = 0; i < sk_X509_num(chain); i++) {
+    X509 *x = sk_X509_value(chain, i);
+    if (x == leaf || us_x509_stack_contains(peer_certs, x)) continue;
+    if (X509_get_extension_flags(x) & EXFLAG_CRITICAL) {
+      return X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION;
+    }
+  }
+  return X509_V_OK;
+}
+
+/* X509_verify_cert plus the check above. Every chain bun verifies goes through
+ * here: installed on each SSL_CTX by us_internal_ssl_ctx_set_chain_verifier,
+ * called directly by the QUIC client's custom_verify (quic.c). Same contract
+ * as X509_verify_cert: the verdict is left in the ctx error, the return value
+ * says whether verification may proceed. */
+int us_internal_verify_cert_chain(X509_STORE_CTX *ctx) {
+  int ok = X509_verify_cert(ctx);
+  if (!ok || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
+  int err = us_trusted_chain_certs_error(ctx);
+  if (err == X509_V_OK) return ok;
+  X509_STORE_CTX_set_error(ctx, err);
+  /* Hand the error to the same verify callback BoringSSL gives its own errors
+   * to (us_verify_callback keeps the handshake going and leaves the verdict to
+   * JS, us_inline_reject_verify_callback records it); with no callback it is
+   * fatal, exactly like a BoringSSL-detected error. */
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  int (*verify_cb)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
+  return verify_cb ? verify_cb(0, ctx) : 0;
+}
+
+static int us_cert_verify_callback(X509_STORE_CTX *ctx, void *arg) {
+  return us_internal_verify_cert_chain(ctx);
+}
+
+/* Also called from the Rust node:quic TLS context builder, which creates its
+ * SSL_CTX outside us_ssl_ctx_build_raw. */
+void us_internal_ssl_ctx_set_chain_verifier(SSL_CTX *ctx) {
+  SSL_CTX_set_cert_verify_callback(ctx, us_cert_verify_callback, NULL);
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also
@@ -1167,6 +1227,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  us_internal_ssl_ctx_set_chain_verifier(ssl_context);
   /* BoringSSL ships with SSL_MODE_NO_AUTO_CHAIN set; Node clears it so a
    * leaf-only `cert` presents the intermediates found in the context's store
    * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */

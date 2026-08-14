@@ -194,7 +194,10 @@ pub trait JobContext: Sized + 'static {
     /// I/O that finishes on another thread) and call [`Completion::finish`]
     /// later to complete then. `vm` is the job's ticket: proof the VM is alive
     /// (for [`JsPtr::under_ticket`]) and `vm.script_allowed()` says whether the
-    /// result still has a consumer.
+    /// result still has a consumer. `off` and `vm` borrow the job, which the JS
+    /// thread may free the moment [`Completion::finish`] queues it: touch
+    /// neither after finishing (work that continues past `run` reaches its
+    /// state through [`Completion::off_thread`] / [`Completion::ticket`]).
     fn run(
         off: &mut Self::OffThread,
         vm: &Ticket,

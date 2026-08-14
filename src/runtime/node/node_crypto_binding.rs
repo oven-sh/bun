@@ -129,7 +129,7 @@ macro_rules! extern_crypto_job {
                     vm: &bun_jsc::Ticket,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
-                    // SAFETY: the creating global, alive under the borrow; C++
+                    // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
                         this.global.under_ticket(vm)
@@ -243,7 +243,7 @@ pub mod random {
                 RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                    // the borrow keeps the VM (and so that buffer) alive; `length` is
+                    // the ticket keeps the VM (and so that buffer) alive; `length` is
                     // the buffer's own allocation size.
                     let slice = unsafe {
                         core::slice::from_raw_parts_mut(
@@ -1066,7 +1066,7 @@ mod _impl {
             vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
+            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the ticket.
             let key = unsafe { this.result.under_ticket(vm) };
             this.err = this.params.run_task_impl(key);
             Some(done)

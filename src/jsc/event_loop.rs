@@ -822,6 +822,18 @@ impl EventLoop {
         &self,
         task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
+        if self.closed_for_tasks {
+            // As `enqueue_task`: the loop never ticks again; release now.
+            // SAFETY: JS thread, heap alive; `task` was handed over unqueued.
+            unsafe {
+                let (inner, auto_delete) = (task.as_ref().task, task.as_ref().auto_delete());
+                if auto_delete {
+                    drop(bun_core::heap::take(task.as_ptr()));
+                }
+                __bun_release_task_unrun(inner);
+            }
+            return;
+        }
         self.concurrent_tasks.push(task);
         self.wakeup();
     }

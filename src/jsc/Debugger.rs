@@ -505,10 +505,9 @@ impl Debugger {
         bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
 
         debuggee.wake();
-        // Re-read `this.event_loop()` here rather than reusing
-        // the cached `loop` — `vm.event_loop` may have flipped between
-        // `regular_event_loop` and `macro_event_loop` inside the re-entrant JS
-        // above. `event_loop_mut()` re-reads the slot on every call.
+        // `vm.event_loop` may have flipped between `regular_event_loop` and
+        // `macro_event_loop` inside the re-entrant JS above;
+        // `event_loop_mut()` re-reads the slot.
         this.event_loop_mut().tick();
         debuggee.wake();
 

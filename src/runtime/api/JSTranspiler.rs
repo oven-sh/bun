@@ -752,7 +752,7 @@ impl TransformTask {
         let name = self.loader.stdin_name();
         let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
         self.transpiler.linker.resolver = resolver_ptr;
-        // SAFETY: the wrapper's config, alive under the borrow (see `schedule`).
+        // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
             self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
 

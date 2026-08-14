@@ -18,16 +18,12 @@
 // debug assertions only (debug, ASAN): the gate does not exist in release.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import path from "node:path";
 
 type Row = {
   name: string;
   // Runs in the worker before it exits; starts exactly one piece of off-thread work.
   worker: string;
-  // Ticketed work: substring of the site (file) the ticket was taken at, as
-  // logged by "[vm] late completion from <file>:<line>". Weak posters: the
-  // task tag logged by "[vm] late post: <tag> (...)".
-  ticket?: string;
-  weak?: string;
   // Runs in the parent before the worker is created; may add to `data` (workerData).
   prelude?: string;
   // Runs in the parent once the worker says it is set up (for producers on the parent's side).
@@ -37,7 +33,12 @@ type Row = {
   env?: Record<string, string>;
   files?: Record<string, string>;
   skip?: boolean;
-};
+} & (Ticketed | Weak);
+// Ticketed work: substring of the site (file) the ticket was taken at, as
+// logged by "[vm] late completion from <file>:<line>".
+type Ticketed = { ticket: string; weak?: never };
+// Weak posters: the task tag logged by "[vm] late post: <tag> (...)".
+type Weak = { weak: string; ticket?: never };
 
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
@@ -211,9 +212,10 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = stderr.split("\n").filter(l => l.startsWith("[vm] "));
-      const seen = row.ticket
-        ? lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(row.ticket!))
-        : lines.some(l => l.startsWith(`[vm] late post: ${row.weak} (`));
+      const seen =
+        "ticket" in row && row.ticket
+          ? lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(row.ticket))
+          : lines.some(l => l.startsWith(`[vm] late post: ${row.weak} (`));
       expect({
         exitCode,
         seen,
@@ -232,7 +234,7 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
-    const fifo = require("node:path").join(String(dir), "fifo");
+    const fifo = path.join(String(dir), "fifo");
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

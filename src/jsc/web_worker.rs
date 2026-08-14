@@ -14,7 +14,7 @@
 //! touches the parent's `Worker` object or a thread-affine ref.
 //!
 //! Thread lifecycle (`thread_main`):
-//!   1. `start_vm()`  — arena, cloned env, `VirtualMachine`, publish `vm` under `vm_lock`.
+//!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
 //!   2. `spin()`      — load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
@@ -118,7 +118,7 @@ pub struct WebWorker {
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
-    /// or being stopped before it started. Written under `vm_lock`.
+    /// or being stopped before it started. Written under the `vm_handle` lock.
     terminated_by_parent: AtomicBool,
 }
 
@@ -627,9 +627,9 @@ impl WebWorker {
             return;
         }
 
-        // `start_vm()` published `vm_ptr` under `vm_lock` AND installed it as
-        // this thread's per-thread VM (`VirtualMachine::init` → `VMHolder`), so
-        // the safe thread-local accessor returns the same allocation.
+        // `start_vm()` installed `vm_ptr` as this thread's per-thread VM
+        // (`VirtualMachine::init` → `VMHolder`), so the safe thread-local
+        // accessor returns the same allocation.
         debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         let global = VirtualMachine::get().global();
         // Take the API lock for the thread's whole life and abandon it with the
@@ -686,12 +686,8 @@ impl WebWorker {
                 ..Default::default()
             },
         )?;
-        // Pre-publish init: the VM is not yet visible to the parent thread,
-        // so a scoped `&mut VirtualMachine` is safe here. The borrow MUST
-        // end before the publish below — once `self.vm` is published under
-        // `vm_lock`, `request_termination`
-        // may concurrently dereference the same pointer on another thread,
-        // and a still-live `&mut VirtualMachine` would be aliased-&mut UB.
+        // Scoped `&mut VirtualMachine` for the worker-specific fields; ends
+        // before anything else on this thread re-derives access to the VM.
         {
             // SAFETY: init_worker returns a valid heap-allocated VM ptr;
             // not yet published, so this `&mut` is exclusive.
@@ -1383,8 +1379,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // SAFETY: per fn contract; `global` is a read-only field, and the resolver
     // (`transpiler`) is mutated only on `parent`'s owning thread — both call
     // sites (`create()` on the parent thread, `spin()` on the worker thread)
-    // satisfy that. The cross-thread readers under `vm_lock` never touch
-    // `transpiler`.
+    // satisfy that.
     let global = unsafe { (*parent).global };
     // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
     // owning thread (the caller's thread per fn contract).

@@ -712,9 +712,7 @@ impl<'a> LinkerGraph<'a> {
                 }
                 let is_boundary: BitSet = scb.bit_set(self.files.len())?;
 
-                // The reference replaces the boundary only for importers built for
-                // another target; a "use client" file importing another one keeps
-                // importing the boundary file itself.
+                // Only importers built for a target other than the boundary's get the reference.
                 let ast_cols = self.ast.split_mut();
                 let import_records_list: &mut [import_record::List<'_>] = ast_cols.import_records;
                 let targets: &[bun_ast::Target] = ast_cols.target;
@@ -955,8 +953,7 @@ pub struct File {
     pub entry_point_kind: EntryPoint::Kind,
 
     /// If "entry_point_kind" is not ".none", this is the index of the
-    /// corresponding entry point chunk. The `Scb` unique keys are resolved
-    /// through this as well.
+    /// corresponding entry point chunk.
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

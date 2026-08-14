@@ -7306,8 +7306,6 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        // The path maps keep pointing at the parsed file; `LinkerGraph::load`
-                        // redirects the import records that cross the boundary.
                         this.graph
                             .server_component_boundaries
                             .put(

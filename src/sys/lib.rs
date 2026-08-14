@@ -1711,8 +1711,7 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        // `_DARWIN_UNLIMITED_SELECT` select(2): no FD_SETSIZE limit; a set is
-        // ceil(nfds / 32) 32-bit words rather than a `libc::fd_set`.
+        // `_DARWIN_UNLIMITED_SELECT`: no FD_SETSIZE cap; a set is ceil(nfds / 32) `u32`s.
         #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
         pub(crate) fn select(
             nfds: c_int,
@@ -7643,28 +7642,21 @@ pub fn kevent(
     }
 }
 
-// ── block_until_readable / block_until_writable ──
-//
-// For loops that copy blocking-style on a pool thread but may be handed an fd
-// whose open file description is in O_NONBLOCK mode (`process.stdout` puts the
-// inherited stdio descriptions there, and the flag travels with a description
-// into child processes). On EAGAIN the loop waits here and retries, which is
-// what a blocking description would have done inside the syscall. Both return
-// as soon as the retried syscall will not block again, including when what it
-// is going to report is EOF or an error such as EPIPE: the retry reports it.
-
-/// Blocks until a `read`-side syscall on `fd` would make progress. EINTR is retried.
+/// Blocks until a read-side syscall on `fd` would not return EAGAIN; the
+/// retried syscall reports whatever is pending (data, EOF or the error).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     block_until(fd, posix::POLL_IN)
 }
 
-/// Blocks until a `write`-side syscall on `fd` would make progress. EINTR is retried.
+/// Blocks until a write-side syscall on `fd` would not return EAGAIN; the
+/// retried syscall reports whatever is pending (room or the error, e.g. EPIPE).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     block_until(fd, posix::POLL_OUT)
 }
 
+/// POLLHUP / POLLERR / POLLNVAL wake this without being requested; EINTR is retried.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn block_until(fd: Fd, events: i16) -> Maybe<()> {
     debug_assert!(fd.is_valid());
@@ -7673,21 +7665,21 @@ fn block_until(fd: Fd, events: i16) -> Maybe<()> {
         events,
         revents: 0,
     }];
-    // POLLHUP / POLLERR / POLLNVAL are reported without being requested, so
-    // any return means the caller's retry settles the matter.
     match posix::poll(&mut fds, -1) {
         Ok(_) => Ok(()),
         Err(err) => Err(err.with_fd(fd)),
     }
 }
 
-/// Blocks until a `read`-side syscall on `fd` would make progress. EINTR is retried.
+/// Blocks until a read-side syscall on `fd` would not return EAGAIN; the
+/// retried syscall reports whatever is pending (data, EOF or the error).
 #[cfg(target_os = "macos")]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     select_one(fd, SelectFor::Read)
 }
 
-/// Blocks until a `write`-side syscall on `fd` would make progress. EINTR is retried.
+/// Blocks until a write-side syscall on `fd` would not return EAGAIN; the
+/// retried syscall reports whatever is pending (room or the error, e.g. EPIPE).
 #[cfg(target_os = "macos")]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     select_one(fd, SelectFor::Write)
@@ -7700,11 +7692,9 @@ enum SelectFor {
     Write,
 }
 
-/// `select(2)` rather than `poll(2)`: XNU implements poll on the kqueue vnode
-/// filter, which for a named pipe (FIFO) fires only while bytes (or space) are
-/// available and never for the other end closing, so a poll would outlive the
-/// peer. `fifo_select` consults the FIFO's socket, which does report the close.
-/// `pipe(2)` pipes, sockets and ttys behave under select exactly as under poll.
+/// `select(2)`, not `poll(2)`: XNU's poll is the kqueue vnode filter, which for
+/// a named pipe never fires when the other end closes; `fifo_select` goes
+/// through the FIFO's socket and does. EINTR is retried.
 #[cfg(target_os = "macos")]
 fn select_one(fd: Fd, what: SelectFor) -> Maybe<()> {
     debug_assert!(fd.is_valid());

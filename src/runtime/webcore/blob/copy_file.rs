@@ -426,10 +426,8 @@ impl CopyFile {
             match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
 
-                // One of the fds is O_NONBLOCK (`Bun.stdout` is, once
-                // `process.stdout` has been touched). A pipe-to-pipe splice is
-                // non-blocking as a whole if either end is, so EAGAIN does not
-                // say which side would have blocked: wait for both, then retry.
+                // A pipe-to-pipe splice is non-blocking if either pipe is, so
+                // EAGAIN does not say which side would have blocked.
                 bun_sys::E::EAGAIN => {
                     if let Err(err) = bun_sys::block_until_readable(src_fd)
                         .and_then(|()| bun_sys::block_until_writable(dest_fd))
@@ -1005,8 +1003,6 @@ fn read_write_loop_capped(
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
-        // Either fd may be O_NONBLOCK (`Bun.stdout` is once `process.stdout` has
-        // been touched); wait for it and retry instead of failing the copy.
         let amt = match bun_sys::read(src_fd, &mut buf[..want]) {
             Ok(amt) => amt,
             Err(err) if err.is_retry() => {

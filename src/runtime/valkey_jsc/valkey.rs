@@ -40,6 +40,11 @@ pub struct ConnectionFlags {
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
+    /// `close()` is closing the socket itself: a close event uSockets dispatches synchronously
+    /// from inside it is `close()`'s to return, not the socket trampoline's to fold.
+    pub(crate) in_close: bool,
+    /// Set by that close event when its handler left an exception pending.
+    pub(crate) close_event_threw: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -63,6 +68,8 @@ impl Default for ConnectionFlags {
             failed: false,
             enable_auto_pipelining: true,
             finalized: false,
+            in_close: false,
+            close_event_threw: false,
             connection_promise_returns_client: false,
         }
     }
@@ -620,18 +627,29 @@ impl ValkeyClient {
         val
     }
 
-    /// For a half-open socket this runs `on_close` itself (see below) and returns what its
-    /// `onclose` listener left pending; the caller propagates that like any other callback
-    /// result (or folds it if it is the trampoline), it is never folded here beneath a
-    /// frame that is still going to return its own `Err`.
+    /// Returns what the close event's handler (ultimately the user's `onclose`) left pending —
+    /// whether uSockets dispatched the event synchronously from in here or, for a half-open
+    /// socket, `on_close` had to be run by hand — so the caller propagates it like any other
+    /// callback result (or folds it if it is the trampoline). It is never folded in here,
+    /// beneath frames that may still be about to return their own `Err`.
     pub fn close(&mut self) -> JsResult<()> {
+        if self.socket.is_closed() {
+            return Ok(());
+        }
+        let global = self.global_object();
+        if global.has_exception() && !global.has_pending_termination_exception() {
+            // A caller is unwinding an exception (it holds the `Err` for it). Closing now could run
+            // the close event — user script — on top of it, and whatever that left pending would be
+            // indistinguishable from the caller's; close from the task queue instead, where the
+            // event's result is folded as a top-level callback's. (Not for a stopped worker's
+            // termination: that stays pending for good, and no script runs under it anyway.)
+            self.parent().close_socket_next_tick();
+            return Ok(());
+        }
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        if socket.is_closed() {
-            return Ok(());
-        }
         // usockets does not dispatch `on_close`/`on_connect_error` when an
         // application explicitly closes a `us_socket_t` whose TCP connect
         // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
@@ -644,7 +662,12 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
+        self.flags.in_close = true;
         socket.close(uws::CloseCode::Normal);
+        self.flags.in_close = false;
+        if core::mem::take(&mut self.flags.close_event_threw) {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         if is_semi_socket {
             self.status = Status::Disconnected;
             // A half-open socket never gets uSockets' close dispatch, so run the

@@ -1373,6 +1373,10 @@ impl JSValkeyClient {
             return Ok(());
         };
         this_jsvalue.ensure_still_alive();
+        if global_object.has_exception() {
+            // As in `fail_with_js_value`: an exception already unwinding keeps propagating.
+            return Err(bun_jsc::JsError::Thrown);
+        }
 
         // Create an error value
         let error_value = protocol_jsc::valkey_error_to_js(
@@ -1411,6 +1415,11 @@ impl JSValkeyClient {
             return Ok(());
         };
         let global_object = self.global_object;
+        if global_object.has_exception() {
+            // Already unwinding an exception (a caller's, or the worker's termination): it keeps
+            // propagating; `onclose` cannot be entered on top of it.
+            return Err(bun_jsc::JsError::Thrown);
+        }
         if let Some(on_close) = Js::onclose_get_cached(this_value) {
             let _exit = self.vm().enter_event_loop_scope();
             on_close.call(&global_object, this_value, &[value])?;
@@ -1418,7 +1427,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    fn close_socket_next_tick(&self) {
+    pub(super) fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
             return;
         }
@@ -1880,7 +1889,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        this.client_mut().on_close()
+        let closed = this.client_mut().on_close();
+        if this.client.get().flags.in_close {
+            // Dispatched synchronously from `ValkeyClient::close()`: hand the result to it rather
+            // than to the socket trampoline's fold (see `close()`).
+            this.client_mut().flags.close_event_threw = closed.is_err();
+            return Ok(());
+        }
+        closed
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {

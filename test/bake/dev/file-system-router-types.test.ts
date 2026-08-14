@@ -5,17 +5,19 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { devTest, minimalFramework } from "../bake-harness";
 
-function frameworkWithRouterOptions(options: Partial<Bake.FrameworkFileSystemRouterType>): Bake.Framework {
+/** `minimalFramework` with one router type per entry, each overriding the minimal router type's options. */
+function frameworkWithRouterTypes(...types: Partial<Bake.FrameworkFileSystemRouterType>[]): Bake.Framework {
+  const [minimalType] = minimalFramework.fileSystemRouterTypes!;
   return {
     ...minimalFramework,
-    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes[0], ...options }],
+    fileSystemRouterTypes: types.map(options => ({ ...minimalType, ...options })),
   };
 }
 
 const page = (text: string) => `export default () => new Response(${JSON.stringify(text)});`;
 
 devTest("ignoreDirs skips directories whose name is listed", {
-  framework: frameworkWithRouterOptions({ ignoreDirs: ["hidden", "also-hidden"] }),
+  framework: frameworkWithRouterTypes({ ignoreDirs: ["hidden", "also-hidden"] }),
   files: {
     "routes/index.ts": page("index"),
     "routes/hidden/index.ts": page("hidden"),
@@ -23,6 +25,7 @@ devTest("ignoreDirs skips directories whose name is listed", {
     "routes/visible/index.ts": page("visible"),
     "routes/visible/hidden/index.ts": page("visible/hidden"),
     "routes/hidden-suffix/index.ts": page("hidden-suffix"),
+    "routes/node_modules/index.ts": page("node_modules"),
   },
   async test(dev) {
     await dev.fetch("/").equals("index");
@@ -33,6 +36,27 @@ devTest("ignoreDirs skips directories whose name is listed", {
     await dev.fetch("/visible/hidden").expect404();
     // Compared against the whole directory name, not as a prefix.
     await dev.fetch("/hidden-suffix").equals("hidden-suffix");
+    // Like `extensions`, a configured list replaces the default one instead of extending it.
+    await dev.fetch("/node_modules").equals("node_modules");
+  },
+});
+
+devTest("ignoreDirs is read from each router type", {
+  framework: frameworkWithRouterTypes(
+    { root: "routes-a", ignoreDirs: ["skip-a"] },
+    { root: "routes-b", ignoreDirs: ["skip-b"] },
+  ),
+  files: {
+    "routes-a/skip-a/one.ts": page("a: skip-a/one"),
+    "routes-a/skip-b/two.ts": page("a: skip-b/two"),
+    "routes-b/skip-a/three.ts": page("b: skip-a/three"),
+    "routes-b/skip-b/four.ts": page("b: skip-b/four"),
+  },
+  async test(dev) {
+    await dev.fetch("/skip-a/one").expect404();
+    await dev.fetch("/skip-b/two").equals("a: skip-b/two");
+    await dev.fetch("/skip-a/three").equals("b: skip-a/three");
+    await dev.fetch("/skip-b/four").expect404();
   },
 });
 

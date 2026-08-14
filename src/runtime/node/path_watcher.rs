@@ -588,8 +588,7 @@ pub(crate) fn watch(
 /// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
 /// (inotify delivers file events on the parent dir's wd so we only need a watch
 /// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
-/// subdirectory, or one deeper than `PATH_MAX` (its joined path spills past the
-/// `PathBuffer`), just stops that branch (matches Node).
+/// subdirectory just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,

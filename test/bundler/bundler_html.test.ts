@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import path from "node:path";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -982,6 +983,61 @@ body {
       expect(manifestContent).toContain('"My App"');
     },
   });
+
+  // The same rule applies when the reference is resolved through an onResolve
+  // plugin instead of by the bulk resolution pass: the resolver runs after the
+  // callback declines, or the callback returns the path itself.
+  const manifestViaPluginFiles = {
+    "/index.html": `<!DOCTYPE html><link rel="manifest" href="./manifest.json" /><script src="./app.js"></script>`,
+    "/app.js": "console.log('hello')",
+  };
+  function expectManifestCopied(api: BundlerTestBundleAPI) {
+    const htmlContent = api.readFile("out/index.html");
+    expect(htmlContent).not.toContain('manifest.json"');
+    const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+    expect(manifestMatch).not.toBeNull();
+    expect(api.readFile("out/" + manifestMatch![1])).toBe('{"name":"My App"}');
+    // The page's script is still bundled, not copied.
+    expect(htmlContent).toMatch(/src="(?:\.\/|\/)?[^"]+\.js"/);
+  }
+
+  itBundled("html/manifest-json-onresolve-declines", () => {
+    const declined: string[] = [];
+    return {
+      outdir: "out/",
+      files: {
+        ...manifestViaPluginFiles,
+        "/manifest.json": '{"name":"My App"}',
+      },
+      entryPoints: ["/index.html"],
+      plugins(builder) {
+        builder.onResolve({ filter: /manifest\.json$/ }, args => {
+          declined.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(declined).toEqual(["./manifest.json"]);
+        expectManifestCopied(api);
+      },
+    };
+  });
+
+  itBundled("html/manifest-json-onresolve-path", ({ root }) => ({
+    outdir: "out/",
+    files: {
+      ...manifestViaPluginFiles,
+      // Only reachable through the plugin: index.html references ./manifest.json.
+      "/generated/manifest.json": '{"name":"My App"}',
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /manifest\.json$/ }, () => ({
+        path: path.join(root, "generated", "manifest.json"),
+      }));
+    },
+    onAfterBundle: expectManifestCopied,
+  }));
 
   // Test that other non-JS/CSS file types referenced via URL imports are copied as assets
   itBundled("html/xml-asset", {

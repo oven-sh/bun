@@ -5,11 +5,10 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, ZigStringSlice};
+use bun_core::{self, ZigStringSlice, strings};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
-    line_offset_table,
 };
 
 type LinesHits = Vec<u32>;
@@ -417,7 +416,10 @@ pub struct BasicBlockRange {
 }
 
 pub struct ByteRangeMapping {
-    pub(crate) line_offset_table: line_offset_table::List,
+    /// Offset of the start of each line, in UTF-16 code units: the unit JSC
+    /// reports `BasicBlockRange` offsets in. Equal to the byte offset only
+    /// while the source text is pure ASCII.
+    pub(crate) line_starts: Box<[u32]>,
     pub(crate) source_id: i32,
     pub source_url: ZigStringSlice,
 }
@@ -483,7 +485,7 @@ impl ByteRangeMapping {
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
     ) -> Result<Report, bun_alloc::AllocError> {
-        let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
+        let line_starts = &*self.line_starts;
 
         let mut executable_lines: Bitset;
         let mut lines_which_have_executed: Bitset;
@@ -808,16 +810,42 @@ impl ByteRangeMapping {
         source_id: i32,
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
+        let mut line_offset_table = LineOffsetTable::generate(source_contents, 0)
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let byte_starts = line_offset_table.items_byte_offset_to_start_of_line();
+
+        let line_starts: Box<[u32]> = if strings::is_all_ascii(source_contents) {
+            Box::from(byte_starts)
+        } else {
+            // `source_contents` is the UTF-8 form of the string JSC holds
+            // (8-bit or 16-bit), and JSC's offsets count that string's code
+            // units, so re-measure each line in those.
+            let mut previous_byte_start: usize = 0;
+            let mut code_units: u32 = 0;
+            byte_starts
+                .iter()
+                .map(|&byte_start| {
+                    let byte_start = byte_start as usize;
+                    let line = &source_contents[previous_byte_start..byte_start];
+                    code_units += u32::try_from(strings::element_length_utf8_into_utf16(line))
+                        .expect("int cast");
+                    previous_byte_start = byte_start;
+                    code_units
+                })
+                .collect()
+        };
+        // `MultiArrayList`'s own `Drop` frees the slab only; this drops each
+        // row's `columns_for_non_ascii` box.
+        line_offset_table.drop_elements();
+
         ByteRangeMapping {
-            line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            line_starts,
             source_id,
             source_url,
         }
     }
 }
 
-// line_offset_table drops automatically.
 // source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]

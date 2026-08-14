@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Generate (and optionally clearsign) SHASUMS256.txt for a bun release.
 #

@@ -3638,8 +3638,7 @@ extern "C" bool Bun__VM__entryEvaluationStarted(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
-// The entry root's record is Evaluating (or beyond) from the moment linkAndEvaluateModule() enters it:
-// its graph is fetched and linked, and whatever is still pending on the entry promise is a top-level await.
+// Evaluating or beyond: the entry's graph is fetched and linked, and anything still pending is a top-level await.
 static bool entryRootIsEvaluating(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
@@ -3656,10 +3655,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__entryRootIsEvaluating(Zig::GlobalOb
     return entryRootIsEvaluating(globalObject, globalObject->moduleLoader());
 }
 
-// A module body is about to run. That means "the entry's graph is linked and executing" only if it is
-// part of the entry root's own evaluation, whose dependencies run inside it (post-order). A module that
-// evaluates before the root is Evaluating belongs to some other root: a preload's un-awaited import()
-// finishing while the entry is still fetching.
+// A module body is about to run. Before the root is Evaluating it belongs to some other root, such as a
+// preload's un-awaited import() finishing while the entry is still fetching, so it does not count.
 static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     void* bunVM = globalObject->bunVM();

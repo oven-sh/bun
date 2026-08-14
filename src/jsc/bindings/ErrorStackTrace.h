@@ -235,9 +235,7 @@ public:
     static constexpr unsigned AddNewKeyword = 1 << 4;
 };
 
-// An anonymous `export default` is bound to JSC's private `*default*` identifier, whose string is
-// "starDefault". JSC only substitutes "default" when it reifies the function's `name` property
-// (JSFunction::reifyName); apply the same substitution to a name taken from the executable instead.
+// Renders an anonymous `export default`'s internal `*default*` binding as "default", like JSFunction::reifyName does for `.name`.
 String functionNameForDisplay(JSC::VM& vm, String name);
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);

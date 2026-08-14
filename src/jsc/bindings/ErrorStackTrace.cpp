@@ -526,8 +526,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
 
 String functionNameForDisplay(JSC::VM& vm, String name)
 {
-    // Compared by identity: the private identifier's string is its own unique StringImpl, so a
-    // function that is really called "starDefault" keeps its name.
+    // Identity, not equality: a function that is actually named "starDefault" keeps its name.
     if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl()) {
         return vm.propertyNames->defaultKeyword.string();
     }

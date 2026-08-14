@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { bunEnv, bunExe, isDebug, makeTree, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -369,34 +369,143 @@ describe("@types/bun integration test", () => {
 
   // Runs on debug builds too: spawning tsc over a single file is cheap,
   // unlike the in-process LanguageService runs above.
+  async function expectToTypecheck(dirName: string, fileName: string, source: string) {
+    const checkDir = join(TEMP_DIR, dirName);
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = [fileName];
+    tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, {
+      "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+      [fileName]: source,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
   describe("Bun.mmap", () => {
     test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
-           view satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+      await expectToTypecheck(
+        "mmap-options-check",
+        "mmap-options.ts",
+        `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+         view satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+      );
+    });
+  });
+
+  describe("BuildMessage / ResolveMessage", () => {
+    test("declare the Error base and the members the runtime objects have", async () => {
+      using dir = tempDir("bun-types-message-members", {
+        "redeclared.ts": "let a = 1;\nlet a = 2;\n",
+        "missing-import.ts": 'import "./missing";\n',
       });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
+      const { logs } = await Bun.build({
+        entrypoints: [join(String(dir), "redeclared.ts"), join(String(dir), "missing-import.ts")],
+        throw: false,
+      });
+      const buildMessage = logs.find(log => log instanceof BuildMessage)!;
+      const resolveMessage = logs.find(log => log instanceof ResolveMessage)!;
+      let requireFailure: unknown;
+      try {
+        require(join(String(dir), "missing-require"));
+      } catch (e) {
+        requireFailure = e;
+      }
+      if (!(requireFailure instanceof ResolveMessage)) throw new Error("require() did not throw a ResolveMessage");
+
+      const buildJsonKeys = Object.keys(buildMessage.toJSON());
+      const resolveJsonKeys = Object.keys(resolveMessage.toJSON());
+
+      // The runtime shape the declarations below have to mirror.
+      expect({
+        errors: [buildMessage instanceof Error, resolveMessage instanceof Error],
+        stacks: [buildMessage.stack, resolveMessage.stack],
+        notes: buildMessage.notes.map((note): [boolean, string] => [note instanceof BuildMessage, note.level]),
+        // zero-based [line, column], unlike the one-based position.line / position.column
+        locations: [
+          [buildMessage.line, buildMessage.column, buildMessage.position?.line, buildMessage.position?.column],
+          [resolveMessage.line, resolveMessage.column, resolveMessage.position?.line, resolveMessage.position?.column],
+        ],
+        requireStacks: [resolveMessage.requireStack, requireFailure.requireStack],
+        strings: [`${buildMessage}`, buildMessage[Symbol.toPrimitive]("number")],
+        json: { build: buildJsonKeys, resolve: resolveJsonKeys },
+      }).toEqual({
+        errors: [true, true],
+        stacks: [undefined, `ResolveMessage: ${resolveMessage.message}`],
+        notes: [[true, "note"]],
+        locations: [
+          [1, 4, 2, 5],
+          [0, 7, 1, 8],
+        ],
+        requireStacks: [undefined, [expect.any(String)]],
+        strings: [`BuildMessage: ${buildMessage.message}`, null],
+        json: {
+          build: ["name", "position", "message", "level"],
+          resolve: ["name", "position", "message", "level", "specifier", "importKind", "referrer"],
+        },
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+      await expectToTypecheck(
+        "build-message-members-check",
+        "build-logs.ts",
+        [
+          `declare const output: Bun.BuildOutput;`,
+          `for (const log of output.logs) {`,
+          `  log.stack satisfies string | undefined;`,
+          `  log.cause satisfies unknown;`,
+          `  log.line satisfies number;`,
+          `  log.column satisfies number;`,
+          `  log[Symbol.toPrimitive]("default") satisfies string;`,
+          `  log[Symbol.toPrimitive]("number") satisfies string | null;`,
+          `  if (log instanceof ResolveMessage) {`,
+          `    log.stack satisfies string;`,
+          `    log.requireStack satisfies string[] | undefined;`,
+          `    const json = log.toJSON();`,
+          ...resolveJsonKeys.map(key => `    json.${key};`),
+          `    // @ts-expect-error - not serialized`,
+          `    json.code;`,
+          `    // @ts-expect-error - not serialized`,
+          `    json.requireStack;`,
+          `  } else {`,
+          `    log.notes satisfies BuildMessage[];`,
+          `    log.notes[0]?.notes satisfies BuildMessage[] | undefined;`,
+          `    const json = log.toJSON();`,
+          ...buildJsonKeys.map(key => `    json.${key};`),
+          `    // @ts-expect-error - not serialized`,
+          `    json.notes;`,
+          `    // @ts-expect-error - only ResolveMessage has requireStack`,
+          `    log.requireStack;`,
+          `  }`,
+          `}`,
+          `try {`,
+          `  require("./missing");`,
+          `} catch (e) {`,
+          `  if (e instanceof ResolveMessage) {`,
+          `    const requireStack: string[] = e.requireStack ?? [];`,
+          `    console.error(e.stack, requireStack, e.line, e.column);`,
+          `  } else if (e instanceof BuildMessage) {`,
+          `    const error: Error = e;`,
+          `    console.error(error.stack, e.notes, e.line, e.column);`,
+          `  }`,
+          `}`,
+        ].join("\n"),
+      );
     });
   });
 

@@ -390,48 +390,59 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    pub fn on_ready(&mut self) {
+    /// # Safety
+    /// `this` is the live `ReadFile` whose `io_poll` fired; the pool owns it
+    /// again once this returns.
+    pub(crate) unsafe fn on_ready(this: *mut Self) {
         bloblog!("ReadFile.onReady");
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
-        // On macOS, we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
-        }
+        // SAFETY: fn contract; no reference into `*this` outlives its statement.
+        unsafe {
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_read_loop_task,
+            };
+            // On macOS, we use one-shot mode, so:
+            // - we don't need to unregister
+            // - we don't need to delete from kqueue
+            #[cfg(target_os = "macos")]
+            {
+                // unless pending IO has been scheduled in-between.
+                (*this).close_after_io = (*this).io_request.scheduled;
+            }
 
-        WorkPool::schedule(&raw mut self.task);
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
-    pub(crate) fn on_io_error(&mut self, err: &bun_sys::Error) {
+    /// # Safety
+    /// As for [`on_ready`](Self::on_ready).
+    pub(crate) unsafe fn on_io_error(this: *mut Self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        self.system_error = Some(err.to_system_error().into());
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
-        // On macOS, we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
+        // SAFETY: as in `on_ready`.
+        unsafe {
+            (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            (*this).system_error = Some(err.to_system_error().into());
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_read_loop_task,
+            };
+            // On macOS, we use one-shot mode, so:
+            // - we don't need to unregister
+            // - we don't need to delete from kqueue
+            #[cfg(target_os = "macos")]
+            {
+                // unless pending IO has been scheduled in-between.
+                (*this).close_after_io = (*this).io_request.scheduled;
+            }
+            WorkPool::schedule(&raw mut (*this).task);
         }
-        WorkPool::schedule(&raw mut self.task);
     }
 
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
     #[cfg(not(windows))]
     fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
-        // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
+        // SAFETY: `ctx` is the `*mut ReadFile` registered in `on_request_readable` below.
+        unsafe { Self::on_io_error(ctx.cast::<ReadFile>(), err) }
     }
 
     #[cfg(not(windows))]
@@ -765,9 +776,9 @@ impl ReadFile {
     }
 
     fn do_read_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
-        // recover parent.
+        // SAFETY: only reached via `WorkPoolTask::callback` with the `task`
+        // field that `on_ready` / `on_io_error` projected from the live
+        // `ReadFile`'s own pointer; recover parent.
         let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
 
         this.update();
@@ -985,19 +996,10 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn io_request(&mut self) -> Option<&mut bun_io::Request> {
         None
     }
-    fn io_poll(&mut self) -> &mut bun_io::Poll {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
     fn update(&mut self) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
-    fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
 }

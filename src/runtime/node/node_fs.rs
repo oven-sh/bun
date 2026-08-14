@@ -1605,8 +1605,9 @@ mod _async_tasks {
             // the JS heap: counted, so the VM waits for it (embedded work).
             task.poster.embedded_work_scheduled();
 
-            let raw = bun_core::heap::release(task);
-            WorkPool::schedule(&raw mut raw.task);
+            let raw = bun_core::heap::into_raw(task);
+            // SAFETY: `raw` is the box just released; the pool owns it from here.
+            WorkPool::schedule(unsafe { &raw mut (*raw).task });
             raw
         }
 

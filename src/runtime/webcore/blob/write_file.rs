@@ -179,26 +179,35 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_ready(&mut self) {
+    /// # Safety
+    /// `this` is the live `WriteFile` whose `io_poll` fired; the pool owns it
+    /// again once this returns.
+    pub(crate) unsafe fn on_ready(this: *mut Self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut self.task);
+        // SAFETY: fn contract; no reference into `*this` outlives its statement.
+        unsafe {
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
     pub(crate) fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
-        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        this.system_error = Some(err.to_system_error().into());
-        this.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut this.task);
+        let this = this.cast::<WriteFile>();
+        // SAFETY: `this` is the live `WriteFile` the io thread handed to this
+        // hook; otherwise as in `on_ready`.
+        unsafe {
+            (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            (*this).system_error = Some(err.to_system_error().into());
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
     #[cfg(not(windows))]
@@ -473,8 +482,9 @@ impl WriteFile {
     }
 
     fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_writable`/`init`; recover parent.
+        // SAFETY: only reached via `WorkPoolTask::callback` with the `task` field
+        // that `on_ready` / `on_io_error` projected from the live `WriteFile`'s
+        // own pointer; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]

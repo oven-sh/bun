@@ -235,16 +235,10 @@ public:
     static constexpr unsigned AddNewKeyword = 1 << 4;
 };
 
-// The name JSC recorded for a function, as it should be shown to users. An anonymous
-// `export default` is bound to the private `*default*` identifier, which stringifies as
-// "starDefault"; its reified `name` property is "default" (JSFunction::reifyName).
-String functionNameForDisplay(JSC::VM& vm, const JSC::Identifier& name);
-
-// Bun's counterpart of JSC::getCalculatedDisplayName: a non-empty own "displayName" property, else
-// the function's own name, else (for JS functions) its ecmaName via functionNameForDisplay. Empty
-// for anything that is not a function. Runs no JS and allocates nothing on the JS heap, so it is
-// also used to format stack traces from error finalizers.
-String calculatedDisplayName(JSC::VM& vm, JSC::JSObject* object);
+// An anonymous `export default` is bound to JSC's private `*default*` identifier, whose string is
+// "starDefault". JSC only substitutes "default" when it reifies the function's `name` property
+// (JSFunction::reifyName); apply the same substitution to a name taken from the executable instead.
+String functionNameForDisplay(JSC::VM& vm, String name);
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);

@@ -524,56 +524,15 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(function->jsExecutable()->source());
 }
 
-String functionNameForDisplay(JSC::VM& vm, const JSC::Identifier& name)
+String functionNameForDisplay(JSC::VM& vm, String name)
 {
-    if (name == vm.propertyNames->starDefaultPrivateName) {
+    // Compared by identity: the private identifier's string is its own unique StringImpl, so a
+    // function that is really called "starDefault" keeps its name.
+    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl()) {
         return vm.propertyNames->defaultKeyword.string();
     }
 
-    return name.string();
-}
-
-// Own data properties only: this also runs from error finalizers, where getters must not run
-// and nothing may be allocated on the JS heap.
-static String ownStringPropertyWithoutGC(JSC::JSObject* object, const JSC::Identifier& propertyName)
-{
-    unsigned attributes;
-    PropertyOffset offset = object->structure()->getConcurrently(propertyName.impl(), attributes);
-    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-        return String();
-    }
-
-    JSValue value = object->getDirect(offset);
-    if (!value || !value.isString()) {
-        return String();
-    }
-
-    return asString(value)->tryGetValueWithoutGC();
-}
-
-String calculatedDisplayName(JSC::VM& vm, JSC::JSObject* object)
-{
-    auto jstype = object->type();
-    if (jstype != JSC::JSFunctionType && jstype != JSC::InternalFunctionType) {
-        return emptyString();
-    }
-
-    String displayName = ownStringPropertyWithoutGC(object, vm.propertyNames->displayName);
-    if (!displayName.isEmpty()) {
-        return displayName;
-    }
-
-    if (jstype == JSC::InternalFunctionType) {
-        return uncheckedDowncast<JSC::InternalFunction>(object)->name();
-    }
-
-    auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-    String name = function->nameWithoutGC(vm);
-    if (!name.isEmpty() || function->isHostFunction()) {
-        return name;
-    }
-
-    return functionNameForDisplay(vm, function->jsExecutable()->ecmaName());
+    return name;
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -586,7 +545,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return functionNameForDisplay(vm, uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName());
+        return functionNameForDisplay(vm, uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string());
     }
 
     return String();
@@ -594,7 +553,9 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object)
 {
-    if (object->type() == JSC::ProxyObjectType) return {};
+    WTF::String functionName;
+    auto jstype = object->type();
+    if (jstype == JSC::ProxyObjectType) return {};
 
     // First try the "name" property.
     {
@@ -617,7 +578,30 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         }
     }
 
-    return calculatedDisplayName(vm, object);
+    {
+        // Then try the "displayName" property (what this does internally)
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        functionName = JSC::getCalculatedDisplayName(vm, object);
+        if (topExceptionScope.exception()) [[unlikely]] {
+            (void)topExceptionScope.tryClearException();
+        }
+    }
+
+    {
+        if (functionName.isEmpty()) {
+            if (jstype == JSC::JSFunctionType) {
+                auto* function = uncheckedDowncast<JSC::JSFunction>(object);
+                functionName = function->nameWithoutGC(vm);
+                if (functionName.isEmpty() && !function->isHostFunction()) {
+                    functionName = function->jsExecutable()->ecmaName().string();
+                }
+            } else if (jstype == JSC::InternalFunctionType) {
+                functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
+            }
+        }
+    }
+
+    return functionNameForDisplay(vm, WTF::move(functionName));
 }
 
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
@@ -628,17 +612,63 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
         if (auto* callee = frame.callee()) {
             if (auto* object = callee->getObject()) {
                 auto jstype = object->type();
-                if (flags && (jstype == JSC::JSFunctionType || jstype == JSC::InternalFunctionType)) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                }
+                Structure* structure = object->structure();
+
+                auto setTypeFlagsIfNecessary = [&]() {
+                    if (flags) {
+                        if (jstype == JSC::JSFunctionType || jstype == JSC::InternalFunctionType) {
+                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
+                        }
+                    }
+                };
 
                 // First try the "name" property.
-                String name = ownStringPropertyWithoutGC(object, vm.propertyNames->name);
-                if (!name.isEmpty()) {
-                    return name;
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
+                            }
+                        }
+                    }
                 }
 
-                return calculatedDisplayName(vm, object);
+                // Then try the "displayName" property.
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
+                            }
+                        }
+                    }
+                }
+
+                // Lastly, try type-specific properties.
+                if (jstype == JSC::JSFunctionType) {
+                    auto* function = uncheckedDowncast<JSC::JSFunction>(object);
+                    auto str = function->nameWithoutGC(vm);
+                    if (str.isEmpty() && !function->isHostFunction()) {
+                        setTypeFlagsIfNecessary();
+                        return functionNameForDisplay(vm, function->jsExecutable()->ecmaName().string());
+                    }
+                    setTypeFlagsIfNecessary();
+                    return str;
+                } else if (jstype == JSC::InternalFunctionType) {
+                    auto str = uncheckedDowncast<JSC::InternalFunction>(object)->name();
+                    setTypeFlagsIfNecessary();
+                    return str;
+                }
             }
         }
 

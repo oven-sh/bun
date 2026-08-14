@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { readdir } from "node:fs/promises";
+import { gzip } from "node:zlib";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -649,6 +651,18 @@ it("anonymous export default class and function are named 'default'", async () =
     stderr: "",
     exitCode: 0,
   });
+});
+
+// Bun's built-in modules are compiled as JSC builtins. zlib's convenience methods and fs.promises'
+// wrappers are anonymous function expressions that get their `name` defined afterwards; the local
+// variable each was assigned to inside the module (`fn`, `wrapped`) must not show up here.
+it("functions from built-in modules do not inspect as their internal variable name", () => {
+  expect([gzip.name, Bun.inspect(gzip), readdir.name, Bun.inspect(readdir)]).toEqual([
+    "gzip",
+    "[Function]",
+    "readdir",
+    "[AsyncFunction]",
+  ]);
 });
 
 it("console.log on a Blob shows name", () => {

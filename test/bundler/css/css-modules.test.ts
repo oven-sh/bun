@@ -21,6 +21,304 @@ describe("css", () => {
     },
   });
 
+  // Classes and ids inside `:global(...)` are printed as written, so they must
+  // not show up in the exports object either (the hashed name they would be
+  // exported under matches nothing in the stylesheet).
+  itBundled("css-module/GlobalPseudoFunctionNamesAreNotExported", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.g) { color: red }
+        .local :global(.h) { color: blue }
+        :global(#gid) { color: green }
+        .scoped { color: pink }
+        #sid { color: black }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          local: "local_-MSaAA",
+          scoped: "scoped_-MSaAA",
+          sid: "sid_-MSaAA"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .g {
+          color: red;
+        }
+
+        .local_-MSaAA .h {
+          color: #00f;
+        }
+
+        #gid {
+          color: green;
+        }
+
+        .scoped_-MSaAA {
+          color: pink;
+        }
+
+        #sid_-MSaAA {
+          color: #000;
+        }
+        "
+      `);
+    },
+  });
+
+  // `:local(...)` nested inside `:global(...)` makes its argument local again
+  // (esbuild does the same), and the scope switch ends at the closing paren.
+  itBundled("css-module/LocalPseudoFunctionInsideGlobal", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.a :local(.b)) { color: red }
+        :global(:is(.c, .d) :local(.e):not(.f)) .after { color: blue }
+        .before:not(:global(.n)) { color: green }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          b: "b_-MSaAA",
+          e: "e_-MSaAA",
+          after: "after_-MSaAA",
+          before: "before_-MSaAA"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .a .b_-MSaAA {
+          color: red;
+        }
+
+        :is(.c, .d) .e_-MSaAA:not(.f) .after_-MSaAA {
+          color: #00f;
+        }
+
+        .before_-MSaAA:not(.n) {
+          color: green;
+        }
+        "
+      `);
+    },
+  });
+
+  // `:is()` drops an invalid selector and keeps parsing the rest of its list
+  // with the same selector parser, so a `:global(...)` whose argument fails to
+  // parse must still hand the enclosing (local) scope back.
+  itBundled("css-module/GlobalScopeRestoredAfterInvalidArgument", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        .x:is(:global(.), .y) { color: red }
+        .p:is(:global(), .q) { color: blue }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          x: "x_-MSaAA",
+          y: "y_-MSaAA",
+          p: "p_-MSaAA",
+          q: "q_-MSaAA"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .x_-MSaAA.y_-MSaAA {
+          color: red;
+        }
+
+        .p_-MSaAA.q_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  // The same name used both as a local class and inside `:global(...)` is
+  // exported once, for the local use; the global use still prints as written.
+  itBundled("css-module/GlobalAndLocalUseOfSameName", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        .g { color: red }
+        :global(.g) { color: blue }
+        .wrap :global(.g) { color: green }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          g: "g_-MSaAA",
+          wrap: "wrap_-MSaAA"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .g_-MSaAA {
+          color: red;
+        }
+
+        .g {
+          color: #00f;
+        }
+
+        .wrap_-MSaAA .g {
+          color: green;
+        }
+        "
+      `);
+    },
+  });
+
+  // Rules nested inside a `:global(...)` rule are not inside the parens, so
+  // their own classes are still local.
+  itBundled("css-module/GlobalPseudoFunctionDoesNotLeakIntoNestedRules", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.a) {
+          .b { color: red }
+          &:global(.c) .d { color: blue }
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          b: "b_-MSaAA",
+          d: "d_-MSaAA"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .a .b_-MSaAA {
+          color: red;
+        }
+
+        .a.c .d_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/OnlyGlobalSelectorsExportsNothing", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.a) { color: red }
+        :global(#b) :global(.c) { color: blue }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {};
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .a {
+          color: red;
+        }
+
+        #b .c {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  // A name that only ever appears inside `:global(...)` is not a local, so it
+  // cannot be composed (previously this composed a hashed name that no rule
+  // in the output used).
+  itBundled("css-module/ComposesNameOnlyDefinedAsGlobal", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        .a { composes: g; color: red }
+        :global(.g) { color: blue }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.module.css": [
+        'The name "g" never appears in "styles.module.css" as a CSS modules locally scoped class name.',
+      ],
+    },
+  });
+
   itBundled("css-module/BundleTwoFilesWithoutCodeSplitting", {
     files: {
       "/foo-entry.js": `

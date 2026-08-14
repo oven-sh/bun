@@ -418,7 +418,10 @@ impl TokenList {
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(v.value, dest)?;
+                        match v.exact_int() {
+                            Some(int) => CSSIntegerFns::to_css(int, dest)?,
+                            None => CSSNumberFns::to_css(v.value, dest)?,
+                        }
                         has_whitespace = false;
                     }
                     _ => {

@@ -861,8 +861,8 @@ describe.concurrent("tarball re-extraction over an existing cache folder", () =>
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const { version } = await file(join(app, "node_modules", "pkg", "package.json")).json();
     return version as string;
   }

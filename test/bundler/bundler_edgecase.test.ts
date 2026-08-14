@@ -3262,6 +3262,33 @@ describe("bundler", () => {
     },
     run: { stdout: "esm esm true cjs" },
   });
+  // Assigning through a define is assigning to its value: an import binding
+  // is rejected like a direct assignment would be, a property of one is fine.
+  itBundled("edgecase/DefineValueImportBindingCannotBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import { binding } from "./other.js";
+        X = 1;
+      `,
+      "/other.js": /* js */ `export let binding = 0;`,
+    },
+    define: { X: "binding" },
+    bundleErrors: {
+      "/entry.js": ['Cannot assign to import "binding"'],
+    },
+  });
+  itBundled("edgecase/DefineValuePropertyOfImportCanBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import { box } from "./other.js";
+        X = "stored";
+        console.log(box.prop);
+      `,
+      "/other.js": /* js */ `export const box = {};`,
+    },
+    define: { X: "box.prop" },
+    run: { stdout: "stored" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

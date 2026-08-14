@@ -342,6 +342,15 @@ impl<'a> Installer<'a> {
                     ),
                 );
             }
+            TaskError::LinkPathTooLong(link_pkg_id) => {
+                Output::err(
+                    "ENAMETOOLONG",
+                    "link path for package <b>{}<r> is too long",
+                    (bstr::BStr::new(
+                        pkg_names[*link_pkg_id as usize].slice(string_buf),
+                    ),),
+                );
+            }
             TaskError::Patching(patch_log) => {
                 Output::err_generic(
                     "failed to patch package: {}@{}",
@@ -646,6 +655,9 @@ pub struct DownloadError {
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
+    /// `<global link dir>/<link: target>` of this `link:` dependency does not
+    /// fit in a path buffer. See `Installer::append_dependency_path`.
+    LinkPathTooLong(PackageID),
     RunScripts(crate::Error),
     Binaries(crate::Error),
     Patching(Log),
@@ -657,6 +669,7 @@ impl TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
+            TaskError::LinkPathTooLong(pkg_id) => TaskError::LinkPathTooLong(*pkg_id),
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
             TaskError::Patching(_log) => {
@@ -1506,8 +1519,10 @@ impl Task {
                                 dep.entry_id,
                                 Which::Final,
                             );
-                        } else {
-                            installer.append_store_path(&mut dep_store_path, dep.entry_id);
+                        } else if let Err(err) =
+                            installer.append_dependency_path(&mut dep_store_path, dep.entry_id)
+                        {
+                            return Ok(Yield::failure(err));
                         }
 
                         // A `dest.save()` `ResetScope` guard would hold `&mut dest`,
@@ -2684,6 +2699,52 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
+    /// `append_store_path` for the entry a dependency symlink points at. This
+    /// is the one place a `link:` package's path is needed: it is never
+    /// installed (`install_isolated_packages` marks its entry done up front),
+    /// its dependents link straight to `<global link dir>/<link: target>`.
+    ///
+    /// The `link:` target is stored as written in package.json or bun.lock, so
+    /// unlike every other input of these path builders it is not bounded by a
+    /// path buffer. A target that does not fit fails the dependent instead.
+    pub(crate) fn append_dependency_path(
+        &self,
+        buf: &mut AutoAbsPath,
+        entry_id: StoreEntryId,
+    ) -> core::result::Result<(), TaskError> {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_res = self.lockfile().packages.items_resolution()[pkg_id as usize];
+
+        if pkg_res.tag != ResolutionTag::Symlink {
+            self.append_store_path(buf, entry_id);
+            return Ok(());
+        }
+
+        // Lazily ensuring the global link dir would mutate `*PackageManager`,
+        // but this runs on worker threads, so the lazy init is hoisted to the
+        // main thread (`install_isolated_packages`, before any `start_task`).
+        // Reading the cached field here is then equivalent.
+        let link_dir_path: &[u8] = &self.manager().global_link_dir_path;
+        debug_assert!(
+            !link_dir_path.is_empty(),
+            "global_link_dir_path must be ensured before tasks start",
+        );
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        let link_target = pkg_res.symlink().slice(string_buf);
+
+        let mut target = paths::AutoAbsPathChecked::init();
+        if target.append(link_dir_path).is_err() || target.append(link_target).is_err() {
+            return Err(TaskError::LinkPathTooLong(pkg_id));
+        }
+
+        paths::PathLike::clear(buf);
+        // Same unit width and `target` passed the length check, so this fits.
+        buf.append(target.slice()).assume_ok();
+        Ok(())
+    }
+
+    /// `entry_id` must not be a `link:` package; see `append_dependency_path`.
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
@@ -2730,21 +2791,7 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // Lazily ensuring the global link dir would mutate
-                // `*PackageManager`, but `append_store_path` is
-                // `&self` and may run on worker
-                // threads, so the lazy init is hoisted to the main-thread caller
-                // (`isolated_install::install_packages`, before any `start_task`).
-                // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
-                debug_assert!(
-                    !symlink_dir_path.is_empty(),
-                    "global_link_dir_path must be ensured before tasks start",
-                );
-
-                buf.clear();
-                buf.append(symlink_dir_path);
-                buf.append(pkg_res.symlink().slice(string_buf));
+                unreachable!("link: packages have no store path; see append_dependency_path")
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];

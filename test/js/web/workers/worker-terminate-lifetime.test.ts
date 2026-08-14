@@ -898,3 +898,55 @@ test(
   },
   timeout,
 );
+
+// A worker exiting with fetches that have both a streaming request body (whose sink cell holds the
+// FetchTasklet) and a JS-touched response.body (a ByteStream source owned by another cell): the VM's
+// last sweep destroys cells in no particular order, and the tasklet's teardown unhooked itself as the
+// response stream's producer by writing through the stream's wrapper into a source that sweep had
+// already freed (heap-use-after-free WRITE under ASAN). The tasklet now holds a counted ref on the
+// source for as long as it is its producer.
+test(
+  "worker exit with streaming-request-body fetches whose response.body was touched",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const server = Bun.serve({ port: 0, fetch(req) { return new Response(req.body); } });
+        const N = 4;
+        let done = 0;
+        for (let i = 0; i < N; i++) {
+          const w = new Worker(\`
+            const keep = [];
+            for (let j = 0; j < 8; j++) {
+              let ctrl;
+              const body = new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array(1024)); } });
+              const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
+                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); })
+                .catch(() => {});
+              keep.push(p, ctrl);
+              setInterval(() => { try { ctrl.enqueue(new Uint8Array(512)); } catch {} }, 5);
+            }
+            setTimeout(() => process.exit(0), 150 + \${(i * 13) % 60});
+          \`, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", (code) => {
+            if (code !== 0) { console.error("worker exited " + code); process.exit(1); }
+            if (++done === N) { console.log("all exited"); server.stop(true); process.exit(0); }
+          });
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("all exited\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

@@ -115,6 +115,10 @@ pub struct FetchTasklet {
     pub(crate) native_response: Option<*mut Response>,
     /// stream strong ref if any is available
     pub(crate) readable_stream_ref: ReadableStreamStrong,
+    /// A counted ref on that stream's ByteStream source for as long as this tasklet is its
+    /// `producer`, so unhooking goes through native memory we keep alive rather than through
+    /// the JS wrappers, which the VM's last sweep destroys in no particular order.
+    pub(crate) response_stream_source: Option<NonNull<crate::webcore::byte_stream::Source>>,
     pub(crate) request_headers: Headers,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -1591,7 +1595,17 @@ impl FetchTasklet {
         readable: ReadableStream,
     ) {
         let this = Self::from_ctx(ctx);
+        this.clear_stream_handlers();
         this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
+        if let crate::webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
+            // SAFETY: the stream (held Strong above) owns a live ByteStream embedded in
+            // its Source; JS thread.
+            unsafe {
+                let source = (*bytes).parent();
+                (*source).increment_count();
+                this.response_stream_source = NonNull::new(source);
+            }
+        }
         // A ByteStream now drains scheduled_response_buffer per chunk; undo any
         // buffered-consumer reservation request so callback() stops growing it.
         this.is_buffering_body.store(false, Ordering::Release);
@@ -1658,13 +1672,16 @@ impl FetchTasklet {
         }
     }
 
-    /// Clear every ByteStream.Source callback whose ctx is this FetchTasklet
-    /// before releasing `readable_stream_ref` — the stream can outlive us in JS.
+    /// Unhook this tasklet as the response ByteStream's producer before releasing
+    /// `readable_stream_ref` — the stream can outlive us in JS — and drop the ref that
+    /// kept the source's memory ours to write to. Touches no JS cell.
     fn clear_stream_handlers(&mut self) {
-        if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
-            if let Some(bytes) = readable.ptr.bytes() {
-                let source = bytes.parent_const();
-                source.producer.set(SourceHandle::None);
+        if let Some(source) = self.response_stream_source.take() {
+            // SAFETY: counted ref taken in `on_readable_stream_available`; live until
+            // the `decrement_count` below, which may free it.
+            unsafe {
+                (*source.as_ptr()).producer.set(SourceHandle::None);
+                crate::webcore::byte_stream::Source::decrement_count(source.as_ptr());
             }
         }
     }
@@ -1813,7 +1830,7 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
+    fn ignore_remaining_response_body(&mut self, _from_finalizer: bool) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
@@ -1835,16 +1852,11 @@ impl FetchTasklet {
         }
         // we should not keep the process alive if we are ignoring the body
         self.poll_ref.unref(bun_io::js_vm_ctx());
-        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`), `clear_stream_handlers()` must be skipped: it
-        // reaches `JSCell::classInfo()` via generated cached-value setters /
-        // `ReadableStreamTag__tagged`, and touching any cell during
-        // `MutatorState::Sweeping` is forbidden. The request-body sink is left
-        // for `clear_sink()` in `deinit()` (an event-loop task, outside sweep)
-        // to detach.
-        if !from_finalizer {
-            self.clear_stream_handlers();
-        }
+        // Also fine from `on_response_finalize` (a JSC Weak finalizer inside
+        // `WeakBlock::sweep`, `_from_finalizer`): unhooking touches no JS cell. The
+        // request-body sink is left for `clear_sink()` in `deinit()` (an event-loop
+        // task, outside sweep) to detach.
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
         self.response.clear();
 
@@ -1907,6 +1919,7 @@ impl FetchTasklet {
             response: jsc::Weak::default(),
             native_response: None,
             readable_stream_ref: ReadableStreamStrong::default(),
+            response_stream_source: None,
             request_headers: fetch_options.headers,
             promise,
             concurrent_task: ConcurrentTask::default(),

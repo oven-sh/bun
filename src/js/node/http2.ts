@@ -30,8 +30,7 @@ const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
-// Lazy: an eager require would load _http_common (and its HTTPParser-backed
-// FreeList) whenever http2 loads, breaking http_parser monkey-patching.
+// Lazily required: loading _http_common eagerly breaks http_parser monkey-patching.
 let continueExpression;
 const tls = require("node:tls");
 const net = require("node:net");

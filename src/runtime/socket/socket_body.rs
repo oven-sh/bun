@@ -1964,12 +1964,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let buffer = match Self::create_dispatch_buffer(&global, session.len()) {
-            Ok(b) => b,
-            Err(e) => {
-                return Err(e);
-            }
-        };
+        let buffer = Self::create_dispatch_buffer(&global, session.len())?;
         if let Some(ab) = buffer.as_array_buffer(&global) {
             // SAFETY: `ab.ptr` points to a freshly-created `session.len()`-byte
             // JS buffer kept alive on the stack; `session` is valid for its length.
@@ -2012,12 +2007,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let buffer = match Self::create_dispatch_buffer(&global, line.len()) {
-            Ok(b) => b,
-            Err(e) => {
-                return Err(e);
-            }
-        };
+        let buffer = Self::create_dispatch_buffer(&global, line.len())?;
         if let Some(ab) = buffer.as_array_buffer(&global) {
             // SAFETY: `ab.ptr` points to a freshly-created `line.len()`-byte
             // JS buffer kept alive on the stack; `line` is valid for its length.

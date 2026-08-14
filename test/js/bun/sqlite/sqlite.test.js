@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -1971,6 +1971,175 @@ it("close(true) succeeds after unreferenced query() statements were GC'd (#36572
   // statements that are pending sweep.
   Bun.gc(true);
   expect(() => db.close(true)).not.toThrow();
+});
+
+describe("query() cache byte caps (#28911)", () => {
+  const cachedCount = Symbol.for("Bun.Database.cache.count");
+  // SELECT ... IN (...) with n 16-hex-digit literals; each literal is 19 chars.
+  const bigInClause = n => Array.from({ length: n }, (_, i) => `'${i.toString(16).padStart(16, "0")}'`).join(",");
+
+  it("a query larger than MAX_QUERY_CACHE_ENTRY_BYTES is never cached", () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, template_id TEXT)");
+    const baseSql = `SELECT id FROM t WHERE template_id IN (${bigInClause(10_000)}) LIMIT 1`;
+    expect(baseSql.length).toBeGreaterThan(Database.MAX_QUERY_CACHE_ENTRY_BYTES);
+    for (let i = 0; i < 25; i++) {
+      const stmt = db.query(`${baseSql} /*iter=${i}*/`);
+      stmt.all();
+      stmt.finalize();
+    }
+    expect(db[cachedCount]).toBe(0);
+  });
+
+  it("the entry cap is inclusive: exactly at the limit caches, one over does not", () => {
+    using db = new Database(":memory:");
+    const limit = Database.MAX_QUERY_CACHE_ENTRY_BYTES;
+    const padTo = n => `SELECT '${Buffer.alloc(n - "SELECT ''".length, "x").toString()}'`;
+    const atLimit = padTo(limit);
+    const overLimit = padTo(limit + 1);
+    expect([atLimit.length, overLimit.length]).toEqual([limit, limit + 1]);
+    db.query(atLimit).all();
+    expect(db[cachedCount]).toBe(1);
+    db.query(overLimit).all();
+    expect(db[cachedCount]).toBe(1);
+  });
+
+  it("the issue's synchronous loop of large dynamic queries does not pin statements", async () => {
+    // Uncached statements must not be retained by the database across the loop.
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, template_id TEXT)");
+    const baseSql = `SELECT id FROM t WHERE template_id IN (${bigInClause(10_000)}) LIMIT 1`;
+    expect(baseSql.length).toBeGreaterThan(Database.MAX_QUERY_CACHE_ENTRY_BYTES);
+    Bun.gc(true);
+    const startRss = process.memoryUsage.rss();
+    for (let i = 0; i < 30; i++) {
+      db.query(`${baseSql} /*iter=${i}*/`).all();
+    }
+    // Without the per-entry cap the count-only cache would pin the 20 newest.
+    expect(db[cachedCount]).toBe(0);
+    await Promise.resolve();
+    Bun.gc(true);
+    // Coarse OOM backstop; the cache count above is the discriminating check.
+    const growthMB = (process.memoryUsage.rss() - startRss) / 1024 / 1024;
+    expect(growthMB).toBeLessThan(isASAN ? 400 : 200);
+  });
+
+  it("total cached SQL bytes are bounded by MAX_QUERY_CACHE_BYTES with exact eviction", () => {
+    const prevCount = Database.MAX_QUERY_CACHE_SIZE;
+    const prevEntryBytes = Database.MAX_QUERY_CACHE_ENTRY_BYTES;
+    Database.MAX_QUERY_CACHE_SIZE = 1000;
+    Database.MAX_QUERY_CACHE_ENTRY_BYTES = 512 * 1024;
+    try {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      const baseSql = `SELECT id FROM t WHERE id IN (${bigInClause(6_000)})`;
+      expect(baseSql.length).toBeLessThan(Database.MAX_QUERY_CACHE_ENTRY_BYTES);
+      // Keys vary only in a fixed-width trailing comment, so every entry is the same length.
+      const sqlFor = i => `${baseSql} /*iter=${String(i).padStart(3, "0")}*/`;
+      for (let i = 0; i < 50; i++) {
+        const stmt = db.query(sqlFor(i));
+        stmt.all();
+        stmt.finalize();
+      }
+      expect(db[cachedCount]).toBe(Math.floor(Database.MAX_QUERY_CACHE_BYTES / sqlFor(0).length));
+    } finally {
+      Database.MAX_QUERY_CACHE_SIZE = prevCount;
+      Database.MAX_QUERY_CACHE_ENTRY_BYTES = prevEntryBytes;
+    }
+  });
+
+  it("repeated hits on a large cached key do not inflate the byte budget", () => {
+    const prevEntryBytes = Database.MAX_QUERY_CACHE_ENTRY_BYTES;
+    Database.MAX_QUERY_CACHE_ENTRY_BYTES = 512 * 1024;
+    try {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      const bigSql = `SELECT id FROM t WHERE id IN (${bigInClause(6_000)})`;
+      // Enough hits that double-counting each one would exceed MAX_QUERY_CACHE_BYTES.
+      expect(bigSql.length * 20).toBeGreaterThan(Database.MAX_QUERY_CACHE_BYTES);
+      const first = db.query(bigSql);
+      for (let i = 0; i < 20; i++) expect(db.query(bigSql)).toBe(first);
+      expect(db[cachedCount]).toBe(1);
+      // A small distinct insert must not evict the big key: the budget only
+      // holds one copy of it.
+      db.query("SELECT 1 AS x FROM t").all();
+      expect(db[cachedCount]).toBe(2);
+      expect(db.query(bigSql)).toBe(first);
+    } finally {
+      Database.MAX_QUERY_CACHE_ENTRY_BYTES = prevEntryBytes;
+    }
+  });
+
+  it("evicted entry that is re-queried moves to the newest LRU slot", () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    for (let i = 0; i < max; i++) db.query(`SELECT ${i} AS x FROM t`).all();
+    expect(db[cachedCount]).toBe(max);
+    // Externally finalize the oldest entry, then re-query: the hit path must
+    // move the refreshed entry to the newest slot.
+    const oldestSql = "SELECT 0 AS x FROM t";
+    db.query(oldestSql).finalize();
+    const refreshed = db.query(oldestSql);
+    expect(refreshed.isFinalized).toBe(false);
+    for (let i = max; i < max + max - 1; i++) db.query(`SELECT ${i} AS x FROM t`).all();
+    expect(db[cachedCount]).toBe(max);
+    expect(db.query(oldestSql)).toBe(refreshed);
+  });
+
+  it("MAX_QUERY_CACHE_SIZE = 0 at runtime drains entries on the hit path", () => {
+    const prev = Database.MAX_QUERY_CACHE_SIZE;
+    using db = new Database(":memory:");
+    try {
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      const sql = "SELECT 1 AS x FROM t";
+      const first = db.query(sql);
+      first.all();
+      expect(db[cachedCount]).toBe(1);
+      Database.MAX_QUERY_CACHE_SIZE = 0;
+      first.finalize();
+      const replacement = db.query(sql);
+      expect(replacement).not.toBe(first);
+      expect(replacement.isFinalized).toBe(false);
+      expect(replacement.all()).toEqual([]);
+      expect(db[cachedCount]).toBe(0);
+    } finally {
+      Database.MAX_QUERY_CACHE_SIZE = prev;
+    }
+  });
+
+  it("clearQueryCache() preserves statements the caller still holds", () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    db.exec("INSERT INTO t (id) VALUES (1), (2), (3)");
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    const evictable = db.query("SELECT 0 AS x, id FROM t");
+    evictable.all();
+    for (let i = 1; i < max + 5; i++) db.query(`SELECT ${i} AS x, id FROM t`).all();
+    const bigSql = `SELECT id FROM t WHERE id IN (${bigInClause(10_000)})`;
+    expect(bigSql.length).toBeGreaterThan(Database.MAX_QUERY_CACHE_ENTRY_BYTES);
+    const transient = db.query(bigSql);
+    transient.all();
+    db.clearQueryCache();
+    expect(db[cachedCount]).toBe(0);
+    expect([evictable.isFinalized, transient.isFinalized]).toEqual([false, false]);
+    expect(evictable.all()).toHaveLength(3);
+    expect(() => transient.all()).not.toThrow();
+  });
+
+  it("cache stays consistent when re-preparing a finalized hit throws", () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    const sql = "SELECT id FROM t";
+    db.query(sql).finalize();
+    expect(db[cachedCount]).toBe(1);
+    db.exec("DROP TABLE t");
+    expect(() => db.query(sql)).toThrow(/no such table/);
+    expect(db[cachedCount]).toBe(0);
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    expect(db.query(sql).all()).toEqual([]);
+    expect(db[cachedCount]).toBe(1);
+  });
 });
 
 it("close(true) works when query() statements past the cache limit were already finalized", () => {

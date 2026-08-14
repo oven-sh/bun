@@ -119,6 +119,18 @@ describe("Blob text()/json() decoding does not depend on what was read before", 
     expect(await new Response(blob).text()).toBe("abc" + utf8);
   });
 
+  test("parent after a Response body made from an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await new Response(blob.slice(0, 3)).text()).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  test("parent after a Response body made from an ASCII prefix slice was read as json()", async () => {
+    const blob = new Blob(["123", utf8]);
+    expect(await new Response(blob.slice(0, 3)).json()).toBe(123);
+    expect(await blob.text()).toBe("123" + utf8);
+  });
+
   test("parent json() after an ASCII prefix slice text()", async () => {
     const blob = new Blob(['"', utf8, '"']);
     expect(await blob.slice(0, 1).text()).toBe('"');
@@ -142,6 +154,7 @@ describe("Blob text()/json() decoding does not depend on what was read before", 
   test("slice into a UTF-8 BOM after the parent's text() stripped it", async () => {
     const blob = new Blob([bom, "abc"]);
     const sliceMadeBefore = blob.slice(1);
+    expect(await blob.text()).toBe("abc");
     expect(await blob.text()).toBe("abc");
     expect(await sliceMadeBefore.text()).toBe("\ufffd\ufffdabc");
     expect(await blob.slice(1).text()).toBe("\ufffd\ufffdabc");

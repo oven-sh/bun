@@ -2557,23 +2557,27 @@ impl BlobExt for Blob {
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
+        // The callers scanned the bytes after any stripped UTF-8 BOM, but this
+        // flag describes the raw bytes (slices and the store share them), and
+        // the BOM itself is non-ASCII.
+        let is_all_ascii =
+            is_all_ascii && !self.shared_view().starts_with(&strings::BOM::UTF8_BYTES);
         self.charset
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
-        // The store's flag is consulted by every Blob sharing the store (the
-        // parent of a slice, sibling slices, a Response wrapping the Blob), so
-        // only a Blob whose window spans all of the store's bytes may set it.
-        let Some(store_ref) = self.store() else {
-            return;
-        };
-        let store = store_ref.as_ptr();
-        // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
-        // JS execution means no concurrent &Store borrow is outstanding.
-        unsafe {
-            let store::Data::Bytes(bytes) = &(*store).data else {
-                return;
-            };
-            if self.offset.get() == 0 && self.size.get() >= bytes.len() {
-                (*store).is_all_ascii = Some(is_all_ascii);
+        // Every Blob sharing the store reads the store's flag, so only a Blob
+        // whose window spans the whole store may set it.
+        if self.size.get() > 0 && self.offset.get() == 0 {
+            if let Some(store_ref) = self.store() {
+                let store = store_ref.as_ptr();
+                // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
+                // JS execution means no concurrent &Store borrow is outstanding.
+                unsafe {
+                    if let store::Data::Bytes(bytes) = &(*store).data
+                        && self.size.get() >= bytes.len()
+                    {
+                        (*store).is_all_ascii = Some(is_all_ascii);
+                    }
+                }
             }
         }
     }
@@ -2670,9 +2674,7 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                // The flag describes the raw bytes (which slices and the store
-                // share), and a stripped BOM is itself non-ASCII.
-                self.set_is_ascii_flag(bom.is_none());
+                self.set_is_ascii_flag(true);
             }
         }
 
@@ -2895,8 +2897,7 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                // See to_string_with_bytes: a stripped BOM is itself non-ASCII.
-                self.set_is_ascii_flag(bom.is_none());
+                self.set_is_ascii_flag(true);
             }
         }
 

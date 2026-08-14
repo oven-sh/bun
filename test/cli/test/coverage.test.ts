@@ -589,3 +589,87 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+// JSC reports the offsets of executed and unexecuted blocks in UTF-16 code
+// units of the source text it holds, and the line table those offsets are
+// looked up in was built in bytes, so line attribution drifted after any
+// non-ASCII text. Each non-ASCII variant below has exactly the same number of
+// code units on every line as the ASCII twin (an astral character is two code
+// units and four bytes), so its lcov record must be identical to the twin's;
+// counting bytes or code points shifts it.
+//
+// Both lengths are in UTF-16 code units.
+const coverageBannerUnits = 30;
+const coverageTextUnits = 40;
+function coverageDemo(banner: string, text: string) {
+  return `/*! ${banner} */
+export const raw = String.raw\`${text}\`;
+export const re = /${text}/u;
+export function covered() {
+  return raw.length + re.source.length;
+}
+export function uncovered() {
+  return 1;
+}
+export function alsoUncovered() {
+  return 2;
+}
+`;
+}
+const coverageDemoTest = `
+import { expect, test } from "bun:test";
+import { covered } from "./demo";
+
+test("source text has the expected length", () => {
+  expect(covered()).toBe(${2 * coverageTextUnits});
+});
+`;
+function repeatUnits(piece: string, units: number) {
+  return Buffer.alloc((Buffer.byteLength(piece) * units) / piece.length, piece).toString();
+}
+
+// lcov records of `demo.ts` for each variant, in order.
+async function coverageRecords(variants: Record<string, string>) {
+  using dir = tempDir(
+    "cov-non-ascii",
+    Object.fromEntries(
+      Object.entries(variants).flatMap(([name, source]) => [
+        [`${name}/demo.ts`, source],
+        [`${name}/demo.test.ts`, coverageDemoTest],
+      ]),
+    ),
+  );
+  // `await` here keeps `dir` alive until the processes have finished.
+  return await Promise.all(
+    Object.keys(variants).map(async variant => {
+      const cwd = path.join(String(dir), variant);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "./demo.test.ts"],
+        cwd,
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 1 pass\n");
+      expect(exitCode).toBe(0);
+      const record = readFileSync(path.join(cwd, "coverage", "lcov.info"), "utf8")
+        .split("end_of_record")
+        .find(record => record.includes("\nSF:demo.ts\n"));
+      expect(record).toBeDefined();
+      return record!;
+    }),
+  );
+}
+
+test("a non-ASCII preserved comment does not shift coverage lines", async () => {
+  const asciiText = repeatUnits("x", coverageTextUnits);
+  const [ascii, legalComment] = await coverageRecords({
+    ascii: coverageDemo(repeatUnits("x", coverageBannerUnits), asciiText),
+    legalComment: coverageDemo(repeatUnits("©🐰", coverageBannerUnits), asciiText),
+  });
+  // `uncovered` and `alsoUncovered` start on lines 7 and 10.
+  expect(ascii).toContain("\nDA:7,0\n");
+  expect(ascii).toContain("\nDA:10,0\n");
+  expect(legalComment).toBe(ascii);
+});

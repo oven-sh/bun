@@ -522,7 +522,7 @@ test(
   timeout,
 );
 
-// Regression: a worker's own Bun.serve() listener kept dispatching requests
+// A worker's own Bun.serve() listener kept dispatching requests
 // into the fetch handler for the rest of the loop tick after process.exit()
 // had stopped the VM. Building the Request for a VM whose termination had
 // already unwound script initialised JSRequestStructure under a pending
@@ -575,7 +575,7 @@ test.skipIf(!isDebug)(
   timeout,
 );
 
-// Regression: WebCore-style callbacks (PerformanceObserver, abort algorithms)
+// WebCore-style callbacks (PerformanceObserver, abort algorithms)
 // were still invoked from the task queue after terminate() had stopped the
 // worker's VM mid-tick, entering JS with the TerminationException a previous
 // task left pending and tripping executeCallImpl's assertNoException(). They
@@ -629,7 +629,7 @@ test.skipIf(!isDebug)(
   timeout,
 );
 
-// Regression: a nested worker's parent that is itself being terminated still
+// A nested worker's parent that is itself being terminated still
 // tried to settle the getHeapSnapshot()/getHeapStatistics() promises it had
 // pending against its child when the child's exit was processed in the same
 // tick, building the ERR_WORKER_NOT_RUNNING error under its own pending

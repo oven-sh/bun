@@ -2634,28 +2634,17 @@ impl TestCommand {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
-            match vm.hot_reload {
-                jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
+            // Argument parsing turns `bun test --hot` into `Watch` as well;
+            // the in-process `HotReloader` has nothing to re-run tests with.
+            if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
+                // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                // outlives the leaked reloader.
+                unsafe {
+                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                        std::ptr::from_mut::<VirtualMachine>(vm),
+                        None,
+                    );
                 }
-                jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
-                }
-                _ => {}
             }
         }
 

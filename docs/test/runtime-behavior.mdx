@@ -193,25 +193,15 @@ bun test --prefer-offline
 bun test --frozen-lockfile
 ```
 
-## Watch and Hot Reloading
+## Watch Mode
 
-### Watch Mode
-
-With the `--watch` flag, the test runner watches for file changes and re-runs tests.
+With the `--watch` flag, the test runner watches the test files and the files they import, and restarts the run whenever one of them changes.
 
 ```bash terminal icon="terminal"
 bun test --watch
 ```
 
-### Hot Reloading
-
-The `--hot` flag is similar, but more aggressive about preserving state between runs:
-
-```bash terminal icon="terminal"
-bun test --hot
-```
-
-For most tests, use `--watch`: it gives better isolation between runs.
+`bun test --hot` does the same thing. Unlike [`bun --hot`](/runtime/watch-mode#hot-mode) for scripts, the test runner has no in-process hot reloading: every change restarts the process, so no state is carried over between runs.
 
 ## Global Variables
 

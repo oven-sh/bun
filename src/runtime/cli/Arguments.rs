@@ -1048,12 +1048,19 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        if args.flag(b"--hot") {
+        // The test runner has no in-process reload: a hot reload only
+        // re-evaluates modules, nothing runs the re-collected tests or reports
+        // them. `bun test --hot` is therefore the restart-on-change mode of
+        // `--watch`. Decided here rather than in the test command because
+        // `create_context_data` reads `hot_reload` right after parsing to
+        // become the Windows watcher manager.
+        let hot = args.flag(b"--hot");
+        if hot && cmd != CommandTag::TestCommand {
             ctx.debug.hot_reload = HotReload::Hot;
             if args.flag(b"--no-clear-screen") {
                 let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
-        } else if args.flag(b"--watch") {
+        } else if hot || args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
             // Windows applies this to the watcher child process.

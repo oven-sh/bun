@@ -321,11 +321,15 @@ pub struct DebugIDFormatter {
     pub id: u64,
 }
 
+impl DebugIDFormatter {
+    /// The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
+    /// bits; the other 64 are this constant.
+    const TAIL: u64 = u64::from_be_bytes(*b"bun!bun!");
+}
+
 impl core::fmt::Display for DebugIDFormatter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
-        // bits; the tail is "bun!bun!" hex-encoded.
-        write!(f, "{:016X}64756E2164756E21", self.id)
+        write!(f, "{:016X}{:016X}", self.id, Self::TAIL)
     }
 }
 

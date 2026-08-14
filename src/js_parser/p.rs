@@ -9032,6 +9032,10 @@ impl LowerUsingDeclarationsContext {
                 _ => {}
             }
 
+            debug_assert!(
+                !matches!(stmt.data, js_ast::StmtData::SExportDefault(_)),
+                "s_export_default must split `export default` into a binding and an export clause before the module body is wrapped"
+            );
             stmts[end as usize] = stmt;
             end += 1;
         }

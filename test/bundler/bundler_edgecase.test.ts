@@ -2338,6 +2338,33 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("edgecase/UsingExportDefaultBakeDev", {
+    // The dev server's module format builds each module's export object from the
+    // same lowered statements.
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": `
+        import fn from "./fn.ts";
+        import Klass from "./klass.ts";
+        console.log(fn(), Klass.tag);
+      `,
+      "/fn.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default function fn() { return "fn"; }
+      `,
+      "/klass.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default class Klass { static tag = "klass"; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toMatch(/hmr\.exports = \{\s*default: fn\s*\}/);
+      expect(output).toMatch(/\bvar Klass = class Klass \{/);
+      expect(output).toMatch(/hmr\.exports = \{\s*default: Klass\s*\}/);
+    },
+  });
+
   itBundled("edgecase/UsingExportDefaultReactFastRefresh", {
     skipOnEsbuild: true,
     reactFastRefresh: true,

@@ -4701,114 +4701,217 @@ console.log("boop");
     `);
   });
 
+  // Port of esbuild's TestLowerUsingHoisting (internal/bundler_tests/bundler_lower_test.go):
+  // once a top-level `using` moves the module body into a try/catch, everything that has to
+  // stay at the top level (directives, imports, re-exports, function declarations and every
+  // export) must be hoisted out of it or turned into a binding plus an export clause.
+  //
+  // Each entry is [source, names reported by scan()]. Not ported yet because their output is
+  // still wrong: hoist-export-class-direct, hoist-export-class-indirect (top-level classes are
+  // left block-scoped inside the try) and hoist-export-local-direct (exported destructuring
+  // patterns lose their exports). hoist-use-strict only differs from hoist-directive by the
+  // "use strict" that Bun strips anyway.
+  describe("using top level hoisting", () => {
+    const fixtures = {
+      "hoist-directive": [
+        `
+          "use wtf"
+          using a = b
+          function foo() {
+            "use wtf"
+            using a = b
+          }
+        `,
+        [],
+      ],
+      "hoist-import": [
+        `
+          using a = b
+          import "./foo"
+          using c = d
+        `,
+        [],
+      ],
+      "hoist-export-star": [
+        `
+          using a = b
+          export * from './foo'
+          using c = d
+        `,
+        [],
+      ],
+      "hoist-export-from": [
+        `
+          using a = b
+          export {x, y} from './foo'
+          using c = d
+        `,
+        ["x", "y"],
+      ],
+      "hoist-export-clause": [
+        `
+          using a = b
+          export {a, c as 'c!'}
+          using c = d
+        `,
+        ["a", "c!"],
+      ],
+      "hoist-export-local-indirect": [
+        `
+          using a = b
+          var ac1 = [a, c], { x: [x1] } = foo
+          let a1 = a, { y: [y1] } = foo
+          const c1 = c, { z: [z1] } = foo
+          var ac2 = [a, c], { x: [x2] } = foo
+          let a2 = a, { y: [y2] } = foo
+          const c2 = c, { z: [z2] } = foo
+          using c = d
+          export {x1, y1, z1}
+        `,
+        ["x1", "y1", "z1"],
+      ],
+      "hoist-export-function-direct": [
+        `
+          using a = b
+          export function foo1() { return [a, c] }
+          export function bar1() { return [a, c, bar1] }
+          function foo2() { return [a, c] }
+          function bar2() { return [a, c, bar2] }
+          using c = d
+        `,
+        ["bar1", "foo1"],
+      ],
+      "hoist-export-function-indirect": [
+        `
+          using a = b
+          function foo1() { return [a, c] }
+          function bar1() { return [a, c, bar1] }
+          function foo2() { return [a, c] }
+          function bar2() { return [a, c, bar2] }
+          using c = d
+          export {foo1, bar1}
+        `,
+        ["bar1", "foo1"],
+      ],
+      "hoist-export-default-class-name-unused": [
+        `
+          using a = b
+          export default class Foo {
+            ac = [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-class-name-used": [
+        `
+          using a = b
+          export default class Foo {
+            ac = [a, c, Foo]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-class-anonymous": [
+        `
+          using a = b
+          export default class {
+            ac = [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-name-unused": [
+        `
+          using a = b
+          export default function foo() {
+            return [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-name-used": [
+        `
+          using a = b
+          export default function foo() {
+            return [a, c, foo]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-anonymous": [
+        `
+          using a = b
+          export default function() {
+            return [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-expr": [
+        `
+          using a = b
+          export default [a, c]
+          using c = d
+        `,
+        ["default"],
+      ],
+      // Not in esbuild's suite: `await using` takes the same path with an async finally block.
+      "await-using-export-default-class-anonymous": [
+        `
+          await using a = b
+          export default class {
+            ac = [a]
+          }
+        `,
+        ["default"],
+      ],
+      "await-using-export-default-async-generator": [
+        `
+          await using a = b
+          export default async function* () {
+            yield a
+          }
+        `,
+        ["default"],
+      ],
+    };
+
+    for (const [name, [code, exportNames]] of Object.entries(fixtures)) {
+      it(name, () => {
+        expect(prepareForSnapshot(parsed(code, false, false))).toMatchSnapshot();
+        expect(transpiler.scan(code).exports.sort()).toEqual(exportNames);
+      });
+    }
+  });
+
   describe("using top level with a default export", () => {
-    const lowered = code => prepareForSnapshot(parsed(code, false, false));
-
-    it("hoists an exported function declaration out of the try/catch", () => {
-      expect(lowered(`using a = b;\nexport default function foo() {}`)).toMatchInlineSnapshot(`
-        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
-        function foo() {}
-        let __bun_temp_ref_1$ = [];
-        try {
-          var a = __using(__bun_temp_ref_1$, b, 0);
-        } catch (__bun_temp_ref_2$) {
-          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
-        } finally {
-          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-        }
-
-        export {
-          foo as default
-        };
-        "
-      `);
-      expect(lowered(`using a = b;\nexport default function () {}`)).toMatchInlineSnapshot(`
-        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
-        function input_default() {}
-        let __bun_temp_ref_1$ = [];
-        try {
-          var a = __using(__bun_temp_ref_1$, b, 0);
-        } catch (__bun_temp_ref_2$) {
-          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
-        } finally {
-          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-        }
-
-        export {
-          input_default as default
-        };
-        "
-      `);
+    it("a second default export is still a duplicate", () => {
+      ts.expectParseError(
+        `using a = b;\nexport default function foo() {}\nexport { a as default };`,
+        'Multiple exports with the same name "default"',
+      );
+      ts.expectParseError(
+        `using a = b;\nexport default class Foo {}\nexport { a as default };`,
+        'Multiple exports with the same name "default"',
+      );
     });
 
-    it("turns an exported class declaration into a var inside the try/catch", () => {
-      expect(lowered(`using a = b;\nexport default class Foo { static self = Foo; }`)).toMatchInlineSnapshot(`
-        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
-        let __bun_temp_ref_1$ = [];
-        try {
-          var a = __using(__bun_temp_ref_1$, b, 0);
-          var Foo = class Foo {
-            static self = Foo;
-          };
-        } catch (__bun_temp_ref_2$) {
-          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
-        } finally {
-          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-        }
-
-        export {
-          Foo as default
-        };
-        "
-      `);
-      expect(lowered(`using a = b;\nexport default class { static x = a; }`)).toMatchInlineSnapshot(`
-        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
-        let __bun_temp_ref_1$ = [];
-        try {
-          var a = __using(__bun_temp_ref_1$, b, 0);
-          var input_default = class {
-            static x = a;
-          };
-        } catch (__bun_temp_ref_2$) {
-          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
-        } finally {
-          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-        }
-
-        export {
-          input_default as default
-        };
-        "
-      `);
-    });
-
-    it("turns an exported expression into a var inside the try/catch", () => {
-      expect(lowered(`using a = b;\nexport default a.value;`)).toMatchInlineSnapshot(`
-        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
-        let __bun_temp_ref_1$ = [];
-        try {
-          var a = __using(__bun_temp_ref_1$, b, 0);
-          var input_default = a.value;
-        } catch (__bun_temp_ref_2$) {
-          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
-        } finally {
-          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-        }
-
-        export {
-          input_default as default
-        };
-        "
-      `);
-    });
-
-    it("scan() still reports the default export", () => {
-      const scan = code => transpiler.scan(code).exports;
-      expect(scan(`using a = b;\nexport default function foo() {}`)).toEqual(["default"]);
-      expect(scan(`using a = b;\nexport default function () {}`)).toEqual(["default"]);
-      expect(scan(`using a = b;\nexport default class Foo {}`)).toEqual(["default"]);
-      expect(scan(`await using a = b;\nexport default class {}`)).toEqual(["default"]);
-      expect(scan(`await using a = b;\nexport default async function* foo() {}`)).toEqual(["default"]);
+    it("exports.replace replaces the value", () => {
+      const replace = new Bun.Transpiler({ loader: "js", target: "browser", exports: { replace: { default: 42 } } });
+      // `export default class` ignores exports.replace with or without `using`; not covered here.
+      for (const code of [
+        `using a = b;\nexport default a.value;`,
+        `using a = b;\nexport default function foo() { return a; }`,
+        `using a = b;\nexport default function () { return a; }`,
+      ]) {
+        expect(prepareForSnapshot(replace.transformSync(code))).toMatchSnapshot();
+      }
     });
 
     it("exports.eliminate still drops the default export", () => {

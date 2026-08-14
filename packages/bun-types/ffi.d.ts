@@ -189,6 +189,12 @@ declare module "bun:ffi" {
      * ```
      */
     int = 5,
+    /**
+     * 32-bit signed integer
+     *
+     * The same as `int` in C. Alias of {@link FFIType.int32_t}
+     */
+    c_int = 5,
 
     /**
      * 32-bit unsigned integer
@@ -211,6 +217,12 @@ declare module "bun:ffi" {
      * Alias of {@link FFIType.uint32_t}
      */
     u32 = 6,
+    /**
+     * 32-bit unsigned integer
+     *
+     * The same as `unsigned int` in C. Alias of {@link FFIType.uint32_t}
+     */
+    c_uint = 6,
 
     /**
      * 64-bit signed integer
@@ -222,6 +234,12 @@ declare module "bun:ffi" {
      * Alias of {@link FFIType.int64_t}
      */
     i64 = 7,
+    /**
+     * Pointer-sized signed integer (`intptr_t` / `ssize_t`)
+     *
+     * Bun only runs on 64-bit platforms, so this is an alias of {@link FFIType.int64_t}
+     */
+    isize = 7,
 
     /**
      * 64-bit unsigned integer
@@ -231,6 +249,12 @@ declare module "bun:ffi" {
      * 64-bit unsigned integer
      */
     u64 = 8,
+    /**
+     * Pointer-sized unsigned integer (`uintptr_t` / `size_t`)
+     *
+     * Bun only runs on 64-bit platforms, so this is an alias of {@link FFIType.uint64_t}
+     */
+    usize = 8,
 
     /**
      * IEEE-754 double precision float
@@ -328,7 +352,30 @@ declare module "bun:ffi" {
      * In C, this always becomes `uint64_t`
      */
     u64_fast = 16,
+
+    /**
+     * Function pointer
+     *
+     * In `args`, pass a {@link JSCallback} or its `ptr`.
+     *
+     * In C:
+     * ```c
+     * void (*)()
+     * ```
+     */
     function = 17,
+    /**
+     * Function pointer
+     *
+     * Alias of {@link FFIType.function}
+     */
+    callback = 17,
+    /**
+     * Function pointer
+     *
+     * Alias of {@link FFIType.function}
+     */
+    fn = 17,
 
     napi_env = 18,
     napi_value = 19,
@@ -341,6 +388,10 @@ declare module "bun:ffi" {
      * Engine-native only; not supported inside `cc()`.
      */
     buffer_length = 21,
+    /**
+     * Alias of {@link FFIType.buffer_length}
+     */
+    buffer_bytelength = 21,
   }
 
   type Pointer = number & { __pointer__: null };
@@ -412,12 +463,17 @@ declare module "bun:ffi" {
     ["int32_t"]: FFIType.int32_t;
     ["i32"]: FFIType.i32;
     ["int"]: FFIType.int;
+    ["c_int"]: FFIType.c_int;
     ["uint32_t"]: FFIType.uint32_t;
     ["u32"]: FFIType.u32;
+    ["c_uint"]: FFIType.c_uint;
     ["int64_t"]: FFIType.int64_t;
     ["i64"]: FFIType.i64;
+    ["isize"]: FFIType.isize;
     ["uint64_t"]: FFIType.uint64_t;
     ["u64"]: FFIType.u64;
+    ["usize"]: FFIType.usize;
+    ["size_t"]: FFIType.uint64_t;
     ["double"]: FFIType.double;
     ["f64"]: FFIType.f64;
     ["float"]: FFIType.float;
@@ -425,16 +481,20 @@ declare module "bun:ffi" {
     ["bool"]: FFIType.bool;
     ["ptr"]: FFIType.ptr;
     ["pointer"]: FFIType.pointer;
+    ["void*"]: FFIType.ptr;
+    ["char*"]: FFIType.ptr;
     ["void"]: FFIType.void;
     ["cstring"]: FFIType.cstring;
+    ["i64_fast"]: FFIType.i64_fast;
+    ["u64_fast"]: FFIType.u64_fast;
     ["function"]: FFIType.pointer; // for now
-    ["usize"]: FFIType.uint64_t; // for now
     ["callback"]: FFIType.pointer; // for now
+    ["fn"]: FFIType.pointer; // for now
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;
     ["buffer_length"]: FFIType.buffer_length;
-    ["buffer_bytelength"]: FFIType.buffer_length;
+    ["buffer_bytelength"]: FFIType.buffer_bytelength;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;
@@ -710,7 +770,7 @@ declare module "bun:ffi" {
    * ```js
    * import {CFunction} from 'bun:ffi';
    *
-   * const getVersion = new CFunction({
+   * const getVersion = CFunction({
    *   returns: "cstring",
    *   args: [],
    *   ptr: myNativeLibraryGetVersion,

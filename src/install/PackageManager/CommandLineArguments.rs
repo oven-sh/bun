@@ -152,6 +152,9 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
             "--latest                              Update packages to their latest versions"
         ),
         clap::param!(
+            "-E, --exact                           Save the exact resolved version instead of a ^range"
+        ),
+        clap::param!(
             "-i, --interactive                     Show an interactive list of outdated packages to select for update"
         ),
         clap::param!(
@@ -1330,6 +1333,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 
         if subcommand == Subcommand::Update {
             cli.latest = args.flag(b"--latest");
+            cli.exact = args.flag(b"--exact");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
         }

@@ -12,14 +12,8 @@ $.env(bunEnv);
 $.cwd(process.cwd());
 $.nothrow();
 
-// Bound on RSS growth over a whole run. ASAN's quarantine retains freed
-// allocations (default 256 MB), so RSS grows far more under bun-asan even
-// without a leak; widen the threshold there. (Measured growth over 100 runs is
-// 11-56 MB under ASAN, much less without it.)
-const DEFAULT_THRESHOLD = (isASAN ? 350 : process.platform === "darwin" ? 100 : 150) * (1 << 20);
-
 // Every leak these tests guard against costs at least one unit (fd, JS object,
-// protected object) per run, so a leak puts `runs` units on the detector. The
+// protected object) per run, so a leak puts RUNS units on the detector. The
 // bounds below allow for legitimate residue: the last run's interpreter and
 // script can stay conservatively rooted through Bun.gc(true), and an interpreter
 // that has not been finalized yet can still hold an fd or two. 100 runs puts a
@@ -28,6 +22,10 @@ const RUNS = 100;
 const WARMUP_RUNS = 1;
 const FD_LEAK_BOUND = 5;
 const MAX_SHELL_OBJECTS = 3;
+// Bound on RSS growth across the measured runs (11-56 MB measured under ASAN,
+// less without it). ASAN's quarantine keeps freed allocations resident
+// (256 MB by default), so the bound is wider under bun-asan.
+const MAX_RSS_GROWTH = (isASAN ? 350 : process.platform === "darwin" ? 100 : 150) * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -146,11 +144,11 @@ async function runChild(
 }
 
 describe.concurrent("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = RUNS) {
+  function fdLeakTest(name: string, builder: () => TestBuilder) {
     test(`fdleak_${name}`, async () => {
       const { result, exitCode } = await runChild(`fd-${name}`, {
         once: `${snippet(builder)}.quiet().run()`,
-        runs,
+        runs: RUNS,
         measure: /* ts */ `async (run) => {
           const baseline = fdCount();
           await run();
@@ -164,16 +162,11 @@ describe.concurrent("fd leak", () => {
     });
   }
 
-  function memLeakTest(
-    name: string,
-    builder: () => TestBuilder,
-    runs: number = RUNS,
-    threshold: number = DEFAULT_THRESHOLD,
-  ) {
+  function memLeakTest(name: string, builder: () => TestBuilder) {
     test(`memleak_${name}`, async () => {
       const { result, exitCode } = await runChild(`mem-${name}`, {
         once: `${snippet(builder)}.quiet().run()`,
-        runs,
+        runs: RUNS,
         measure: /* ts */ `async (run) => {
           const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           const rssBefore = rss();
@@ -190,7 +183,7 @@ describe.concurrent("fd leak", () => {
       });
       expect(result.ShellInterpreter).toBeLessThanOrEqual(MAX_SHELL_OBJECTS);
       expect(result.ParsedShellScript).toBeLessThanOrEqual(MAX_SHELL_OBJECTS);
-      expect(result.rssGrowth).toBeLessThan(threshold);
+      expect(result.rssGrowth).toBeLessThan(MAX_RSS_GROWTH);
       expect(exitCode).toBe(0);
     });
   }

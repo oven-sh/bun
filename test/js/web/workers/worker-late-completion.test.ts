@@ -37,8 +37,9 @@ type Row = {
   onExit?: string;
   // A C source built into `<dir>/addon.node` (against Bun's own N-API headers) before the worker starts.
   addon?: string;
-  // Exactly what the row's native fixture must have printed, in order.
-  stdout?: string[];
+  // Exactly what the row's native fixture must have printed, in order; a
+  // RegExp where more than one outcome is correct.
+  stdout?: (string | RegExp)[];
   env?: Record<string, string>;
   files?: Record<string, string>;
   skip?: boolean;
@@ -59,6 +60,8 @@ type Weak = { weak: string; ticket?: never; lateCompletions?: never };
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const napiFixture = path.join(import.meta.dir, "worker-late-completion-napi-fixture.c");
 const napiAddon = `require(require("node:path").join(workerData.dir, "addon.node"))`;
+// See the first napi row.
+const FIRST_SETTLED = /^complete first: (ok|cancelled)$/;
 
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
@@ -213,14 +216,17 @@ const ROWS: Row[] = [
   },
   // ── thread pool: napi_async_work (worker-late-completion-napi-fixture.c) ─
   {
-    // Queued while the worker runs: `execute` runs on the pool under a ticket
+    // Queued while the worker runs: the work goes to the pool under a ticket
     // and the wait releases the completion, which for napi means running the
-    // addon's `complete` (that is how it frees the work).
+    // addon's `complete` (that is how it frees the work). Its status depends on
+    // whether the pool reached the work before the worker began stopping
+    // (`execute` ran: ok) or after (it did not: cancelled); the gate only fixes
+    // when the completion arrives, so either is correct here.
     name: "napi_queue_async_work",
     addon: napiFixture,
     worker: `${napiAddon}.queue();`,
     ticket: "napi_body.rs",
-    stdout: ["queued first: ok", "complete first: ok"],
+    stdout: ["queued first: ok", FIRST_SETTLED],
     skip: !cc,
   },
   {
@@ -235,7 +241,7 @@ const ROWS: Row[] = [
     worker: `${napiAddon}.queueFromComplete();`,
     ticket: "napi_body.rs",
     lateCompletions: 1,
-    stdout: ["queued first: ok", "complete first: ok", "queued from complete second: ok", "complete second: cancelled"],
+    stdout: ["queued first: ok", FIRST_SETTLED, "queued from complete second: ok", "complete second: cancelled"],
     skip: !cc,
   },
   {
@@ -345,13 +351,19 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
           ? lines.some(l => l.startsWith(`[vm] late post: ${weak} (`))
           : (ticket === undefined || completions.some(l => l.includes(ticket))) &&
             (lateCompletions === undefined || completions.length === lateCompletions);
-      const expected = { exitCode: 0, seen: true, printed: row.stdout };
-      const actual = { exitCode, seen, printed: row.stdout && stdout.split("\n").filter(Boolean) };
+      const printed = stdout.split("\n").filter(Boolean);
+      const printedAsExpected =
+        row.stdout === undefined ||
+        (printed.length === row.stdout.length &&
+          row.stdout.every((want, i) => (typeof want === "string" ? printed[i] === want : want.test(printed[i]))));
+      const ok = exitCode === 0 && seen && printedAsExpected;
       expect({
-        ...actual,
+        exitCode,
+        seen,
+        printedAsExpected,
         // On a failure, everything the host printed.
-        detail: Bun.deepEquals(actual, expected) ? "" : stdout + stderr,
-      }).toEqual({ ...expected, detail: "" });
+        detail: ok ? "" : stdout + stderr,
+      }).toEqual({ exitCode: 0, seen: true, printedAsExpected: true, detail: "" });
     });
   }
 });

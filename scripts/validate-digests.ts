@@ -195,12 +195,17 @@ interface Source {
 async function loadFromGitHub(tag: string): Promise<Source> {
   const apiUrl = buildReleaseUrl("oven-sh", "bun", tag);
   console.log(`Fetching release metadata: ${apiUrl}`);
-  const response = await fetch(apiUrl, {
-    headers: {
-      "Accept": "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  // Authenticate when a token is available (e.g. the release workflow's
+  // validate job) so the metadata call is not subject to the low
+  // unauthenticated rate limit shared across CI runners.
+  if (process.env.GITHUB_TOKEN) {
+    headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  const response = await fetch(apiUrl, { headers });
   if (!response.ok) {
     throw new Error(`GitHub API Error: ${response.status} ${response.statusText}`);
   }

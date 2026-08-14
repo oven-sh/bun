@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -100,6 +101,68 @@ describe("vm", () => {
         contextExtensions: undefined,
       })();
       expect(result).toBe(2);
+    });
+
+    test("parsingContext accepts a DONT_CONTEXTIFY context and compiles the function inside it", () => {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      expect(isContext(ctx)).toBe(true);
+      ctx.fromOutside = 400;
+      runInContext("globalThis.fromInside = 56", ctx);
+
+      const fn = compileFunction(
+        "globalThis.fromFunction = fromOutside + fromInside; return [typeof process, fromOutside, fromInside, Array];",
+        [],
+        { parsingContext: ctx },
+      );
+      const [processType, fromOutside, fromInside, ArrayInContext] = fn();
+
+      expect([processType, fromOutside, fromInside]).toEqual(["undefined", 400, 56]);
+      expect(ArrayInContext).toBe(runInContext("Array", ctx));
+      expect(ArrayInContext).not.toBe(Array);
+      expect(ctx.fromFunction).toBe(456);
+      expect(runInContext("fromFunction", ctx)).toBe(456);
+      expect("fromFunction" in globalThis).toBe(false);
+    });
+
+    test("parsingContext accepts the this and globalThis values of a DONT_CONTEXTIFY context", () => {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      ctx.marker = "dont-contextify";
+
+      for (const code of ["this", "globalThis"]) {
+        const parsingContext = runInContext(code, ctx);
+        expect(isContext(parsingContext)).toBe(true);
+        expect(compileFunction("return marker", [], { parsingContext })()).toBe("dont-contextify");
+      }
+    });
+
+    test("params and contextExtensions work with a DONT_CONTEXTIFY parsingContext", () => {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      ctx.fromContext = 1;
+
+      const fn = compileFunction("return [fromContext, fromExtension, fromParam]", ["fromParam"], {
+        parsingContext: ctx,
+        contextExtensions: [{ fromExtension: 2 }],
+      });
+
+      expect([...fn(3)]).toEqual([1, 2, 3]);
+    });
+
+    test("parsingContext rejects values that are not contexts", () => {
+      const notContexts = [
+        {},
+        null,
+        1,
+        "context",
+        constants.DONT_CONTEXTIFY,
+        Object.create(createContext(constants.DONT_CONTEXTIFY)),
+        Object.create(createContext({})),
+      ];
+
+      for (const parsingContext of notContexts) {
+        const compile = () => compileFunction("return 1", [], { parsingContext });
+        expect(compile).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+        expect(compile).toThrow(/^The "options\.parsingContext" property must be an instance of Context\./);
+      }
     });
 
     // Security tests

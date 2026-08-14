@@ -37,7 +37,7 @@ type Row = {
   onExit?: string;
   // A C source built into `<dir>/addon.node` (against Bun's own N-API headers) before the worker starts.
   addon?: string;
-  // What the row's native fixture must have printed, in any order.
+  // Exactly what the row's native fixture must have printed, in order.
   stdout?: string[];
   env?: Record<string, string>;
   files?: Record<string, string>;
@@ -227,7 +227,9 @@ const ROWS: Row[] = [
     // `first`'s complete runs from the wait's release, with script already
     // forbidden, and queues `second`. Work queued that late is handed back on
     // this thread (complete with napi_cancelled) without going near the pool,
-    // so only `first` ever crossed the door.
+    // so only `first` ever crossed the door; and it is released after the
+    // complete that queued it returns, not inside it (the order below), so a
+    // chain of such works is released link by link rather than recursively.
     name: "napi_queue_async_work from a complete callback during the wait",
     addon: napiFixture,
     worker: `${napiAddon}.queueFromComplete();`,
@@ -343,8 +345,8 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
           ? lines.some(l => l.startsWith(`[vm] late post: ${weak} (`))
           : (ticket === undefined || completions.some(l => l.includes(ticket))) &&
             (lateCompletions === undefined || completions.length === lateCompletions);
-      const expected = { exitCode: 0, seen: true, printed: row.stdout && [...row.stdout].sort() };
-      const actual = { exitCode, seen, printed: row.stdout && stdout.split("\n").filter(Boolean).sort() };
+      const expected = { exitCode: 0, seen: true, printed: row.stdout };
+      const actual = { exitCode, seen, printed: row.stdout && stdout.split("\n").filter(Boolean) };
       expect({
         ...actual,
         // On a failure, everything the host printed.

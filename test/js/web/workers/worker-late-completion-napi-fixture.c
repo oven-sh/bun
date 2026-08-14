@@ -22,11 +22,20 @@ static Work second = {"second", NULL, NULL};
 static Work late = {"late", NULL, NULL};
 
 static void report(const char *what, const Work *w, napi_status status) {
-  const char *name = status == napi_ok              ? "ok"
-                     : status == napi_cancelled     ? "cancelled"
-                     : status == napi_cannot_run_js ? "cannot run js"
-                                                    : "unexpected status";
-  printf("%s %s: %s\n", what, w->name, name);
+  switch (status) {
+  case napi_ok:
+    printf("%s %s: ok\n", what, w->name);
+    break;
+  case napi_cancelled:
+    printf("%s %s: cancelled\n", what, w->name);
+    break;
+  case napi_cannot_run_js:
+    printf("%s %s: cannot run js\n", what, w->name);
+    break;
+  default:
+    printf("%s %s: napi_status %d\n", what, w->name, (int)status);
+    break;
+  }
   fflush(stdout);
 }
 
@@ -45,10 +54,18 @@ static void complete(napi_env env, napi_status status, void *data) {
   napi_delete_async_work(env, w->work);
 }
 
+// A failure here shows up in the row's output as its own line.
 static void create(napi_env env, Work *w) {
   napi_value name;
-  napi_create_string_utf8(env, w->name, NAPI_AUTO_LENGTH, &name);
-  napi_create_async_work(env, NULL, name, execute, complete, w, &w->work);
+  napi_status status =
+      napi_create_string_utf8(env, w->name, NAPI_AUTO_LENGTH, &name);
+  if (status == napi_ok) {
+    status =
+        napi_create_async_work(env, NULL, name, execute, complete, w, &w->work);
+  }
+  if (status != napi_ok) {
+    report("created", w, status);
+  }
 }
 
 // The ordinary path: queued while the worker runs. The completion comes back

@@ -847,6 +847,98 @@ resp.text().then((a) => {
   }
 });
 
+describe("code frame of an error thrown from a source compiled with columnOffset", () => {
+  const filename = "/virtual/caret.js";
+
+  // The code frame Bun's error printer puts above an error: the excerpted line,
+  // the column of that line the caret sits under, and the top frame's position.
+  function parseCodeFrame(printed: string) {
+    expect(printed).toMatch(/^\d+ \| .*\n *\^\n/m);
+    expect(printed).toMatch(/\/virtual\/caret\.js:\d+:\d+/);
+    const lines = printed.split("\n");
+    const caretIndex = lines.findIndex(line => line.trim() === "^");
+    const textStart = lines[caretIndex - 1].indexOf("| ") + 2;
+    const [, line, column] = printed.match(/\/virtual\/caret\.js:(\d+):(\d+)/)!;
+    return {
+      text: lines[caretIndex - 1].slice(textStart),
+      caret: lines[caretIndex].indexOf("^") - textStart,
+      line: Number(line),
+      column: Number(column),
+    };
+  }
+
+  function inspectThrown(run: () => void) {
+    let thrown: unknown;
+    try {
+      run();
+    } catch (e) {
+      thrown = e;
+    }
+    return parseCodeFrame(Bun.inspect(thrown, { colors: false }));
+  }
+
+  // displayErrors: false keeps node:vm from replacing err.stack with its own
+  // source line and caret; the code frame under test is the printer's.
+  const script = (code: string, columnOffset: number) => () =>
+    new Script(code, { filename, columnOffset }).runInThisContext({ displayErrors: false });
+
+  test.each(['throw new Error("x")', "null.x;", '"use strict"; missing;'])(
+    "the caret stays under the token on the first line: %s",
+    code => {
+      const plain = inspectThrown(script(code, 0));
+      expect(plain.caret).toBeGreaterThan(0);
+      // columnOffset is added to the reported column of the first line (as in
+      // Node), but the excerpt is the physical line, so the caret must not move.
+      expect(inspectThrown(script(code, 20))).toEqual({ ...plain, column: plain.column + 20 });
+    },
+  );
+
+  test("lines after the first do not get the offset", () => {
+    const code = '"line 1";\nthrow new Error("x")';
+    const plain = inspectThrown(script(code, 0));
+    expect(plain).toMatchObject({ text: 'throw new Error("x")', line: 2 });
+    expect(inspectThrown(script(code, 20))).toEqual(plain);
+  });
+
+  test("compileFunction", () => {
+    const body = 'throw new Error("x")';
+    const fn = (columnOffset: number) => () => compileFunction(body, [], { filename, columnOffset })();
+    const plain = inspectThrown(fn(0));
+    expect(plain).toMatchObject({ text: body });
+    expect(plain.caret).toBeGreaterThan(0);
+    // Only the excerpt is compared: which line and column compileFunction
+    // reports for its body is its own business, the caret has to follow the
+    // text either way.
+    const { text, caret } = inspectThrown(fn(20));
+    expect({ text, caret }).toEqual({ text: plain.text, caret: plain.caret });
+  });
+
+  test("uncaught error output", async () => {
+    const code = 'throw new Error("x")';
+    async function uncaught(columnOffset: number) {
+      const options = { filename, columnOffset, displayErrors: false };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:vm").runInThisContext(${JSON.stringify(code)}, ${JSON.stringify(options)})`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const frame = parseCodeFrame(stderr);
+      expect(exitCode).toBe(1);
+      return frame;
+    }
+    const [plain, shifted] = await Promise.all([uncaught(0), uncaught(20)]);
+    expect(plain).toMatchObject({ text: code, line: 1 });
+    expect(plain.caret).toBeGreaterThan(0);
+    expect(shifted).toEqual({ ...plain, column: plain.column + 20 });
+  });
+});
+
 test("can't use export syntax in vm.Script", () => {
   // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
   // construction rather than at runInThisContext()/createCachedData().

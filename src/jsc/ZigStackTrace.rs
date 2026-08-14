@@ -2,6 +2,7 @@ use core::ptr;
 use core::ptr::NonNull;
 
 use crate::exception_list;
+use bun_core::Ordinal;
 use bun_core::String as BunString;
 use bun_core::ZigStringSlice;
 use bun_url::URL as ZigURL;
@@ -16,6 +17,12 @@ pub struct ZigStackTrace {
     pub(crate) source_lines_numbers: *mut i32,
     pub(crate) source_lines_len: u8,
     pub(crate) source_lines_to_collect: u8,
+    /// Column of `source_lines_ptr[0]` the caret is drawn under; set together
+    /// with that line. Not necessarily the top frame's column: on the first
+    /// line of a source with a start column (node:vm's `columnOffset`) the
+    /// frame's column includes the offset, while the excerpt is the physical
+    /// line.
+    pub(crate) source_lines_caret_column: Ordinal,
 
     pub(crate) frames_ptr: *mut ZigStackFrame,
     pub frames_len: u8,
@@ -36,6 +43,7 @@ impl ZigStackTrace {
             source_lines_numbers: ptr::dangling_mut(),
             source_lines_len: 0,
             source_lines_to_collect: 0,
+            source_lines_caret_column: Ordinal::INVALID,
 
             frames_ptr: frames_slice.as_mut_ptr(),
             frames_len: frames_slice.len().min(usize::from(u8::MAX)) as u8,

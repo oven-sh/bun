@@ -5762,6 +5762,7 @@ impl VirtualMachine {
                     current_line_number -= 1;
                 }
                 exception.stack.source_lines_len = take as u8;
+                exception.stack.source_lines_caret_column = frames[top].position.column;
             }
 
             if !code.slice().is_empty() {
@@ -6168,7 +6169,7 @@ impl VirtualMachine {
                         allow_ansi_color,
                         formatter.error_display_level,
                     )?;
-                } else if let Some(top) = top_frame {
+                } else {
                     did_print_name = true;
                     let display_line = source.line + 1;
                     let int_size = count_digits(display_line);
@@ -6197,7 +6198,7 @@ impl VirtualMachine {
                     } else {
                         pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
 
-                        let col = top.position.column.zero_based();
+                        let col = exception.stack.source_lines_caret_column.zero_based();
                         if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                             || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
                         {

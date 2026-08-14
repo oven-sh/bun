@@ -128,7 +128,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
-    OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
+    OrdinalNumber* source_line_numbers, int32_t* source_lines_caret_column, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     auto code = stackFrame.codeBlock();
@@ -187,6 +187,14 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         *referenced_source_provider = provider;
         source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();
+        // The caret is measured from the excerpt's text (the printer trims the previous
+        // line's '\n' that lineStart is still on), not taken from location.column(): on
+        // the first line of a source with a start column (node:vm's columnOffset) the
+        // reported column includes that offset, which the excerpt does not contain.
+        int textStart = static_cast<int>(lineStart);
+        if (lineStart < sourceString.length() && sourceString[lineStart] == '\n')
+            textStart++;
+        *source_lines_caret_column = std::max(location.byte_position - textStart, 0);
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -230,11 +238,12 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
         populateStackFramePosition(stackFrame, nullptr,
-            nullptr,
+            nullptr, nullptr,
             0, frame.position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
             is_top ? trace.source_lines_numbers : nullptr,
+            is_top ? &trace.source_lines_caret_column_zero_based : nullptr,
             is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
     }
 }
@@ -673,6 +682,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                                     auto str = jsStr->value(global);
                                     except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
                                     except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
+                                    except.stack.source_lines_caret_column_zero_based = except.stack.frames_ptr[0].position.column_zero_based;
                                     except.stack.source_lines_len = 1;
                                     except.remapped = true;
                                 }

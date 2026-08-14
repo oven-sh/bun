@@ -244,6 +244,7 @@ pub(crate) fn select_packages(
         graph.as_ref(),
         RootSelection::Implicit,
     );
+    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
     let packages = discovered
         .into_iter()
         .enumerate()

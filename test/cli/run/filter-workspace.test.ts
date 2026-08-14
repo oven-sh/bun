@@ -480,6 +480,18 @@ describe("bun", () => {
   test("should error with missing script", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
   });
+  test("warns about a filter that matched nothing while running the others", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "pkga", "--filter", "typo", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toMatch(/pkga/);
+    expect(stderr.toString()).toContain('warn: No workspace packages matched the filter "typo"');
+    expect(exitCode).toBe(0);
+  });
   test("should warn about malformed package.json", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });

@@ -227,9 +227,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Err(e) => return Err(e),
     }
 
-    // Success exits through the VM as well: this runs the 'exit' handlers, applies
-    // process.exitCode and, under BUN_DESTRUCT_VM_ON_EXIT, destroys the JSC heap
-    // that owns the prerender's timers, blobs, ...; `_vm_guard` frees only the Rust side.
+    // Success must exit through the VM too: 'exit' handlers, process.exitCode, VM teardown.
     vm.on_exit();
     vm.global_exit()
 }

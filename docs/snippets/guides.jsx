@@ -134,7 +134,6 @@ export const GuidesList = () => {
           { title: "Build an app with Nuxt and Bun", href: "/guides/ecosystem/nuxt" },
           { title: "Build an app with Qwik and Bun", href: "/guides/ecosystem/qwik" },
           { title: "Build an app with Astro and Bun", href: "/guides/ecosystem/astro" },
-          { title: "Build an app with Remix and Bun", href: "/guides/ecosystem/remix" },
           { title: "Use TanStack Start with Bun", href: "/guides/ecosystem/tanstack-start" },
           { title: "Run Bun as a daemon with systemd", href: "/guides/ecosystem/systemd" },
           { title: "Build an app with Next.js and Bun", href: "/guides/ecosystem/nextjs" },

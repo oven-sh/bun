@@ -20,20 +20,76 @@ const { minifyTest } = cssInternals;
 //    selectors at all parsed as a valid empty selector. That let
 //    `:nth-child(2n of)`, ` { color: red }`, and `.a, , .b { }` through too.
 
-// An unfixed build asserts on the empty of-list in the serializer, so run each
-// input through a child process to keep the test runner alive either way.
-// Returns the single line the child prints, `ok: <minified>` or `error: <message>`,
-// plus stderr filtered to real diagnostics so a crash shows up in the failure diff.
-async function minifyInChild(css: string): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+function rejected(message: string) {
+  return `error: parsing failed: ${message}`;
+}
+
+function minified(output: string) {
+  return `ok: ${output}`;
+}
+
+const cases: [css: string, expected: string][] = [
+  // --- :nth-child(An+B of <selectors>) ---
+
+  // An of-list made only of invalid selectors invalidates the rule: a
+  // pseudo-element, a lexically invalid selector, a bad-string token.
+  ["a:nth-child(2n of ::before) { color: red }", rejected("Invalid selector. Token is not allowed in this state")],
+  ["a:nth-child(2n of %bad) { color: red }", rejected("Invalid selector. Empty selector is not allowed")],
+  [
+    'div:nth-child(2n of [q="x\n]) { color: red }',
+    rejected("Invalid selector. Invalid value in attribute selector: x"),
+  ],
+  // Non-forgiving means one invalid selector invalidates the whole list, even
+  // when another selector in it is valid on its own.
+  [
+    "a:nth-child(2n of .valid, ::before) { color: red }",
+    rejected("Invalid selector. Token is not allowed in this state"),
+  ],
+  // :nth-last-child takes the same of-list grammar.
+  ["a:nth-last-child(2n of ::before) { color: red }", rejected("Invalid selector. Token is not allowed in this state")],
+  // An empty of-list, or an empty selector before a comma in one.
+  ["a:nth-child(2n of) { color: red }", rejected("Invalid selector. Empty selector is not allowed")],
+  ["a:nth-child(2n of , .x) { color: red }", rejected("Invalid selector. Empty selector is not allowed")],
+  // Valid of-lists still parse and minify.
+  [":nth-child(even of li.important) {width: 20px}", minified(":nth-child(2n of li.important){width:20px}")],
+  [
+    ":nth-last-child(2n of li.important, .other) {width: 20px}",
+    minified(":nth-last-child(2n of li.important, .other){width:20px}"),
+  ],
+  ["a:nth-child(2n of *) { color: red }", minified("a:nth-child(2n of *){color:red}")],
+
+  // --- :has(<relative-selector-list>) ---
+
+  // A list made only of a lexically invalid selector, or of a lone comma,
+  // invalidates the rule.
+  ["a:has(%bad) { color: red }", rejected("Invalid selector. Empty selector is not allowed")],
+  ["a:has(,) { color: red }", rejected("Unexpected end of input")],
+  // A valid selector does not rescue a list with an invalid one.
+  ["a:has(> .x, %bad) { color: red }", rejected("Invalid selector. Empty selector is not allowed")],
+  // Valid lists still parse and minify.
+  ["a:has(.x) { color: red }", minified("a:has(.x){color:red}")],
+  ["a:has(> .x, ~ .y) { color: red }", minified("a:has(>.x,~.y){color:red}")],
+];
+
+// An unfixed build asserts on the empty of-list in the serializer, so the inputs
+// run in a child process to keep the test runner alive either way. One child for
+// all of them: a debug build takes a couple of seconds to start, so a child per
+// input does not fit in the per-test timeout. The child prints a `[css, result]`
+// line per input, so if it crashes the diff still shows how far it got.
+test("of-lists and :has() lists are parsed non-forgivingly", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
-try {
-  console.log("ok: " + minifyTest(${JSON.stringify(css)}, ""));
-} catch (e) {
-  console.log("error: " + e.message);
+for (const css of ${JSON.stringify(cases.map(([css]) => css))}) {
+  let result;
+  try {
+    result = "ok: " + minifyTest(css, "");
+  } catch (e) {
+    result = "error: " + e.message;
+  }
+  console.log(JSON.stringify([css, result]));
 }`,
     ],
     env: bunEnv,
@@ -41,100 +97,12 @@ try {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return {
-    stdout: stdout.trim(),
-    stderr: stderr.includes("error") || stderr.includes("panic") ? stderr.trim() : "",
-    exitCode,
-  };
-}
+  const results = stdout
+    .split("\n")
+    .filter(line => line !== "")
+    .map(line => JSON.parse(line));
 
-function rejected(message: string) {
-  return { stdout: `error: parsing failed: ${message}`, stderr: "", exitCode: 0 };
-}
-
-function minified(output: string) {
-  return { stdout: `ok: ${output}`, stderr: "", exitCode: 0 };
-}
-
-// --- :nth-child(An+B of <selectors>) ---
-
-test.concurrent("an of-list made only of a pseudo-element invalidates the rule", async () => {
-  expect(await minifyInChild("a:nth-child(2n of ::before) { color: red }")).toEqual(
-    rejected("Invalid selector. Token is not allowed in this state"),
-  );
-});
-
-test.concurrent("an of-list made only of a lexically invalid selector invalidates the rule", async () => {
-  expect(await minifyInChild("a:nth-child(2n of %bad) { color: red }")).toEqual(
-    rejected("Invalid selector. Empty selector is not allowed"),
-  );
-});
-
-test.concurrent("an of-list made only of a bad-string token invalidates the rule", async () => {
-  expect(await minifyInChild('div:nth-child(2n of [q="x\n]) { color: red }')).toEqual(
-    rejected("Invalid selector. Invalid value in attribute selector: x"),
-  );
-});
-
-// Non-forgiving means one invalid selector invalidates the whole list, even when
-// another selector in it is valid on its own.
-test.concurrent("a valid selector does not rescue an of-list with an invalid one", async () => {
-  expect(await minifyInChild("a:nth-child(2n of .valid, ::before) { color: red }")).toEqual(
-    rejected("Invalid selector. Token is not allowed in this state"),
-  );
-});
-
-test.concurrent(":nth-last-child takes the same of-list grammar", async () => {
-  expect(await minifyInChild("a:nth-last-child(2n of ::before) { color: red }")).toEqual(
-    rejected("Invalid selector. Token is not allowed in this state"),
-  );
-});
-
-test.concurrent("an empty of-list invalidates the rule", async () => {
-  expect(await minifyInChild("a:nth-child(2n of) { color: red }")).toEqual(
-    rejected("Invalid selector. Empty selector is not allowed"),
-  );
-});
-
-test.concurrent("an empty selector before a comma invalidates the of-list", async () => {
-  expect(await minifyInChild("a:nth-child(2n of , .x) { color: red }")).toEqual(
-    rejected("Invalid selector. Empty selector is not allowed"),
-  );
-});
-
-test.concurrent("valid of-lists still parse and minify", async () => {
-  expect(await minifyInChild(":nth-child(even of li.important) {width: 20px}")).toEqual(
-    minified(":nth-child(2n of li.important){width:20px}"),
-  );
-  expect(await minifyInChild(":nth-last-child(2n of li.important, .other) {width: 20px}")).toEqual(
-    minified(":nth-last-child(2n of li.important, .other){width:20px}"),
-  );
-  expect(await minifyInChild("a:nth-child(2n of *) { color: red }")).toEqual(
-    minified("a:nth-child(2n of *){color:red}"),
-  );
-});
-
-// --- :has(<relative-selector-list>) ---
-
-test.concurrent("a :has() list made only of a lexically invalid selector invalidates the rule", async () => {
-  expect(await minifyInChild("a:has(%bad) { color: red }")).toEqual(
-    rejected("Invalid selector. Empty selector is not allowed"),
-  );
-});
-
-test.concurrent("a lone comma in :has() invalidates the rule", async () => {
-  expect(await minifyInChild("a:has(,) { color: red }")).toEqual(rejected("Unexpected end of input"));
-});
-
-test.concurrent("a valid selector does not rescue a :has() list with an invalid one", async () => {
-  expect(await minifyInChild("a:has(> .x, %bad) { color: red }")).toEqual(
-    rejected("Invalid selector. Empty selector is not allowed"),
-  );
-});
-
-test.concurrent("valid :has() lists still parse and minify", async () => {
-  expect(await minifyInChild("a:has(.x) { color: red }")).toEqual(minified("a:has(.x){color:red}"));
-  expect(await minifyInChild("a:has(> .x, ~ .y) { color: red }")).toEqual(minified("a:has(>.x,~.y){color:red}"));
+  expect({ results, stderr, exitCode }).toEqual({ results: cases, stderr: "", exitCode: 0 });
 });
 
 // --- empty selectors ---

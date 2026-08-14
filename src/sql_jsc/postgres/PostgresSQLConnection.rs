@@ -3105,7 +3105,7 @@ impl PostgresSQLConnection {
             return Ok(entry.js.get());
         }
         let js = bun_string_jsc::create_utf8_for_js(global, channel)
-            .map_err(|_| AnyPostgresError::JSError)?;
+            .map_err(crate::jsc::js_error_to_postgres)?;
         if self.channel_names.get().len() < Self::MAX_INTERNED_CHANNELS {
             self.channel_names.with_mut(|names| {
                 names.push(InternedChannel {
@@ -3129,7 +3129,7 @@ impl PostgresSQLConnection {
         let global = self.global();
         let channel_js = self.channel_name_js(global, channel)?;
         let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
-            .map_err(|_| AnyPostgresError::JSError)?;
+            .map_err(crate::jsc::js_error_to_postgres)?;
         self.event_loop().run_callback(
             callback,
             global,

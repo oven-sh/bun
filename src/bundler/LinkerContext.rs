@@ -2737,12 +2737,8 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // A dynamically imported stylesheet gets a JS chunk of its own (see
-            // `compute_chunks`) whose exports are the stylesheet's, so its JS
-            // parts are walked like any other entry point's: that keeps its entry
-            // point part, and through it every export, alive. Stylesheets passed
-            // as entry points by the user only produce CSS, so their exports can
-            // stay dead.
+            // An import()ed stylesheet has a JS chunk of its own (`compute_chunks`), so its
+            // parts are walked below like any other entry point's to keep its exports alive.
             if ctx.entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
                 return;
             }

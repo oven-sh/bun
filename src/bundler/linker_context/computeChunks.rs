@@ -187,14 +187,7 @@ pub(crate) fn compute_chunks(
                 };
             }
 
-            // A stylesheet that is an entry point because a JS file `import()`s
-            // it is loaded as a JS module: the import() is rewritten to this
-            // entry point's chunk and evaluates to the stylesheet's exports (the
-            // CSS modules class map), so it also needs a JS chunk. esbuild has a
-            // separate JS stub file to chunk here; in Bun that JS lives in the
-            // CSS file's own source index, which the loop below keeps out of
-            // `files_with_parts_in_chunk`, so `find_imported_parts_in_js_order`
-            // prints it into this chunk by way of being the chunk's entry point.
+            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk.
             if this.graph.files.items_entry_point_kind()[source_index as usize]
                 != crate::EntryPoint::Kind::DynamicImport
             {
@@ -539,10 +532,7 @@ pub(crate) fn compute_chunks(
     // to look up the path for this chunk to use with the import.
     for (chunk_id, chunk) in chunks.iter_mut().enumerate() {
         if chunk.entry_point.is_entry_point() {
-            // JS entry points that import CSS files (and dynamically imported
-            // stylesheets) generate two chunks, a JS chunk and a CSS chunk. Don't
-            // link the CSS chunk to the file since the CSS chunk is secondary (the
-            // JS chunk is primary).
+            // An entry point with both a JS and a CSS chunk is linked to the JS chunk.
             if matches!(chunk.content, chunk::Content::Css(_))
                 && entry_point_to_js_chunk_idx[chunk.entry_point.entry_point_id() as usize]
                     != u32::MAX

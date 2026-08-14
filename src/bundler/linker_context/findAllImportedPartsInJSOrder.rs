@@ -61,12 +61,8 @@ pub(crate) fn find_imported_parts_in_js_order(
             push(source_index);
         }
 
-        // CSS files are never in `files_with_parts_in_chunk`: a copy of their JS
-        // side is printed into every chunk that imports them (the entry bits
-        // check in `visit`). The JS chunk emitted for a dynamically imported
-        // stylesheet (see `compute_chunks`) contains no importer of the
-        // stylesheet, it is the stylesheet's own chunk, so visit the stylesheet
-        // itself.
+        // CSS files are never in `files_with_parts_in_chunk` (each importing chunk prints its
+        // own copy, see `visit`), so the chunk of an import()ed stylesheet visits it directly.
         let entry_point = chunk.entry_point;
         if entry_point.is_entry_point()
             && this.graph.ast.items_css()[entry_point.source_index() as usize].is_some()

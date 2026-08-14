@@ -1,5 +1,6 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "BunClientData.h"
 
 #include "ExceptionOr.h"
 #include "JavaScriptCore/CallData.h"
@@ -198,6 +199,27 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSize,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     return JSValue::encode(jsNumber(vm.heap.size()));
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionTotalAllocatedHeapBytes);
+JSC_DEFINE_HOST_FUNCTION(functionTotalAllocatedHeapBytes,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    // JSC's allocation counter resets each GC cycle, so accumulate deltas
+    // across reads into a monotonic total. Bytes allocated between the last
+    // read and a GC reset are lost, making this a lower bound whose accuracy
+    // improves with read frequency. State lives on the VM's client data so a
+    // VM created on a reused native thread starts from zero.
+    auto* clientData = WebCore::clientData(vm);
+    size_t current = vm.heap.totalBytesAllocatedThisCycle();
+    if (current >= clientData->lastCycleAllocatedBytes)
+        clientData->totalAllocatedHeapBytes += current - clientData->lastCycleAllocatedBytes;
+    else
+        clientData->totalAllocatedHeapBytes += current;
+    clientData->lastCycleAllocatedBytes = current;
+    return JSValue::encode(jsNumber(clientData->totalAllocatedHeapBytes));
 }
 
 JSC::Structure*
@@ -989,6 +1011,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     getRandomSeed                       functionGetRandomSeed                       Function    0
     heapSize                            functionHeapSize                            Function    0
     heapStats                           functionMemoryUsageStatistics               Function    0
+    totalAllocatedHeapBytes             functionTotalAllocatedHeapBytes             Function    0
     startSamplingProfiler               functionStartSamplingProfiler               Function    0
     samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
     noInline                            functionNeverInlineFunction                 Function    0
@@ -1017,7 +1040,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1029,6 +1052,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getRandomSeed"_s), functionGetRandomSeed);
     putNativeFn(Identifier::fromString(vm, "heapSize"_s), functionHeapSize);
     putNativeFn(Identifier::fromString(vm, "heapStats"_s), functionMemoryUsageStatistics);
+    putNativeFn(Identifier::fromString(vm, "totalAllocatedHeapBytes"_s), functionTotalAllocatedHeapBytes);
     putNativeFn(Identifier::fromString(vm, "startSamplingProfiler"_s), functionStartSamplingProfiler);
     putNativeFn(Identifier::fromString(vm, "samplingProfilerStackTraces"_s), functionSamplingProfilerStackTraces);
     putNativeFn(Identifier::fromString(vm, "noInline"_s), functionNeverInlineFunction);

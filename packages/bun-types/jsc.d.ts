@@ -9,6 +9,19 @@ declare module "bun:jsc" {
   function edenGC(): number;
   function heapSize(): number;
   function heapStats(): HeapStats;
+  /**
+   * Cumulative bytes allocated in the JavaScriptCore GC heap since the
+   * process (or worker thread) started, regardless of how much has since
+   * been freed.
+   *
+   * JSC resets its internal allocation counter each GC cycle; this
+   * accumulates deltas across reads, so bytes allocated between your last
+   * call and a GC are not counted. It is a monotonic lower bound whose
+   * accuracy improves the more frequently it is called. Useful for
+   * computing allocation rates and for weighting profiler samples by
+   * allocated bytes.
+   */
+  function totalAllocatedHeapBytes(): number;
   function memoryUsage(): MemoryUsage;
   function getRandomSeed(): number;
   function setRandomSeed(value: number): void;

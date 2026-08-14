@@ -16,7 +16,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { join, relative, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -656,26 +656,43 @@ describe.concurrent("bun-install", () => {
     return file(join(package_dir, "bun.lock")).text();
   }
 
+  // Where the links in node_modules/@repo point, relative to the project, whatever kind of link the linker made
+  // (relative symlinks here, junctions or symlinks on Windows depending on the linker).
+  async function repoLinks(package_dir: string) {
+    const root = realpathSync(package_dir);
+    const links: Record<string, string> = {};
+    for (const name of await readdirSorted(join(package_dir, "node_modules", "@repo"))) {
+      const target = realpathSync(join(package_dir, "node_modules", "@repo", name));
+      links[`@repo/${name}`] = relative(root, target).replaceAll(sep, "/");
+    }
+    return links;
+  }
+
   it("should work when moving workspace packages", async () => {
     using dir = tempDir("workspace-move", repoWorkspace);
     const package_dir = String(dir);
-    const names = ["eslint-config", "typescript-config", "ui"];
 
     expect(await installRepoWorkspace(package_dir)).toContain('"@repo/ui@workspace:packages/ui"');
-    for (const name of names) {
-      expect(package_dir).toHaveWorkspaceLink2([`@repo/${name}`, `../packages/${name}`, `packages/${name}`]);
-    }
+    expect(await repoLinks(package_dir)).toEqual({
+      "@repo/eslint-config": "packages/eslint-config",
+      "@repo/typescript-config": "packages/typescript-config",
+      "@repo/ui": "packages/ui",
+    });
 
     // Move every package to config/ and point the workspaces glob there.
     await rename(join(package_dir, "packages"), join(package_dir, "config"));
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ ...repoRoot, workspaces: ["config/*"] }));
 
     const lockfile = await installRepoWorkspace(package_dir);
-    for (const name of names) {
+    for (const name of ["eslint-config", "typescript-config", "ui"]) {
       expect(lockfile).toContain(`"@repo/${name}@workspace:config/${name}"`);
-      expect(package_dir).toHaveWorkspaceLink2([`@repo/${name}`, `../config/${name}`, `config/${name}`]);
     }
     expect(lockfile).not.toContain("packages/");
+    expect(await repoLinks(package_dir)).toEqual({
+      "@repo/eslint-config": "config/eslint-config",
+      "@repo/typescript-config": "config/typescript-config",
+      "@repo/ui": "config/ui",
+    });
   });
 
   it("should work when renaming a single workspace package", async () => {
@@ -683,11 +700,11 @@ describe.concurrent("bun-install", () => {
     const package_dir = String(dir);
 
     expect(await installRepoWorkspace(package_dir)).toContain('"@repo/eslint-config@workspace:packages/eslint-config"');
-    expect(package_dir).toHaveWorkspaceLink2([
-      "@repo/eslint-config",
-      "../packages/eslint-config",
-      "packages/eslint-config",
-    ]);
+    expect(await repoLinks(package_dir)).toEqual({
+      "@repo/eslint-config": "packages/eslint-config",
+      "@repo/typescript-config": "packages/typescript-config",
+      "@repo/ui": "packages/ui",
+    });
 
     // Rename @repo/eslint-config to @repo/eslint-config-lol in place, in the package itself and in both dependents.
     await Promise.all([
@@ -714,17 +731,12 @@ describe.concurrent("bun-install", () => {
     const lockfile = await installRepoWorkspace(package_dir);
     expect(lockfile).toContain('"@repo/eslint-config-lol@workspace:packages/eslint-config"');
     expect(lockfile).not.toContain('"@repo/eslint-config@workspace:');
-    expect(package_dir).toHaveWorkspaceLink2([
-      "@repo/eslint-config-lol",
-      "../packages/eslint-config",
-      "packages/eslint-config",
-    ]);
-    expect(package_dir).toHaveWorkspaceLink2(["@repo/ui", "../packages/ui", "packages/ui"]);
-    expect(package_dir).toHaveWorkspaceLink2([
-      "@repo/typescript-config",
-      "../packages/typescript-config",
-      "packages/typescript-config",
-    ]);
+    // toMatchObject: the link for the old name is currently left behind, which is not what this test is about.
+    expect(await repoLinks(package_dir)).toMatchObject({
+      "@repo/eslint-config-lol": "packages/eslint-config",
+      "@repo/typescript-config": "packages/typescript-config",
+      "@repo/ui": "packages/ui",
+    });
   });
 
   it("should handle missing package", async () => {
@@ -7809,7 +7821,7 @@ describe.concurrent("bun-install", () => {
       },
     });
 
-    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).quiet().throws(true);
     const err1 = stderr.toString();
     expect(err1).toContain("Saved lockfile");
     expect(
@@ -7870,7 +7882,7 @@ describe.concurrent("bun-install", () => {
       },
     });
 
-    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).quiet().throws(true);
     const err1 = stderr.toString();
     expect(err1).toContain("Saved lockfile");
     expect(
@@ -7927,7 +7939,7 @@ describe.concurrent("bun-install", () => {
         },
       },
     });
-    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+    const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).quiet().throws(true);
     const err1 = stderr.toString();
     expect(err1).toContain("Saved lockfile");
     expect(

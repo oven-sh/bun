@@ -676,34 +676,34 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
         } else if tag == S::SHORTHAND {
             let val = S::extract_shorthand(property);
-            self.flush_helper_physical(
-                PhysicalSlot::Top,
-                S::shorthand_top(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Right,
-                S::shorthand_right(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Bottom,
-                S::shorthand_bottom(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Left,
-                S::shorthand_left(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
+
+            // The shorthand sets all four physical sides, which overrides everything
+            // buffered here, logical longhands included (in every writing mode). So unlike
+            // in the longhand arms, a category change is not a reason to flush: when logical
+            // properties are compiled, flushed inline longhands become `:lang()` rules
+            // emitted after this rule, where they would win over the shorthand. The buffered
+            // values are only emitted, as a fallback, when a target cannot parse the new
+            // value: per side for physical values, and for any side when logical values are
+            // buffered, since which side those resolve to depends on the writing mode.
+            if let Some(browsers) = context.targets.browsers {
+                let has_logical = self.block_start.is_some()
+                    || self.block_end.is_some()
+                    || self.inline_start.is_some()
+                    || self.inline_end.is_some();
+                let sides = [
+                    (PhysicalSlot::Top, S::shorthand_top(val)),
+                    (PhysicalSlot::Right, S::shorthand_right(val)),
+                    (PhysicalSlot::Bottom, S::shorthand_bottom(val)),
+                    (PhysicalSlot::Left, S::shorthand_left(val)),
+                ];
+                let needs_fallback = sides.iter().any(|&(slot, v)| {
+                    (has_logical || self.physical_slot_is_some(slot)) && !v.is_compatible(&browsers)
+                });
+                if needs_fallback {
+                    self.flush(dest, context);
+                }
+            }
+
             self.top = Some(S::shorthand_top(val).clone());
             self.right = Some(S::shorthand_right(val).clone());
             self.bottom = Some(S::shorthand_bottom(val).clone());
@@ -712,6 +712,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.block_end = None;
             self.inline_start = None;
             self.inline_end = None;
+            self.category = S::SHORTHAND_CATEGORY;
             self.has_any = true;
         } else {
             return false;

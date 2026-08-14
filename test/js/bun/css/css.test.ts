@@ -2436,6 +2436,134 @@ describe("css tests", () => {
     );
   });
 
+  // A 4-side shorthand sets all four physical sides, so logical longhands declared before it in the
+  // same rule are dead in every writing mode. They must not survive into the output: when logical
+  // properties are compiled for old targets, inline longhands become separate :lang() rules emitted
+  // after the rule, which would win over the shorthand.
+  describe("logical longhands overridden by a 4-side shorthand", () => {
+    for (const [shorthand, inlineStart, inlineEnd, inline, blockStart] of [
+      ["margin", "margin-inline-start", "margin-inline-end", "margin-inline", "margin-block-start"],
+      ["padding", "padding-inline-start", "padding-inline-end", "padding-inline", "padding-block-start"],
+    ]) {
+      // Safari 8 compiles logical properties away (the :lang() cases above use it too); Safari 15
+      // supports them.
+      for (const [label, targets] of [
+        ["logical properties compiled", { safari: 8 << 16 }],
+        ["logical properties supported", { safari: 15 << 16 }],
+      ] as const) {
+        describe(`${shorthand}, ${label}`, () => {
+          for (const decls of [
+            `${inlineStart}: 2px`,
+            `${inlineEnd}: 2px`,
+            `${inline}: 2px 4px`,
+            `${blockStart}: 2px`,
+            `${inlineStart}: var(--x)`,
+            `${inlineStart}: 2px; ${blockStart}: 3px`,
+          ]) {
+            prefix_test(
+              `
+              .foo {
+                ${decls};
+                ${shorthand}: 0;
+              }
+            `,
+              indoc`
+              .foo {
+                ${shorthand}: 0;
+              }
+            `,
+              targets,
+            );
+          }
+        });
+      }
+
+      // The shorthand's value is not supported by the target, so the overridden declarations stay as
+      // a fallback, like physical longhands do (see the "length" tests).
+      prefix_test(
+        `
+        .foo {
+          ${inlineStart}: 2px;
+          ${shorthand}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${inlineStart}: 2px;
+          ${shorthand}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 14 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inlineStart}: 2px;
+          ${shorthand}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${shorthand}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 16 << 16,
+        },
+      );
+
+      // A logical longhand after the shorthand is live and stays.
+      prefix_test(
+        `
+        .foo {
+          ${shorthand}: 0;
+          ${inlineStart}: 2px;
+        }
+      `,
+        indoc`
+        .foo {
+          ${shorthand}: 0;
+          ${inlineStart}: 2px;
+        }
+      `,
+        {
+          safari: 15 << 16,
+        },
+      );
+    }
+
+    for (const [shorthand, inlineStart, inline, top, left] of [
+      ["margin", "margin-inline-start", "margin-inline", "margin-top", "margin-left"],
+      ["padding", "padding-inline-start", "padding-inline", "padding-top", "padding-left"],
+      ["inset", "inset-inline-start", "inset-inline", "top", "left"],
+      [
+        "scroll-margin",
+        "scroll-margin-inline-start",
+        "scroll-margin-inline",
+        "scroll-margin-top",
+        "scroll-margin-left",
+      ],
+    ]) {
+      minify_test(`.a{${inlineStart}:2px;${shorthand}:0}`, `.a{${shorthand}:0}`);
+      minify_test(`.a{${inline}:2px 4px;${shorthand}:0}`, `.a{${shorthand}:0}`);
+      minify_test(`.a{${inlineStart}:2px!important;${shorthand}:0!important}`, `.a{${shorthand}:0!important}`);
+      // Longhands after the shorthand still fold into it.
+      minify_test(`.a{${inlineStart}:2px;${shorthand}:0;${top}:5px}`, `.a{${shorthand}:5px 0 0}`);
+
+      // Only the 4-side shorthand overrides the other category: a 2-side logical shorthand leaves
+      // the physical sides alone (they map to different sides depending on the writing mode), and a
+      // logical longhand after the shorthand is live.
+      minify_test(`.a{${left}:2px;${inline}:0}`, `.a{${left}:2px;${inline}:0}`);
+      minify_test(`.a{${shorthand}:0;${inlineStart}:2px}`, `.a{${shorthand}:0;${inlineStart}:2px}`);
+      // An unparsed shorthand may hold a value some browser rejects, so the earlier declaration is
+      // kept as a fallback.
+      minify_test(`.a{${inlineStart}:2px;${shorthand}:var(--v)}`, `.a{${inlineStart}:2px;${shorthand}:var(--v)}`);
+    }
+  });
+
   describe("scroll-paddding", () => {
     prefix_test(
       `

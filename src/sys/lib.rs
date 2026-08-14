@@ -3051,8 +3051,9 @@ mod posix_impl {
                             E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG | E::EACCES
                         ) =>
                     {
-                        return Err(Error::new(e.get_errno(), Tag::realpath)
-                            .with_path(path.as_bytes()));
+                        return Err(
+                            Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes())
+                        );
                     }
                     // No `O_PATH` here (old kernel, gVisor, seccomp): use libc.
                     Err(e) if matches!(e.get_errno(), E::EINVAL | E::ENOSYS | E::EOPNOTSUPP) => {

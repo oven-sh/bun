@@ -1657,11 +1657,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // is a S3 file we can use chunked here
 
             if let Some(stream) = ReadableStream::from_js(
-                ReadableStream::from_blob_copy_ref(
-                    global_this,
-                    body.any_blob().blob(),
-                    s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
-                )?,
+                ReadableStream::from_blob_copy_ref(global_this, body.any_blob().blob(), None)?,
                 global_this,
             )? {
                 let mut old = core::mem::replace(

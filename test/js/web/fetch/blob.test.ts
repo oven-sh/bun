@@ -735,3 +735,128 @@ describe("Blob from ArrayBuffer-like values", () => {
     expect(await blob.text()).toBe("abcdefgh");
   });
 });
+
+// `.stream(chunkSize)` sizes the chunks of in-memory and file-backed blobs.
+// Regressed silently: in-memory blobs filled whatever pull buffer the stream
+// handed them, and the argument was never passed down to file-backed blobs.
+describe("Blob.prototype.stream(chunkSize)", () => {
+  function pattern(length: number): Buffer {
+    const bytes = Buffer.alloc(length);
+    for (let i = 0; i < length; i++) bytes[i] = (i * 7 + (i >> 8)) & 0xff;
+    return bytes;
+  }
+
+  function expectedSizes(total: number, chunkSize: number): number[] {
+    const sizes: number[] = new Array(Math.floor(total / chunkSize)).fill(chunkSize);
+    if (total % chunkSize) sizes.push(total % chunkSize);
+    return sizes;
+  }
+
+  async function collect(stream: ReadableStream<Uint8Array>) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return { sizes: chunks.map(chunk => chunk.byteLength), bytes: Buffer.concat(chunks) };
+  }
+
+  describe("in-memory Blob", () => {
+    const data = pattern(50_000);
+    const blob = new Blob([data]);
+
+    // 20_000 is larger than the first chunk the source used to hand out
+    // synchronously (16 KiB); 60_000 is larger than the blob.
+    test.each([1024, 3000, 20_000, 60_000])("stream(%i)", async chunkSize => {
+      const { sizes, bytes } = await collect(blob.stream(chunkSize));
+      expect(sizes).toEqual(expectedSizes(data.length, chunkSize));
+      expect(bytes.equals(data)).toBe(true);
+    });
+
+    test("slice().stream(chunkSize) chunks the slice", async () => {
+      const { sizes, bytes } = await collect(blob.slice(100, 2700).stream(1024));
+      expect(sizes).toEqual([1024, 1024, 552]);
+      expect(bytes.equals(data.subarray(100, 2700))).toBe(true);
+    });
+
+    test("each stream() call chunks independently", async () => {
+      const [a, b] = await Promise.all([collect(blob.stream(1024)), collect(blob.stream(3000))]);
+      expect(a.sizes).toEqual(expectedSizes(data.length, 1024));
+      expect(b.sizes).toEqual(expectedSizes(data.length, 3000));
+    });
+
+    test("a chunked stream still buffers to the full contents", async () => {
+      expect((await blob.stream(1024).bytes()).length).toBe(data.length);
+      expect(await new Response(blob.stream(1024)).bytes()).toEqual(new Uint8Array(data));
+    });
+  });
+
+  describe("Bun.file()", () => {
+    // Larger than one read of the file (256 KiB), so chunks have to be carried
+    // across reads: 3000 does not divide 262144, and 270_000 needs more than
+    // one read per chunk.
+    const data = pattern(300_000);
+
+    test.each([1024, 3000, 270_000, 1_000_000])("stream(%i)", async chunkSize => {
+      using dir = tempDir("blob-stream-chunk-size", { "data.bin": data });
+      const { sizes, bytes } = await collect(Bun.file(`${dir}/data.bin`).stream(chunkSize));
+      expect(sizes).toEqual(expectedSizes(data.length, chunkSize));
+      expect(bytes.equals(data)).toBe(true);
+    });
+
+    test("slice().stream(chunkSize) chunks the slice", async () => {
+      const small = pattern(5000);
+      using dir = tempDir("blob-stream-chunk-size-slice", { "data.bin": small });
+      const { sizes, bytes } = await collect(Bun.file(`${dir}/data.bin`).slice(100, 4100).stream(1024));
+      expect(sizes).toEqual([1024, 1024, 1024, 928]);
+      expect(bytes.equals(small.subarray(100, 4100))).toBe(true);
+    });
+
+    test("a pipe hands out what has arrived instead of waiting to fill a chunk", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const sizes = [];
+           let total = 0;
+           for await (const chunk of Bun.stdin.stream(64)) {
+             sizes.push(chunk.byteLength);
+             total += chunk.byteLength;
+             if (total >= 100) break;
+           }
+           console.log(JSON.stringify(sizes));`,
+        ],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      // One 100 byte write, and stdin stays open: the 36 byte remainder must
+      // come out without waiting for more data or EOF.
+      proc.stdin.write(pattern(100));
+      await proc.stdin.flush();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([64, 36]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("argument handling", () => {
+    const data = pattern(50_000);
+
+    test.each([undefined, null, 0, -1])("stream(%p) keeps the default chunking", async chunkSize => {
+      using dir = tempDir("blob-stream-chunk-size-default", { "data.bin": data });
+      for (const blob of [new Blob([data]), Bun.file(`${dir}/data.bin`)]) {
+        const [defaulted, explicit] = await Promise.all([collect(blob.stream()), collect(blob.stream(chunkSize!))]);
+        expect(explicit.sizes).toEqual(defaulted.sizes);
+        expect(explicit.bytes.equals(data)).toBe(true);
+      }
+    });
+
+    test("rejects a non-numeric chunk size", () => {
+      const blob = new Blob([data]);
+      // @ts-expect-error
+      expect(() => blob.stream("1024")).toThrow("chunkSize must be a number");
+      // @ts-expect-error
+      expect(() => blob.stream({})).toThrow("chunkSize must be a number");
+    });
+  });
+});

@@ -1,5 +1,6 @@
 use core::cell::{Cell, UnsafeCell};
 use core::mem;
+use core::num::NonZero;
 
 use bun_collections::VecExt;
 #[cfg(unix)]
@@ -56,6 +57,18 @@ pub struct FileReader {
     pub(crate) start_offset: Option<usize>,
     /// Read-only after construction.
     pub(crate) max_size: Option<usize>,
+    /// `.stream(chunkSize)` on a file-backed Blob. Read-only after
+    /// construction; set only by `ReadableStream::from_blob_copy_ref`. When set,
+    /// everything read lands in `buffered` and JS is served from it one chunk
+    /// at a time (`take_chunk`) instead of through the unchunked delivery paths
+    /// of `on_read_chunk` / `on_pull`. A native sink (`self.sink`) is fed
+    /// unchunked either way.
+    pub(crate) chunk_size: Option<NonZero<usize>>,
+    /// Chunked mode only: length of the prefix of `buffered` already handed out.
+    /// `buffered` is emptied (not compacted) as soon as the last unread byte
+    /// goes out, so `buffered.is_empty()` still means "nothing left to
+    /// deliver" everywhere in this file.
+    pub(crate) buffered_consumed: Cell<usize>,
     pub(crate) total_readed: Cell<usize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
@@ -84,6 +97,8 @@ impl Default for FileReader {
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
+            chunk_size: None,
+            buffered_consumed: Cell::new(0),
             total_readed: Cell::new(0),
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
@@ -739,6 +754,49 @@ impl FileReader {
             return has_more;
         }
 
+        if let Some(chunk_size) = self.chunk_size {
+            let chunk_size = chunk_size.get();
+            if !buf.is_empty() && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
+                self.buffer_for_chunking(buf);
+                // SAFETY: see `reader_buffer` decl — tight deref, no `&mut` held.
+                if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
+                    // SAFETY: see `reader_buffer` decl.
+                    unsafe { (*reader_buffer).clear() };
+                }
+            }
+            // A synchronous `on_pull` read is not pending; it takes its chunk once
+            // the read returns. Only a parked pull is settled from here.
+            if self.pending.get().state == streams::PendingState::Pending {
+                if let Some(chunk) =
+                    self.take_chunk(chunk_size, !has_more || !self.rest_of_chunk_in_flight())
+                {
+                    let is_last = !has_more && self.buffered.get().is_empty();
+                    self.pending.with_mut(|p| {
+                        p.result = if is_last {
+                            streams::Result::OwnedAndDone(chunk)
+                        } else {
+                            streams::Result::Owned(chunk)
+                        }
+                    });
+                    // Pin across `p.run()`: see the unchunked pending path below.
+                    let parent = self.parent();
+                    // SAFETY: see `parent()`.
+                    unsafe { (*parent).increment_count() };
+                    self.pending.with_mut(|p| p.run());
+                    close_if_needed!();
+                    let ret = !self.done.get()
+                        && !self.reader().is_done()
+                        && self.wants_more_for_chunking(chunk_size);
+                    // SAFETY: see `parent()`; the pin keeps the count >= 1, so this
+                    // never frees. `self` is not accessed after.
+                    let _ = unsafe { Source::decrement_count(parent) };
+                    return ret;
+                }
+            }
+            close_if_needed!();
+            return has_more && self.wants_more_for_chunking(chunk_size);
+        }
+
         if !self.read_inside_on_pull.get().is_none() {
             // R-2: `with_mut` projects `&mut ReadDuringJSOnPullResult` from
             // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
@@ -948,6 +1006,9 @@ impl FileReader {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
+        if let Some(chunk_size) = self.chunk_size {
+            return self.on_pull_chunked(chunk_size.get(), buffer);
+        }
         let drained = self.drain();
 
         if drained.len() > 0 {
@@ -1091,7 +1152,9 @@ impl FileReader {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
+    /// Everything undelivered so far, in one piece.
     pub(crate) fn drain(&self) -> Vec<u8> {
+        self.discard_consumed();
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
             debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
@@ -1103,6 +1166,132 @@ impl FileReader {
         }
 
         Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
+    }
+
+    // ─── `.stream(chunkSize)` ───────────────────────────────────────────────
+    //
+    // The stream asks the source for data in two ways: `drain()` (no pull
+    // buffer; anything returned is enqueued as one chunk) before every pull,
+    // then `on_pull()`. In chunked mode both serve `buffered` through
+    // `take_chunk`, so the read geometry of the file never shows through:
+    // `drain()` only gives out whole chunks, and `on_pull()` tops `buffered` up
+    // by reading first, which is also the only place a short final chunk (or,
+    // for a pipe, whatever has arrived so far) leaves from.
+
+    fn on_pull_chunked(&self, chunk_size: usize, buffer: &'static mut [u8]) -> streams::Result {
+        if self.unread_len() < chunk_size && !self.reader().has_pending_read() {
+            let idle_reader_bytes = mem::take(self.reader().buffer());
+            if !idle_reader_bytes.is_empty() {
+                self.buffer_for_chunking(&idle_reader_bytes);
+            }
+            if self.unread_len() < chunk_size && !self.reader().is_done() && self.flowing.get() {
+                // Same marker as the unchunked path: tells a synchronous
+                // `on_reader_done` that this pull takes its own result.
+                self.read_inside_on_pull
+                    .set(ReadDuringJSOnPullResult::Js(buffer));
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
+                self.read_inside_on_pull.set(ReadDuringJSOnPullResult::None);
+            }
+        }
+
+        let eof = self.reader().is_done();
+        if let Some(chunk) = self.take_chunk(chunk_size, eof || !self.rest_of_chunk_in_flight()) {
+            bun_core::scoped_log!(
+                FileReader,
+                "onPull(chunk_size={}) = {}",
+                chunk_size,
+                chunk.len()
+            );
+            if eof && self.buffered.get().is_empty() {
+                return streams::Result::OwnedAndDone(chunk);
+            }
+            return streams::Result::Owned(chunk);
+        }
+        if eof {
+            return streams::Result::Done;
+        }
+        bun_core::scoped_log!(FileReader, "onPull(chunk_size={}) = pending", chunk_size);
+        streams::Result::Pending(self.pending.as_ptr())
+    }
+
+    fn unread_len(&self) -> usize {
+        self.buffered.get().len() - self.buffered_consumed.get()
+    }
+
+    /// Copies the next chunk out of `buffered`. A chunk shorter than
+    /// `chunk_size` only leaves when `allow_short` (end of data, or a source
+    /// whose next bytes are not already on their way); otherwise the caller
+    /// waits for more.
+    fn take_chunk(&self, chunk_size: usize, allow_short: bool) -> Option<Vec<u8>> {
+        let unread = self.unread_len();
+        let len = if unread >= chunk_size {
+            chunk_size
+        } else if unread > 0 && allow_short {
+            unread
+        } else {
+            return None;
+        };
+        let consumed = self.buffered_consumed.get();
+        let chunk = self.buffered.get()[consumed..consumed + len].to_vec();
+        if len == unread {
+            self.buffered.set(Vec::new());
+            self.buffered_consumed.set(0);
+        } else {
+            self.buffered_consumed.set(consumed + len);
+        }
+        Some(chunk)
+    }
+
+    /// Appends freshly read bytes behind the unread ones. The delivered prefix
+    /// is dropped only once it is at least as long as what is still unread, so
+    /// the memmove stays amortized O(1) per byte however small the chunks are.
+    fn buffer_for_chunking(&self, bytes: &[u8]) {
+        let consumed = self.buffered_consumed.get();
+        if consumed > 0 && consumed >= self.unread_len() {
+            self.discard_consumed();
+        }
+        self.buffered
+            .with_mut(|buffered| buffered.extend_from_slice(bytes));
+    }
+
+    fn discard_consumed(&self) {
+        let consumed = self.buffered_consumed.replace(0);
+        if consumed > 0 {
+            self.buffered
+                .with_mut(|buffered| buffered.drain_front(consumed));
+        }
+    }
+
+    /// Whether to keep the reader going: stay one chunk (at least the usual
+    /// highwater mark) ahead of the consumer, no further.
+    fn wants_more_for_chunking(&self, chunk_size: usize) -> bool {
+        self.flowing.get() && self.unread_len() < chunk_size.max(self.highwater_mark)
+    }
+
+    /// Is the rest of a partially buffered chunk already on its way, so that it
+    /// is worth waiting for instead of handing out a short chunk? Only while a
+    /// regular file is being read: POSIX reads regular files synchronously
+    /// inside `on_pull_chunked`, so afterwards what is buffered is all there is
+    /// until the next pull; Windows reads them through libuv and keeps a read
+    /// in flight until EOF (or `pause()`), so the missing bytes arrive by
+    /// themselves. A pipe or tty never waits: a short chunk there is simply
+    /// what the writer has sent.
+    fn rest_of_chunk_in_flight(&self) -> bool {
+        #[cfg(windows)]
+        {
+            use bun_io::pipe_reader::WindowsFlags;
+            let reader = self.reader();
+            matches!(
+                reader.source,
+                Some(bun_io::Source::File(_) | bun_io::Source::SyncFile(_))
+            ) && !reader.flags.contains(WindowsFlags::IS_PAUSED)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     pub(crate) fn set_ref_or_unref(&self, enable: bool) {
@@ -1131,7 +1320,7 @@ impl FileReader {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
                 self.sink.set(SinkHandle::None);
-                let buffered = self.buffered.replace(Vec::new());
+                let buffered = self.drain();
                 if !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
                 }
@@ -1140,16 +1329,27 @@ impl FileReader {
         } else if !self.is_pulling() {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
-                if !self.buffered.get().is_empty() {
+                if let Some(chunk_size) = self.chunk_size {
+                    // One chunk settles the parked pull; anything beyond it is
+                    // served by the pulls that follow, which also close the stream.
+                    let result = match self.take_chunk(chunk_size.get(), true) {
+                        Some(chunk) if !self.buffered.get().is_empty() => {
+                            streams::Result::Owned(chunk)
+                        }
+                        Some(chunk) => streams::Result::OwnedAndDone(chunk),
+                        None => streams::Result::Done,
+                    };
+                    self.pending.with_mut(|p| p.result = result);
+                } else if !self.buffered.get().is_empty() {
                     let buffered = self.buffered.replace(Vec::new());
                     self.pending.with_mut(|p| {
                         p.result =
                             streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
                     });
                 } else {
+                    self.buffered.set(Vec::new());
                     self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
-                self.buffered.set(Vec::new());
                 self.pending.with_mut(|p| p.run());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
@@ -1302,7 +1502,11 @@ impl readable_stream::SourceContext for FileReader {
         Self::set_ref_or_unref(self, e)
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
-        Self::drain(self)
+        match self.chunk_size {
+            // Whole chunks only; `on_pull_chunked` decides about short ones.
+            Some(chunk_size) => Self::take_chunk(self, chunk_size.get(), false).unwrap_or_default(),
+            None => Self::drain(self),
+        }
     }
     fn memory_cost_fn(&self) -> usize {
         Self::memory_cost(self)

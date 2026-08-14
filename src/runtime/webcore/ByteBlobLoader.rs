@@ -6,11 +6,21 @@ use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
+/// What `drain` hands out when no chunk size was requested: just enough to
+/// prime the stream synchronously; `on_pull` moves the rest.
+const DEFAULT_DRAIN_SIZE: blob::SizeType = 16384;
+
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
     pub(crate) store: Option<StoreRef>,
+    /// Most bytes one `on_pull` copies out; also reported to the stream as the
+    /// pull buffer size it should allocate.
     pub(crate) chunk_size: blob::SizeType,
+    /// Most bytes one `drain` hands out. The stream drains before it pulls, so
+    /// `.stream(chunkSize)` pins this and `chunk_size` to the requested size;
+    /// otherwise `drain` only primes the stream with a small first chunk.
+    pub(crate) drain_size: blob::SizeType,
     pub(crate) remain: blob::SizeType,
     pub(crate) done: bool,
 
@@ -25,8 +35,9 @@ impl Default for ByteBlobLoader {
         Self {
             offset: 0,
             store: None,
-            chunk_size: 1024 * 1024 * 2,
-            remain: 1024 * 1024 * 2,
+            chunk_size: readable_stream::MAX_CHUNK_SIZE,
+            drain_size: DEFAULT_DRAIN_SIZE,
+            remain: readable_stream::MAX_CHUNK_SIZE,
             done: false,
             content_type: blob::BlobContentType::default(),
         }
@@ -72,7 +83,10 @@ impl readable_stream::SourceContext for ByteBlobLoader {
 bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
 
 impl ByteBlobLoader {
-    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
+    /// `user_chunk_size` is the `.stream(chunkSize)` argument (already clamped
+    /// by `ReadableStream::from_blob_copy_ref`); `None` streams the blob in
+    /// pull-buffer-sized pieces.
+    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: Option<blob::SizeType>) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
@@ -82,15 +96,21 @@ impl ByteBlobLoader {
         } else {
             blob::BlobContentType::default()
         };
+        let (chunk_size, drain_size) = match user_chunk_size {
+            Some(user_chunk_size) => {
+                let chunk_size = user_chunk_size.min(size);
+                (chunk_size, chunk_size)
+            }
+            None => (
+                size.min(readable_stream::MAX_CHUNK_SIZE),
+                DEFAULT_DRAIN_SIZE,
+            ),
+        };
         *self = ByteBlobLoader {
             offset,
             store: Some(store),
-            chunk_size: (if user_chunk_size > 0 {
-                user_chunk_size.min(size)
-            } else {
-                size
-            })
-            .min(1024 * 1024 * 2),
+            chunk_size,
+            drain_size,
             remain: size,
             done: false,
             content_type,
@@ -115,7 +135,10 @@ impl ByteBlobLoader {
         let temporary = store.shared_view();
         let temporary = &temporary[(self.offset as usize).min(temporary.len())..];
 
-        let take = buffer.len().min(temporary.len().min(self.remain as usize));
+        let take = buffer
+            .len()
+            .min(self.chunk_size as usize)
+            .min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
         if temporary.is_empty() {
             self.clear_data();
@@ -204,7 +227,7 @@ impl ByteBlobLoader {
         };
         let temporary = store.shared_view();
         let temporary = &temporary[self.offset as usize..];
-        let take = 16384usize.min(temporary.len().min(self.remain as usize));
+        let take = (self.drain_size as usize).min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).

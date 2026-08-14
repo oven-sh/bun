@@ -317,7 +317,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(global_object, bytes)
             }
             State::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;

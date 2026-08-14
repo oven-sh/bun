@@ -1502,8 +1502,22 @@ interface Blob {
 
   /**
    * Returns a readable stream of the blob's contents
+   *
+   * @param chunkSize Maximum number of bytes per chunk. For in-memory blobs
+   * and regular files every chunk except the last is exactly this size; a
+   * pipe yields whatever has been written so far, up to this size. Defaults
+   * to a size chosen by Bun.
+   *
+   * This parameter is a non-standard addition to the `Blob` API.
+   *
+   * @example
+   * ```ts
+   * for await (const chunk of Bun.file("video.mp4").stream(64 * 1024)) {
+   *   // chunk is a Uint8Array of 64 KiB (the last one may be smaller)
+   * }
+   * ```
    */
-  stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
+  stream(chunkSize?: number): ReadableStream<Uint8Array<ArrayBuffer>>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<

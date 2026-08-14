@@ -6,6 +6,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
+use core::num::NonZero;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
@@ -1212,10 +1213,10 @@ impl BlobExt for Blob {
         if let Some(cached) = get_cached(this_value) {
             return Ok(cached);
         }
-        let mut recommended_chunk_size: SizeType = 0;
-        let recommended_chunk_size_value = callframe.argument(0);
-        if !recommended_chunk_size_value.is_undefined_or_null() {
-            if !recommended_chunk_size_value.is_number() {
+        let mut chunk_size: Option<NonZero<SizeType>> = None;
+        let chunk_size_value = callframe.argument(0);
+        if !chunk_size_value.is_undefined_or_null() {
+            if !chunk_size_value.is_number() {
                 return Err(
                     global_this.throw_invalid_arguments(format_args!("chunkSize must be a number"))
                 );
@@ -1223,10 +1224,11 @@ impl BlobExt for Blob {
             // `(x << 12) >> 12` on i64 truncates to a sign-extended i52
             // (arithmetic right-shift sign-extends bit 51), so negatives clamp to 0
             // via `.max(0)` instead of becoming the 52-bit zero-extended mask.
-            let v = (recommended_chunk_size_value.to_int64() << 12) >> 12;
-            recommended_chunk_size = v.max(0) as SizeType;
+            // Zero (and therefore any negative value) keeps the default chunking.
+            let v = (chunk_size_value.to_int64() << 12) >> 12;
+            chunk_size = NonZero::new(v.max(0) as SizeType);
         }
-        let stream = ReadableStream::from_blob_copy_ref(global_this, self, recommended_chunk_size)?;
+        let stream = ReadableStream::from_blob_copy_ref(global_this, self, chunk_size)?;
 
         if let Some(store) = self.store.get() {
             if let store::Data::File(f) = &store.data {
@@ -4685,13 +4687,8 @@ pub(crate) fn write_file_with_source_destination(
             ));
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
-        let s3 = source_store.data.as_s3();
         if let Some(stream) = ReadableStream::from_js(
-            ReadableStream::from_blob_copy_ref(
-                ctx,
-                source_blob,
-                s3.options.part_size as crate::webcore::blob::SizeType,
-            )?,
+            ReadableStream::from_blob_copy_ref(ctx, source_blob, None)?,
             ctx,
         )? {
             return destination_blob.pipe_readable_stream_to_blob(
@@ -4744,11 +4741,7 @@ pub(crate) fn write_file_with_source_destination(
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
-                        ReadableStream::from_blob_copy_ref(
-                            ctx,
-                            source_blob,
-                            s3.options.part_size as crate::webcore::blob::SizeType,
-                        )?,
+                        ReadableStream::from_blob_copy_ref(ctx, source_blob, None)?,
                         ctx,
                     )? {
                         return s3_client::upload_stream(
@@ -4844,11 +4837,7 @@ pub(crate) fn write_file_with_source_destination(
             store::Data::File(_) | store::Data::S3(_) => {
                 // stream
                 if let Some(stream) = ReadableStream::from_js(
-                    ReadableStream::from_blob_copy_ref(
-                        ctx,
-                        source_blob,
-                        s3.options.part_size as crate::webcore::blob::SizeType,
-                    )?,
+                    ReadableStream::from_blob_copy_ref(ctx, source_blob, None)?,
                     ctx,
                 )? {
                     return s3_client::upload_stream(

@@ -60,8 +60,15 @@ declare module "buffer" {
 
     /**
      * Returns a readable stream of the blob's contents
+     *
+     * @param chunkSize Maximum number of bytes per chunk. For in-memory blobs
+     * and regular files every chunk except the last is exactly this size; a
+     * pipe yields whatever has been written so far, up to this size. Defaults
+     * to a size chosen by Bun.
+     *
+     * This parameter is a non-standard addition to the `Blob` API.
      */
-    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
+    stream(chunkSize?: number): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 }
 

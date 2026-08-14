@@ -769,8 +769,7 @@ impl Value {
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
-                let blob_size = blob.size.get();
-                let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
+                let value = ReadableStream::from_blob_copy_ref(global_this, &blob, None)?;
 
                 let stream = ReadableStream::from_js(value, global_this)?.unwrap();
                 *self = Value::Locked(PendingValue {
@@ -822,9 +821,7 @@ impl Value {
                     let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
-                        let blob_size = blob.size.get();
-                        let bytes =
-                            ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
+                        let bytes = ReadableStream::from_blob_copy_ref(global_this, &blob, None)?;
                         ReadableStream::text_decode_from(global_this, bytes)?
                     } else {
                         let string = blob.to_string(global_this, Lifetime::Transfer)?;

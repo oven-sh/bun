@@ -85,3 +85,12 @@ expectType(new Blob([]).bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(new Blob([]).json()).is<Promise<any>>();
 expectType(new Blob([]).formData()).is<Promise<FormData>>();
 expectType(new Blob([]).stream()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+
+// Keep additions below this line: the lib.dom snapshot in bun-types.test.ts
+// refers to line numbers above it.
+import { Blob as NodeBlob } from "node:buffer";
+expectType(new Blob([]).stream(1024)).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new NodeBlob([]).stream(1024)).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(Bun.file("./foo.csv").stream(64 * 1024)).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+// @ts-expect-error chunkSize is a number
+new Blob([]).stream("1024");

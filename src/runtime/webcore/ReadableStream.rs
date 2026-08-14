@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::num::NonZero;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
@@ -11,6 +12,11 @@ use bun_sys as syscall;
 
 use crate::webcore::streams;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
+
+/// Largest chunk a blob-backed stream produces per pull, and the ceiling for a
+/// `.stream(chunkSize)` request (a file-backed stream buffers up to one chunk
+/// while assembling it).
+pub(crate) const MAX_CHUNK_SIZE: webcore::blob::SizeType = 2 * 1024 * 1024;
 
 #[derive(Copy, Clone)]
 pub struct ReadableStream {
@@ -494,21 +500,26 @@ impl ReadableStream {
     pub(crate) fn from_owned_slice(
         global_this: &JSGlobalObject,
         bytes: impl Into<Vec<u8>>,
-        recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
         // defer blob.deinit() → handled by Drop
-        Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
+        Self::from_blob_copy_ref(global_this, &blob, None)
     }
 
+    /// `chunk_size` is the `.stream(chunkSize)` argument: in-memory and
+    /// file-backed blobs then hand out chunks of exactly that many bytes
+    /// (clamped to [`MAX_CHUNK_SIZE`]), except for the last one and for pipes,
+    /// which yield whatever has arrived. `None` leaves each source to its own
+    /// read geometry. S3 objects always stream in network-sized chunks.
     pub fn from_blob_copy_ref(
         global_this: &JSGlobalObject,
         blob: &Blob,
-        recommended_chunk_size: webcore::blob::SizeType,
+        chunk_size: Option<NonZero<webcore::blob::SizeType>>,
     ) -> JsResult<JSValue> {
         let Some(store) = blob.store.get() else {
             return ReadableStream::empty(global_this);
         };
+        let chunk_size = chunk_size.map(|size| size.get().min(MAX_CHUNK_SIZE));
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
@@ -516,7 +527,7 @@ impl ReadableStream {
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
-                reader.context.setup(blob, recommended_chunk_size);
+                reader.context.setup(blob, chunk_size);
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::File(_) => {
@@ -532,6 +543,7 @@ impl ReadableStream {
                         } else {
                             None
                         },
+                        chunk_size: chunk_size.and_then(|size| NonZero::new(size as usize)),
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },

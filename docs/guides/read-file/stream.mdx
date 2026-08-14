@@ -25,4 +25,14 @@ for await (const chunk of stream) {
 
 ---
 
+Pass a number to `.stream()` to set the chunk size in bytes. Every chunk except the last one is exactly that size.
+
+```ts
+for await (const chunk of file.stream(64 * 1024)) {
+  chunk.byteLength; // => 65536, except for the final chunk
+}
+```
+
+---
+
 See [Streams](/runtime/streams) for more on working with streams in Bun.

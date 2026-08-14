@@ -1547,7 +1547,8 @@ impl PEFile {
                     if other.size_of_raw_data == 0 {
                         continue;
                     }
-                    let other_end = other.pointer_to_raw_data as u64 + other.size_of_raw_data as u64;
+                    let other_end =
+                        other.pointer_to_raw_data as u64 + other.size_of_raw_data as u64;
                     if (section.pointer_to_raw_data as u64).max(other.pointer_to_raw_data as u64)
                         < raw_end.min(other_end)
                     {

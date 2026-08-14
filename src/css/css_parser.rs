@@ -1020,15 +1020,11 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
 
 // ───────────────────────────── NestedRuleParser ─────────────────────────────
 
-/// Whether the declarations of the block currently being parsed may use
-/// `composes`. Decided once per block from the rule that opens it (see
-/// `QualifiedRuleParser::parse_block`) and handed to the parser of that block;
-/// a block never changes the state of the block enclosing it.
+/// Whether the declarations of one block may use `composes`. Fixed when the
+/// block is opened; nested blocks get their own state and never change it.
 #[derive(Clone, Copy)]
 pub enum ComposesState {
-    /// The block is the body of a style rule that is not nested in another one
-    /// and whose selector is the single class `class`; every `composes` in it
-    /// is recorded against that class.
+    /// `composes` declarations in the block are recorded against `class`.
     Allow {
         loc: SourceLocation,
         class: ast::Ref,
@@ -1447,8 +1443,7 @@ mod rule_parsers {
     // ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
     impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
-        /// Parses the block that `input` is positioned in with a child parser;
-        /// `composes_state` is the state for that block's own declarations.
+        /// `composes_state` applies to the declarations of the block being parsed.
         pub(crate) fn parse_nested(
             &mut self,
             input: &mut Parser,
@@ -1557,10 +1552,6 @@ mod rule_parsers {
             Ok(rules)
         }
 
-        /// `composes` is allowed in the body of a style rule only when the rule
-        /// is not nested in another style rule and its selector is a single
-        /// class (the class the composed names are attached to). `loc` is the
-        /// rule's location, which the warnings for the disallowed cases point at.
         fn composes_state_for_body(
             &self,
             selectors: &SelectorList,
@@ -1580,8 +1571,7 @@ mod rule_parsers {
                 return ComposesState::DisallowNotSingleClass(loc);
             };
             match component.as_class() {
-                // With css modules enabled every class selector refers to a
-                // local symbol (see `SelectorParser::new_local_identifier`).
+                // Always a ref with css modules on, see `new_local_identifier`.
                 Some(class) => ComposesState::Allow {
                     loc,
                     class: class.as_ref().unwrap(),
@@ -2060,9 +2050,7 @@ mod rule_parsers {
             let location = input.position();
             let (declarations, rules) = this.parse_nested(input, true, composes_state)?;
 
-            // Track which properties a class that may use `composes` declares, so
-            // the bundler can report properties that conflict between composed
-            // classes.
+            // See `LocalPropertyUsage`.
             if let ComposesState::Allow { class, .. } = composes_state {
                 let len = input.position() - location;
                 let mut usage = PropertyBitset::init_empty();

@@ -200,12 +200,8 @@ pub(crate) fn generate_chunk_json(
 
 /// Assembles the final metafile JSON from pre-built chunk fragments.
 /// Called after all chunks have been generated in parallel.
-/// Chunk references (unique_keys) are resolved to their final output paths.
-/// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
-    // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
+pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
     let mut j = StringJoiner::default();
-    // errdefer j.deinit() — handled by Drop
 
     j.push_static(b"{\n  \"inputs\": {");
 
@@ -218,7 +214,13 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
-    // defer seen_sources.deinit() — handled by Drop
+
+    // With code splitting, `compute_cross_chunk_dependencies` rewrites a dynamic
+    // import of another entry point so the printer emits an import of that entry
+    // point's chunk: `path.text` becomes the chunk's unique key and `source_index`
+    // is cleared. The inputs graph describes source files, so such a record is
+    // reported as an import of the chunk's entry point, the file the source imports.
+    let mut entry_point_by_chunk_key: StringHashMap<u32> = StringHashMap::default();
 
     // Mark all files that appear in chunks
     for chunk in chunks.iter() {
@@ -226,6 +228,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
+        }
+        if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
+            entry_point_by_chunk_key
+                .put_static_key(chunk.unique_key, chunk.entry_point.source_index())?;
         }
     }
 
@@ -292,17 +298,20 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 }
                 first_import = false;
 
+                let target_source_index: Option<u32> = if record.source_index.is_valid() {
+                    Some(record.source_index.get())
+                } else {
+                    entry_point_by_chunk_key.get(record.path.text).copied()
+                };
+
                 j.push_static(b"\n        {\n          \"path\": ");
                 // Bundled imports use the target source's pretty path (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
-                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                // `source_index` without rewriting the path. Externals fall through.
                 let import_path: &[u8] = 'path: {
-                    if record.source_index.is_valid()
-                        && record.source_index.get() != Index::RUNTIME.get()
-                    {
-                        let idx = record.source_index.get() as usize;
-                        if idx < sources.len() {
-                            let pretty = sources[idx].path.pretty;
+                    if let Some(idx) = target_source_index {
+                        if idx != Index::RUNTIME.get() && (idx as usize) < sources.len() {
+                            let pretty = sources[idx as usize].path.pretty;
                             if !pretty.is_empty() {
                                 break 'path pretty;
                             }
@@ -339,16 +348,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 if record
                     .flags
                     .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-                    || !record.source_index.is_valid()
+                    || target_source_index.is_none()
                 {
                     j.push_static(b",\n          \"external\": true");
                 }
 
                 // Add "with" for import attributes (json, toml, text loaders)
-                if record.source_index.is_valid()
-                    && (record.source_index.get() as usize) < loaders.len()
+                if let Some(loader) =
+                    target_source_index.and_then(|idx| loaders.get(idx as usize).copied())
                 {
-                    let loader = loaders[record.source_index.get() as usize];
                     let with_type: Option<&'static [u8]> = match loader {
                         Loader::Json => Some(b"json"),
                         Loader::Toml => Some(b"toml"),
@@ -418,40 +426,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     j.push_static(b"\n  }\n}\n");
 
-    // If no chunks, there are no chunk references to resolve, so just return the joined string
-    if chunks.is_empty() {
-        return Ok(j.done()?);
-    }
-
-    // Break output into pieces and resolve chunk references to final paths
-    let alloc = c.arena();
-    // SAFETY: every borrowed node in `j` points into `chunk.metafile_chunk_json`,
-    // parse-graph data (import-record kind labels), or `'static` literals, all of
-    // which outlive `intermediate` — it is consumed by `code()` below while `chunks`
-    // and `c` are still alive.
-    let mut j = unsafe { j.detach_lifetime() };
-    let mut intermediate = c.break_output_into_pieces(
-        alloc,
-        &mut j,
-        u32::try_from(chunks.len()).expect("int cast"),
-    )?;
-
-    // Get final output with all chunk references resolved.
-    // `code()` takes the dummy chunk and the full slice as `&`, so pass
-    // `&chunks[0]` directly — overlapping shared borrows are fine.
-    let code_result = intermediate.code(
-        None,
-        parse_graph,
-        &c.graph,
-        b"", // no import prefix for metafile
-        &chunks[0],
-        chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
-    )?;
-
-    Ok(code_result.buffer)
+    Ok(j.done()?)
 }
 
 fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()> {

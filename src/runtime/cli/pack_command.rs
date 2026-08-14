@@ -1528,6 +1528,35 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
+/// Bins are added to the pack queue directly instead of being found by the
+/// tree walk, which never packs symlinks (like npm-packlist). Apply the same
+/// rule here: a bin reached through a symlink in any path component would
+/// otherwise be packed with the contents of whatever the link points at,
+/// possibly outside the package. Returns `Unknown` if the path does not
+/// exist or a parent component is not a real directory.
+fn bin_kind_without_following_symlinks(root_dir: &Dir, bin_path: &[u8]) -> bun_sys::FileKind {
+    // A trailing slash would make `lstat` resolve a symlink to a directory.
+    let bin_path = strings::without_trailing_slash(bin_path);
+    let mut end = 0;
+    loop {
+        end += match strings::index_of_char_usize(&bin_path[end..], b'/') {
+            Some(i) => i,
+            None => bin_path.len() - end,
+        };
+        let kind = match bun_sys::lstatat(root_dir, &ZBox::from_bytes(&bin_path[..end])) {
+            Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+            Err(_) => return bun_sys::FileKind::Unknown,
+        };
+        if end == bin_path.len() {
+            return kind;
+        }
+        if kind != bun_sys::FileKind::Directory {
+            return bun_sys::FileKind::Unknown;
+        }
+        end += 1;
+    }
+}
+
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     for bin in bins {
         match bin.ty {
@@ -2268,6 +2297,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let bins = get_package_bins(&json.root)?;
 
     for bin in &bins {
+        let expected_kind = match bin.ty {
+            BinType::File => bun_sys::FileKind::File,
+            BinType::Dir => bun_sys::FileKind::Directory,
+        };
+        if bin_kind_without_following_symlinks(&root_dir, bin.path.as_bytes()) != expected_kind {
+            continue;
+        }
+
         match bin.ty {
             BinType::File => {
                 pack_queue.add(PackQueueItem {

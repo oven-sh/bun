@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { exists, mkdir, rm, symlink } from "fs/promises";
+import { bunEnv, bunExe, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -1596,6 +1596,93 @@ describe("bins", () => {
         pathname: "package/dist/hi.js",
       },
     ]);
+  });
+
+  test("pointing at a directory is ignored", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-dir-as-file",
+          version: "1.0.0",
+          bin: "lib",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('index')"),
+      write(join(packageDir, "lib", "a.js"), "console.log('a')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-dir-as-file-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/index.js" },
+      { pathname: "package/lib/a.js" },
+    ]);
+  });
+
+  // Symlinks are never packed (same as npm). Bins are no exception: packing one
+  // would copy the link target, which may live outside the package.
+  test.skipIf(isWindows)("that are symlinks, or behind a symlinked directory, are not packed", async () => {
+    const pkgDir = join(packageDir, "pkg");
+    await Promise.all([
+      write(join(packageDir, "outside", "secret.js"), "console.log('outside the package')"),
+      write(join(packageDir, "outside", "nested", "inner.js"), "console.log('outside the package')"),
+      write(
+        join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-symlink",
+          version: "1.0.0",
+          files: ["index.js"],
+          bin: {
+            "real": "real-bin.js",
+            "linked": "linked-bin.js",
+            "through-link": "linked-dir/inner.js",
+          },
+        }),
+      ),
+      write(join(pkgDir, "index.js"), "console.log('index')"),
+      write(join(pkgDir, "real-bin.js"), "console.log('real bin')"),
+    ]);
+    await Promise.all([
+      symlink("../outside/secret.js", join(pkgDir, "linked-bin.js")),
+      symlink("../outside/nested", join(pkgDir, "linked-dir")),
+    ]);
+
+    await pack(pkgDir, bunEnv);
+
+    const tarball = readTarball(join(pkgDir, "pack-bins-symlink-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/index.js" },
+      { pathname: "package/real-bin.js" },
+    ]);
+  });
+
+  test.skipIf(isWindows)('"directories.bin" that is a symlink is not packed', async () => {
+    const pkgDir = join(packageDir, "pkg");
+    await Promise.all([
+      write(join(packageDir, "outside", "bins", "a.js"), "console.log('outside the package')"),
+      write(join(packageDir, "outside", "bins", "b.js"), "console.log('outside the package')"),
+      write(
+        join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-dir-symlink",
+          version: "1.0.0",
+          directories: {
+            bin: "bins",
+          },
+        }),
+      ),
+      write(join(pkgDir, "index.js"), "console.log('index')"),
+    ]);
+    await symlink("../outside/bins", join(pkgDir, "bins"));
+
+    await pack(pkgDir, bunEnv);
+
+    const tarball = readTarball(join(pkgDir, "pack-bins-dir-symlink-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
   });
 });
 

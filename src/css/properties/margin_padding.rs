@@ -712,6 +712,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.block_end = None;
             self.inline_start = None;
             self.inline_end = None;
+            self.category = S::SHORTHAND_CATEGORY;
             self.has_any = true;
         } else {
             return false;

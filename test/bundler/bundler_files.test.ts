@@ -1,7 +1,6 @@
 import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { basename } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -585,76 +584,222 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
-  // A server-side build importing an in-memory HTML file gets a manifest of the
-  // HTML's browser bundle, just like it does for an HTML file on disk. Each
-  // case below resolves the import on a different path: the bulk resolution
-  // pass, the one-at-a-time resolver behind a declining onResolve callback,
-  // and a path returned by onResolve.
-  describe("HTML import from a server-side build", () => {
-    const htmlImportFiles = {
-      "/page.html": `<!DOCTYPE html><html><head><script src="./page.js"></script></head><body></body></html>`,
-      "/page.js": `console.log("page script");`,
+  test("in-memory imports are parsed with the build's jsx options", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: {
+        "/app/entry.js": `import "./child.jsx";`,
+        "/app/child.jsx": `console.log(<div>child</div>);`,
+      },
+      jsx: { runtime: "classic", factory: "myFactory", fragment: "MyFragment" },
+    });
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain(`myFactory("div", null, "child")`);
+    // In-memory files are labelled by their key, not by a path relative to cwd.
+    expect(output).toContain("// /app/child.jsx");
+  });
+
+  describe("HTML imports", () => {
+    type Manifest = {
+      index: string;
+      files: Array<{ input: string; path: string; loader: string; isEntry: boolean; headers: Record<string, string> }>;
     };
 
-    async function buildHtmlImport(specifier: string, plugins: BunPlugin[]) {
-      const result = await Bun.build({
-        entrypoints: ["/server.js"],
-        target: "bun",
-        files: {
-          ...htmlImportFiles,
-          "/server.js": `import manifest from "${specifier}"; console.log(manifest.index);`,
-        },
-        plugins,
-        throw: false,
-      });
-      expect(result.logs).toEqual([]);
-      expect(result.success).toBe(true);
-
-      const outputNames = result.outputs.map(output => basename(output.path));
-      expect(outputNames.filter(name => name.endsWith(".html"))).toEqual(["page.html"]);
-
-      const serverOutput = await result.outputs.find(output => basename(output.path) === "server.js")!.text();
-      // The import is replaced by the inlined manifest, not left for the runtime to resolve.
-      expect(serverOutput).not.toContain("import manifest");
-      const manifests = [...serverOutput.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
-        JSON.parse(JSON.parse('"' + match[1] + '"')),
-      );
-      expect(manifests).toHaveLength(1);
-      const [manifest] = manifests;
-      expect(basename(manifest.index)).toBe("page.html");
-      expect(manifest.files.map((file: any) => file.loader).sort()).toEqual(["html", "js"]);
-
-      // The HTML's script is bundled for the browser, not for the server target.
-      const scriptPath = manifest.files.find((file: any) => file.loader === "js").path;
-      const scriptOutput = await result.outputs.find(output => basename(output.path) === basename(scriptPath))!.text();
-      expect(scriptOutput).toContain("page script");
-      expect(scriptOutput).not.toContain("// @bun");
+    // Importing an .html file into a server build replaces the import with a
+    // `__jsonParse("<manifest json>")` module describing the browser build of that page.
+    function manifestsIn(serverCode: string): Manifest[] {
+      return [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(m => JSON.parse(JSON.parse(`"${m[1]}"`)));
     }
 
-    test("without plugins", async () => {
-      await buildHtmlImport("./page.html", []);
-    });
+    const basename = (path: string) => path.split(/[\\/]/).pop()!;
 
-    test("with an onResolve plugin that declines the import", async () => {
-      await buildHtmlImport("./page.html", [
+    function outputText(result: Awaited<ReturnType<typeof Bun.build>>, path: string) {
+      const output = result.outputs.find(o => basename(o.path) === basename(path));
+      if (!output) throw new Error(`no output named ${basename(path)} in ${result.outputs.map(o => o.path)}`);
+      return output.text();
+    }
+
+    const pageHtml = `<!DOCTYPE html><html><head><link rel="stylesheet" href="./page.css"></head><body><script src="./client.js"></script></body></html>`;
+    const pageCss = `body { color: red }`;
+    const clientJs = `document.title = "client";`;
+
+    test("server build importing an in-memory .html file gets a manifest and a browser bundle", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/server.js"],
+        target: "bun",
+        files: {
+          "/app/server.js": `import page from "./page.html"; export default page;`,
+          "/app/page.html": pageHtml,
+          "/app/page.css": pageCss,
+          "/app/client.js": clientJs,
+        },
+      });
+
+      const server = await outputText(result, "server.js");
+      expect(server).toStartWith("// @bun\n");
+      expect(server).not.toMatch(/from "[^"]*page\.html"/);
+
+      const [manifest, ...extra] = manifestsIn(server);
+      expect(extra).toBeEmpty();
+      expect(manifest.index).toMatch(/page\.html$/);
+      expect(manifest.files.toSorted((a, b) => a.loader.localeCompare(b.loader))).toEqual([
         {
-          name: "decline-relative-imports",
-          setup(build) {
-            build.onResolve({ filter: /^\.\// }, () => undefined);
-          },
+          input: expect.stringContaining("page.html"),
+          path: expect.stringMatching(/\.css$/),
+          loader: "css",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/css;charset=utf-8" },
+        },
+        {
+          input: expect.stringContaining("page.html"),
+          path: manifest.index,
+          loader: "html",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/html;charset=utf-8" },
+        },
+        {
+          input: expect.stringContaining("page.html"),
+          path: expect.stringMatching(/\.js$/),
+          loader: "js",
+          isEntry: true,
+          headers: { "etag": expect.any(String), "content-type": "text/javascript;charset=utf-8" },
         },
       ]);
+
+      const { path: cssPath } = manifest.files.find(f => f.loader === "css")!;
+      const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+      const html = await outputText(result, manifest.index);
+      expect(html).toContain(basename(cssPath));
+      expect(html).toContain(basename(jsPath));
+
+      // The page's script is bundled for the browser even though the build targets bun.
+      const client = await outputText(result, jsPath);
+      expect(client).toContain(clientJs);
+      expect(client).not.toContain("// @bun");
+      expect(await outputText(result, cssPath)).toContain("color: red");
     });
 
-    test("with an onResolve plugin that resolves to the in-memory HTML file", async () => {
-      await buildHtmlImport("app:page", [
-        {
-          name: "resolve-to-html",
-          setup(build) {
-            build.onResolve({ filter: /^app:page$/ }, () => ({ path: "/page.html" }));
-          },
+    test("file on disk importing an in-memory .html file", async () => {
+      using dir = tempDir("bundler-files-html-import", {
+        "server.js": `import page from "./page.html"; export default page;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/server.js`],
+        target: "bun",
+        files: {
+          [`${dir}/page.html`]: pageHtml,
+          [`${dir}/page.css`]: pageCss,
+          [`${dir}/client.js`]: clientJs,
         },
-      ]);
+      });
+
+      const [manifest, ...extra] = manifestsIn(await outputText(result, "server.js"));
+      expect(extra).toBeEmpty();
+      expect(manifest.index).toMatch(/page\.html$/);
+      expect(manifest.files.map(f => f.loader).toSorted()).toEqual(["css", "html", "js"]);
+      const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+      expect(await outputText(result, manifest.index)).toContain(basename(jsPath));
+      expect(await outputText(result, jsPath)).toContain(clientJs);
+    });
+
+    test("each in-memory .html file gets one manifest, however often it is imported", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/server.js"],
+        target: "bun",
+        files: {
+          "/app/server.js": `
+            import home from "./home.html";
+            import about from "./about.html";
+            import { home as homeAgain } from "./routes.js";
+            export default { home, about, homeAgain };
+          `,
+          "/app/routes.js": `export { default as home } from "./home.html";`,
+          "/app/home.html": `<!DOCTYPE html><script src="./home.js"></script>`,
+          "/app/about.html": `<!DOCTYPE html><script src="./about.js"></script>`,
+          "/app/home.js": `console.log("home");`,
+          "/app/about.js": `console.log("about");`,
+        },
+      });
+
+      const server = await outputText(result, "server.js");
+      expect(server).not.toMatch(/from "[^"]*\.html"/);
+
+      const manifests = manifestsIn(server).toSorted((a, b) => a.index.localeCompare(b.index));
+      expect(manifests.map(m => basename(m.index))).toEqual(["about.html", "home.html"]);
+      for (const manifest of manifests) {
+        expect(manifest.files.map(f => f.loader).toSorted()).toEqual(["html", "js"]);
+        const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+        const pageName = basename(manifest.index).replace(".html", "");
+        expect(await outputText(result, jsPath)).toContain(`console.log("${pageName}")`);
+      }
+    });
+
+    // With an onResolve plugin registered, imports matching its filter are resolved one at a
+    // time (by the plugin, or by the regular resolver when the plugin declines) instead of by
+    // the bulk pass the tests above go through. The in-memory page has to become a manifest
+    // on those paths as well.
+    async function expectManifestWithPlugin(specifier: string, plugin: BunPlugin) {
+      const result = await Bun.build({
+        entrypoints: ["/app/server.js"],
+        target: "bun",
+        files: {
+          "/app/server.js": `import page from "${specifier}"; export default page;`,
+          "/app/page.html": pageHtml,
+          "/app/page.css": pageCss,
+          "/app/client.js": clientJs,
+        },
+        plugins: [plugin],
+      });
+
+      const server = await outputText(result, "server.js");
+      expect(server).not.toContain(`from "${specifier}"`);
+      const [manifest, ...extra] = manifestsIn(server);
+      expect(extra).toBeEmpty();
+      expect(manifest.index).toMatch(/page\.html$/);
+      expect(manifest.files.map(f => f.loader).toSorted()).toEqual(["css", "html", "js"]);
+      expect(result.outputs.filter(o => o.path.endsWith(".html"))).toHaveLength(1);
+
+      const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
+      const client = await outputText(result, jsPath);
+      expect(client).toContain(clientJs);
+      expect(client).not.toContain("// @bun");
+    }
+
+    test("imported through an onResolve plugin that declines the import", async () => {
+      await expectManifestWithPlugin("./page.html", {
+        name: "decline-relative-imports",
+        setup(build) {
+          build.onResolve({ filter: /^\.\// }, () => undefined);
+        },
+      });
+    });
+
+    test("imported through an onResolve plugin that returns the in-memory file's path", async () => {
+      await expectManifestWithPlugin("app:page", {
+        name: "resolve-to-in-memory-page",
+        setup(build) {
+          build.onResolve({ filter: /^app:page$/ }, () => ({ path: "/app/page.html" }));
+        },
+      });
+    });
+
+    test("assets referenced by an in-memory .html file are copied to the output", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/index.html"],
+        files: {
+          "/app/index.html": `<!DOCTYPE html><link rel="manifest" href="./manifest.json">`,
+          "/app/manifest.json": `{"name":"app"}`,
+        },
+      });
+
+      const html = await outputText(result, "index.html");
+      expect(html).toMatch(/href="[^"]*manifest-[a-zA-Z0-9]+\.json"/);
+
+      const asset = result.outputs.find(o => o.kind === "asset");
+      expect(asset?.path).toMatch(/manifest-[a-zA-Z0-9]+\.json$/);
+      expect(await asset!.text()).toBe(`{"name":"app"}`);
     });
   });
 });

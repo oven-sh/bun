@@ -6223,96 +6223,21 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
+                // Check the FileMap first for in-memory files. A hit takes the place of
+                // the resolver's result and is handled like a file on disk from there on.
+                let in_memory_result: Option<_resolver::Result> =
+                    self.file_map.and_then(|file_map| {
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
-                        import_record.loader = Some(import_record_loader);
-
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
-                            import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let is_html_entrypoint =
-                            self.is_server_html_import(import_record_loader, target);
-                        if is_html_entrypoint {
-                            import_record.kind = ImportKind::HtmlManifest;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
-                        }
-
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                        // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                        // cascading borrow conflicts into every `&mut self` call below).
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
-                        import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "created ParseTask from FileMap: {}",
-                            bstr::BStr::new(&path_primary.text)
-                        );
-                        file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val =
-                            ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = if is_html_entrypoint {
-                            Target::Browser
-                        } else {
-                            target
-                        };
-                        // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
-                        resolve_task.loader = Some(import_record_loader);
-                        resolve_task.tree_shaking = transpiler.options.tree_shaking;
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
-
-                        if is_html_entrypoint {
-                            import_record.source_index = Index::init(
-                                self.generate_server_html_module(&path_primary, target)
-                                    .expect("unreachable"),
-                            );
-                        }
-                        continue;
-                    }
-                }
-
+                    });
+                let is_in_memory = in_memory_result.is_some();
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
+                    if let Some(mut result) = in_memory_result {
+                        // The resolver fills this in from the transpiler (and tsconfig.json);
+                        // an in-memory file has no tsconfig.json.
+                        result.jsx = transpiler.options.jsx.clone();
+                        break result;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -6647,9 +6572,18 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                if is_in_memory {
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+                    // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
+                    path.pretty = unsafe {
+                        bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
+                    };
+                } else {
+                    *path = self
+                        .path_with_pretty_initialized(path, target)
+                        .expect("oom");
+                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut

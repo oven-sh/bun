@@ -11,8 +11,6 @@ use bun_jsc::{
 
 use bun_lsquic_sys as lsquic;
 
-use super::fold::OrReport;
-
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
 use super::ffi::lsquic_callback;
@@ -779,7 +777,7 @@ impl QuicSession {
                 qs
             }
             Err(e) => {
-                let _ = super::fold::at_boundary(global, e);
+                crate::dispatch::fold(Err(e));
                 null_mut()
             }
         }
@@ -913,9 +911,9 @@ impl QuicSession {
                 break;
             }
             if let Err(err) = self.dispatch_event(global, event) {
-                // Reported: the drain goes on (that event is lost); the VM's
-                // stop ends it.
-                if super::fold::at_boundary(global, err).is_err() {
+                // This drain is the events' dispatcher: reported, and the drain
+                // goes on (that event is lost); the VM's stop ends it.
+                if bun_jsc::task::report_error_or_terminate(global, err).is_err() {
                     break;
                 }
             }
@@ -2278,19 +2276,18 @@ impl QuicSession {
             b"disableActiveMigration",
             JSValue::js_boolean(tp.disable_active_migration != 0),
         );
-        let put_cid = |name: &[u8], s: &str| {
+        let put_cid = |name: &[u8], s: &str| -> JsResult<()> {
             let v = if s.is_empty() {
                 JSValue::UNDEFINED
             } else {
-                bun_core::String::clone_utf8(s.as_bytes())
-                    .to_js(global)
-                    .or_report(global)
+                bun_core::String::clone_utf8(s.as_bytes()).to_js(global)?
             };
             obj.put(global, name, v);
+            Ok(())
         };
-        put_cid(b"initialSCID", tp.initial_scid_str());
-        put_cid(b"retrySCID", tp.retry_scid_str());
-        put_cid(b"originalDCID", tp.original_dcid_str());
+        put_cid(b"initialSCID", tp.initial_scid_str())?;
+        put_cid(b"retrySCID", tp.retry_scid_str())?;
+        put_cid(b"originalDCID", tp.original_dcid_str())?;
         Ok(obj)
     }
 }
@@ -2601,5 +2598,28 @@ lsquic_callback! {
         let early = unsafe { lsquic::Conn::from_raw(session.conn.get()) }
             .is_some_and(|c| c.datagram_early());
         session.push_event(SessionEvent::Datagram { payload, early });
+    }
+}
+
+/// node's lifecycle callbacks (`onSessionClose`, `onSessionHandshake`, …) run
+/// behind state that is latched *before* their arguments are built — bailing
+/// would leave `closed`/`opened` never settling — so an argument that cannot be
+/// built (allocation failure, a terminating VM) is folded and replaced with
+/// `undefined`, and the callback still runs (or is skipped by `run_callback`'s
+/// gate when it is the termination).
+trait OrReport {
+    fn or_report(self, global: &JSGlobalObject) -> JSValue;
+}
+
+impl OrReport for JsResult<JSValue> {
+    #[inline]
+    fn or_report(self, _global: &JSGlobalObject) -> JSValue {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                crate::dispatch::fold(Err(e));
+                JSValue::UNDEFINED
+            }
+        }
     }
 }

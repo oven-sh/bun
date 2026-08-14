@@ -235,19 +235,15 @@ pub(crate) fn do_send(
         }
     }
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
-    // here (node: postSend on error). The handle's `close()`/`pause()` run as top-level calls: what
-    // they throw is reported, and the send goes on to deliver its own result.
+    // here (node: postSend on error). The handle's `close()`/`pause()` are calls of their own: what
+    // one throws is reported (this host function is its landing frame), and the send goes on to
+    // deliver its own result.
     let call_handle_method =
         |global_object: &JSGlobalObject, target: JSValue, name: &'static str| -> JsResult<()> {
             if target.is_object() {
                 if let Some(f) = target.get(global_object, name)? {
                     if f.is_callable() {
-                        global_object.bun_vm().event_loop_mut().run_callback(
-                            f,
-                            global_object,
-                            target,
-                            &[],
-                        );
+                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
                     }
                 }
             }

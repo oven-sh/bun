@@ -9,7 +9,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
-use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
+use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
@@ -403,8 +403,8 @@ mod shim {
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
-    ) {
-        cb.with_mut(|cb| cb.trigger(ev, g));
+    ) -> JsResult<bool> {
+        cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
     pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
@@ -1364,18 +1364,31 @@ where
         debug_assert!(this.resp.get().is_some());
         debug_assert!(this.server.get().is_some());
 
+        let any_js_calls = core::cell::Cell::new(false);
         let server = this.server();
+        let _ = server.vm();
         let global_this = server.global_this();
-        // This is a task in the event loop: one microtask checkpoint when it
-        // is done, none beneath it.
-        let _scope = server.vm().enter_event_loop_scope();
+        // This is a task in the event loop.
+        // If we called into JavaScript, we must drain the microtask queue.
+        scopeguard::defer! {
+            if any_js_calls.get() {
+                VirtualMachine::get().as_mut().drain_microtasks();
+            }
+        }
 
         if let Some(request) = this.request_mut() {
-            shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Timeout,
                 global_this,
-            );
+            ) {
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
+            }
         }
     }
 
@@ -1407,22 +1420,33 @@ where
         }
 
         this.detach_response();
+        let any_js_calls = core::cell::Cell::new(false);
         let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
-        // This is a task in the event loop: one microtask checkpoint when it
-        // is done (declared after `_ref`, so it runs before the deref), none
-        // beneath it.
-        let _scope = vm.enter_event_loop_scope();
+        // This is a task in the event loop.
+        // If we called into JavaScript, we must drain the microtask queue.
+        scopeguard::defer! {
+            if any_js_calls.get() {
+                vm.as_mut().drain_microtasks();
+            }
+        }
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
                 global_this,
-            );
+            ) {
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
+            }
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
             this.request_weakref.with_mut(|w| w.deref());
@@ -1435,6 +1459,7 @@ where
                     global_this,
                     jsc::CommonAbortReason::ConnectionClosed,
                 );
+                any_js_calls.set(true);
             }
             shim::signal_release(signal);
         }
@@ -1442,6 +1467,7 @@ where
         // if have sink, call onAborted on sink
         if let Some(sink_ptr) = this.sink.get() {
             // The sink abort runs the stream's JS onClose through its signal.
+            any_js_calls.set(true);
             // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
             // (repr(transparent) over the sink). `abort` takes the raw pointer
             // because the teardown it can re-enter frees the sink.
@@ -1459,14 +1485,17 @@ where
         if this.is_dead_request() {
             this.finalize_without_deinit();
         } else {
-            // TODO: properly propagate exception upwards
-            let _ = this.end_request_streaming();
+            if this.end_request_streaming().unwrap_or(true) {
+                // TODO: properly propagate exception upwards
+                any_js_calls.set(true);
+            }
 
             if let Some(response) = this.response_mut() {
                 if let Some(stream) = shim::response_body_stream(response, global_this) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
                     stream.abort(global_this);
+                    any_js_calls.set(true);
                 }
             }
         }

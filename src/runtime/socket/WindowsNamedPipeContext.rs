@@ -116,12 +116,12 @@ macro_rules! match_socket {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
-                crate::dispatch::fold(crate::dispatch::LiftJsResult::lift($body))
+                crate::dispatch::fold($body)
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
-                crate::dispatch::fold(crate::dispatch::LiftJsResult::lift($body))
+                crate::dispatch::fold($body)
             }
             SocketType::None => {}
         }
@@ -405,7 +405,10 @@ impl WindowsNamedPipeContext {
             }
 
             // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
-            match_socket!(socket, |s: NewSocket<SSL>| s.ref_());
+            match_socket!(socket, |s: NewSocket<SSL>| {
+                s.ref_();
+                Ok(())
+            });
 
             // A socket over a Windows named pipe is in no uSockets group: the VM's
             // stop phase closes it through this owner (unregistered when freed).
@@ -492,7 +495,10 @@ impl Drop for WindowsNamedPipeContext {
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),
             // +1 ref taken in `create()`; this is the matching release.
-            |s: NewSocket<SSL>| s.get().deref()
+            |s: NewSocket<SSL>| {
+                s.get().deref();
+                Ok(())
+            }
         );
         // `named_pipe` drops via field destructor after this.
     }

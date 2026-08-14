@@ -493,7 +493,7 @@ impl Writable {
             Writable::Done => promise.resolve(global_this, JSValue::FALSE),
             other => promise.resolve(global_this, other.to_js(global_this)),
         };
-        settle_fold(global_this, settled);
+        crate::dispatch::fold(settled);
     }
 
     pub fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
@@ -661,10 +661,11 @@ impl Pending {
     /// Settle the parked read. This is the stream settle primitive, reached
     /// from native frames of every kind (sink ABI methods, uWS response
     /// callbacks, pipe I/O, tasks): the promise is settled with a value built
-    /// here — never a user thenable — so what settling can leave pending is an
-    /// allocation failure or the VM's termination, and it is folded here
-    /// ([`settle_fold`]) rather than handed to callers that have nowhere to put
-    /// it. The pending itself is consumed either way.
+    /// here — never a user thenable; a value that cannot be built becomes the
+    /// rejection — so what settling itself can leave pending is the VM's
+    /// termination (or the settle throwing), and it is folded here
+    /// (`dispatch::fold`) rather than handed to callers that have nowhere to
+    /// put it. The pending itself is consumed either way.
     pub(crate) fn run(&mut self) {
         if self.state != PendingState::Pending {
             return;
@@ -684,17 +685,6 @@ impl Pending {
                 );
             }
         }
-    }
-}
-
-/// The fold for the stream settle primitives ([`Pending::run`],
-/// [`WritablePending::run`], [`BufferAction`], `flush_promise`, and
-/// [`SourceHandle::close`]/[`SourceHandle::ready`] signalling a JS controller):
-/// report what the settle left, or leave the VM's termination where it is.
-#[inline]
-fn settle_fold(global: &JSGlobalObject, settled: JsResult<()>) {
-    if let Err(err) = settled {
-        let _ = bun_jsc::task::report_error_or_terminate(global, err);
     }
 }
 
@@ -762,7 +752,7 @@ impl StreamResult {
                 }
             }
         };
-        settle_fold(global_this, settled);
+        crate::dispatch::fold(settled);
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -958,12 +948,9 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                settle_fold(
-                    global,
-                    ::bun_jsc::call_check_slow(global, || {
-                        controller_abi::on_close(cpp, JSValue::UNDEFINED)
-                    }),
-                );
+                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
+                    controller_abi::on_close(cpp, JSValue::UNDEFINED)
+                }));
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
@@ -991,12 +978,9 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                settle_fold(
-                    global,
-                    ::bun_jsc::call_check_slow(global, || {
-                        controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
-                    }),
-                );
+                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
+                    controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+                }));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
@@ -2122,7 +2106,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // wrapper); momentary access only.
             unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
             // SAFETY: as above.
-            settle_fold(unsafe { (*this).global_this() }, result);
+            crate::dispatch::fold(result);
         }
     }
 }
@@ -2299,7 +2283,7 @@ impl NetworkSink {
                 let flushed = (*this)
                     .flush_promise
                     .resolve(&global, JSValue::js_number(flushed as f64));
-                settle_fold(&global, flushed);
+                crate::dispatch::fold(flushed);
             }
             (*this).pending.run();
             (*this).source
@@ -2617,14 +2601,14 @@ impl BufferAction {
     /// Terminal like the other settle primitives (`Pending::run`).
     pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
         let settled = blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag());
-        settle_fold(global, settled);
+        crate::dispatch::fold(settled);
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
     pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
-        settle_fold(global, settled);
+        crate::dispatch::fold(settled);
     }
 
     pub fn value(&self) -> JSValue {

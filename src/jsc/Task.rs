@@ -50,10 +50,10 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
     }
     let vm = global.bun_vm();
     let _ = vm.as_mut().uncaught_exception(global, ex, false);
-    if !vm.is_shutting_down() {
-        vm.event_loop_mut().maybe_drain_microtasks();
+    if vm.is_shutting_down() {
+        return Ok(());
     }
-    Ok(())
+    vm.event_loop_mut().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

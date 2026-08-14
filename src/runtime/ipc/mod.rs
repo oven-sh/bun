@@ -1,5 +1,4 @@
 use core::cell::Cell;
-mod fold;
 
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
@@ -2183,7 +2182,7 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
-                    let _ = fold::delivered_message(global_this, e);
+                    crate::dispatch::fold(Err(e));
                     return;
                 }
                 drop(_scope);
@@ -2283,7 +2282,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
         DecodeStep::Fail(IPCDecodeError::JSError) => {
-            let _ = fold::delivered_message(&send_queue.get_global_this(), JsError::Thrown);
+            crate::dispatch::fold(Err(JsError::Thrown));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {

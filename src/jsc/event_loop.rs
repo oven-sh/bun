@@ -398,11 +398,20 @@ impl EventLoop {
     }
 
     // should be called after exit()
-    pub fn maybe_drain_microtasks(&mut self) {
-        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
-        {
-            let _ = self.drain_microtasks();
+    pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
+        if self.entered_event_loop_count != 0 {
+            return Ok(());
         }
+        // `exit()`'s checkpoint, with the count at 1 while it runs so JS reached
+        // from a microtask nests instead of checkpointing again.
+        self.entered_event_loop_count = 1;
+        let drained = if self.vm_ref().is_inside_deferred_task_queue.get() {
+            Ok(())
+        } else {
+            self.drain_microtasks()
+        };
+        self.entered_event_loop_count = 0;
+        drained
     }
 
     /// When you call a JavaScript function from outside the event loop task
@@ -763,9 +772,16 @@ impl EventLoop {
     ///
     /// # Safety
     /// JS thread, JSC heap alive; `task` just left (or was refused by) the queue.
+    #[cold]
+    #[inline(never)]
     unsafe fn release_task_unrun(&mut self, task: Task) {
         // SAFETY: fn contract.
         unsafe { __bun_release_task_unrun(task) };
+        // Once the VM is shutting down nothing is reported (`uncaught_exception`
+        // is a no-op) and the heap may be mid-destruction: leave it alone.
+        if self.vm_ref().is_shutting_down() {
+            return;
+        }
         if let Some(global) = self.global {
             // SAFETY: set at VM init; live for the loop's lifetime.
             let global = unsafe { global.as_ref() };
@@ -922,7 +938,7 @@ impl EventLoop {
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
             // SAFETY: as above.
-            unsafe { (*this).maybe_drain_microtasks() };
+            let _ = unsafe { (*this).maybe_drain_microtasks() };
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the

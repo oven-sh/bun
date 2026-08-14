@@ -1156,9 +1156,9 @@ fn download_stream(
         has_more: bool,
         err: Option<Error::S3Error>,
         ctx: *mut c_void,
-    ) -> JsResult<()>,
+    ),
     callback_context: *mut c_void,
-) -> JsResult<*mut S3HttpDownloadStreamingTask> {
+) -> *mut S3HttpDownloadStreamingTask {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -1205,8 +1205,8 @@ fn download_stream(
                     message: error_code_and_message.message,
                 }),
                 callback_context,
-            )?;
-            return Ok(core::ptr::null_mut());
+            );
+            return core::ptr::null_mut();
         }
     };
 
@@ -1323,7 +1323,7 @@ fn download_stream(
     crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
         .register();
     bun_http::HTTPThread::schedule(batch);
-    Ok(task_ptr)
+    task_ptr
 }
 
 pub struct S3DownloadStreamWrapper {
@@ -1346,7 +1346,7 @@ impl S3DownloadStreamWrapper {
         has_more: bool,
         request_err: Option<Error::S3Error>,
         self_: &mut Self,
-    ) -> JsResult<()> {
+    ) {
         // scope-exit cleanup via guard (keeps borrowck happy)
         let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
             if !has_more {
@@ -1369,24 +1369,23 @@ impl S3DownloadStreamWrapper {
                             ),
                         ),
                     ));
-                    return Ok(());
+                    return;
                 }
                 if has_more {
                     bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
                         // chunk.list is borrowed for the duration of on_data.
                         bun_ptr::RawSlice::new(chunk.list.as_slice()),
                     ));
-                    return Ok(());
+                    return;
                 }
 
                 bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
                     // chunk.list is borrowed for the duration of on_data.
                     bun_ptr::RawSlice::new(chunk.list.as_slice()),
                 ));
-                return Ok(());
+                return;
             }
         }
-        Ok(())
     }
 
     pub(crate) fn on_stream_cancelled(&mut self) {
@@ -1422,10 +1421,10 @@ impl S3DownloadStreamWrapper {
         has_more: bool,
         err: Option<Error::S3Error>,
         opaque_self: *mut c_void,
-    ) -> JsResult<()> {
+    ) {
         // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
         let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-        Self::callback(chunk, has_more, err, self_)
+        Self::callback(chunk, has_more, err, self_);
     }
 }
 
@@ -1505,7 +1504,7 @@ pub(crate) fn readable_stream(
         request_payer,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
-    )?;
+    );
     if !task.is_null() {
         // SAFETY: on the success path `download_stream` only schedules work onto the HTTP
         // thread; the wrapper is freed via `opaque_callback` on this (main) thread, which

@@ -170,7 +170,8 @@ impl NapiEnv {
     /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
     /// what it raised through Node-API — latched on the env — or left on the VM
     /// is that call's exception, surfaced as `Err` with it pending on the VM.
-    /// The VM's own exception wins over a latched one.
+    /// If both exist the VM's own wins and the latched one is discarded (it
+    /// cannot be reported without running JS over the pending one).
     pub(crate) fn surface_exception(&self, global: &JSGlobalObject) -> JsResult<()> {
         let latched = self.get_and_clear_pending_exception();
         if global.has_exception() {

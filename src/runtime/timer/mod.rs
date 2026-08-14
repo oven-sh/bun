@@ -939,10 +939,11 @@ impl All {
             };
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
             let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            // WTF timers run JSC-internal work, not user JS; a stop found here
+            // is the loop's to act on at its next gate, and the heap's next
+            // deadline is still reported to the poll.
             // SAFETY: `vm` is the erased per-thread VM per fn contract.
-            if unsafe { fold_timer(vm, fired) }.is_err() {
-                return None;
-            }
+            let _ = unsafe { fold_timer(vm, fired) };
         }
     }
 
@@ -1390,13 +1391,16 @@ unsafe fn fold_timer(
     vm: *mut (),
     fired: bun_event_loop::JsResult<()>,
 ) -> Result<(), bun_jsc::Stopped> {
+    #[cold]
+    #[inline(never)]
+    unsafe fn report(vm: *mut (), err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
+        // SAFETY: fn contract.
+        let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
+        bun_jsc::task::report_error_or_terminate(global, err)
+    }
     match fired {
         Ok(()) => Ok(()),
-        Err(err) => {
-            // SAFETY: fn contract.
-            let global =
-                unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
-            bun_jsc::task::report_error_or_terminate(global, err)
-        }
+        // SAFETY: fn contract.
+        Err(err) => unsafe { report(vm, err) },
     }
 }

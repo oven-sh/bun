@@ -504,7 +504,7 @@ impl ServerWebSocket {
             _ => unreachable!(),
         };
         // Converting the payload threw (or the VM is terminating): there is
-        // no message to deliver; `Wrap` folds it.
+        // no message to deliver; the handler's landing frame folds it.
         let data = data?;
         let arguments = [
             self.this_value

@@ -1539,10 +1539,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 log!("Already closed");
             }
 
-            if !handlers.reject_promise(err)? {
-                handlers.call_error_handler(this_value, &[this_value, err])?;
-            }
+            let delivered = match handlers.reject_promise(err) {
+                Ok(false) => handlers.call_error_handler(this_value, &[this_value, err]),
+                rejected => rejected.map(drop),
+            };
+            // A socket whose `open` threw is closed whatever delivering that
+            // error left pending (`on_close` runs nested; it does not enter JS
+            // over a pending termination).
             this.mark_inactive();
+            delivered?;
         }
         if !SSL
             && !global.has_exception()
@@ -1847,16 +1852,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     JSValue::NULL
                 }
             } else {
-                match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        drop(scope);
-                        if reject_unauthorized {
-                            this.reject_unauthorized_connection();
-                        }
-                        return Err(e);
-                    }
-                }
+                super::uws_jsc::verify_error_to_js(&ssl_error, &global)
             };
 
             result = match callback.call(

@@ -1861,25 +1861,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         let ssl_js_value =
-            match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
-                Ok(v) => v,
-                Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(jsc::JsError::Thrown)
-                    if this.global_object.has_pending_termination_exception() =>
-                {
-                    return Err(jsc::JsError::Thrown);
-                }
-                Err(jsc::JsError::Thrown) => {
-                    // Clear any pending exception since we can't convert it to
-                    // JS, but still fail-close the connection so we never fall
-                    // through to the authenticated state after a rejected
-                    // handshake.
-                    this.global_object.clear_exception();
-                    this.client_mut().flags.is_manually_closed = true;
-                    this.client_mut().close();
-                    return Ok(());
-                }
-            };
+            crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object);
         Self::fail_handshake(this, vm, ssl_js_value)
     }
 

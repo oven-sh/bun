@@ -292,7 +292,8 @@ public:
         for (void* tsfn : tsfns) {
             napi_internal_threadsafe_function_env_teardown(tsfn);
             // Its finalizer ran as a top-level call: what it left is reported
-            // here, and the next one starts clean (as drain() does for hooks).
+            // here (a no-op once the VM is shutting down) and cleared, so the
+            // next one starts clean (as drain() does for hooks).
             reportThenClearExceptionBetweenFinalizers();
         }
     }

@@ -28,9 +28,8 @@ use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
 // A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
-// `JsResult<()>` (valkey, Bun.connect/listen sockets); `LiftJsResult` makes both the `JsResult<()>`
-// the dispatcher folds at the entry.
-use crate::dispatch::{LiftJsResult, fold};
+// `JsResult<()>` (valkey); `LiftJsResult` turns either into the `JsResult<()>` the trampoline folds.
+use crate::dispatch::fold;
 
 #[inline(always)]
 fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
@@ -303,6 +302,24 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // no-ops; each consumer type opts in with an `impl` that overrides only the
 // events it actually handles. `api::NewSocket`'s real impl lives in
 // `socket/mod.rs` (bridges to inherent methods).
+
+/// Lifts what a driver's `on_*` returns into the `JsResult<()>` the trampoline
+/// folds: `()` for drivers that never enter JS, identity otherwise.
+trait LiftJsResult {
+    fn lift(self) -> JsResult<()>;
+}
+impl LiftJsResult for () {
+    #[inline(always)]
+    fn lift(self) -> JsResult<()> {
+        Ok(())
+    }
+}
+impl LiftJsResult for JsResult<()> {
+    #[inline(always)]
+    fn lift(self) -> JsResult<()> {
+        self
+    }
+}
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
 /// `SocketHandler<SSL>` namespace type; `lift()` lifts both return shapes (see

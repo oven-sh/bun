@@ -648,7 +648,8 @@ mod run_impls {
     impl RunTask for S3HttpDownloadStreamingTask {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_response(this)
+            Self::on_response(this);
+            Ok(())
         }
     }
 
@@ -1148,7 +1149,7 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
 /// Each arm is the owner's timer entry with its result surfaced: an owner
 /// returns the exception it left pending and never reports it; the drain loop
 /// (`All::drain_timers`) folds every timer's result in one place. Owners whose
-/// entry cannot enter JS return `()`, lifted to `Ok(())` by [`LiftJsResult`].
+/// entry cannot enter JS return `()` (`timer_arm!` makes that `Ok(())`).
 ///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
@@ -1181,12 +1182,14 @@ pub(crate) unsafe fn __bun_fire_timer(
     /// `$body` under one `unsafe` covering the per-fn-contract dereferences.
     /// Defined *after* the `vm` cast so the def-site `vm` ident resolves to
     /// the typed `*mut VirtualMachine`, not the erased `*mut ()` param.
+    // An owner that cannot enter JS: its `()` return is `Ok(())` here.
     macro_rules! timer_arm {
         ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
             let $c: *mut $Ty = owner!($Ty, $field);
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-            LiftJsResult::lift(unsafe { $body })
+            let () = unsafe { $body };
+            Ok(())
         }};
     }
     let fired: JsResult<()> = match tag {
@@ -1273,7 +1276,8 @@ pub(crate) unsafe fn __bun_fire_timer(
             {
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
-                LiftJsResult::lift(unsafe { (*container).on_timeout() })
+                unsafe { (*container).on_timeout() };
+                Ok(())
             }
             #[cfg(not(windows))]
             {
@@ -1313,11 +1317,14 @@ pub(crate) unsafe fn __bun_fire_timer(
             Ok(())
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
+            let container = owner!(Valkey, timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connection_timeout() }
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            timer_arm!(Valkey, reconnect_timer, |c, _now, _vm| (*c)
-                .on_reconnect_timer())
+            let container = owner!(Valkey, reconnect_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_reconnect_timer() }
         }
         EventLoopTimerTag::SubprocessTimeout => {
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
@@ -1394,25 +1401,6 @@ pub(crate) fn fold(result: JsResult<()>) {
     }
     if let Err(err) = result {
         report(err);
-    }
-}
-
-/// Lifts what a dispatcher's callee returns into the `JsResult<()>` its fold
-/// reads: `()` for owners that never enter JS, identity otherwise. Shared by
-/// the timer switch here and the socket trampolines (`uws_handlers`).
-pub(crate) trait LiftJsResult {
-    fn lift(self) -> JsResult<()>;
-}
-impl LiftJsResult for () {
-    #[inline(always)]
-    fn lift(self) -> JsResult<()> {
-        Ok(())
-    }
-}
-impl LiftJsResult for JsResult<()> {
-    #[inline(always)]
-    fn lift(self) -> JsResult<()> {
-        self
     }
 }
 

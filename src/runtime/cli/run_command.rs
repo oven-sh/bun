@@ -1347,9 +1347,7 @@ impl Run<'_> {
             };
             // The process entry is the outermost frame: a preconnect that threw
             // is reported here, before the entry point loads.
-            if let Err(err) = preconnect() {
-                let _ = bun_jsc::task::report_error_or_terminate(global, err);
-            }
+            crate::dispatch::fold(preconnect());
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1371,9 +1369,7 @@ impl Run<'_> {
                 connect_fn.call(global, sql_object, &[])?;
                 Ok(())
             };
-            if let Err(err) = preconnect() {
-                let _ = bun_jsc::task::report_error_or_terminate(global, err);
-            }
+            crate::dispatch::fold(preconnect());
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────

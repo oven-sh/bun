@@ -2,7 +2,6 @@
 
 pub mod endpoint;
 pub(crate) mod ffi;
-mod fold;
 pub mod session;
 pub mod stream;
 pub mod tls;

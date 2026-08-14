@@ -1689,6 +1689,10 @@ impl RunTestsTask {
             return Ok(());
         };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
+            // A termination is the tick's to fold, not a test failure.
+            if this.global_this.has_pending_termination_exception() {
+                return Err(e);
+            }
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();

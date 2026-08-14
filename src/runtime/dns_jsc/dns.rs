@@ -1950,14 +1950,11 @@ impl Outcome {
     /// (allocation failure, a terminating VM).
     fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
-        let settled = match self {
+        crate::dispatch::fold(match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
-        };
-        if let Err(err) = settled {
-            let _ = bun_jsc::task::report_error_or_terminate(global, err);
-        }
+        });
     }
 }
 

@@ -858,9 +858,7 @@ impl PostgresSQLConnection {
                     // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {
-                            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                return;
-                            };
+                            let v = verify_error_to_js(&ssl_error, self.global());
                             self.fail_with_js_value(v);
                             return;
                         }
@@ -887,9 +885,7 @@ impl PostgresSQLConnection {
                                     )
                             };
                             if !ok {
-                                let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                    return;
-                                };
+                                let v = verify_error_to_js(&ssl_error, self.global());
                                 self.fail_with_js_value(v);
                             }
                         }
@@ -901,9 +897,7 @@ impl PostgresSQLConnection {
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // no matter if reject_unauthorized is false because we are disconnected by the server
-            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                return;
-            };
+            let v = verify_error_to_js(&ssl_error, self.global());
             self.fail_with_js_value(v);
         }
     }

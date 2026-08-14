@@ -30,7 +30,7 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-const FOLD = new RegExp(String.raw`\breport_error_or_terminate\s*\(`, "g");
+const FOLD = new RegExp(String.raw`\breport_error_or_terminate\b`, "g");
 
 const DISPATCHERS = new Set([
   "src/jsc/Task.rs", // the fold itself
@@ -38,15 +38,11 @@ const DISPATCHERS = new Set([
   "src/jsc/VirtualMachine.rs", // cleanup-hook runner
   "src/jsc/web_worker.rs", // a worker thread's start sequence: its outermost frame
   "src/jsc/RuntimeTranspilerStore.rs", // the transpiled-module fulfilment drain
-  "src/runtime/dispatch.rs", // task queue tick, timer switch, `fold` for foreign landing frames
+  "src/runtime/dispatch.rs", // task queue tick, timer switch, and `fold`: the wrapper for every frame that discards `Stopped` (foreign landing frames, stream settles, the process entry)
   "src/runtime/timer/mod.rs", // timer drains
   "src/runtime/test_runner/timers/FakeTimers.rs", // the fake clock's timer drain
-  "src/runtime/cli/run_command.rs", // the process entry: outermost frame for the preconnect scripts
   "src/runtime/napi/napi_body.rs", // the threadsafe-function queue drain
-  "src/runtime/webcore/streams.rs", // the stream settle primitives (Pending::run & co.)
-  "src/runtime/dns_jsc/dns.rs", // resolver completion callbacks (c-ares, libinfo, libuv)
-  "src/runtime/node/quic/fold.rs", // node:quic's event drain and lsquic/UDP callback boundaries
-  "src/runtime/ipc/fold.rs", // the IPC message drain
+  "src/runtime/node/quic/session.rs", // node:quic's event drain (process_events)
 ]);
 
 const offenders: string[] = [];

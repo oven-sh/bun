@@ -611,7 +611,7 @@ extern "C" fn on_data(
         if let Err(err) =
             this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
         {
-            let _ = super::fold::at_boundary(global, err);
+            crate::dispatch::fold(Err(err));
         }
         let engines = match owner_engine {
             // Already matched above: the other engine would only miss it.
@@ -1886,7 +1886,7 @@ impl QuicEndpoint {
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
-                    let _ = super::fold::at_boundary(global, err);
+                    crate::dispatch::fold(Err(err));
                 }
                 self.sessions.with_mut(|v| v.push(session));
                 self.pending_new_sessions.with_mut(|v| v.push(session));
@@ -1898,7 +1898,7 @@ impl QuicEndpoint {
             Err(e) => {
                 // Abort like the sibling null-return branches, or the conn
                 // lingers with no session behind it.
-                let _ = super::fold::at_boundary(global, e);
+                crate::dispatch::fold(Err(e));
                 // SAFETY: `conn` is the live conn lsquic just created.
                 if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
                     c.abort_silent();

@@ -649,3 +649,46 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+// https://drafts.csswg.org/css-color-5/#relative-colors: inside color(), the
+// channel keywords of the destination space are plain numbers, so each of them
+// is accepted in any component slot, including calc() and the alpha slot.
+describe("relative color() syntax", () => {
+  // srgb-linear's `r` channel used to be typed as an angle, so any component
+  // referencing it was rejected and the whole color failed to parse, while
+  // `g`/`b` (and every channel of the other spaces) resolved.
+  test.each([
+    ["color(from red srgb-linear r g b)", "color(srgb-linear 1 0 0)"],
+    ["color(from red srgb-linear g r b)", "color(srgb-linear 0 1 0)"],
+    ["color(from red srgb-linear r 0 0)", "color(srgb-linear 1 0 0)"],
+    ["color(from red srgb-linear calc(r / 2) g b)", "color(srgb-linear .5 0 0)"],
+    ["color(from red srgb-linear r g b / r)", "color(srgb-linear 1 0 0)"],
+    ["color(from red srgb-linear 0 0 0 / calc(r / 4))", "color(srgb-linear 0 0 0 / .25)"],
+    [
+      "color(from color(srgb-linear .5 .25 .125 / .5) srgb-linear b g r / alpha)",
+      "color(srgb-linear .125 .25 .5 / .5)",
+    ],
+    [
+      "color(from light-dark(red, blue) srgb-linear r g b)",
+      "light-dark(color(srgb-linear 1 0 0), color(srgb-linear 0 0 1))",
+    ],
+  ])("color(%s, 'css') === %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    ["srgb", "r g b"],
+    ["srgb-linear", "r g b"],
+    ["display-p3", "r g b"],
+    ["prophoto-rgb", "r g b"],
+    ["rec2020", "r g b"],
+    ["xyz-d50", "x y z"],
+    ["xyz-d65", "x y z"],
+    ["xyz", "x y z"],
+  ])("color(from <%s origin> %s / alpha) reproduces the origin", (space, channels) => {
+    const origin = `color(${space} .5 .25 .125 / .5)`;
+    const expected = color(origin, "css");
+    expect(expected).toStartWith("color(");
+    expect(color(`color(from ${origin} ${space} ${channels} / alpha)`, "css")).toBe(expected);
+  });
+});

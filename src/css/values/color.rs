@@ -1767,9 +1767,7 @@ define_colorspace! {
 define_colorspace! {
     /// A color in the [`sRGB-linear`](https://www.w3.org/TR/css-color-4/#predefined-sRGB-linear) color space.
     SRGBLinear { r, g, b }
-    // `r` intentionally uses the angle channel type (sic) — kept for
-    // behavioral compatibility.
-    types = (CT_ANG, CT_PCT, CT_PCT);
+    types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = rectangular;
     powerless = none;

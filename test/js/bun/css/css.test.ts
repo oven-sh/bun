@@ -7319,6 +7319,43 @@ describe("css tests", () => {
     );
   });
 
+  describe("color", () => {
+    // Relative color() into srgb-linear. The `r` channel keyword used to be
+    // rejected, so the whole declaration was kept as unparsed tokens and got
+    // no fallbacks, unlike the identical srgb form.
+    minify_test(".foo { color: color(from red srgb-linear r g b) }", ".foo{color:color(srgb-linear 1 0 0)}");
+    minify_test(".foo { color: color(from red srgb-linear calc(r / 2) g b) }", ".foo{color:color(srgb-linear .5 0 0)}");
+    minify_test(".foo { color: color(from red srgb-linear r g b / r) }", ".foo{color:color(srgb-linear 1 0 0)}");
+    minify_test(".foo { color: color(from red srgb r g b) }", ".foo{color:color(srgb 1 0 0)}");
+    prefix_test(
+      ".foo { color: color(from red srgb-linear r g b) }",
+      `.foo {
+          color: red;
+          color: color(srgb-linear 1 0 0);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color(from red srgb-linear calc(r / 2) g b) }",
+      `.foo {
+          color: #bc0000;
+          color: color(srgb-linear .5 0 0);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color(from light-dark(red, blue) srgb-linear r g b) }",
+      `.foo {
+          color: var(--buncss-light, red) var(--buncss-dark, #00f);
+          color: var(--buncss-light, color(srgb-linear 1 0 0)) var(--buncss-dark, color(srgb-linear 0 0 1));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+  });
+
   describe("color-scheme", () => {
     minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
     minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");

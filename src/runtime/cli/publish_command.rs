@@ -1589,7 +1589,9 @@ impl PublishCommand {
 
         let mut iter = DirIterator::iterate(workspace_dir);
         while let Some(entry) = iter.next().ok().flatten() {
-            if entry.kind == bun_sys::EntryKind::Directory {
+            // Same rule as the tarball: a README that is a symlink is not packed,
+            // so it must not be published as the readme either.
+            if entry.kind != bun_sys::EntryKind::File {
                 continue;
             }
             // Entry names are UTF-8 on every platform.

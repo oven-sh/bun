@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { exists, rm } from "fs/promises";
+import { exists, rm, symlink } from "fs/promises";
 import {
   VerdaccioRegistry,
   bunExe,
@@ -1204,6 +1204,44 @@ describe("readme", () => {
       readme: readmeContents,
       readmeFilename: "README.md",
     });
+  });
+
+  // A README that is a symlink is not packed (symlinks never are), so its
+  // target must not be published as the readme either.
+  test.skipIf(isWindows)("a README that is a symlink is not sent as readme", async () => {
+    let captured: any = null;
+    using mock = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") captured = await req.json();
+        return new Response("OK", { status: 200 });
+      },
+    });
+
+    const dir = tmpdirSync();
+    const packageDir = join(dir, "pkg");
+    await Promise.all([
+      write(join(dir, "outside", "README.md"), "# outside the package"),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+          },
+        }),
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-3", version: "3.0.0" })),
+      write(join(packageDir, "index.js"), "module.exports = 3;"),
+    ]);
+    await symlink("../outside/README.md", join(packageDir, "README.md"));
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(captured.versions["3.0.0"]).not.toContainAnyKeys(["readme", "readmeFilename"]);
+    expect(JSON.stringify(captured)).not.toContain("outside the package");
   });
 });
 

@@ -565,8 +565,9 @@ function hostsNamesFor(address) {
       .map(line => line.replace(/#.*/, "").trim().split(/\s+/))
       .filter(parts => parts[0] === address)
       .flatMap(parts => parts.slice(1));
-  } catch {
-    return [];
+  } catch (err) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
   }
 }
 // c-ares merges hosts entries by name, so 127.0.0.1's "localhost" entry may
@@ -592,8 +593,9 @@ async function localDnsServer() {
     socket: {
       data(sock, query, port, addr) {
         let end = 12;
-        while (query[end] !== 0) end += query[end] + 1;
+        while (end < query.length && query[end] !== 0) end += query[end] + 1;
         end += 5; // root label + QTYPE + QCLASS
+        if (end > query.length) return;
         const answer = Buffer.concat([
           query.subarray(0, end),
           Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 2]),
@@ -622,8 +624,9 @@ test("Resolver getServers/setServers round-trip", async () => {
     resolver.setServers([]);
     expect(resolver.getServers()).toEqual([]);
     if (isAndroid) {
-      // back on the platform resolver, which does not know 127.0.0.2
-      expect(await resolver.resolve4("example.com")).not.toEqual(["127.0.0.2"]);
+      // back on the platform resolver: whatever it answers (or fails with), it
+      // is not the local responder's 127.0.0.2
+      expect(await resolver.resolve4("example.com").catch(e => [e.code])).not.toEqual(["127.0.0.2"]);
     }
   } finally {
     server.close();

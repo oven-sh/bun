@@ -78,9 +78,7 @@ class SQLArrayParameter {
 }
 
 class SQLResultArray<T> extends PublicArray<T> {
-  // `declare` so these are only types. A real class field would define each of
-  // them as an enumerable own property as soon as super() returns, which the
-  // defineProperties call below would then have to redefine.
+  // Types only: real class fields would be defined (enumerable) after super() and redefined below.
   declare count: number | null;
   declare command: string | null;
   declare lastInsertRowid: number | bigint | null;

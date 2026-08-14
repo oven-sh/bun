@@ -922,31 +922,31 @@ impl Request {
             return BunString::clone_utf8(&path);
         };
 
-        let len = protocol.len() + host.len() + path.len();
-        let mut stack = [0u8; 128];
-        let mut heap = Vec::new();
-        let joined: &mut [u8] = if len <= stack.len() {
-            &mut stack[..len]
+        // Join straight into a WTF string: parsing one is a refcount bump and an
+        // already-canonical URL comes back as the same string, so this is one allocation
+        // per request regardless of target length. Joining into a scratch buffer first adds
+        // a second target-sized allocation per request (req-url-leak.test.ts catches it).
+        // The host is ASCII by construction, so only the path decides the encoding.
+        let joined = if strings::is_all_ascii(&path) {
+            let (joined, bytes) =
+                BunString::create_uninitialized_latin1(protocol.len() + host.len() + path.len());
+            let (a, rest) = bytes.split_at_mut(protocol.len());
+            let (b, c) = rest.split_at_mut(host.len());
+            a.copy_from_slice(protocol);
+            b.copy_from_slice(host);
+            c.copy_from_slice(&path);
+            joined
         } else {
-            heap.resize(len, 0);
-            &mut heap
+            let mut bytes = Vec::with_capacity(protocol.len() + host.len() + path.len());
+            bytes.extend_from_slice(protocol);
+            bytes.extend_from_slice(host);
+            bytes.extend_from_slice(&path);
+            BunString::clone_utf8(&bytes)
         };
-        let (a, rest) = joined.split_at_mut(protocol.len());
-        let (b, c) = rest.split_at_mut(host.len());
-        a.copy_from_slice(protocol);
-        b.copy_from_slice(host);
-        c.copy_from_slice(&path);
-
-        let href = bun_url::href_from_string(&BunString::from_bytes(joined));
+        let href = bun_url::href_from_string(&joined);
+        joined.deref();
         if href.is_empty() {
             return BunString::clone_utf8(&path);
-        }
-        if core::ptr::eq(href.byte_slice().as_ptr(), joined.as_ptr()) {
-            // Already canonical: `href` is a view of `joined`, which is about to go away.
-            // A URL the parser accepted verbatim is ASCII, so latin1 is exact.
-            let owned = BunString::clone_latin1(&joined[..href.length()]);
-            href.deref();
-            return owned;
         }
         href
     }

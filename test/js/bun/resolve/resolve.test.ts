@@ -1708,9 +1708,11 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
 describe.concurrent("differently-cased package.json / tsconfig.json in a directory", () => {
   const aliasFixture = {
     "src/x.ts": `export const x = "via-alias";`,
+    "decoy/x.ts": `export const x = "via-decoy";`,
     "entry.ts": `import { x } from "@alias/x"; console.log(x);`,
   };
-  const aliasTsconfig = JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@alias/*": ["./src/*"] } } });
+  const aliasConfig = (target: string) =>
+    JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@alias/*": [`./${target}/*`] } } });
 
   async function bunBuild(dir: string, entry: string) {
     await using proc = Bun.spawn({
@@ -1756,34 +1758,42 @@ describe.concurrent("differently-cased package.json / tsconfig.json in a directo
       expect(exitCode).toBe(0);
     });
 
-    it("Tsconfig.json does not configure the directory", async () => {
-      using dir = tempDir("resolve-cased-tsconfig-ignored", { ...aliasFixture, "Tsconfig.json": aliasTsconfig });
+    it.each(["Tsconfig.json", "Jsconfig.json"])("%s does not configure the directory", async name => {
+      using dir = tempDir("resolve-cased-config-ignored", { ...aliasFixture, [name]: aliasConfig("src") });
       const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
       expect(stderr).toContain('Could not resolve: "@alias/x"');
       expect(stderr).not.toContain("Cannot find tsconfig file");
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     });
-  });
 
-  it.skipIf(isCaseSensitiveFileSystem())("on a case-insensitive filesystem Tsconfig.json is the tsconfig", async () => {
-    using dir = tempDir("resolve-cased-tsconfig-folded", { ...aliasFixture, "Tsconfig.json": aliasTsconfig });
-    const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
-    expect(stderr).toBe("");
-    expect(stdout).toContain("via-alias");
-    expect(exitCode).toBe(0);
-  });
-
-  it("tsconfig.json is still found when a Tsconfig.json sits next to it", async () => {
-    using dir = tempDir("resolve-cased-tsconfig-both", {
-      ...aliasFixture,
-      "Tsconfig.json": aliasTsconfig,
-      "tsconfig.json": aliasTsconfig,
+    // Whichever of the two files the lowercased listing ends up holding, the
+    // lowercase one is the configuration that applies.
+    it.each([
+      ["tsconfig.json", "Tsconfig.json"],
+      ["jsconfig.json", "Jsconfig.json"],
+    ])("%s is used when a %s with other contents sits next to it", async (lower, other) => {
+      using dir = tempDir("resolve-cased-config-both", {
+        ...aliasFixture,
+        [other]: aliasConfig("decoy"),
+        [lower]: aliasConfig("src"),
+      });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      expect(stdout).toContain("via-alias");
+      expect(stdout).not.toContain("via-decoy");
+      expect(exitCode).toBe(0);
     });
-    const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
-    expect(stderr).toBe("");
-    expect(stdout).toContain("via-alias");
-    expect(exitCode).toBe(0);
+  });
+
+  describe.skipIf(isCaseSensitiveFileSystem())("on a case-insensitive filesystem it is the configuration file", () => {
+    it.each(["Tsconfig.json", "Jsconfig.json"])("%s configures the directory", async name => {
+      using dir = tempDir("resolve-cased-config-folded", { ...aliasFixture, [name]: aliasConfig("src") });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      expect(stdout).toContain("via-alias");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it.skipIf(isWindows)("a package.json that cannot be read is reported under its own path", async () => {

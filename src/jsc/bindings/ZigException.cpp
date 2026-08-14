@@ -135,7 +135,10 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (!code)
         return;
 
-    auto* provider = code->source().provider();
+    // The position below is in the class's source for a default class constructor, so the
+    // source lines have to come from it as well.
+    auto classSource = Bun::defaultClassConstructorClassSource(code->ownerExecutable());
+    auto* provider = classSource.isNull() ? code->source().provider() : classSource.provider();
     if (!provider) [[unlikely]]
         return;
     // Make sure the range is valid:
@@ -146,7 +149,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 
     if (!stackFrame.hasBytecodeIndex()) {
         if (stackFrame.hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame.computeLineAndColumn();
+            auto lineColumn = Bun::computeLineAndColumn(stackFrame);
             position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
             position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         }

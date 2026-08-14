@@ -304,7 +304,16 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 intptr_t JSCStackFrame::sourceID() const
 {
-    return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
+    if (!m_codeBlock) {
+        return JSC::noSourceID;
+    }
+
+    auto classSource = Bun::defaultClassConstructorClassSource(m_codeBlock->ownerExecutable());
+    if (!classSource.isNull()) {
+        return classSource.providerID();
+    }
+
+    return m_codeBlock->ownerExecutable()->sourceID();
 }
 
 JSC::JSString* JSCStackFrame::sourceURL()
@@ -371,12 +380,9 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
     // Instead, try to get some identifying information for this frame
 
     // Try to use sourceID if available
-    if (m_codeBlock) {
-        auto sourceID = m_codeBlock->ownerExecutable()->sourceID();
-        if (sourceID != JSC::noSourceID) {
-            // Use a placeholder that includes the sourceID to make frames distinguishable
-            return makeString("[source:"_s, sourceID, "]"_s);
-        }
+    if (auto sourceID = this->sourceID(); sourceID != JSC::noSourceID) {
+        // Use a placeholder that includes the sourceID to make frames distinguishable
+        return makeString("[source:"_s, sourceID, "]"_s);
     }
 
     // Last resort: return a distinguishable placeholder instead of empty string
@@ -468,6 +474,11 @@ String sourceURL(JSC::CodeBlock& codeBlock)
 {
     if (!codeBlock.ownerExecutable()) {
         return String();
+    }
+
+    auto classSource = Bun::defaultClassConstructorClassSource(codeBlock.ownerExecutable());
+    if (!classSource.isNull()) {
+        return sourceURL(classSource);
     }
 
     const auto& source = codeBlock.source();

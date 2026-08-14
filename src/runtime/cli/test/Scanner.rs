@@ -153,13 +153,11 @@ impl<'a> Scanner<'a> {
             // all stay active (a `build`/`dist` ancestor outside the project
             // must not drop a default).
             let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
-            let mut kept: Vec<&'static [u8]> = Vec::with_capacity(self.path_ignore_patterns.len());
-            for &pattern in self.path_ignore_patterns {
+            let mut kept: Vec<&'static [u8]> =
+                Vec::with_capacity(DEFAULT_PATH_IGNORE_PATTERNS.len());
+            for &pattern in DEFAULT_PATH_IGNORE_PATTERNS.iter() {
                 if !pattern_matches_path(pattern, rel_path) {
-                    // SAFETY: all entries in DEFAULT_PATH_IGNORE_PATTERNS are
-                    // &'static [u8] byte-string literals; the `_are_defaults`
-                    // flag guarantees that's the slice we're iterating.
-                    kept.push(unsafe { &*core::ptr::from_ref::<[u8]>(pattern) });
+                    kept.push(pattern);
                 }
             }
             Some(kept.into_boxed_slice())

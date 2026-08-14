@@ -489,6 +489,8 @@ test("explicit test", () => {
       });
 
       const stderr = result.stderr.toString("utf-8");
+      // Positive anchor: the file was discovered-then-filtered, not crashed.
+      expect(stderr).toContain("The following filters did not match any test files");
       expect(stderr).not.toContain("explicit test");
       expect(stderr).not.toContain("1 pass");
       expect(result.exitCode).not.toBe(0);

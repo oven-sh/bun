@@ -194,8 +194,7 @@ impl ResolveMessage {
                     "module"
                 };
                 let _ = write!(&mut out, "Cannot find {what} '{}'", BStr::new(specifier));
-                // Entry points and preloads are loaded directly, not imported
-                // from anywhere; Node words those the same way.
+                // Empty for an entry point or preload; Node omits it there too.
                 if !referrer.is_empty() {
                     let _ = write!(&mut out, " from '{}'", BStr::new(referrer));
                 }

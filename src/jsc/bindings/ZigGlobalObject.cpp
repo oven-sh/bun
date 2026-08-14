@@ -3682,9 +3682,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         return result;
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        // The resolver leaves `res` untouched when it threw (a plugin's onResolve
-        // throwing, for instance); that exception is the one to keep. Same shape
-        // as moduleLoaderImportModule below.
+        // `res` is not written when the resolver threw (e.g. a plugin's onResolve); keep that exception.
         if (!scope.exception())
             throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;

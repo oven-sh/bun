@@ -141,9 +141,8 @@ mod bun_test {
     }
 }
 
-/// The report declares `encoding="UTF-8"`, but file paths, the hostname and the
-/// CI env vars are raw OS bytes: ill-formed sequences become U+FFFD, as the
-/// console already prints them (`bstr::BStr`).
+/// Paths, the hostname and CI env vars are raw OS bytes; the report is declared
+/// UTF-8, so ill-formed sequences become U+FFFD as on the console (`bstr::BStr`).
 pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
     if strings::is_valid_utf8(str_) {
         return escape_xml_utf8(str_, writer);

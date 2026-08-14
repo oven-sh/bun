@@ -30,10 +30,7 @@ impl JSModuleLoader {
     /// Raw-pointer variant of `load_and_evaluate_module`. Returns the FFI
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
-    ///
-    /// Every load failure comes back as a rejected promise (see
-    /// [`Self::reject_with_thrown_exception`]); `None` only while the VM is
-    /// being terminated, with the termination exception left pending.
+    /// A failed load is a rejected promise; `None` only on VM termination.
     pub fn load_and_evaluate_module_ptr(
         global_object: *mut JSGlobalObject,
         module_name: Option<&BunString>,
@@ -52,8 +49,7 @@ impl JSModuleLoader {
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
     /// don't launder provenance through `&T -> *mut T`. Mirrors
-    /// [`Self::load_and_evaluate_module_ptr`], including how failures are
-    /// reported: `Err` only while the VM is being terminated.
+    /// [`Self::load_and_evaluate_module_ptr`]; `Err` only on VM termination.
     pub fn import_ptr(
         global_object: *mut JSGlobalObject,
         module_name: &BunString,
@@ -66,17 +62,14 @@ impl JSModuleLoader {
             .ok_or(JsError::Thrown)
     }
 
-    /// JSC resolves the specifier before it has a promise to reject
-    /// (Completion.cpp `loadAndEvaluateModule`, JSModuleLoader.cpp
-    /// `requestImportModule`), so an unresolvable one is thrown and the binding
-    /// returns null. One way to get there is a path whose bytes are not valid
-    /// UTF-8: once it is a JS string it no longer names the file. The callers
-    /// report load failures from the promise, so deliver the error that way,
-    /// marked handled like the loader's own promises so the unhandled
-    /// rejection tracker does not report it a second time.
+    /// JSC resolves the specifier before it has a promise to reject (Completion.cpp
+    /// `loadAndEvaluateModule`, JSModuleLoader.cpp `requestImportModule`), so that
+    /// failure alone is thrown, and the binding returns null. Callers report load
+    /// failures from the promise. Handled, like the loader's own promises: the
+    /// caller reports it, not the rejection tracker.
     fn reject_with_thrown_exception(global: &JSGlobalObject) -> Option<NonNull<JSInternalPromise>> {
         let exception = global.try_take_exception()?;
-        // `try_take_exception` leaves a termination exception pending; so do we.
+        // Still pending (`try_take_exception` does not clear it); leave it to the caller.
         if exception.is_termination_exception() {
             return None;
         }

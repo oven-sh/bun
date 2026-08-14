@@ -289,7 +289,7 @@ export function canCreateNonUtf8FileNames(): boolean {
     if (isWindows) {
       canCreateNonUtf8FileNamesCached = false;
     } else {
-      const dir = fs.mkdtempSync(join(os.tmpdir(), "bun-non-utf8-name-probe-"));
+      const dir = tmpdirSync("bun-non-utf8-name-probe-");
       try {
         fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/"), Buffer.from([0xff])]), "");
         canCreateNonUtf8FileNamesCached = fs.readdirSync(dir, { encoding: "buffer" }).some(name => name.includes(0xff));

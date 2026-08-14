@@ -197,18 +197,18 @@ pub fn stop_all_for_exit() {
     STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
     let list = ACTIVE_WATCHERS.lock();
     for &addr in list.iter() {
-        let ptr = addr as *mut Watcher;
         // SAFETY: entries are live `Box<Watcher>` allocations; they are removed
-        // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed. No
-        // `&mut Watcher` is formed (the watcher thread holds one in
-        // `thread_body`); these are raw-place projections, and every `platform`
-        // mutator takes `mutex` first, so the two `stop()`s cannot race.
-        unsafe {
-            (*ptr).mutex.lock();
-            (*ptr).running.store(false);
-            (*ptr).platform.stop();
-            (*ptr).mutex.unlock();
-        }
+        // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed.
+        // Shared access suffices, matching `shutdown()`: only the mutex and the
+        // `running` atomic are touched. `platform` is left alone; a thread
+        // still blocked in its platform wait never dispatches, and one that
+        // wakes sees `running == false` (checked under `mutex` in
+        // `dispatch_file_updates` and in `watch_loop`'s condition) and exits
+        // without touching the freed resolver state.
+        let me = unsafe { &*(addr as *const Watcher) };
+        me.mutex.lock();
+        me.running.store(false);
+        me.mutex.unlock();
     }
 }
 
@@ -437,8 +437,8 @@ impl Watcher {
         let owner_still_alive = match self.watch_loop() {
             Err(err) => {
                 self.watchloop_handle.store(false);
-                // `stop_all_for_exit` stops the platform and writes `running`
-                // under `mutex`; hold it here so the two `stop()`s can't race.
+                // `stop_all_for_exit` and `shutdown` write `running` under
+                // `mutex`; hold it so the stop and the read are one step.
                 self.mutex.lock();
                 self.platform.stop();
                 let running = self.running.load();

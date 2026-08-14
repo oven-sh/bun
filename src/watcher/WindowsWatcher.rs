@@ -380,9 +380,7 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
-        // Idempotent: `stop_all_for_exit` and the watcher thread's error arm
-        // both call this (serialised by `Watcher.mutex`); clear the fields so
-        // the second call skips the close.
+        // Idempotent: clear the fields so a repeated call skips the close.
         let dir_handle = std::mem::replace(&mut self.watcher.dir_handle, w::INVALID_HANDLE_VALUE);
         let iocp = std::mem::replace(&mut self.iocp, w::INVALID_HANDLE_VALUE);
         // SAFETY: each handle was opened in init() and is closed at most once.

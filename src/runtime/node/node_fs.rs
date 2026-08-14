@@ -9064,26 +9064,32 @@ impl NodeFS {
                 let link_target = &link_buf[..link_len];
                 let mut resolved_buf = paths::path_buffer_pool::get();
                 let mut cwd_buf = paths::path_buffer_pool::get();
-                let target: &ZStr = match sys::getcwd(&mut cwd_buf[..]) {
-                    Ok(cwd_len) if !paths::is_absolute(link_target) => {
-                        let src_dir = paths::resolve_path::dirname::<paths::platform::Windows>(
-                            src8.as_bytes(),
-                        );
-                        paths::resolve_path::join_abs_string_buf_z::<paths::platform::Windows>(
-                            &cwd_buf[..cwd_len],
-                            &mut resolved_buf[..],
-                            &[src_dir, link_target],
-                        )
-                    }
-                    // Absolute already, or cwd is unavailable: preserve the link
-                    // target as-is rather than pointing the copy back at `src`.
-                    _ => ZStr::from_buf(&link_buf[..], link_len),
+                let target: &ZStr = if paths::is_absolute(link_target) {
+                    ZStr::from_buf(&link_buf[..], link_len)
+                } else {
+                    // `src8` is absolute (a kernel32 path), so the cwd is only
+                    // the join's required base.
+                    let cwd_len = match sys::getcwd(&mut cwd_buf[..]) {
+                        Ok(n) => n,
+                        Err(err) => {
+                            let p = self.os_path_into_sync_error_buf(dest.as_slice());
+                            return Err(err.with_path(p));
+                        }
+                    };
+                    let src_dir =
+                        paths::resolve_path::dirname::<paths::platform::Windows>(src8.as_bytes());
+                    paths::resolve_path::join_abs_string_buf_z::<paths::platform::Windows>(
+                        &cwd_buf[..cwd_len],
+                        &mut resolved_buf[..],
+                        &[src_dir, link_target],
+                    )
                 };
                 let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
                 // UNC targets skip the junction fallback: libuv's
                 // `fs__create_junction` only accepts drive-letter targets.
-                let is_unc = target.as_bytes().starts_with(b"\\\\")
-                    && !target.as_bytes().starts_with(b"\\\\?\\");
+                let t = target.as_bytes();
+                let is_unc = t.starts_with(b"\\\\")
+                    && (!t.starts_with(b"\\\\?\\") || t.starts_with(b"\\\\?\\UNC\\"));
                 let link_result = if is_dir && !is_unc {
                     let mut dest8 = paths::path_buffer_pool::get();
                     sys::symlink_or_junction(

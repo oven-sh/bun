@@ -176,6 +176,31 @@ if (isDockerEnabled()) {
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
         });
+        test("result metadata properties are not enumerable", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "meta_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+
+          const inserted = await sql`INSERT INTO ${sql(t)} (name) VALUES (${"test"})`;
+          expect(Object.keys(inserted)).toEqual([]);
+          expect(
+            ["lastInsertRowid", "affectedRows"].map(key => Object.getOwnPropertyDescriptor(inserted, key)),
+          ).toEqual([
+            { value: 1, writable: true, enumerable: false, configurable: true },
+            { value: 1, writable: true, enumerable: false, configurable: true },
+          ]);
+
+          const selected = await sql`SELECT id, name FROM ${sql(t)}`;
+          expect(selected).toEqual([{ id: 1, name: "test" }]);
+          expect(Object.keys(selected)).toEqual(["0"]);
+          expect(Object.getOwnPropertyDescriptor(selected, "count")).toEqual({
+            value: 1,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+          });
+        });
         test("MEDIUMINT not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
           // field. Reading only 3 left the cursor 1 byte behind, silently

@@ -440,7 +440,14 @@ fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // before I add that.
 #[inline]
 fn is_tarball(dependency: &[u8]) -> bool {
-    dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
+    has_suffix_ignore_ascii_case(dependency, b".tgz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar.gz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar")
+}
+
+#[inline]
+fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// the input is assumed to be either a remote or local tarball

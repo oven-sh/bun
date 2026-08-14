@@ -9,9 +9,9 @@ Run the command in a project with a `bun.lock` file:
 bun audit
 ```
 
-Bun sends the list of installed packages and versions to npm, and prints a report of any vulnerabilities found. Packages installed from registries other than the default registry are skipped.
+Bun sends the list of installed packages and versions to npm, and prints a report of any vulnerabilities found. Packages that come from a registry configured for their scope are sent to that registry's advisory endpoint instead, and its answer is merged into the same report; a registry that does not answer is listed after the report (`Skipped @acme/a, @acme/b because https://npm.acme.dev could not be audited`) and does not affect the exit code.
 
-The package list comes from `bun.lock` alone, so `node_modules` does not need to exist, and `bun audit` writes nothing: `package.json`, `bun.lock` and `node_modules` are left as they are (only `bun audit fix`, below, changes `bun.lock` and `node_modules`).
+The package list comes from `bun.lock` alone, so `node_modules` does not need to exist, and `bun audit` writes nothing: `package.json`, `bun.lock` and `node_modules` are left as they are (only `bun audit fix`, below, changes `bun.lock` and `node_modules`, and `package.json` only when it rewrites an exact pin).
 
 If no vulnerabilities are found, the command prints:
 
@@ -19,12 +19,17 @@ If no vulnerabilities are found, the command prints:
 No vulnerabilities found
 ```
 
-When vulnerabilities are detected, Bun lists each affected package with the severity, a short description, and a link to the advisory. At the end of the report it prints a summary and hints for updating:
+When vulnerabilities are detected, Bun lists each affected package with the severity, a short description, and a link to the advisory. At the end of the report it prints a summary (`1 vulnerability (1 high)` when there is only one) and hints for updating:
 
 ```
 3 vulnerabilities (1 high, 2 moderate)
+
+To upgrade only the vulnerable packages, within their declared ranges:
+  bun audit fix
+
 To update all dependencies to the latest compatible versions:
   bun update
+
 To update all dependencies to the latest versions (including breaking changes):
   bun update --latest
 ```
@@ -43,6 +48,12 @@ bun audit --audit-level=high
 bun audit --prod
 ```
 
+**`--omit=<dev|optional|peer>`** - Leave out packages that are only reached through edges of the given kind, using the same reachability rule as `--prod` (`--omit=dev` is the same as `--prod`). Repeat the flag to leave out several kinds:
+
+```bash terminal icon="terminal"
+bun audit --omit=optional --omit=peer
+```
+
 **`--ignore <id>`** - Ignore specific advisories by GHSA ID or numeric advisory ID (repeat the flag to ignore several). The registry's advisory data does not include CVE IDs, so a CVE ID does not match anything:
 
 ```bash terminal icon="terminal"
@@ -59,11 +70,11 @@ Use the `--json` flag to print the raw JSON response from the registry instead o
 bun audit --json
 ```
 
-The response is printed as received: `--prod` still limits which packages are sent, and `--audit-level` and `--ignore` do not remove anything from the printed JSON. They do decide the exit code, which is `1` only if an advisory is left after both filters are applied (and `0` otherwise), so `bun audit --json --audit-level=high` prints every advisory but only fails the run for high or critical ones. If the response cannot be parsed, it is still printed and the command exits with `1`.
+The response is printed as received: `--prod` and `--omit` still limit which packages are sent, and `--audit-level` and `--ignore` do not remove anything from the printed JSON. They do decide the exit code, which is `1` only if an advisory is left after both filters are applied (and `0` otherwise), so `bun audit --json --audit-level=high` prints every advisory but only fails the run for high or critical ones. If the response cannot be parsed, it is still printed and the command exits with `1`.
 
 ### `bun audit fix`
 
-`bun audit fix` runs the audit and then upgrades each vulnerable package in `bun.lock` to the lowest version that is not affected by any advisory and still satisfies every range that depends on it (including `overrides` and catalog entries), then installs. `package.json` is never modified (Bun does not add `overrides` on your behalf; see `requires a semver-major update:` below) and unrelated packages are not touched. `fix` is a subcommand, not a flag: `bun audit --fix` is rejected as an unknown flag.
+`bun audit fix` runs the audit and then moves each vulnerable version installed in `bun.lock` to the lowest release that no advisory covers and that the ranges of its dependents accept (`overrides` and catalog entries count as ranges), then installs. A dependency that the root `package.json`, a workspace `package.json` or a catalog entry pins to an exact version is planned as if it were written `^version`; when that finds a fix, that `package.json` entry (or the catalog entry in the root; workspace files that say `catalog:` are left as they are) is rewritten to the new version. This is the only time the command edits `package.json`: `overrides` are never added or changed, and unrelated packages are not touched. `fix` is a subcommand, not a flag: `bun audit --fix` is rejected as an unknown flag.
 
 ```bash terminal icon="terminal"
 bun audit fix
@@ -72,26 +83,29 @@ bun audit fix
 ```
 fixing:
   ms@0.7.0 → 0.7.1
+  lodash@4.17.20 → 4.17.21
+    package.json: 4.17.20 → 4.17.21
 
-requires a semver-major update:
+blocked by a dependent's range:
   minimatch@0.3.0 → 3.0.2
     express@3.21.2 depends on minimatch@0.3.0
 
-Fixed 1 vulnerability in 1 package
+Fixed 2 vulnerabilities in 2 packages
 1 vulnerability remaining
 ```
 
-- Packages whose only safe version falls outside a dependent's range are listed under `requires a semver-major update:` and left alone. Update the dependent, or add an `overrides` entry, and run the command again. A dependency bundled inside another package (`express@3.21.2 bundles minimatch@0.3.0`) can only be fixed by updating the package that bundles it.
-- Packages are only ever upgraded, never downgraded, and only stable releases are candidates. `no fix available:` lists packages with no safe newer release, and says so when a safe release exists but is newer than `--minimum-release-age` or the package's manifest could not be fetched.
+- `blocked by a dependent's range:` lists the dependents whose range accepts no safe release; they stay on the version they have. Other dependents of the same version whose ranges do accept the fix are still moved, in which case the package appears under both `fixing:` and this heading. Update the dependent, or add an `overrides` entry, and run the command again. A dependency bundled inside another package (`express@3.21.2 bundles minimatch@0.3.0`) can only be fixed by updating the package that bundles it.
+- Only stable releases are candidates. When no newer release is safe, the highest safe older release the ranges accept is installed instead and marked `(downgrade)`. `no fix available:` lists versions for which no safe release exists in either direction; `manifest could not be fetched:` lists versions whose registry request failed, and nothing is installed for them.
+- A safe release published more recently than `--minimum-release-age` is still installed, marked `(newer than --minimum-release-age)`: the age gate is lifted for that package during this run only.
 - Advisories that match none of the installed versions are listed under `not matched to an installed version:` and count as remaining.
-- Counts are advisories, as in `bun audit`. A package installed as several versions is upgraded per version, and an advisory only counts as fixed once every version it affects has been upgraded; otherwise it counts as remaining.
-- The fix lives in `bun.lock` only. A later dependency that pins the vulnerable version, or regenerating the lockfile, can bring it back; re-run `bun audit`.
-- `--dry-run` prints the plan without changing anything.
+- Counts are advisories, as in `bun audit`. After installing, Bun checks the `bun.lock` it wrote against the advisories again, so the `Fixed`/`remaining` lines, the exit code and the `vulnerable after install:` list (versions that survived, or that the fix itself pulled in) describe the lockfile on disk rather than the plan; an advisory counts as fixed only when no version it covers is left. `--dry-run` prints the plan without changing anything, and its counts are the plan's.
+- A fix that only moved `bun.lock` can be undone by a later dependency that pins the vulnerable version or by regenerating the lockfile; a rewritten `package.json` pin stays. Re-run `bun audit` after such changes.
+- `--json` prints one JSON object instead of the text report, with the fields `fixes`, `blocked`, `unfixable`, `manifestUnavailable`, `unmatched`, `unaudited`, `vulnerableAfterInstall`, `fixed`, `remaining` and `dryRun`. It is printed once the install has finished (with `--dry-run`, as soon as the plan is made); if a root lifecycle script writes to stdout, pass `--ignore-scripts` to keep the output parseable.
 - `--registry` applies to both the advisory request and the install of the fixed versions; there is no way to query one registry for advisories and install from another.
-- `--audit-level`, `--ignore` and `--prod` behave as for `bun audit`, except that `--prod` (like `--frozen-lockfile` and `--no-save`) stops `bun.lock` from being written, so `bun audit fix` rejects it before contacting the registry.
+- `--audit-level`, `--ignore` and `--prod` behave as for `bun audit`, except that `--prod` (like `--frozen-lockfile` and `--no-save`) stops `bun.lock` from being written, so `bun audit fix` rejects it before contacting the registry. `--omit` does not narrow what `bun audit fix` audits: every package in `bun.lock` is checked and fixed.
 
 ### Exit code
 
-`bun audit` exits with code `0` if no vulnerabilities are found and `1` if any are left after `--audit-level` and `--ignore` are applied; `--json` uses the same rule even though it prints the unfiltered response. `bun audit fix` exits with `0` when nothing vulnerable remains after the fix (or, with `--dry-run`, would remain) and `1` otherwise.
+`bun audit` exits with code `0` if no vulnerabilities are found and `1` if any are left after `--audit-level` and `--ignore` are applied; `--json` uses the same rule even though it prints the unfiltered response. `bun audit fix` exits with `0` when its check of the written `bun.lock` finds nothing remaining (or, with `--dry-run`, when the plan leaves nothing remaining) and `1` otherwise.
 
-When the registry cannot be reached, or answers with a 4xx or 5xx status, both commands print `audit request failed` to stderr and also exit with `1`; there is no flag to turn a registry failure into a passing run, so a CI step that wants to distinguish an outage from a vulnerable tree has to look at stderr.
+When the default registry cannot be reached, or answers with a 4xx or 5xx status, both commands print `audit request failed` to stderr and also exit with `1`; there is no flag to turn a registry failure into a passing run, so a CI step that wants to distinguish an outage from a vulnerable tree has to look at stderr. A scoped registry that fails is only reported as skipped, as described above.

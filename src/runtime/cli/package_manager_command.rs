@@ -1,6 +1,7 @@
 use core::cmp::Ordering;
 use std::io::Write as _;
 
+use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
@@ -17,7 +18,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
-use crate::cli::pm_licenses_command::PmLicensesCommand;
+use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
@@ -162,7 +163,10 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
   <d>├<r> <cyan>--json<r>                    output as JSON\n\
-  <d>└<r> <cyan>--prod<r>                    omit devDependencies\n\
+  <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
+  <d>├<r> <cyan>--dev<r>                     list only what devDependencies pull in\n\
+  <d>├<r> <cyan>--long<r>                    also print author, description and homepage\n\
+  <d>└<r> <cyan>--filter<r> <d>\\<pattern\\><r>      list only the matching workspaces' dependencies\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
@@ -206,7 +210,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let production = cli.production;
+        let licenses_flags = LicensesFlags {
+            dev_only: cli.dev_only,
+            long: cli.long,
+        };
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -248,6 +255,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
         if strings::eql_comptime(subcommand, b"list") {
             subcommand = b"ls";
+        }
+
+        if !pm.options.filter_patterns.is_empty() && !strings::eql_comptime(subcommand, b"licenses")
+        {
+            Output::err_generic("--filter is only supported by `bun pm licenses`", ());
+            Global::exit(1);
         }
 
         if pm.options.global {
@@ -708,7 +721,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmLicensesCommand::exec(pm, positionals, production)?;
+            PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
@@ -936,7 +949,7 @@ fn print_trusted_dependencies_flat(
     let pkg_names = slice.items_name();
     let pkg_count = lockfile.packages.len();
 
-    let mut seen: Vec<bool> = vec![false; pkg_count];
+    let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(pkg_count));
     let mut trusted: Vec<DependencyID> = Vec::new();
 
     let mut visit = |dep_id: DependencyID| {
@@ -944,13 +957,13 @@ fn print_trusted_dependencies_flat(
         if package_id as usize >= pkg_count {
             return;
         }
-        if seen[package_id as usize] {
+        if seen.is_set(package_id as usize) {
             return;
         }
         let alias = dependencies[dep_id as usize].name.slice(string_bytes);
         let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
         if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
-            seen[package_id as usize] = true;
+            seen.set(package_id as usize);
             trusted.push(dep_id);
         }
     };

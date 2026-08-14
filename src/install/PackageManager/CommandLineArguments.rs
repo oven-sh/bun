@@ -152,7 +152,7 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!(
-            "--latest                              Update packages to their latest versions"
+            "-L, --latest                          Update packages to their latest versions, ignoring the ranges in package.json"
         ),
         clap::param!(
             "-i, --interactive                     Show an interactive list of outdated packages to select for update"
@@ -161,7 +161,12 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
             "--filter <STR>...                     Update packages for the matching workspaces"
         ),
         clap::param!("-r, --recursive                       Update packages in all workspaces"),
-        clap::param!("<POS> ...                             \"name\" of packages to update"),
+        clap::param!("-d, --dev                             Only update devDependencies"),
+        clap::param!("-D, --development"),
+        clap::param!("--no-optional                         Don't update optionalDependencies"),
+        clap::param!(
+            "<POS> ...                             \"name\" or pattern (\"@scope/*\", \"!name\") of packages to update"
+        ),
     ]
 ];
 
@@ -171,7 +176,15 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!("-a, --all"),
         clap::param!("--trusted"),
         clap::param!("--json                              Output in JSON format"),
-        // clap::param!("--filter <STR>...                      Pack each matching workspace"),
+        clap::param!(
+            "-F, --filter <STR>...                  List only the matching workspaces' dependencies (bun pm licenses)"
+        ),
+        clap::param!(
+            "-D, --dev                              List only the packages pulled in by devDependencies (bun pm licenses)"
+        ),
+        clap::param!(
+            "--long                                 Also print author, description and homepage (bun pm licenses)"
+        ),
         clap::param!(
             "--destination <STR>                    The directory the tarball will be saved in"
         ),
@@ -373,7 +386,12 @@ static DEDUPE_PARAMS: &[ParamType] = concat_params![
 
 static PRUNE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
-    &[clap::param!("<POS> ...                              "),]
+    &[
+        clap::param!(
+            "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
+        ),
+        clap::param!("<POS> ...                              "),
+    ]
 ];
 
 const PRUNE_HELP_PARAMS: &[ParamType] = &[
@@ -394,6 +412,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--linker <STR>                         Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")"
+    ),
+    clap::param!(
+        "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces; the shared store / hoisted root folder keeps everything other workspaces use"
     ),
     clap::param!("--silent                               Don't log anything"),
     clap::param!("--cwd <STR>                            Set a specific cwd"),
@@ -440,6 +461,7 @@ pub struct CommandLineArguments {
     pub json_output: bool,
     pub(crate) recursive: bool,
     pub(crate) filters: &'static [&'static [u8]],
+    pub update_groups: UpdateGroups,
 
     pub(crate) pack_destination: &'static [u8],
     pub(crate) pack_filename: &'static [u8],
@@ -481,6 +503,10 @@ pub struct CommandLineArguments {
     // `bun pm why` options
     pub top_only: bool,
     pub(crate) depth: Option<usize>,
+
+    // `bun pm licenses` options
+    pub dev_only: bool,
+    pub long: bool,
 
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
@@ -524,6 +550,7 @@ impl Default for CommandLineArguments {
             json_output: false,
             recursive: false,
             filters: &[],
+            update_groups: UpdateGroups::default(),
 
             pack_destination: b"",
             pack_filename: b"",
@@ -563,6 +590,9 @@ impl Default for CommandLineArguments {
 
             top_only: false,
             depth: None,
+
+            dev_only: false,
+            long: false,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -619,6 +649,19 @@ pub struct Omit {
     pub(crate) peer: bool,
 }
 
+#[derive(Default, Copy, Clone, PartialEq, Eq)]
+pub struct UpdateGroups {
+    pub dev: bool,
+    pub prod: bool,
+    pub no_optional: bool,
+}
+
+impl UpdateGroups {
+    pub fn is_default(self) -> bool {
+        self == UpdateGroups::default()
+    }
+}
+
 impl CommandLineArguments {
     pub fn print_help(subcommand: Subcommand) {
         // the output of --help uses the following syntax highlighting
@@ -655,6 +698,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
             Subcommand::Update => {
                 let intro_text = r"
 <b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
+<b>Alias<r>: <b><green>bun up<r>
 
   Update dependencies to their most recent versions within the version range in package.json.
 
@@ -673,6 +717,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
   <d>Update specific packages:<r>
   <b><green>bun update<r> <blue>zod jquery@3<r>
+
+  <d>Update every @types package, or everything except webpack:<r>
+  <b><green>bun update<r> <blue>'@types/*'<r>
+  <b><green>bun update<r> <blue>'!webpack'<r>
+
+  <d>Only update devDependencies:<r>
+  <b><green>bun update<r> <cyan>--dev<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
@@ -1051,6 +1102,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
 
   <d>Show what would be removed without deleting anything<r>
   <b><green>bun prune<r> <cyan>--dry-run<r>
+
+  <d>Only prune what the app workspace no longer needs<r>
+  <b><green>bun prune<r> <cyan>--production --filter app<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>.
 ";
@@ -1468,17 +1522,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.latest = args.flag(b"--latest");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
-            if cli.production {
-                Output::err_generic("--production cannot be used with bun update\n", ());
-                Global::crash();
-            }
-            if cli.positionals.len() > 1 && (cli.recursive || !cli.filters.is_empty()) {
-                Output::err_generic(
-                    "--recursive and --filter cannot be combined with package names\n",
-                    (),
-                );
-                Global::crash();
-            }
+            cli.update_groups = UpdateGroups {
+                dev: args.flag(b"--dev") || args.flag(b"--development"),
+                prod: cli.production,
+                no_optional: args.flag(b"--no-optional"),
+            };
+            cli.production = false;
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {
@@ -1587,6 +1636,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             if let Some(message) = args.option(b"--message") {
                 cli.message = Some(message);
             }
+            cli.dev_only = args.flag(b"--dev");
+            cli.long = args.flag(b"--long");
         }
 
         // `bun pm why` and `bun why` options

@@ -2,7 +2,9 @@ use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_core::{Output, prettyln};
+use bun_collections::DynamicBitSet;
+use bun_collections::bit_set::Range as BitRange;
+use bun_core::{Output, UnwrapOrOom as _, prettyln};
 use bun_semver as Semver;
 
 use crate::audit_fix;
@@ -82,7 +84,7 @@ impl DirectDependencies {
                 continue;
             }
             let rows = &self.rows[start as usize..(start + len) as usize];
-            let mut claimed: Option<Vec<bool>> = None;
+            let mut claimed: Option<DynamicBitSet> = None;
             let current = dep_slices[owner]
                 .get(deps)
                 .iter()
@@ -96,19 +98,25 @@ impl DirectDependencies {
                 } else {
                     // Every row before the first miss was a same-index hit.
                     let taken = claimed.get_or_insert_with(|| {
-                        let mut taken = vec![false; rows.len()];
-                        taken[..i.min(rows.len())].fill(true);
+                        let mut taken = DynamicBitSet::init_empty(rows.len()).unwrap_or_oom();
+                        taken.set_range_value(
+                            BitRange {
+                                start: 0,
+                                end: i.min(rows.len()),
+                            },
+                            true,
+                        );
                         taken
                     });
-                    let hit = if !taken.get(i).copied().unwrap_or(true) && same(&rows[i]) {
+                    let hit = if !taken.is_set_allow_out_of_bound(i, true) && same(&rows[i]) {
                         Some(i)
                     } else {
-                        (0..rows.len()).find(|&k| !taken[k] && same(&rows[k]))
+                        (0..rows.len()).find(|&k| !taken.is_set(k) && same(&rows[k]))
                     };
                     let Some(k) = hit else {
                         continue;
                     };
-                    taken[k] = true;
+                    taken.set(k);
                     k
                 };
                 let old = rows[index].2;
@@ -276,18 +284,24 @@ struct Instance {
     wants: Vec<Want>,
 }
 
-fn workspace_owned_dependencies(lockfile: &Lockfile) -> Vec<bool> {
-    let mut owned = vec![false; lockfile.buffers.dependencies.len()];
+fn workspace_owned_dependencies(lockfile: &Lockfile) -> crate::Result<DynamicBitSet> {
+    let mut owned = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
     let pkg_res = lockfile.packages.items_resolution();
     for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
         if matches!(
             pkg_res[owner].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) {
-            owned[slice.begin() as usize..slice.end() as usize].fill(true);
+            owned.set_range_value(
+                BitRange {
+                    start: slice.begin() as usize,
+                    end: slice.end() as usize,
+                },
+                true,
+            );
         }
     }
-    owned
+    Ok(owned)
 }
 
 fn plan_edges(manager: &mut PackageManager) -> crate::Result<(Vec<Pin>, Vec<Row>)> {
@@ -323,7 +337,7 @@ fn plan_edges(manager: &mut PackageManager) -> crate::Result<(Vec<Pin>, Vec<Row>
             return Ok((Vec::new(), Vec::new()));
         }
 
-        let workspace_owned = workspace_owned_dependencies(lockfile);
+        let workspace_owned = workspace_owned_dependencies(lockfile)?;
         let no_overrides = lockfile.overrides.is_empty();
         let deps = lockfile.buffers.dependencies.as_slice();
         for (dep_id, &target) in lockfile.buffers.resolutions.iter().enumerate() {
@@ -332,7 +346,7 @@ fn plan_edges(manager: &mut PackageManager) -> crate::Result<(Vec<Pin>, Vec<Row>
             };
             let dep = &deps[dep_id];
             if instance == u32::MAX
-                || workspace_owned[dep_id]
+                || workspace_owned.is_set(dep_id)
                 || dep.behavior.is_peer()
                 || dep.behavior.is_bundled()
             {

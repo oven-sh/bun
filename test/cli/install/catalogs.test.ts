@@ -2,18 +2,75 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
-import { exists, readdir, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, pack, runBunInstall } from "harness";
+import { exists, readdir, realpath, rm } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, pack, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 var registry = new VerdaccioRegistry();
 
+type Manifests = Record<string, Record<string, Record<string, Record<string, string>>>>;
+
+// Registry packages that ship a raw `catalog:` specifier; verdaccio has none.
+const catalogManifests: Manifests = {
+  "leaf": { "1.0.0": {}, "2.0.0": {} },
+  "wants-leaf-peer": { "1.0.0": { peerDependencies: { leaf: "catalog:" } } },
+  "wants-leaf-dep": { "1.0.0": { dependencies: { leaf: "catalog:" } } },
+  "no-deps": { "1.0.0": {}, "2.0.0": {} },
+  "catalog-peer": {
+    "1.0.0": { peerDependencies: { "no-deps": "catalog:" } },
+    "2.0.0": { peerDependencies: { "no-deps": "catalog:peers" } },
+  },
+};
+
+async function serveRegistry(manifests: Manifests) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, versions] of Object.entries(manifests)) {
+    for (const [version, extra] of Object.entries(versions)) {
+      const archive = new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+        { compress: "gzip" },
+      );
+      tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+    }
+  }
+  return Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const name = pathname.slice(1);
+      const entry = manifests[name];
+      if (!entry) return new Response("not found", { status: 404 });
+      const versions: Record<string, unknown> = {};
+      for (const [version, extra] of Object.entries(entry)) {
+        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+      }
+      const latest = Object.keys(entry).sort(Bun.semver.order).at(-1);
+      return Response.json({ name, versions, "dist-tags": { latest } });
+    },
+  });
+}
+
+let catalogRegistry: Awaited<ReturnType<typeof serveRegistry>>;
+
+function writeRegistryProject(files: Record<string, string>, registryUrl: string) {
+  return tempDir("catalog-registry-", {
+    ...files,
+    "bunfig.toml": ({ root }) =>
+      Bun.TOML.stringify({
+        install: { cache: join(root, ".bun-cache"), registry: registryUrl, saveTextLockfile: true },
+      }),
+  });
+}
+
 beforeAll(async () => {
-  await registry.start();
+  [catalogRegistry] = await Promise.all([serveRegistry(catalogManifests), registry.start()]);
 });
 
 afterAll(() => {
   registry.stop();
+  catalogRegistry.stop(true);
 });
 
 describe("basic", () => {
@@ -548,6 +605,18 @@ describe("update", () => {
 });
 
 describe("errors", () => {
+  async function failingInstall(cwd: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { err, exitCode };
+  }
+
   test("fails gracefully when no catalog is found for a package", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
 
@@ -569,19 +638,10 @@ describe("errors", () => {
       }),
     );
 
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-
-    const out = await stdout.text();
-    const err = await stderr.text();
-
+    const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
+    expect(exitCode).not.toBe(0);
   });
 
   test("invalid dependency version", async () => {
@@ -601,25 +661,73 @@ describe("errors", () => {
       }),
     );
 
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-
-    const out = await stdout.text();
-    const err = await stderr.text();
-
+    const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("no-deps@catalog: failed to resolve");
+    expect(exitCode).not.toBe(0);
   });
+
+  // pnpm: deps-installer/test/catalogs.ts "external dependency using catalog protocol errors"
+  test.concurrent("a catalog: dependency inside a registry package fails to resolve", async () => {
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: { catalog: { leaf: "^2.0.0" } },
+          dependencies: { "wants-leaf-dep": "1.0.0" },
+        }),
+      },
+      catalogRegistry.url.href,
+    );
+
+    const { err, exitCode } = await failingInstall(String(dir));
+    expect(err).toContain("leaf@catalog: failed to resolve");
+    expect(exitCode).not.toBe(0);
+    expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
+  });
+
+  test.concurrent(
+    "a catalog: dependency inside a file: folder dependency fails to resolve, the same package as a workspace works",
+    async () => {
+      const localLib = JSON.stringify({ name: "local-lib", dependencies: { "no-deps": "catalog:" } });
+      const [folder, workspace] = await Promise.all([
+        registry.createTestDir({
+          bunfigOpts: { linker: "hoisted" },
+          files: {
+            "package.json": JSON.stringify({
+              name: "root",
+              workspaces: { catalog: { "no-deps": "^1.0.0" } },
+              dependencies: { "local-lib": "file:./local-lib" },
+            }),
+            "local-lib/package.json": localLib,
+          },
+        }),
+        registry.createTestDir({
+          bunfigOpts: { linker: "hoisted" },
+          files: {
+            "package.json": JSON.stringify({
+              name: "root",
+              workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+            }),
+            "packages/local-lib/package.json": localLib,
+          },
+        }),
+      ]);
+
+      const { err, exitCode } = await failingInstall(folder.packageDir);
+      expect(err).toContain("no-deps@catalog: failed to resolve");
+      expect(exitCode).not.toBe(0);
+
+      await runBunInstall(bunEnv, workspace.packageDir);
+      expect((await file(join(workspace.packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
+        "1.1.0",
+      );
+    },
+  );
 });
 
 describe("peer dependencies", () => {
   type Linker = "hoisted" | "isolated";
 
-  // `--linker` in addition to bunfig: a user-level ~/.npmrc `install-strategy` would otherwise override bunfig's linker.
   async function spawnInstall(dir: string, linker: Linker, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--linker", linker, ...args],
@@ -685,6 +793,7 @@ describe("peer dependencies", () => {
     libVersion?: string;
     linker: Linker;
     saveTextLockfile?: boolean;
+    registry?: string;
   };
 
   async function makeRepo(opts: RepoOpts): Promise<string> {
@@ -715,6 +824,19 @@ describe("peer dependencies", () => {
         ...extraFiles,
       },
     });
+    if (opts.registry) {
+      await Bun.write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: opts.registry,
+            linker: opts.linker,
+            saveTextLockfile: opts.saveTextLockfile,
+          },
+        }),
+      );
+    }
     return packageDir;
   }
 
@@ -997,7 +1119,7 @@ describe("peer dependencies", () => {
     });
   });
 
-  // pnpm errors here; Bun never fails an install over an unresolved peer, so the peer must simply not get a nested copy.
+  // pnpm errors here; Bun never fails an install over an unresolved peer, so the peer must simply not get a nested copy (a registry package's own `catalog:` peer takes this exact path).
   describe.each([
     ["catalog:", { catalog: {} }],
     ["catalog:peers", { catalogs: { other: { "no-deps": ">=1.0.0" } } }],
@@ -1014,6 +1136,174 @@ describe("peer dependencies", () => {
         reloadSavedLockfile: false,
       });
     });
+  });
+
+  const registryPeerKeys = ["app", "catalog-peer", "lib", "no-deps"];
+
+  describe.each(linkers)("linker=%s", linker => {
+    test.concurrent("a catalog: peer inside a registry package never reads the consumer's catalog", async () => {
+      using project = writeRegistryProject(
+        {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: { packages: ["packages/*"], catalog: { leaf: "^2.0.0" } },
+            dependencies: { "leaf": "1.0.0", "wants-leaf-peer": "1.0.0" },
+          }),
+          "packages/lib/package.json": JSON.stringify({ name: "lib", peerDependencies: { leaf: "catalog:" } }),
+        },
+        catalogRegistry.url.href,
+      );
+      const dir = String(project);
+      const keys = ["leaf", "lib", "lib/leaf", "wants-leaf-peer"];
+
+      await install(dir, linker);
+      expect(await packageKeys(dir)).toEqual(keys);
+      const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+
+      await rmNodeModules(dir);
+      const frozen = await install(dir, linker, "--frozen-lockfile");
+      expect(frozen.err).not.toContain("lockfile had changes");
+      expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
+      expect(await packageKeys(dir)).toEqual(keys);
+    });
+
+    // pnpm: resolving-deps-resolver walk.rs resolves_children_through_catalogs — only importers substitute catalogs.
+    test.concurrent(
+      "a registry package's catalog: peer ignores the root catalog and binds to the workspace's copy",
+      async () => {
+        const dir = await makeRepo({
+          rootDependencies: {},
+          catalog: { "no-deps": "^2.0.0" },
+          appDependencies: { "no-deps": "1.0.0", "catalog-peer": "1.0.0" },
+          peerSpec: "*",
+          linker,
+          registry: catalogRegistry.url.href,
+        });
+        const result = await record(dir, linker);
+        expect(result.keys).toEqual(registryPeerKeys);
+        expect(result.keysAfterReload).toEqual(registryPeerKeys);
+        expect(result.reloadSavedLockfile).toBeFalse();
+        expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+        if (linker === "isolated") {
+          const storeEntry = await realpath(join(dir, "packages", "app", "node_modules", "catalog-peer"));
+          expect((await Bun.file(join(storeEntry, "..", "no-deps", "package.json")).json()).version).toBe("1.0.0");
+        } else {
+          expect(existsSync(join(dir, "node_modules", "catalog-peer", "node_modules"))).toBeFalse();
+        }
+      },
+    );
+
+    // Overrides are root-owned: an override VALUE of `catalog:` still applies to a registry package's peer.
+    test.concurrent("an override valued catalog: still applies to a registry package's peer", async () => {
+      const dir = await makeRepo({
+        rootDependencies: {},
+        overrides: { "no-deps": "catalog:" },
+        catalog: { "no-deps": "1.0.0" },
+        appDependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+        peerSpec: "*",
+        linker,
+      });
+      const result = await record(dir, linker);
+      const keys = ["app", "lib", "no-deps", "peer-deps-fixed"];
+      expect(result.keys).toEqual(keys);
+      expect(result.keysAfterReload).toEqual(keys);
+      expect(result.reloadSavedLockfile).toBeFalse();
+      const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+      expect(lockfile).not.toContain("no-deps@2.0.0");
+      const { packages } = Bun.JSONC.parse(lockfile) as { packages: Record<string, [string, ...unknown[]]> };
+      expect(packages["no-deps"][0]).toBe("no-deps@1.0.0");
+    });
+  });
+
+  test.concurrent("a registry package's catalog: peer with no provider anywhere installs nothing for it", async () => {
+    const dir = await makeRepo({
+      rootDependencies: {},
+      catalog: { "no-deps": "^2.0.0" },
+      appDependencies: { "catalog-peer": "1.0.0" },
+      peerSpec: "*",
+      optionalPeer: true,
+      linker: "hoisted",
+      registry: catalogRegistry.url.href,
+    });
+    const keys = ["app", "catalog-peer", "lib"];
+    const result = await record(dir, "hoisted");
+    expect(result.keys).toEqual(keys);
+    expect(result.keysAfterReload).toEqual(keys);
+    expect(result.reloadSavedLockfile).toBeFalse();
+    expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@");
+    expect(existsSync(join(dir, "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  test.concurrent("a registry package's named catalog:peers peer is scoped the same way", async () => {
+    const dir = await makeRepo({
+      rootDependencies: {},
+      catalogs: { peers: { "no-deps": "^2.0.0" } },
+      appDependencies: { "no-deps": "1.0.0", "catalog-peer": "2.0.0" },
+      peerSpec: "*",
+      linker: "hoisted",
+      registry: catalogRegistry.url.href,
+    });
+    const result = await record(dir, "hoisted");
+    expect(result.keys).toEqual(registryPeerKeys);
+    expect(result.keysAfterReload).toEqual(registryPeerKeys);
+    expect(result.reloadSavedLockfile).toBeFalse();
+    expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+    expect(existsSync(join(dir, "node_modules", "catalog-peer", "node_modules"))).toBeFalse();
+  });
+
+  test.concurrent("changing the root catalog does not re-resolve a registry package's catalog: peer", async () => {
+    const dir = await makeRepo({
+      rootDependencies: {},
+      catalog: { "no-deps": "^1.0.0" },
+      appDependencies: { "no-deps": "1.0.0", "catalog-peer": "1.0.0" },
+      peerSpec: "*",
+      linker: "hoisted",
+      registry: catalogRegistry.url.href,
+    });
+    await install(dir, "hoisted");
+    expect(await packageKeys(dir)).toEqual(registryPeerKeys);
+
+    await rewriteRootPackageJson(dir, { rootDependencies: {}, catalog: { "no-deps": "^2.0.0" } });
+    await install(dir, "hoisted");
+    expect(await packageKeys(dir)).toEqual(registryPeerKeys);
+    expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+
+    const { err } = await install(dir, "hoisted");
+    expect(err).not.toContain("Saved lockfile");
+  });
+
+  test.concurrent("a file: folder dependency does not see the catalog either", async () => {
+    const { packageDir: dir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          catalog: { "no-deps": "^2.0.0" },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "1.0.0", "vendored": "file:../../vendor/vendored" },
+        }),
+        "vendor/vendored/package.json": JSON.stringify({
+          name: "vendored",
+          version: "1.0.0",
+          peerDependencies: { "no-deps": "catalog:" },
+        }),
+      },
+    });
+    const expectNoNestedCopy = async () => {
+      const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+      expect(lockfile).not.toContain("no-deps@2.0.0");
+      expect((await packageKeys(dir)).filter(key => key.endsWith("vendored/no-deps"))).toEqual([]);
+    };
+
+    await install(dir, "hoisted");
+    await expectNoNestedCopy();
+    await rmNodeModules(dir);
+    const { err } = await install(dir, "hoisted");
+    expect(err).not.toContain("Saved lockfile");
+    await expectNoNestedCopy();
   });
 
   // pnpm #12159 shape: an override whose value is a catalog reference wins over the peer's own range, fresh and on reload.

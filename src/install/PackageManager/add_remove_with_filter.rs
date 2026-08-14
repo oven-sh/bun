@@ -4,6 +4,7 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
@@ -14,14 +15,17 @@ use bun_sys::{Fd, File};
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
 use super::options::Do;
-use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
+use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
     print_package_json_into_cache_entry, remove_dependencies_from_package_json,
     remove_leftover_node_modules,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
-use super::{Command, PackageManager, Subcommand, UpdateRequest, WorkspaceFilter};
+use super::workspace_selection::{self, Candidate, RootSelection, WorkspaceGraph};
+use super::{
+    Command, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest, UpdateTargetWorkspace,
+};
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceTarget {
@@ -51,12 +55,13 @@ fn print_log_and_crash(
     Global::crash();
 }
 
-pub(crate) fn select_targets(
-    manager: &mut PackageManager,
-    original_cwd: &[u8],
-) -> Result<Vec<WorkspaceTarget>, Error> {
-    debug_assert!(!manager.options.filter_patterns.is_empty());
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+pub(crate) struct WorkspaceMembers {
+    pub(crate) root_path: Box<[u8]>,
+    pub(crate) root_name: Box<[u8]>,
+    pub(crate) members: WorkspaceMap,
+}
+
+pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
     let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
@@ -135,18 +140,26 @@ pub(crate) fn select_targets(
         }
     }
 
+    WorkspaceMembers {
+        root_path,
+        root_name,
+        members,
+    }
+}
+
+pub(crate) fn select_targets(
+    manager: &mut PackageManager,
+    original_cwd: &[u8],
+) -> Result<Vec<WorkspaceTarget>, Error> {
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let WorkspaceMembers {
+        root_path,
+        root_name,
+        members,
+    } = load_workspace_members(manager);
+
     let mut path_buf = path_buffer_pool::get();
     let patterns = manager.options.filter_patterns;
-    let filters: Vec<WorkspaceFilter> = patterns
-        .iter()
-        .map(|pattern| {
-            bun_core::handle_oom(WorkspaceFilter::init(
-                pattern,
-                original_cwd,
-                &mut path_buf.0,
-            ))
-        })
-        .collect();
 
     let root_subject: Box<[u8]> =
         strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
@@ -190,30 +203,35 @@ pub(crate) fn select_targets(
         ));
     }
 
-    let unmatched: Vec<&[u8]> = filters
+    let root_rule = if matches!(manager.subcommand, Subcommand::Add | Subcommand::Remove) {
+        RootSelection::ExplicitOnly
+    } else {
+        RootSelection::Implicit
+    };
+    let graph: Option<WorkspaceGraph> = workspace_selection::first_relational(patterns)
+        .map(|pattern| load_workspace_graph(manager, &candidates, pattern));
+    let selection = {
+        let subjects: Vec<Candidate<'_>> = candidates
+            .iter()
+            .map(|(target, subject)| Candidate {
+                name: &target.name,
+                abs_posix_dir: subject,
+                is_root: target.name_hash.is_none(),
+            })
+            .collect();
+        workspace_selection::select(patterns, original_cwd, &subjects, graph.as_ref(), root_rule)
+    };
+    let unmatched: Vec<&[u8]> = selection
+        .unmatched_patterns
         .iter()
-        .zip(patterns)
-        .filter(|(filter, _)| {
-            let negated = match filter {
-                WorkspaceFilter::All => return false,
-                WorkspaceFilter::Name(p) | WorkspaceFilter::Path(p) => p.first() == Some(&b'!'),
-            };
-            !negated
-                && !candidates.iter().any(|(target, subject)| {
-                    WorkspaceFilter::matches_any(
-                        core::slice::from_ref(filter),
-                        &target.name,
-                        subject,
-                    )
-                })
-        })
-        .map(|(_, pattern)| *pattern)
+        .map(|&i| patterns[i])
         .collect();
 
     let targets: Vec<WorkspaceTarget> = candidates
         .into_iter()
-        .filter(|(target, subject)| WorkspaceFilter::matches_any(&filters, &target.name, subject))
-        .map(|(target, _)| target)
+        .zip(selection.selected)
+        .filter(|(_, selected)| *selected)
+        .map(|((target, _), _)| target)
         .collect();
 
     if targets.is_empty() {
@@ -231,6 +249,43 @@ pub(crate) fn select_targets(
     }
 
     Ok(targets)
+}
+
+fn load_workspace_graph(
+    manager: &mut PackageManager,
+    candidates: &[(WorkspaceTarget, Box<[u8]>)],
+    pattern: &[u8],
+) -> WorkspaceGraph {
+    use crate::lockfile::LoadResult;
+    let outcome: Result<(), Option<Error>> = if !manager.options.do_.load_lockfile() {
+        Err(None)
+    } else {
+        match manager.load_lockfile_from_cwd::<true>() {
+            LoadResult::Ok(_) => Ok(()),
+            LoadResult::NotFound => Err(None),
+            LoadResult::Err(cause) => Err(Some(cause.value)),
+        }
+    };
+    match outcome {
+        Ok(()) => {}
+        Err(None) => {
+            Output::err_generic(
+                "--filter \"{}\" selects workspaces by their dependency graph, which needs a bun.lock; run bun install first",
+                (BStr::new(pattern),),
+            );
+            Global::crash();
+        }
+        Err(Some(err)) => {
+            Output::err_generic(
+                "failed to load the lockfile needed by --filter \"{}\": {}",
+                (BStr::new(pattern), err.name()),
+            );
+            Global::crash();
+        }
+    }
+    let hashes: Vec<Option<PackageNameHash>> =
+        candidates.iter().map(|(t, _)| t.name_hash).collect();
+    WorkspaceGraph::from_lockfile(&manager.lockfile, &hashes)
 }
 
 fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
@@ -324,7 +379,7 @@ fn move_to_front(updates: &mut [UpdateRequest], wanted: &[PackageNameHash]) -> u
 }
 
 /// The `(prefix, path)` of a positional naming a local path, which is relative to the invoking cwd.
-fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [u8], &[u8])> {
+pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [u8], &[u8])> {
     let literal = request.version.literal.slice(request.version_buf());
     let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
         dependency::Tag::Folder | dependency::Tag::Tarball => {
@@ -444,9 +499,15 @@ fn assign_requests(
     (requests, assigned)
 }
 
-/// The `add`/`link --filter` targets and the requests each one received; edited again once resolved.
+struct PendingTarget {
+    target: WorkspaceTarget,
+    received: Box<[PackageNameHash]>,
+    updating: StringArrayHashMap<PackageUpdateInfo>,
+}
+
+/// The add/update --filter targets and the requests each one received; edited again once resolved.
 pub(crate) struct PendingWrite {
-    targets: Vec<(WorkspaceTarget, Box<[PackageNameHash]>)>,
+    targets: Vec<PendingTarget>,
     catalog_mode: bool,
     root_target: WorkspaceTarget,
 }
@@ -460,17 +521,17 @@ impl PendingWrite {
     ) -> Vec<PackageID> {
         self.targets
             .iter()
-            .filter(|(_, received)| received.contains(&request))
-            .filter_map(|(target, _)| {
-                let id = lockfile.get_workspace_package_id(target.name_hash);
-                (target.name_hash.is_none() || id != 0).then_some(id)
+            .filter(|pending| pending.received.contains(&request))
+            .filter_map(|pending| {
+                let id = lockfile.get_workspace_package_id(pending.target.name_hash);
+                (pending.target.name_hash.is_none() || id != 0).then_some(id)
             })
             .collect()
     }
 
     /// Writes the resolved versions into every target's cache entry; `flush` puts them on disk.
     pub(crate) fn edit_entries(
-        &self,
+        &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
     ) -> Result<(), Error> {
@@ -478,12 +539,20 @@ impl PendingWrite {
         let exact_versions = manager.options.enable.exact_versions();
         let summary_order: Vec<PackageNameHash> = updates.iter().map(|r| r.name_hash).collect();
 
-        for (target, received) in &self.targets {
-            let kept = move_to_front(updates, received);
-            let mut root = fetch_entry_root(manager, target);
-            reset_e_strings(updates);
+        for pending in &mut self.targets {
+            let kept = move_to_front(updates, &pending.received);
+            manager.lockfile.bind_update_requests(
+                None,
+                pending.target.name_hash,
+                &mut updates[..kept],
+            );
+            let outer = core::mem::replace(
+                &mut manager.updating_packages,
+                core::mem::take(&mut pending.updating),
+            );
+            let mut root = fetch_entry_root(manager, &pending.target);
             let mut slice: &mut [UpdateRequest] = &mut updates[..kept];
-            PackageJSONEditor::edit(
+            let result = add_catalog::edit_target(
                 manager,
                 &mut slice,
                 &mut root,
@@ -492,17 +561,16 @@ impl PendingWrite {
                     exact_versions,
                     ..Default::default()
                 },
-            )?;
-            if self.catalog_mode {
-                add_catalog::rewrite_references(manager, &updates[..kept]);
-            }
-            store_entry(manager, target, root);
+            );
+            pending.updating = core::mem::replace(&mut manager.updating_packages, outer);
+            result?;
+            store_entry(manager, &pending.target, root);
         }
         updates.sort_by_key(|r| summary_order.iter().position(|&h| h == r.name_hash));
 
         if self.catalog_mode {
             let root = fetch_entry_root(manager, &self.root_target);
-            if add_catalog::edit_root_after_install(manager, &root, updates)? {
+            if add_catalog::edit_root_after_install(manager, &root)? {
                 store_entry(manager, &self.root_target, root);
             }
         }
@@ -510,6 +578,7 @@ impl PendingWrite {
     }
 }
 
+/// bun add/remove --filter and bun update <name> -r/--filter: edits every selected package.json, then runs one install.
 pub(super) fn update_filtered_workspaces_and_install(
     manager: &mut PackageManager,
     ctx: Command::Context,
@@ -517,12 +586,29 @@ pub(super) fn update_filtered_workspaces_and_install(
     updates: Vec<UpdateRequest>,
 ) -> Result<(), Error> {
     if manager.options.global {
-        Output::err_generic("--filter cannot be used with --global", ());
+        let flag = if manager.options.filter_patterns.is_empty() {
+            "--recursive"
+        } else {
+            "--filter"
+        };
+        Output::err_generic("{} cannot be used with --global", (flag,));
         Global::crash();
     }
 
     let targets = select_targets(manager, original_cwd)?;
+    add_catalog::prepare(manager, &updates);
     let subcommand = manager.subcommand;
+    let is_update = subcommand == Subcommand::Update;
+    let update_targets: Option<Box<[UpdateTargetWorkspace]>> = is_update.then(|| {
+        targets
+            .iter()
+            .map(|t| UpdateTargetWorkspace {
+                is_root: t.name_hash.is_none(),
+                name_hash: t.name_hash.unwrap_or(0),
+                name: t.name.clone(),
+            })
+            .collect()
+    });
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let exact_versions = manager.options.enable.exact_versions();
     let catalog_mode = subcommand == Subcommand::Add && manager.options.add_catalog.is_some();
@@ -541,20 +627,20 @@ pub(super) fn update_filtered_workspaces_and_install(
         assign_requests(manager, original_cwd, updates, &targets)
     };
 
-    let mut changed: Vec<(WorkspaceTarget, Box<[PackageNameHash]>)> =
-        Vec::with_capacity(targets.len());
+    let mut changed: Vec<PendingTarget> = Vec::with_capacity(targets.len());
     for (target, wanted) in targets.into_iter().zip(assigned) {
         let mut root = fetch_entry_root(manager, &target);
-        let received: Box<[PackageNameHash]> = if subcommand == Subcommand::Remove {
+        let (received, updating) = if subcommand == Subcommand::Remove {
             if !remove_dependencies_from_package_json(&mut root, &updates) {
                 continue;
             }
-            Box::default()
+            (Box::default(), StringArrayHashMap::default())
         } else {
             let wanted_len = move_to_front(&mut updates, &wanted);
             reset_e_strings(&mut updates);
+            let outer = core::mem::take(&mut manager.updating_packages);
             let mut slice: &mut [UpdateRequest] = &mut updates[..wanted_len];
-            PackageJSONEditor::edit(
+            let result = add_catalog::edit_target(
                 manager,
                 &mut slice,
                 &mut root,
@@ -564,34 +650,55 @@ pub(super) fn update_filtered_workspaces_and_install(
                     before_install: true,
                     ..Default::default()
                 },
-            )?;
+            );
             let kept = slice.len();
-            if kept == 0 {
+            let mine = core::mem::replace(&mut manager.updating_packages, outer);
+            result?;
+            for (name, info) in mine.iter() {
+                let entry = manager.updating_packages.get_or_put(name)?;
+                if !entry.found_existing {
+                    *entry.value_ptr = PackageUpdateInfo {
+                        original_version_literal: info.original_version_literal.clone(),
+                        ..Default::default()
+                    };
+                }
+            }
+            let received: Box<[PackageNameHash]> = updates[..kept]
+                .iter()
+                .filter(|r| r.e_string.is_some())
+                .map(|r| r.name_hash)
+                .collect();
+            if received.is_empty() {
                 continue;
             }
-            if catalog_mode {
-                add_catalog::rewrite_references(manager, &updates[..kept]);
-            }
-            updates[..kept].iter().map(|r| r.name_hash).collect()
+            (received, mine)
         };
         store_entry(manager, &target, root);
-        changed.push((target, received));
+        changed.push(PendingTarget {
+            target,
+            received,
+            updating,
+        });
     }
-    for (target, _) in &changed {
-        package_json_write_back::record(manager, target.clone(), subcommand != Subcommand::Remove);
+    for pending in &changed {
+        package_json_write_back::record(
+            manager,
+            pending.target.clone(),
+            subcommand != Subcommand::Remove,
+        );
     }
     let any_changed = !changed.is_empty();
 
-    if subcommand != Subcommand::Remove {
+    if subcommand == Subcommand::Add {
         updates.retain(|r| {
             changed
                 .iter()
-                .any(|(_, received)| received.contains(&r.name_hash))
+                .any(|pending| pending.received.contains(&r.name_hash))
         });
     }
     if catalog_mode && !updates.is_empty() {
         let root = fetch_entry_root(manager, &root_target);
-        add_catalog::edit_root_before_install(manager, &root, &updates)?;
+        add_catalog::edit_root_before_install(manager, &root)?;
         store_entry(manager, &root_target, root);
         package_json_write_back::record(manager, root_target.clone(), false);
     }
@@ -599,11 +706,14 @@ pub(super) fn update_filtered_workspaces_and_install(
     // The install summary is printed from this workspace's point of view.
     let summary_target = changed
         .iter()
-        .find(|(_, received)| received.len() == updates.len())
+        .find(|pending| pending.received.len() == updates.len())
         .or_else(|| changed.first());
-    manager.workspace_name_hash = summary_target.and_then(|(target, _)| target.name_hash);
-    manager.to_update = false;
+    manager.workspace_name_hash = summary_target.and_then(|pending| pending.target.name_hash);
+    manager.to_update = is_update;
     manager.update_requests = updates.into_boxed_slice();
+    if let Some(update_targets) = update_targets {
+        manager.update_target_workspaces = Some(update_targets);
+    }
     if subcommand != Subcommand::Remove {
         manager.pending_filtered_write = Some(Box::new(PendingWrite {
             targets: changed,

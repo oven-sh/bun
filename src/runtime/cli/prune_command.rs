@@ -19,7 +19,7 @@ impl PruneCommand {
             Global::exit(1);
         }
 
-        let (manager, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Prune)
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Prune)
         {
             Ok(v) => v,
             Err(bun_install::Error::MissingPackageJSON) => {
@@ -37,6 +37,6 @@ impl PruneCommand {
             Output::flush();
         }
 
-        bun_install::prune::prune(manager).map_err(crate::Error::from)
+        bun_install::prune::prune(manager, &original_cwd).map_err(crate::Error::from)
     }
 }

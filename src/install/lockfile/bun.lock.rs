@@ -2374,6 +2374,7 @@ pub(crate) fn parse_into_binary_lockfile(
             None,
             None,
             Some(&workspaces_obj),
+            true,
         )?;
 
         let mut root_pkg = Package::default();
@@ -2442,6 +2443,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     None,
                     None,
                     None,
+                    true,
                 )?;
 
                 pkg.dependencies = DependencySlice::new(off, len);
@@ -2795,6 +2797,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             Some(pkg_path),
                             Some(&bundled_pkgs),
                             None,
+                            res.tag == ResolutionTag::Workspace,
                         )?;
 
                         pkg.dependencies = DependencySlice::new(off, len);
@@ -3334,7 +3337,7 @@ fn deferred_peer_range<'a>(
 /// so the isolated store's ancestor walk and the hoisted tree's dedupe
 /// both resolve the name through the root's workspace entry before the
 /// edge value is ever consulted.
-fn resolve_peer_dep_version_based(
+pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,
     catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
@@ -3503,6 +3506,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
+    catalogs_apply: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
     // callers (none read the buf between calls) and also covers early-error exits.
@@ -3586,7 +3590,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         &mut *log,
                         None,
                     ) {
-                        Some(v) => v,
+                        Some(v) if catalogs_apply => v,
+                        Some(v) => CatalogMap::strip_reference(v),
                         None => {
                             log.add_error(
                                 Some(source),

@@ -5,7 +5,9 @@ use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
-use bun_install::dependency::{Tag as DependencyVersionTag, Version as DependencyVersion};
+use bun_install::dependency::{
+    Tag as DependencyVersionTag, Value as DependencyVersionValue, Version as DependencyVersion,
+};
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
@@ -154,6 +156,19 @@ impl CatalogMap {
         match self.get_ref(string_buf, *dep.version.catalog(), dep.name) {
             Some(entry) => &entry.version,
             None => &dep.version,
+        }
+    }
+
+    /// Only the root and its workspaces may reference catalogs; anywhere else a `catalog:` spec is left unresolvable.
+    pub(crate) fn strip_reference(version: DependencyVersion) -> DependencyVersion {
+        if version.tag != DependencyVersionTag::Catalog {
+            return version;
+        }
+        let literal = version.literal;
+        DependencyVersion {
+            tag: DependencyVersionTag::Uninitialized,
+            literal,
+            value: DependencyVersionValue::default(),
         }
     }
 

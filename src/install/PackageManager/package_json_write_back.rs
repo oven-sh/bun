@@ -1,3 +1,5 @@
+use bun_collections::DynamicBitSet;
+use bun_collections::bit_set::Range as BitRange;
 use bun_core::{Global, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -77,7 +79,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
     let exact = manager.options.enable.exact_versions();
     let cwd = edited.iter().position(|e| e.received_requests);
 
-    let result = if let Some(pending) = manager.pending_filtered_write.take() {
+    let result = if let Some(mut pending) = manager.pending_filtered_write.take() {
         let result = pending.edit_entries(manager, &mut updates);
         manager.pending_filtered_write = Some(pending);
         result
@@ -104,7 +106,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
     result
 }
 
-/// `bun update -r` / `bun update --filter`: every targeted root/workspace package.json.
+/// Bare `bun update -r` / `bun update --filter`: every targeted root/workspace package.json (named requests take the `pending` branch instead).
 fn edit_update_targets(
     manager: &mut PackageManager,
     targets: &[super::UpdateTargetWorkspace],
@@ -211,14 +213,11 @@ fn edit_cwd(
     } else {
         let dependency_list: &'static [u8] = manager.options.update.prop;
         let mut slice: &mut [UpdateRequest] = &mut updates[..];
-        PackageJSONEditor::edit(manager, &mut slice, &mut ast, dependency_list, options)?;
+        add_catalog::edit_target(manager, &mut slice, &mut ast, dependency_list, options)?;
     }
     let catalog_mode = manager.options.add_catalog.is_some();
-    if catalog_mode {
-        add_catalog::rewrite_references(manager, updates);
-        if in_root {
-            add_catalog::edit_root_after_install(manager, &ast, updates)?;
-        }
+    if catalog_mode && in_root {
+        add_catalog::edit_root_after_install(manager, &ast)?;
     }
     store_entry(manager, &cwd_target, ast);
     if in_root {
@@ -232,7 +231,7 @@ fn edit_cwd(
         changed |= PackageJSONEditor::edit_catalogs_after_update(manager, &root_ast)?;
     }
     if catalog_mode {
-        add_catalog::edit_root_after_install(manager, &root_ast, updates)?;
+        add_catalog::edit_root_after_install(manager, &root_ast)?;
     }
     if changed {
         store_entry(manager, &root, root_ast);
@@ -327,29 +326,35 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         let changed: Vec<(usize, usize)> = {
             let lbuf = manager.lockfile.buffers.string_bytes.as_slice();
             let row_deps = row.get(manager.lockfile.buffers.dependencies.as_slice());
-            // Empty while every scratch dep so far matched the row at its own index.
-            let mut claimed: Vec<bool> = Vec::new();
+            // Zero-length while every scratch dep so far matched the row at its own index.
+            let mut claimed = DynamicBitSet::default();
             let mut changed = Vec::new();
             for (si, s) in scratch_deps.iter().enumerate() {
                 let same_index = si < row_deps.len()
-                    && claimed.get(si).is_none_or(|&taken| !taken)
+                    && !claimed.is_set_allow_out_of_bound(si, false)
                     && same_row(s, &row_deps[si]);
                 let ti = if same_index {
-                    if let Some(taken) = claimed.get_mut(si) {
-                        *taken = true;
+                    if si < claimed.bit_length() {
+                        claimed.set(si);
                     }
                     si
                 } else {
-                    if claimed.is_empty() {
-                        claimed = vec![false; row_deps.len()];
-                        claimed[..si.min(row_deps.len())].fill(true);
+                    if claimed.bit_length() == 0 && !row_deps.is_empty() {
+                        claimed = DynamicBitSet::init_empty(row_deps.len())?;
+                        claimed.set_range_value(
+                            BitRange {
+                                start: 0,
+                                end: si.min(row_deps.len()),
+                            },
+                            true,
+                        );
                     }
-                    let Some(ti) =
-                        (0..row_deps.len()).find(|&ti| !claimed[ti] && same_row(s, &row_deps[ti]))
+                    let Some(ti) = (0..row_deps.len())
+                        .find(|&ti| !claimed.is_set(ti) && same_row(s, &row_deps[ti]))
                     else {
                         continue;
                     };
-                    claimed[ti] = true;
+                    claimed.set(ti);
                     ti
                 };
                 if row_deps[ti].version.literal.slice(lbuf) != s.version.literal.slice(sbuf) {

@@ -2754,3 +2754,80 @@ it("should install tarball with tarball dependencies", async () => {
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));
 });
+
+it("should add a local tarball with an uppercase .TGZ extension", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(package_dir, "BAZ-0.0.3.TGZ"));
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "./BAZ-0.0.3.TGZ"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@");
+  expect(out).toContain("1 package installed");
+  expect(await exited).toBe(0);
+  expect(urls).toBeEmpty();
+  expect(requested).toBe(0);
+  const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(package_json.name).toBe("baz");
+  expect(package_json.version).toBe("0.0.3");
+});
+
+it("should add an uncompressed .tar local tarball", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "baz-0.0.3.tar"),
+    Bun.gunzipSync(await file(join(__dirname, "baz-0.0.3.tgz")).bytes()),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz-0.0.3.tar"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed baz@baz-0.0.3.tar with binaries:",
+    " - baz-run",
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(package_json.name).toBe("baz");
+  expect(package_json.version).toBe("0.0.3");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tar"');
+});

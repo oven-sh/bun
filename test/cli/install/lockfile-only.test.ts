@@ -136,7 +136,9 @@ describe("--lockfile-only under --frozen-lockfile", () => {
     async flag => {
       using tmp = tempDir("lockfile-only-frozen", project);
       const dir = String(tmp);
-      expect((await run(dir, "--lockfile-only")).exitCode).toBe(0);
+      const setup = await run(dir, "--lockfile-only");
+      expect(setup.stderr).not.toContain("error:");
+      expect(setup.exitCode).toBe(0);
       const canary = readFileSync(lock(dir), "utf8") + "\n";
       writeFileSync(lock(dir), canary);
 
@@ -165,7 +167,9 @@ describe("--lockfile-only under --frozen-lockfile", () => {
   it.concurrent("--lockfile-only rewrites an up-to-date bun.lock", async () => {
     using tmp = tempDir("lockfile-only-rewrite", project);
     const dir = String(tmp);
-    expect((await run(dir, "--lockfile-only")).exitCode).toBe(0);
+    const setup = await run(dir, "--lockfile-only");
+    expect(setup.stderr).not.toContain("error:");
+    expect(setup.exitCode).toBe(0);
     const original = readFileSync(lock(dir), "utf8");
     writeFileSync(lock(dir), original + "\n");
 

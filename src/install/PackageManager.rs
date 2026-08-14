@@ -8,7 +8,6 @@ use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
-use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
@@ -89,6 +88,8 @@ pub mod update_package_json_and_install;
 pub mod update_request;
 #[path = "PackageManager/WorkspacePackageJSONCache.rs"]
 pub mod workspace_package_json_cache;
+#[path = "PackageManager/workspace_selection.rs"]
+pub mod workspace_selection;
 
 /// Lower-case path alias so `package_manager::options::Options` (used by the
 /// retired stub surface) keeps resolving.
@@ -129,13 +130,16 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
+  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON
-  <d>└<r> <cyan>--prod<r>                    omit devDependencies
+  <d>├<r> <cyan>--prod<r>                    omit devDependencies
+  <d>├<r> <cyan>--dev<r>                     list only what devDependencies pull in
+  <d>├<r> <cyan>--long<r>                    also print author, description and homepage
+  <d>└<r> <cyan>--filter<r> <d>\<pattern\><r>        list only the matching workspaces' dependencies
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
@@ -427,6 +431,9 @@ pub struct PackageManager {
     // package.json cache entries that differ from disk; written by package_json_write_back::flush.
     pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
 
+    // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
+    pub(crate) catalog_add: add_catalog::State,
+
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
@@ -498,7 +505,13 @@ impl Subcommand {
     pub(crate) fn supports_workspace_filtering(self) -> bool {
         matches!(
             self,
-            Self::Outdated | Self::Install | Self::Update | Self::Add | Self::Remove
+            Self::Outdated
+                | Self::Install
+                | Self::Update
+                | Self::Add
+                | Self::Remove
+                | Self::Prune
+                | Self::Pm
         )
     }
 
@@ -512,93 +525,25 @@ impl Subcommand {
     }
 }
 
-pub enum WorkspaceFilter {
-    All,
-    Name(Box<[u8]>),
-    Path(Box<[u8]>),
+/// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
+pub struct WorkspaceFilter {
+    pub(crate) workspace_ids: Box<[PackageID]>,
 }
 
 impl WorkspaceFilter {
-    pub fn init(
-        input: &[u8],
-        cwd: &[u8],
-        path_buf: &mut [u8],
-    ) -> Result<WorkspaceFilter, AllocError> {
-        if (input.len() == 1 && input[0] == b'*') || input == b"**" {
-            return Ok(WorkspaceFilter::All);
+    pub(crate) fn from_ids(mut ids: Vec<PackageID>) -> WorkspaceFilter {
+        ids.sort_unstable();
+        ids.dedup();
+        WorkspaceFilter {
+            workspace_ids: ids.into_boxed_slice(),
         }
-
-        let mut remain = input;
-
-        let mut prepend_negate = false;
-        while !remain.is_empty() && remain[0] == b'!' {
-            prepend_negate = !prepend_negate;
-            remain = &remain[1..];
-        }
-
-        let is_path = !remain.is_empty() && remain[0] == b'.';
-
-        let filter: &[u8] =
-            if is_path {
-                strings::without_trailing_slash(
-                    resolve_path::join_abs_string_buf::<platform::Posix>(cwd, path_buf, &[remain]),
-                )
-            } else {
-                remain
-            };
-
-        if filter.is_empty() {
-            // won't match anything
-            return Ok(WorkspaceFilter::Path(Box::default()));
-        }
-        let copy_start = prepend_negate as usize;
-        let copy_end = copy_start + filter.len();
-
-        let mut buf = vec![0u8; copy_end].into_boxed_slice();
-        buf[copy_start..copy_end].copy_from_slice(filter);
-
-        if prepend_negate {
-            buf[0] = b'!';
-        }
-
-        // pattern = buf[0..copy_end] == buf (since buf.len() == copy_end)
-        Ok(if is_path {
-            WorkspaceFilter::Path(buf)
-        } else {
-            WorkspaceFilter::Name(buf)
-        })
     }
 
-    pub fn matches_any(filters: &[WorkspaceFilter], name: &[u8], abs_posix_path: &[u8]) -> bool {
-        let has_positive = filters.iter().any(|f| match f {
-            WorkspaceFilter::All => true,
-            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
-        });
-
-        let mut matched = !has_positive;
-        for filter in filters {
-            let (pattern, subject): (&[u8], &[u8]) = match filter {
-                WorkspaceFilter::All => {
-                    matched = true;
-                    continue;
-                }
-                WorkspaceFilter::Path(pattern) => {
-                    if pattern.is_empty() {
-                        continue;
-                    }
-                    (pattern, abs_posix_path)
-                }
-                WorkspaceFilter::Name(pattern) => (pattern, name),
-            };
-            if pattern.first() == Some(&b'!') {
-                if bun_glob::r#match(&pattern[1..], subject).matches() {
-                    return false;
-                }
-            } else if bun_glob::r#match(pattern, subject).matches() {
-                matched = true;
-            }
-        }
-        matched
+    #[inline]
+    pub(crate) fn is_selected(filters: &[WorkspaceFilter], pkg_id: PackageID) -> bool {
+        filters
+            .iter()
+            .all(|f| f.workspace_ids.binary_search(&pkg_id).is_ok())
     }
 
     /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
@@ -607,64 +552,14 @@ impl WorkspaceFilter {
         filter_patterns: &[&[u8]],
         original_cwd: &[u8],
     ) -> Vec<PackageID> {
-        use crate::lockfile::package::PackageColumns as _;
-
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
-            if res.tag == crate::resolution::Tag::Workspace
-                || res.tag == crate::resolution::Tag::Root
-            {
-                ids.push(pkg_id as PackageID);
-            }
-        }
-
-        if filter_patterns.is_empty() {
-            return ids;
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-        let converted_filters: Vec<WorkspaceFilter> = filter_patterns
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-
-        let top_level_dir = FileSystem::instance().top_level_dir();
-
-        let mut i = 0;
-        while i < ids.len() {
-            let pkg_id = ids[i] as usize;
-            let name = pkg_names[pkg_id].slice(string_buf);
-            let res = &pkg_resolutions[pkg_id];
-            let res_path: &[u8] = match res.tag {
-                crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                crate::resolution::Tag::Root => top_level_dir,
-                _ => unreachable!(),
-            };
-            let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
-                top_level_dir,
-                &mut path_buf.0,
-                &[res_path],
-            );
-            let abs = strings::without_trailing_slash(abs);
-            if WorkspaceFilter::matches_any(&converted_filters, name, abs) {
-                i += 1;
-            } else {
-                ids.swap_remove(i);
-            }
-        }
-
-        ids
+        workspace_selection::select_lockfile_workspaces(
+            lockfile,
+            filter_patterns,
+            original_cwd,
+            workspace_selection::RootSelection::Implicit,
+        )
     }
 }
-
-// deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
 
 #[derive(Default)]
 pub struct PackageUpdateInfo {
@@ -2218,6 +2113,7 @@ pub fn init(
         wr!(update_target_workspaces, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2660,6 +2556,7 @@ fn init_with_runtime_once(
         wr!(update_target_workspaces, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

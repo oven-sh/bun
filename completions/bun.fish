@@ -187,6 +187,15 @@ complete -c bun \
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'production' -d 'Omit devDependencies' -f
 
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'dev' -s 'D' -d 'List only what devDependencies pull in' -f
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'long' -d 'Also print author, description and homepage' -f
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
+
 # Add built-in subcommands with descriptions.
 complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
 complete -c bun -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"

@@ -1853,6 +1853,57 @@ describe("install --filter", () => {
     expect(await exited).toBe(0);
     await checkWorkspace();
   });
+
+  test.concurrent("relation selectors walk the workspace graph", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const pkg = (name: string, deps: Record<string, unknown>) =>
+      write(join(packageDir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0", ...deps }));
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { app: "workspace:*", "left-pad": "1.0.0" },
+        }),
+      ),
+      pkg("app", { dependencies: { lib: "workspace:*", "is-number": "1.0.0" } }),
+      pkg("lib", { dependencies: { util: "workspace:*", "no-deps": "1.0.0" } }),
+      pkg("util", { dependencies: { "a-dep": "1.0.1" } }),
+      pkg("tool", { devDependencies: { lib: "1.0.0" }, dependencies: { "no-deps-bins": "1.0.0" } }),
+      pkg("lone", { dependencies: { "peer-no-deps": "1.0.0" } }),
+    ]);
+
+    const externals = ["a-dep", "no-deps", "is-number", "no-deps-bins", "left-pad", "peer-no-deps"];
+    const installed = () => Promise.all(externals.map(name => exists(join(packageDir, "node_modules", name))));
+
+    async function installWithFilter(filter: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", filter],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      return exitCode;
+    }
+
+    // util and its dependents: lib, app, root (via app), tool (via its devDependency on lib); not lone
+    const dependentsExit = await installWithFilter("...util");
+    expect(await installed()).toEqual([true, true, true, true, true, false]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"peer-no-deps": "1.0.0"');
+    expect(dependentsExit).toBe(0);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // only app's dependencies: lib and util
+    const dependenciesExit = await installWithFilter("app^...");
+    expect(await installed()).toEqual([true, true, false, false, false, false]);
+    expect(dependenciesExit).toBe(0);
+  });
 });
 
 test.concurrent("can override npm package with workspace package under a different name", async () => {

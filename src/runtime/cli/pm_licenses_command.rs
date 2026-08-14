@@ -1,13 +1,14 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
-use bun_collections::StringHashMap;
+use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
-use bun_install::{PackageManager, Resolution, ResolutionTag};
+use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag, WorkspaceFilter};
 use bun_parsers::json as JSON;
 use bun_paths::AutoAbsPath;
 use bun_sys::{self, Dir, Fd, File};
@@ -23,6 +24,7 @@ struct PackageInfo {
     license: Box<[u8]>,
     homepage: Option<Box<[u8]>>,
     author: Option<Box<[u8]>>,
+    description: Option<Box<[u8]>>,
 }
 
 struct Entry {
@@ -32,6 +34,8 @@ struct Entry {
     semver: Option<bun_semver::Version>,
     homepage: Option<Box<[u8]>>,
     author: Option<Box<[u8]>>,
+    description: Option<Box<[u8]>>,
+    dev_only: bool,
 }
 
 /// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
@@ -43,13 +47,20 @@ struct DiskIndex {
     entries: Option<StringHashMap<PackageInfo>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct LicensesFlags {
+    pub(crate) dev_only: bool,
+    pub(crate) long: bool,
+}
+
 pub(crate) struct PmLicensesCommand;
 
 impl PmLicensesCommand {
     pub(crate) fn exec(
         pm: &mut PackageManager,
         positionals: &[&[u8]],
-        _production: bool,
+        original_cwd: &[u8],
+        flags: LicensesFlags,
     ) -> crate::Result<()> {
         if positionals.len() > 1
             && !strings::eql_comptime(positionals[1], b"list")
@@ -65,8 +76,12 @@ impl PmLicensesCommand {
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
-        let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
         let lockfile: &Lockfile = &pm.lockfile;
+
+        if flags.dev_only && !features.dev_dependencies {
+            Output::err_generic("--dev cannot be combined with --prod or --omit=dev", ());
+            Global::exit(1);
+        }
 
         let mut path = AutoAbsPath::init_top_level_dir();
         let top_len = path.len();
@@ -77,19 +92,60 @@ impl PmLicensesCommand {
         }
         path.set_length(top_len);
 
-        let wanted = reachable::packages(
+        let filter_patterns = pm.options.filter_patterns;
+        let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if filter_patterns.is_empty()
+        {
+            (
+                vec![pm.root_package_id.get(lockfile, pm.workspace_name_hash)],
+                true,
+            )
+        } else {
+            let roots = WorkspaceFilter::select_workspaces(lockfile, filter_patterns, original_cwd);
+            if roots.is_empty() {
+                Output::err_generic(
+                    "No workspace packages matched the filter {}",
+                    (BStr::new(&quoted_patterns(filter_patterns)),),
+                );
+                Global::exit(1);
+            }
+            (roots, false)
+        };
+
+        let options = reachable::Options {
+            root: 0,
+            dev: features.dev_dependencies,
+            optional: features.optional_dependencies,
+            peer: features.peer_dependencies,
+            optional_peer: features.peer_dependencies,
+            bundled: true,
+            platform: Some((pm.options.cpu, pm.options.os)),
+        };
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let walk = if flags.dev_only {
+            reachable::dev_packages_from
+        } else {
+            reachable::packages_from
+        };
+        let wanted = walk(
             lockfile,
-            lockfile.buffers.resolutions.as_slice(),
-            reachable::Options {
-                root: root_id,
-                dev: features.dev_dependencies,
-                optional: features.optional_dependencies,
-                peer: features.peer_dependencies,
-                optional_peer: features.peer_dependencies,
-                bundled: true,
-                platform: Some((pm.options.cpu, pm.options.os)),
-            },
+            resolutions,
+            &roots,
+            follow_workspace_edges,
+            options,
         );
+        let production: Option<DynamicBitSet> =
+            (!json_output && features.dev_dependencies).then(|| {
+                reachable::packages_from(
+                    lockfile,
+                    resolutions,
+                    &roots,
+                    follow_workspace_edges,
+                    reachable::Options {
+                        dev: false,
+                        ..options
+                    },
+                )
+            });
         let locations = tree_locations(lockfile);
 
         let packages = lockfile.packages.slice();
@@ -104,7 +160,7 @@ impl PmLicensesCommand {
         let mut missing: usize = 0;
 
         for pkg_id in 0..packages.len() {
-            if !wanted[pkg_id] {
+            if !wanted.is_set(pkg_id) {
                 continue;
             }
             let resolution = &pkg_resolution[pkg_id];
@@ -173,6 +229,8 @@ impl PmLicensesCommand {
                 semver: is_npm.then(|| resolution.npm().version),
                 homepage: info.homepage,
                 author: info.author,
+                description: info.description,
+                dev_only: production.as_ref().is_some_and(|prod| !prod.is_set(pkg_id)),
             });
         }
 
@@ -199,7 +257,7 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries);
+            print_text(&entries, flags.long);
         }
 
         Output::flush();
@@ -213,6 +271,32 @@ fn sort_key(e: &Entry) -> (bool, &[u8], &[u8]) {
         &e.license[..],
         &e.name[..],
     )
+}
+
+fn quoted_patterns(patterns: &[&[u8]]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    for (i, pattern) in patterns.iter().enumerate() {
+        if i > 0 {
+            out.extend_from_slice(b", ");
+        }
+        out.push(b'"');
+        out.extend_from_slice(pattern);
+        out.push(b'"');
+    }
+    out
+}
+
+fn printable(s: &[u8]) -> Cow<'_, [u8]> {
+    if s.iter().any(u8::is_ascii_control) {
+        Cow::Owned(
+            s.iter()
+                .copied()
+                .filter(|b| !b.is_ascii_control())
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(s)
+    }
 }
 
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
@@ -269,6 +353,7 @@ fn read_package_info(path: &[u8], log: &mut Log) -> Option<PackageInfo> {
                 license: license_of(&json),
                 homepage: string_field(&json, b"homepage"),
                 author: author_of(&json),
+                description: string_field(&json, b"description"),
             },
             Err(_) => PackageInfo {
                 name: None,
@@ -276,6 +361,7 @@ fn read_package_info(path: &[u8], log: &mut Log) -> Option<PackageInfo> {
                 license: UNKNOWN_LICENSE.into(),
                 homepage: None,
                 author: None,
+                description: None,
             },
         },
     )
@@ -521,7 +607,12 @@ impl DiskIndex {
     }
 }
 
-fn print_text(entries: &[Entry]) {
+fn print_text(entries: &[Entry], long: bool) {
+    if entries.is_empty() {
+        bun_core::prettyln!("No packages found");
+        return;
+    }
+
     let mut start = 0;
     while start < entries.len() {
         let license = &entries[start].license;
@@ -533,20 +624,34 @@ fn print_text(entries: &[Entry]) {
         if start > 0 {
             Output::print(format_args!("\n"));
         }
-        bun_core::prettyln!("<b>{}<r> <d>({})<r>", BStr::new(license), end - start);
+        bun_core::prettyln!(
+            "<b>{}<r> <d>({})<r>",
+            BStr::new(&printable(license)),
+            end - start
+        );
         for (i, entry) in entries[start..end].iter().enumerate() {
-            if start + i + 1 < end {
-                bun_core::prettyln!(
-                    "<d>├──<r> {}<d>@{}<r>",
-                    BStr::new(&entry.name),
-                    BStr::new(&entry.version)
-                );
-            } else {
-                bun_core::prettyln!(
-                    "<d>└──<r> {}<d>@{}<r>",
-                    BStr::new(&entry.name),
-                    BStr::new(&entry.version)
-                );
+            let last = start + i + 1 == end;
+            bun_core::pretty!(
+                "<d>{}<r> {}<d>@{}<r>",
+                if last { "└──" } else { "├──" },
+                BStr::new(&entry.name),
+                BStr::new(&entry.version)
+            );
+            if entry.dev_only {
+                bun_core::pretty!(" <d>(dev)<r>");
+            }
+            Output::print(format_args!("\n"));
+            if long {
+                for field in [&entry.author, &entry.description, &entry.homepage]
+                    .into_iter()
+                    .flatten()
+                {
+                    if last {
+                        bun_core::prettyln!("    <d>{}<r>", BStr::new(&printable(field)));
+                    } else {
+                        bun_core::prettyln!("<d>│   {}<r>", BStr::new(&printable(field)));
+                    }
+                }
             }
         }
 
@@ -615,6 +720,8 @@ fn print_json(entries: &[Entry]) {
                 previous = Some(&entry.version[..]);
             }
             out.push(b']');
+            out.extend_from_slice(b",\n      \"license\": ");
+            json_string(&mut out, license);
             let newest = &entries[group_end - 1];
             if let Some(homepage) = &newest.homepage {
                 out.extend_from_slice(b",\n      \"homepage\": ");
@@ -623,6 +730,10 @@ fn print_json(entries: &[Entry]) {
             if let Some(author) = &newest.author {
                 out.extend_from_slice(b",\n      \"author\": ");
                 json_string(&mut out, author);
+            }
+            if let Some(description) = &newest.description {
+                out.extend_from_slice(b",\n      \"description\": ");
+                json_string(&mut out, description);
             }
             out.extend_from_slice(b"\n    }");
 

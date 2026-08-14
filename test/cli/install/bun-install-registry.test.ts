@@ -5167,14 +5167,14 @@ describe("update", () => {
       },
     });
 
-    // Update with `a-dep` and `--latest`, `latest` should be replaced with the installed version
+    // a dist-tag literal is kept in every mode; only bun.lock follows the tag
     await runBunUpdate(env, packageDir, ["a-dep"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
-        "a-dep": "^1.0.10",
+        "a-dep": "latest",
       },
     });
     await runBunUpdate(env, packageDir, ["--latest"]);
@@ -5183,9 +5183,10 @@ describe("update", () => {
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
-        "a-dep": "^1.0.10",
+        "a-dep": "latest",
       },
     });
+    expect((await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version).toBe("1.0.10");
   });
   test("exact versions stay exact", async () => {
     const runs = [
@@ -5949,11 +5950,23 @@ describe("update", () => {
       version: "1.0.0",
     });
 
-    // updating a package the workspace does not declare re-resolves the root's pin in place and never adds it to the workspace's package.json
-    ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["no-deps"]));
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-    expect(out[0]).toContain("bun update v1.");
+    // a name only the root declares is out of scope inside pkg1: error, nothing written
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "update", "no-deps"],
+        cwd: join(packageDir, "packages", "pkg1"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(
+        'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
+      );
+      expect(stderr).toContain("bun update -r no-deps");
+      expect(stdout).not.toContain("installed no-deps");
+      expect(exitCode).toBe(1);
+    }
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
     });
@@ -8590,6 +8603,62 @@ describe("outdated", () => {
     expect(out).not.toContain("foo");
     expect(out).toContain("pkg2222222222222");
     expect(out).toContain("pkg1");
+  });
+
+  test("--filter with relation selectors lists only the selected workspaces' dependencies", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { app: "workspace:*", "left-pad": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({ name: "app", version: "1.0.0", dependencies: { lib: "workspace:*", "is-number": "1.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "lib", "package.json"),
+        JSON.stringify({ name: "lib", version: "1.0.0", dependencies: { util: "workspace:*", "no-deps": "1.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "util", "package.json"),
+        JSON.stringify({ name: "util", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+      write(
+        join(packageDir, "packages", "tool", "package.json"),
+        JSON.stringify({
+          name: "tool",
+          version: "1.0.0",
+          devDependencies: { lib: "1.0.0" },
+          dependencies: { "no-deps-bins": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "lone", "package.json"),
+        JSON.stringify({ name: "lone", version: "1.0.0", dependencies: { "peer-no-deps": "1.0.0" } }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    // app... = app + lib + util
+    let out = await runBunOutdated(env, packageDir, "--filter", "app...");
+    expect(out).toContain("Workspace");
+    expect(out).toContain("is-number");
+    expect(out).toMatch(/\bno-deps\s/);
+    expect(out).toContain("a-dep");
+    expect(out).not.toContain("no-deps-bins");
+    expect(out).not.toContain("peer-no-deps");
+
+    // ...^util = root + lib + app + tool, minus app
+    out = await runBunOutdated(env, packageDir, "--filter", "...^util", "--filter", "!app");
+    expect(out).toContain("no-deps-bins");
+    expect(out).toMatch(/\bno-deps\s/);
+    expect(out).not.toContain("is-number");
+    expect(out).not.toContain("a-dep");
+    expect(out).not.toContain("peer-no-deps");
   });
 
   test("dependency pattern args", async () => {

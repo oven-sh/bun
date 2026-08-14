@@ -3,9 +3,9 @@ title: "bun --filter"
 description: "Select packages by pattern in a monorepo using the --filter flag"
 ---
 
-The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. Patterns match package names or package paths, with full glob syntax.
+The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. A pattern is a package name glob, a `./path` glob, a `{dir}` directory selector, or a `...` dependency relation.
 
-`bun install`, `bun add`, `bun remove`, `bun update` and `bun outdated` support `--filter` (pass it after the subcommand, or as `--filter=<pattern>` before it); for `bun add`/`bun remove` it selects which workspace `package.json` files are edited. You can also use it to run scripts in multiple packages at once.
+`bun install`, `bun add`, `bun remove`, `bun update` and `bun outdated` support `--filter` (pass it after the subcommand, or as `--filter=<pattern>` before it); for `bun add`/`bun remove` it selects which workspace `package.json` files are edited. You can also use it to run scripts in multiple packages at once. The `{dir}` and `...` forms are only understood by these package-manager commands, not by `bun run --filter`.
 
 ---
 
@@ -21,11 +21,38 @@ Path patterns start with `./` and select all packages in directories matching th
 
 Patterns are matched against the full package name -- `--filter core` does not select `@acme/core` (use `@acme/core` or `@acme/*`), and `*` does not cross `/`. Path patterns must match a workspace's directory itself: `--filter ./packages` selects nothing, `--filter './packages/*'` selects every workspace directly inside it, and `--filter '!./lib'` only excludes a workspace located at `./lib`.
 
+### Directory `--filter '{<dir>}'`
+
+A directory in braces selects every workspace located in that directory or anywhere below it. The directory is resolved from the current directory: `--filter '{packages}'` and `--filter '{./packages}'` select every workspace under `packages`, and `--filter '{.}'` selects the workspace in the current directory and everything under it. Unlike a `./path` pattern, which has to match a workspace's own directory, the directory in braces can be any parent of the workspaces you want. A pattern that starts with `{` is always a directory selector.
+
+### Dependency relations `--filter 'foo...'`
+
+Adding `...` to a pattern also selects the workspaces related to it through workspace dependencies:
+
+| Pattern    | Selects                                                                     |
+| ---------- | --------------------------------------------------------------------------- |
+| `foo...`   | `foo` and the workspaces it depends on, directly or transitively            |
+| `foo^...`  | only the workspaces `foo` depends on, not `foo` itself                      |
+| `...foo`   | `foo` and the workspaces that depend on it, directly or transitively        |
+| `...^foo`  | only the workspaces that depend on `foo`, not `foo` itself                  |
+
+The middle part is a name glob or a directory selector (`...{./packages/api}`), and `!` still goes first: `--filter '!...foo'` drops `foo` and everything that depends on it.
+
+Relations follow the workspace links recorded in `bun.lock`, from any dependency group. `bun install --filter 'web...'` works on a fresh clone, but `bun add`, `bun remove` and `bun update <pkg>` with a relation need an existing `bun.lock` and ask you to run `bun install` first when it is missing.
+
+```bash terminal icon="terminal"
+bun install --filter 'web...'
+bun add zod --filter '...^ui'
+bun outdated --filter '{./packages/apps}'
+```
+
 ---
 
 ## `bun install` and `bun outdated`
 
 By default, `bun install` installs dependencies for every package in the monorepo. To install dependencies for specific packages, use `--filter`.
+
+A set of patterns selects everything matched by a positive pattern, minus everything matched by a `!` pattern, so `bun install --filter api --filter '!web'` installs only `api`. If nothing matches, `bun install` installs nothing and exits 0.
 
 Given a monorepo with workspaces `pkg-a`, `pkg-b`, and `pkg-c` under `./packages`:
 

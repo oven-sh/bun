@@ -127,6 +127,21 @@ fn write_pnpm_dep_path(
     .map_err(|_| AllocError)
 }
 
+/// Binds a peer edge the way bun.lock's reader does, so the migrated tree matches the reloaded one.
+fn resolve_peer_like_bun_lock(lockfile: &Lockfile, dep: &Dependency) -> Option<PackageID> {
+    if !dep.behavior.is_peer() {
+        return None;
+    }
+    lockfile::bun_lock::resolve_peer_dep_version_based(
+        dep,
+        &lockfile.catalogs,
+        &lockfile.package_index,
+        &lockfile.overrides,
+        lockfile.packages.items_resolution(),
+        string_bytes!(lockfile),
+    )
+}
+
 fn missing_package_entry(
     log: &mut bun_ast::Log,
     dep_path: &[u8],
@@ -199,6 +214,48 @@ fn read_config_patch_paths(
     }
 
     Ok(paths)
+}
+
+/// pnpm 11's built-in named registries; `namedRegistries` in pnpm-workspace.yaml overrides them.
+const BUILTIN_NAMED_REGISTRIES: [(&[u8], &[u8]); 2] = [
+    (b"gh", b"https://npm.pkg.github.com/"),
+    (b"npmjs", b"https://registry.npmjs.org/"),
+];
+
+fn read_named_registries(
+    log: &mut bun_ast::Log,
+) -> Result<StringArrayHashMap<Box<[u8]>>, AllocError> {
+    let mut registries: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+
+    if let Ok(contents) = sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
+        let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
+        let source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
+        let arena = bun_alloc::Arena::new();
+        if let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
+            &source,
+            log,
+            &arena,
+            bun_parsers::yaml::CyclicAliases::Reject,
+        ) {
+            if let Some(named) = ws_root.get_object(b"namedRegistries") {
+                for prop in e_object(&named).properties.slice() {
+                    let key = prop.key.as_ref().expect("infallible: prop has key");
+                    let value = prop.value.as_ref().expect("infallible: prop has value");
+                    if let (Some(name_str), Some(url_str)) = (as_string(key), as_string(value)) {
+                        registries.put(name_str, Box::from(url_str))?;
+                    }
+                }
+            }
+        }
+    }
+
+    for (name, url) in BUILTIN_NAMED_REGISTRIES {
+        if !registries.contains(name) {
+            registries.put(name, Box::from(url))?;
+        }
+    }
+
+    Ok(registries)
 }
 
 /// `work:1.0.0` -> `1.0.0` for pnpm's registry-qualified dep paths (pnpm11/deps/path parseRegistryQualifiedVersion).
@@ -526,8 +583,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         );
     }
 
+    let exclude_links = root
+        .get(b"settings")
+        .and_then(|settings| settings.get(b"excludeLinksFromLockfile"))
+        .and_then(|e| e.as_bool())
+        == Some(true);
+
     let mut found_patches: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
     let mut snapshot_dep_paths = SnapshotDepPaths::new();
+    let mut named_registries: Option<StringArrayHashMap<Box<[u8]>>> = None;
+    let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     let (pkg_map, importer_dep_res_versions, workspace_pkgs_off, workspace_pkgs_end) = 'build: {
         if let Some(mut catalogs_expr) = root.get_object(b"catalogs") {
@@ -774,9 +839,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 Err(_) => return Err(invalid_pnpm_lockfile()),
             };
 
+            let root_manifest: Expr = pkg_json.root;
+
             let mut root_pkg = lockfile::Package::default();
 
-            if let Some((name, _)) = get_string(&pkg_json.root, b"name") {
+            if let Some((name, _)) = get_string(&root_manifest, b"name") {
                 let name_hash = semver::string::Builder::string_hash(name);
                 root_pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 root_pkg.name_hash = name_hash;
@@ -789,6 +856,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 lockfile,
                 manager,
                 &root_pkg_expr,
+                &root_manifest,
+                b".",
+                exclude_links,
                 log,
                 true,
                 &importers_obj,
@@ -865,6 +935,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     lockfile,
                     manager,
                     value,
+                    &workspace_root,
+                    path,
+                    exclude_links,
                     log,
                     false,
                     &importers_obj,
@@ -940,6 +1013,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         let Some(version_str) =
                             importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
                         else {
+                            if dep.behavior.is_peer() {
+                                continue;
+                            }
                             return Err(invalid_pnpm_lockfile());
                         };
                         let version_without_suffix = remove_suffix(version_str);
@@ -1021,80 +1097,22 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
         }
 
-        struct SnapshotEntry {
-            obj: Expr,
-            patch_hash: Option<&'static [u8]>,
+        let packages_obj = root.get_object(b"packages");
+        let snapshots_obj = root.get_object(b"snapshots");
+
+        if packages_obj.is_some() && snapshots_obj.is_none() {
+            log.add_error(
+                None,
+                bun_ast::Loc::EMPTY,
+                b"pnpm-lock.yaml has 'packages' but missing 'snapshots' field",
+            );
+            return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
         }
-        impl Default for SnapshotEntry {
-            fn default() -> Self {
-                Self {
-                    obj: Expr::EMPTY,
-                    patch_hash: None,
-                }
-            }
-        }
-        let mut snapshots: StringArrayHashMap<SnapshotEntry> = StringArrayHashMap::new();
 
-        if let Some(packages_obj) = root.get_object(b"packages") {
-            let Some(snapshots_obj) = root.get_object(b"snapshots") else {
-                log.add_error(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    b"pnpm-lock.yaml has 'packages' but missing 'snapshots' field",
-                );
-                return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
-            };
+        let mut packages_by_key: StringArrayHashMap<Expr> = StringArrayHashMap::new();
 
-            for snapshot_prop in e_object(&snapshots_obj).properties.slice() {
-                let key = snapshot_prop
-                    .key
-                    .as_ref()
-                    .expect("infallible: prop has key");
-                let value = snapshot_prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value");
-
-                let Some(key_str) = as_string(key) else {
-                    return Err(invalid_pnpm_lockfile());
-                };
-
-                if !value.is_object() {
-                    return Err(invalid_pnpm_lockfile());
-                }
-
-                let (peer_hash_idx, patch_hash_idx) = index_of_dep_path_suffix(key_str);
-
-                let key_str_without_suffix = if let Some(idx) = patch_hash_idx.or(peer_hash_idx) {
-                    &key_str[0..idx]
-                } else {
-                    key_str
-                };
-
-                let patch_hash = match patch_hash_idx {
-                    Some(idx) => {
-                        let patch_hash_str = &key_str[idx + b"(patch_hash=".len()..];
-                        let Some(end_idx) = strings::index_of_char_usize(patch_hash_str, b')')
-                        else {
-                            return Err(invalid_pnpm_lockfile());
-                        };
-                        Some(&patch_hash_str[..end_idx])
-                    }
-                    None => None,
-                };
-
-                let entry = snapshots.get_or_put(key_str_without_suffix)?;
-                if entry.found_existing {
-                    continue;
-                }
-
-                *entry.value_ptr = SnapshotEntry {
-                    obj: *value,
-                    patch_hash,
-                };
-            }
-
-            for packages_prop in e_object(&packages_obj).properties.slice() {
+        if let Some(packages_obj) = &packages_obj {
+            for packages_prop in e_object(packages_obj).properties.slice() {
                 let key = packages_prop
                     .key
                     .as_ref()
@@ -1113,17 +1131,55 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`.
-                let key_str = remove_suffix(key_str);
+                let entry = packages_by_key.get_or_put(remove_suffix(key_str))?;
+                if entry.found_existing {
+                    continue;
+                }
+                *entry.value_ptr = *package_obj;
+            }
+        }
+
+        if let Some(snapshots_obj) = &snapshots_obj {
+            for snapshot_prop in e_object(snapshots_obj).properties.slice() {
+                let key = snapshot_prop
+                    .key
+                    .as_ref()
+                    .expect("infallible: prop has key");
+                let snapshot_obj = snapshot_prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value");
+
+                let Some(key_str) = as_string(key) else {
+                    return Err(invalid_pnpm_lockfile());
+                };
+
+                if !snapshot_obj.is_object() {
+                    return Err(invalid_pnpm_lockfile());
+                }
+
+                let (peer_hash_idx, patch_hash_idx) = index_of_dep_path_suffix(key_str);
+
+                let patch_hash = match patch_hash_idx {
+                    Some(idx) => {
+                        let patch_hash_str = &key_str[idx + b"(patch_hash=".len()..];
+                        let Some(end_idx) = strings::index_of_char_usize(patch_hash_str, b')')
+                        else {
+                            return Err(invalid_pnpm_lockfile());
+                        };
+                        Some(&patch_hash_str[..end_idx])
+                    }
+                    None => None,
+                };
+
+                let key_str = match patch_hash_idx.or(peer_hash_idx) {
+                    Some(idx) => &key_str[0..idx],
+                    None => key_str,
+                };
+
                 if pkg_map.contains(key_str) {
                     continue;
                 }
-
-                // Like pnpm, a `packages:` entry without a snapshot is unreachable and ignored.
-                let Some(snapshot) = snapshots.get(key_str) else {
-                    continue;
-                };
-                let snapshot_obj = snapshot.obj;
-                let snapshot_patch_hash = snapshot.patch_hash;
 
                 let Ok((name_str, res_str)) = dependency::split_name_and_version(key_str) else {
                     return Err(invalid_pnpm_lockfile());
@@ -1133,20 +1189,25 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     continue;
                 }
 
-                let res_str = match split_registry_qualified_version(res_str) {
-                    Some((registry, version)) => {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "pnpm-lock.yaml package '{}' is from pnpm registry '{}', resolving it from the configured registry instead",
-                                bstr::BStr::new(key_str),
-                                bstr::BStr::new(registry)
-                            ),
-                        );
-                        version
+                let package_obj: Expr = match packages_by_key.get(key_str) {
+                    Some(obj) => *obj,
+                    None => {
+                        // Like pnpm, only a `file:` directory is rebuilt from a snapshot whose `packages:` entry was pruned.
+                        let Some(dir) =
+                            strings::without_prefix_if_possible_comptime(res_str, b"file:")
+                        else {
+                            continue;
+                        };
+                        if Dependency::is_tarball(dir) {
+                            continue;
+                        }
+                        Expr::EMPTY
                     }
-                    None => res_str,
+                };
+
+                let (res_str, registry_name) = match split_registry_qualified_version(res_str) {
+                    Some((registry, version)) => (version, Some(registry)),
+                    None => (res_str, None),
                 };
 
                 let resolution_expr: Option<Expr> = package_obj.get(b"resolution");
@@ -1196,11 +1257,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         .copied()
                         .filter(|id| (*id as usize) < workspace_pkgs_end)
                     {
-                        let entry = pkg_map.get_or_put(key_str)?;
-                        if entry.found_existing {
-                            return Err(invalid_pnpm_lockfile());
-                        }
-                        *entry.value_ptr = workspace_pkg_id;
+                        pkg_map.put(key_str, workspace_pkg_id)?;
                         continue;
                     }
                 }
@@ -1208,7 +1265,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let name_hash = semver::string::Builder::string_hash(name_str);
                 let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
-                if let Some(patch_list) = snapshot_patch_hash.and_then(|hash| patches.get(hash)) {
+                if let Some(patch_list) = patch_hash.and_then(|hash| patches.get(hash)) {
                     if let Some(patch) = patch_list.iter().find(|patch| {
                         Dependency::split_name_and_maybe_version(&patch.key).0 == name_str
                     }) {
@@ -1237,7 +1294,59 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if res.tag == resolution::Tag::Npm {
-                    let registry = manager.scope_for_package_name(name_str).url.href();
+                    let scope_registry: &[u8] = manager.scope_for_package_name(name_str).url.href();
+                    let registry: &[u8] = match registry_name {
+                        None => scope_registry,
+                        Some(registry_name) => {
+                            if named_registries.is_none() {
+                                named_registries = Some(read_named_registries(log)?);
+                            }
+                            match named_registries
+                                .as_ref()
+                                .expect("set above")
+                                .get(registry_name)
+                            {
+                                Some(url)
+                                    if !(lockfile::bun_lock::url_is_under_registry(
+                                        url,
+                                        scope_registry,
+                                    ) && lockfile::bun_lock::url_is_under_registry(
+                                        scope_registry,
+                                        url,
+                                    )) =>
+                                {
+                                    if !warned_registries.get_or_put(registry_name)?.found_existing
+                                    {
+                                        log.add_warning_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "pnpm-lock.yaml packages from pnpm registry '{}' will be fetched from {}; add that registry to bunfig.toml or .npmrc if it needs authentication",
+                                                bstr::BStr::new(registry_name),
+                                                bstr::BStr::new(url)
+                                            ),
+                                        );
+                                    }
+                                    &**url
+                                }
+                                Some(_) => scope_registry,
+                                None => {
+                                    if !warned_registries.get_or_put(registry_name)?.found_existing
+                                    {
+                                        log.add_warning_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "pnpm-lock.yaml packages from pnpm registry '{}' are not in namedRegistries of pnpm-workspace.yaml, resolving them from the configured registry instead",
+                                                bstr::BStr::new(registry_name)
+                                            ),
+                                        );
+                                    }
+                                    scope_registry
+                                }
+                            }
+                        }
+                    };
                     // Registries like GitHub Packages serve tarballs off the canonical `/-/` path (pnpm/pnpm#13534).
                     let recorded = resolution_expr
                         .as_ref()
@@ -1286,8 +1395,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let (off, len) = parse_append_package_dependencies(
                     lockfile,
-                    package_obj,
-                    &snapshot_obj,
+                    &package_obj,
+                    snapshot_obj,
                     log,
                     &mut snapshot_dep_paths,
                 )?;
@@ -1298,12 +1407,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(key_str)?;
-                if entry.found_existing {
-                    return Err(invalid_pnpm_lockfile());
-                }
-
-                *entry.value_ptr = pkg_id;
+                pkg_map.put(key_str, pkg_id)?;
             }
         }
 
@@ -1352,8 +1456,15 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
 
             let dep_name = dep.name.slice(string_buf);
+            if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
+                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                continue;
+            }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
             else {
+                if dep.behavior.is_peer() {
+                    continue;
+                }
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
@@ -1412,8 +1523,15 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
+            if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
+                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                continue;
+            }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
             else {
+                if dep.behavior.is_peer() {
+                    continue;
+                }
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
@@ -1465,15 +1583,20 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
+            if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
+                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                continue;
+            }
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
             let reference = remove_suffix(version_maybe_alias);
 
-            if let Some(dep_path) = snapshot_dep_paths.get(&dep_id) {
-                res_buf.clear();
-                res_buf.extend_from_slice(dep_path);
+            if let Some(snapshot_reference) = snapshot_dep_paths.get(&dep_id) {
+                write_pnpm_dep_path(&mut res_buf, dep_name, snapshot_reference)?;
+            } else if dep.behavior.is_peer() {
+                continue;
             } else {
                 match dep.version.tag {
                     dependency::VersionTag::Folder
@@ -1564,20 +1687,20 @@ impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     }
 }
 
-/// dep -> full pnpm dep-path for aliases whose version isn't a registry version (`cfg: hi2@file:x` has no `npm:` spelling)
+/// dep -> pnpm reference whose dep-path cannot be rebuilt from the dep's literal (non-registry aliases and peer edges)
 type SnapshotDepPaths = bun_collections::HashMap<DependencyID, Box<[u8]>>;
 
 fn append_snapshot_dependency_version(
     lockfile: &mut Lockfile,
     reference: &[u8],
     version_buf: &mut Vec<u8>,
-    aliased_dep_paths: &mut StringArrayHashMap<Box<[u8]>>,
+    references_by_name: &mut StringArrayHashMap<Box<[u8]>>,
     dep_name: &[u8],
 ) -> Result<(String, Option<ExternalString>), AllocError> {
     if pnpm_reference_is_dep_path(reference) {
         if let Ok((alias_str, version_str)) = dependency::split_name_and_version(reference) {
             if !version_str.first().is_some_and(u8::is_ascii_digit) {
-                aliased_dep_paths.put(dep_name, Box::from(reference))?;
+                references_by_name.put(dep_name, Box::from(reference))?;
                 return Ok((sbuf!(lockfile).append(version_str)?, None));
             }
             let alias = sbuf!(lockfile).append_external(alias_str)?;
@@ -1590,6 +1713,69 @@ fn append_snapshot_dependency_version(
     Ok((sbuf!(lockfile).append(reference)?, None))
 }
 
+struct PeerDecl {
+    range: &'static [u8],
+    optional: bool,
+    seen: bool,
+}
+
+fn declared_package_peers(
+    package_obj: &Expr,
+) -> Result<StringArrayHashMap<PeerDecl>, ParseAppendDependenciesError> {
+    let mut peers: StringArrayHashMap<PeerDecl> = StringArrayHashMap::new();
+
+    if let Some(declared) = package_obj.get(b"peerDependencies") {
+        if !declared.is_object() {
+            return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+        }
+        for prop in e_object(&declared).properties.slice() {
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            let (Some(name_str), Some(range)) = (as_string(key), as_string(value)) else {
+                return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+            };
+            peers.put(
+                name_str,
+                PeerDecl {
+                    range,
+                    optional: false,
+                    seen: false,
+                },
+            )?;
+        }
+    }
+
+    if let Some(meta) = package_obj.get(b"peerDependenciesMeta") {
+        if !meta.is_object() {
+            return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+        }
+        for prop in e_object(&meta).properties.slice() {
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            let Some(name_str) = as_string(key) else {
+                return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+            };
+            if !value.is_object() || value.get(b"optional").and_then(|e| e.as_bool()) != Some(true)
+            {
+                continue;
+            }
+            match peers.get_mut(name_str) {
+                Some(decl) => decl.optional = true,
+                None => peers.put(
+                    name_str,
+                    PeerDecl {
+                        range: b"*",
+                        optional: true,
+                        seen: false,
+                    },
+                )?,
+            }
+        }
+    }
+
+    Ok(peers)
+}
+
 fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
@@ -1598,78 +1784,27 @@ fn parse_append_package_dependencies(
     snapshot_dep_paths: &mut SnapshotDepPaths,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     let mut version_buf: Vec<u8> = Vec::new();
-    let mut aliased_dep_paths: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+    let mut references_by_name: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+    let mut peers = declared_package_peers(package_obj)?;
 
     let off = lockfile.buffers.dependencies.len();
 
-    const SNAPSHOT_DEPENDENCY_GROUPS: [(&[u8], dependency::Behavior); 2] = [
+    // pnpm records resolved required peers under `dependencies` and resolved optional peers under `optionalDependencies`.
+    const SNAPSHOT_DEPENDENCY_GROUPS: [(&[u8], dependency::Behavior); 3] = [
+        (b"dependencies", dependency::Behavior::PROD),
         (b"devDependencies", dependency::Behavior::DEV),
         (b"optionalDependencies", dependency::Behavior::OPTIONAL),
     ];
 
     for (group_name, group_behavior) in SNAPSHOT_DEPENDENCY_GROUPS {
-        if let Some(deps) = snapshot_obj.get(group_name) {
-            if !deps.is_object() {
-                return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-            }
-
-            for prop in e_object(&deps).properties.slice() {
-                let key = prop.key.as_ref().expect("infallible: prop has key");
-                let value = prop.value.as_ref().expect("infallible: prop has value");
-
-                let Some(name_str) = as_string(key) else {
-                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                };
-
-                let name_hash = semver::string::Builder::string_hash(name_str);
-                let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
-
-                let Some(version_str) = as_string(value) else {
-                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                };
-
-                let version_without_suffix = remove_suffix(version_str);
-
-                let (version, alias) = append_snapshot_dependency_version(
-                    lockfile,
-                    version_without_suffix,
-                    &mut version_buf,
-                    &mut aliased_dep_paths,
-                    name_str,
-                )?;
-                let version_sliced = version.sliced(string_bytes!(lockfile));
-
-                let behavior: dependency::Behavior = group_behavior;
-
-                let dep = Dependency {
-                    name: name.value,
-                    name_hash,
-                    behavior,
-                    version: match Dependency::parse(
-                        alias.map(|a| a.value).unwrap_or(name.value),
-                        alias.map(|a| a.hash).unwrap_or(name.hash),
-                        version_sliced.slice,
-                        &version_sliced,
-                        Some(&mut *log),
-                        None,
-                    ) {
-                        Some(v) => v,
-                        None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
-                    },
-                };
-
-                lockfile.buffers.dependencies.push(dep);
-            }
-        }
-    }
-
-    if let Some(deps) = snapshot_obj.get(b"dependencies") {
+        let Some(deps) = snapshot_obj.get(group_name) else {
+            continue;
+        };
         if !deps.is_object() {
             return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
         }
 
-        // for each dependency first look it up in peerDependencies in package_obj
-        'next_prod_dep: for prop in e_object(&deps).properties.slice() {
+        for prop in e_object(&deps).properties.slice() {
             let key = prop.key.as_ref().expect("infallible: prop has key");
             let value = prop.value.as_ref().expect("infallible: prop has value");
 
@@ -1684,97 +1819,52 @@ fn parse_append_package_dependencies(
                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
             };
 
-            let version_without_suffix = remove_suffix(version_str);
+            let reference = remove_suffix(version_str);
 
-            let (version, alias) = append_snapshot_dependency_version(
-                lockfile,
-                version_without_suffix,
-                &mut version_buf,
-                &mut aliased_dep_paths,
-                name_str,
-            )?;
-            let version_sliced = version.sliced(string_bytes!(lockfile));
+            let mut behavior: dependency::Behavior = group_behavior;
 
-            if let Some(peers) = package_obj.get(b"peerDependencies") {
-                if !peers.is_object() {
-                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                }
-
-                for peer_prop in e_object(&peers).properties.slice() {
-                    let Some(peer_name_str) =
-                        as_string(peer_prop.key.as_ref().expect("infallible: prop has key"))
-                    else {
-                        return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                    };
-
-                    let mut behavior = dependency::Behavior::PEER;
-
-                    if strings::eql_long(name_str, peer_name_str, true) {
-                        if let Some(peers_meta) = package_obj.get(b"peerDependenciesMeta") {
-                            if !peers_meta.is_object() {
-                                return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                            }
-
-                            for peer_meta_prop in e_object(&peers_meta).properties.slice() {
-                                let Some(peer_meta_name_str) = as_string(
-                                    peer_meta_prop
-                                        .key
-                                        .as_ref()
-                                        .expect("infallible: prop has key"),
-                                ) else {
-                                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                                };
-
-                                if strings::eql_long(name_str, peer_meta_name_str, true) {
-                                    let meta_obj = peer_meta_prop
-                                        .value
-                                        .as_ref()
-                                        .expect("infallible: prop has value");
-                                    if !meta_obj.is_object() {
-                                        return Err(
-                                            ParseAppendDependenciesError::InvalidPnpmLockfile,
-                                        );
-                                    }
-
-                                    behavior.set_optional(
-                                        meta_obj
-                                            .get(b"optional")
-                                            .and_then(|e| e.as_bool())
-                                            .unwrap_or(false),
-                                    );
-                                    break;
-                                }
-                            }
+            if let Some(decl) = peers.get_mut(name_str) {
+                if !decl.seen {
+                    decl.seen = true;
+                    if !strings::has_prefix_comptime(reference, b"link:") {
+                        behavior = dependency::Behavior::PEER;
+                        behavior.set_optional(decl.optional);
+                        let range = sbuf!(lockfile).append(decl.range)?;
+                        let range_sliced = range.sliced(string_bytes!(lockfile));
+                        references_by_name.put(name_str, Box::from(reference))?;
+                        if let Some(version) = Dependency::parse(
+                            name.value,
+                            name.hash,
+                            range_sliced.slice,
+                            &range_sliced,
+                            None,
+                            None,
+                        ) {
+                            lockfile.buffers.dependencies.push(Dependency {
+                                name: name.value,
+                                name_hash: name.hash,
+                                behavior,
+                                version,
+                            });
+                            continue;
                         }
-                        let dep = Dependency {
-                            name: name.value,
-                            name_hash: name.hash,
-                            behavior,
-                            version: match Dependency::parse(
-                                alias.map(|a| a.value).unwrap_or(name.value),
-                                alias.map(|a| a.hash).unwrap_or(name.hash),
-                                version_sliced.slice,
-                                &version_sliced,
-                                Some(&mut *log),
-                                None,
-                            ) {
-                                Some(v) => v,
-                                None => {
-                                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                                }
-                            },
-                        };
-
-                        lockfile.buffers.dependencies.push(dep);
-                        continue 'next_prod_dep;
                     }
                 }
             }
 
+            let (version, alias) = append_snapshot_dependency_version(
+                lockfile,
+                reference,
+                &mut version_buf,
+                &mut references_by_name,
+                name_str,
+            )?;
+            let version_sliced = version.sliced(string_bytes!(lockfile));
+
             let dep = Dependency {
                 name: name.value,
                 name_hash: name.hash,
-                behavior: dependency::Behavior::PROD,
+                behavior,
                 version: match Dependency::parse(
                     alias.map(|a| a.value).unwrap_or(name.value),
                     alias.map(|a| a.hash).unwrap_or(name.hash),
@@ -1792,6 +1882,35 @@ fn parse_append_package_dependencies(
         }
     }
 
+    for (peer_name, decl) in peers.iter() {
+        if decl.seen {
+            continue;
+        }
+        let peer_name: &[u8] = peer_name;
+        let name_hash = semver::string::Builder::string_hash(peer_name);
+        let name = sbuf!(lockfile).append_external_with_hash(peer_name, name_hash)?;
+        let range = sbuf!(lockfile).append(decl.range)?;
+        let range_sliced = range.sliced(string_bytes!(lockfile));
+        let Some(version) = Dependency::parse(
+            name.value,
+            name.hash,
+            range_sliced.slice,
+            &range_sliced,
+            None,
+            None,
+        ) else {
+            continue;
+        };
+        let mut behavior = dependency::Behavior::PEER;
+        behavior.set_optional(decl.optional);
+        lockfile.buffers.dependencies.push(Dependency {
+            name: name.value,
+            name_hash: name.hash,
+            behavior,
+            version,
+        });
+    }
+
     let end = lockfile.buffers.dependencies.len();
 
     {
@@ -1799,12 +1918,12 @@ fn parse_append_package_dependencies(
         lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
-    if aliased_dep_paths.count() > 0 {
+    if references_by_name.count() > 0 {
         let bytes = lockfile.buffers.string_bytes.as_slice();
         for (i, dep) in lockfile.buffers.dependencies[off..end].iter().enumerate() {
-            if let Some(dep_path) = aliased_dep_paths.get(dep.name.slice(bytes)) {
+            if let Some(reference) = references_by_name.get(dep.name.slice(bytes)) {
                 let dep_id = u32::try_from(off + i).expect("int cast");
-                snapshot_dep_paths.put(dep_id, dep_path.clone())?;
+                snapshot_dep_paths.put(dep_id, reference.clone())?;
             }
         }
     }
@@ -1815,20 +1934,124 @@ fn parse_append_package_dependencies(
     ))
 }
 
+fn append_importer_dependency(
+    lockfile: &mut Lockfile,
+    log: &mut bun_ast::Log,
+    name_str: &[u8],
+    specifier_str: &[u8],
+    behavior: dependency::Behavior,
+) -> Result<(), ParseAppendDependenciesError> {
+    let name_hash = semver::string::Builder::string_hash(name_str);
+    let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
+
+    if strings::has_prefix(specifier_str, b"catalog:") {
+        let mut catalog_group_name_str = specifier_str[b"catalog:".len()..].trim_ascii();
+        if catalog_group_name_str == b"default" {
+            catalog_group_name_str = b"";
+        }
+        let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
+        // `CatalogMap::get` borrows `&self` and the whole lockfile, so move catalogs out for the call.
+        let catalogs = core::mem::take(&mut lockfile.catalogs);
+        let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
+        lockfile.catalogs = catalogs;
+        let Some(mut dep) = dep_result else {
+            // catalog is missing an entry in the "catalogs" object in the lockfile
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
+                    bstr::BStr::new(specifier_str[b"catalog:".len()..].trim_ascii()),
+                    bstr::BStr::new(name_str)
+                ),
+            );
+            return Err(ParseAppendDependenciesError::PnpmLockfileMissingCatalogEntry);
+        };
+
+        dep.behavior = behavior;
+
+        lockfile.buffers.dependencies.push(dep);
+        return Ok(());
+    }
+
+    let specifier = sbuf!(lockfile).append(specifier_str)?;
+    let specifier_sliced = specifier.sliced(string_bytes!(lockfile));
+
+    let dep = Dependency {
+        name: name.value,
+        name_hash: name.hash,
+        behavior,
+        version: match Dependency::parse(
+            name.value,
+            name.hash,
+            specifier_sliced.slice,
+            &specifier_sliced,
+            Some(&mut *log),
+            None,
+        ) {
+            Some(v) => v,
+            None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
+        },
+    };
+
+    lockfile.buffers.dependencies.push(dep);
+    Ok(())
+}
+
+const IMPORTER_DEPENDENCY_GROUPS: [(&[u8], dependency::Behavior); 3] = [
+    (b"dependencies", dependency::Behavior::PROD),
+    (b"devDependencies", dependency::Behavior::DEV),
+    (b"optionalDependencies", dependency::Behavior::OPTIONAL),
+];
+
+fn collect_manifest_peers(
+    manifest: &Expr,
+) -> Result<StringArrayHashMap<(&'static [u8], bool)>, AllocError> {
+    let mut peers: StringArrayHashMap<(&'static [u8], bool)> = StringArrayHashMap::new();
+
+    if let Some(declared) = manifest.get_object(b"peerDependencies") {
+        for prop in e_object(&declared).properties.slice() {
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            if let (Some(name_str), Some(range)) = (as_string(key), as_string(value)) {
+                peers.put(name_str, (range, false))?;
+            }
+        }
+    }
+
+    if let Some(meta) = manifest.get_object(b"peerDependenciesMeta") {
+        for prop in e_object(&meta).properties.slice() {
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            let Some(name_str) = as_string(key) else {
+                continue;
+            };
+            if value.get(b"optional").and_then(|e| e.as_bool()) != Some(true) {
+                continue;
+            }
+            match peers.get_mut(name_str) {
+                Some(entry) => entry.1 = true,
+                None => peers.put(name_str, (b"*", true))?,
+            }
+        }
+    }
+
+    Ok(peers)
+}
+
 fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     pkg_expr: &Expr,
+    manifest: &Expr,
+    importer_path: &[u8],
+    exclude_links_from_lockfile: bool,
     log: &mut bun_ast::Log,
     is_root: bool,
     importers_obj: &Expr,
     importer_versions: &mut StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
-    const IMPORTER_DEPENDENCY_GROUPS: [(&[u8], dependency::Behavior); 3] = [
-        (b"dependencies", dependency::Behavior::PROD),
-        (b"devDependencies", dependency::Behavior::DEV),
-        (b"optionalDependencies", dependency::Behavior::OPTIONAL),
-    ];
+    let manifest_peers = collect_manifest_peers(manifest)?;
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -1845,9 +2068,6 @@ fn parse_append_importer_dependencies(
                 let Some(name_str) = as_string(key) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
-
-                let name_hash = semver::string::Builder::string_hash(name_str);
-                let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
                 let Some(specifier_expr) = value.get(b"specifier") else {
                     log.add_error_fmt(
@@ -1896,67 +2116,68 @@ fn parse_append_importer_dependencies(
                 }
                 *entry.value_ptr = Box::from(remove_suffix(version_str));
 
+                // pnpm records an importer's auto-installed peers under `dependencies`; the peer edge comes from package.json below.
+                if manifest_peers.count() > 0
+                    && manifest_peers.contains(name_str)
+                    && manifest
+                        .get(group_name)
+                        .is_none_or(|group| group.get(name_str).is_none())
+                {
+                    continue;
+                }
+
                 let Some(specifier_str) = as_string(&specifier_expr) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
-                if strings::has_prefix(specifier_str, b"catalog:") {
-                    let mut catalog_group_name_str =
-                        specifier_str[b"catalog:".len()..].trim_ascii();
-                    if catalog_group_name_str == b"default" {
-                        catalog_group_name_str = b"";
-                    }
-                    let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
-                    // `CatalogMap::get` needs both `&mut self.catalogs` and
-                    // `&self`; temporarily move catalogs out so the disjoint
-                    // fields can be borrowed.
-                    let catalogs = core::mem::take(&mut lockfile.catalogs);
-                    let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
-                    lockfile.catalogs = catalogs;
-                    let Some(mut dep) = dep_result else {
-                        // catalog is missing an entry in the "catalogs" object in the lockfile
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
-                                bstr::BStr::new(specifier_str[b"catalog:".len()..].trim_ascii()),
-                                bstr::BStr::new(name_str)
-                            ),
-                        );
-                        return Err(ParseAppendDependenciesError::PnpmLockfileMissingCatalogEntry);
-                    };
+                append_importer_dependency(lockfile, log, name_str, specifier_str, group_behavior)?;
+            }
+        }
+    }
 
-                    dep.behavior = group_behavior;
+    for (peer_name, (range, optional)) in manifest_peers.iter() {
+        let peer_name: &[u8] = peer_name;
+        if !*optional && !importer_versions.contains(peer_name) {
+            log.add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "pnpm-lock.yaml does not record peer dependency '{}' of importer '{}'; the next bun install will resolve it",
+                    bstr::BStr::new(peer_name),
+                    bstr::BStr::new(importer_path)
+                ),
+            );
+        }
+        let mut behavior = dependency::Behavior::PEER;
+        behavior.set_optional(*optional);
+        append_importer_dependency(lockfile, log, peer_name, *range, behavior)?;
+    }
 
-                    lockfile.buffers.dependencies.push(dep);
+    if exclude_links_from_lockfile {
+        for (group_name, _) in IMPORTER_DEPENDENCY_GROUPS {
+            let Some(group) = manifest.get_object(group_name) else {
+                continue;
+            };
+            for prop in e_object(&group).properties.slice() {
+                let key = prop.key.as_ref().expect("infallible: prop has key");
+                let value = prop.value.as_ref().expect("infallible: prop has value");
+                let (Some(name_str), Some(spec)) = (as_string(key), as_string(value)) else {
+                    continue;
+                };
+                if !strings::has_prefix_comptime(spec, b"link:")
+                    || importer_versions.contains(name_str)
+                {
                     continue;
                 }
-
-                let specifier = sbuf!(lockfile).append(specifier_str)?;
-                let specifier_sliced = specifier.sliced(string_bytes!(lockfile));
-
-                let behavior: dependency::Behavior = group_behavior;
-
-                // TODO: find peerDependencies from package.json
-                let dep = Dependency {
-                    name: name.value,
-                    name_hash: name.hash,
-                    behavior,
-                    version: match Dependency::parse(
-                        name.value,
-                        name.hash,
-                        specifier_sliced.slice,
-                        &specifier_sliced,
-                        Some(&mut *log),
-                        None,
-                    ) {
-                        Some(v) => v,
-                        None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
-                    },
-                };
-
-                lockfile.buffers.dependencies.push(dep);
+                log.add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "pnpm-lock.yaml omits linked dependency '{}' of importer '{}' (excludeLinksFromLockfile); it is not migrated",
+                        bstr::BStr::new(name_str),
+                        bstr::BStr::new(importer_path)
+                    ),
+                );
             }
         }
     }

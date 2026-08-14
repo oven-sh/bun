@@ -2039,14 +2039,20 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
-            // `bun update <name>`: every `<name>` slot, else other resolutions stay pinned.
-            UpdateRequest::contains_name(
+            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
+            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+            (UpdateRequest::contains_name(
                 &this.update_requests,
                 dependency.name_hash,
-                dependency
-                    .name
-                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
-            )
+                dependency.name.slice(string_buf),
+            ) || (name_hash != dependency.name_hash
+                && UpdateRequest::contains_name(
+                    &this.update_requests,
+                    name_hash,
+                    name.slice(string_buf),
+                )))
+                && crate::update_scope::UpdateScope::of(&*this)
+                    .contains_dependency(&this.lockfile, dependency_id)
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
@@ -2435,10 +2441,7 @@ fn get_or_put_resolved_package(
 
             // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
             let latest_for_target = !version_was_replaced
-                && matches!(
-                    version.tag,
-                    dependency::version::Tag::Npm | dependency::version::Tag::DistTag
-                )
+                && version.tag == dependency::version::Tag::Npm
                 && this.to_update
                 && this.update_requests.is_empty()
                 && this

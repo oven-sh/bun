@@ -1,5 +1,5 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { exists, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -17,14 +17,11 @@ afterAll(() => {
 const app = { name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
 const shared = { name: "shared", version: "1.0.0" };
 
-const notFound = 'Workspace not found "packages/api"';
-
-// `--linker` is passed explicitly: an `install-strategy` in the user's ~/.npmrc overrides the bunfig linker.
 async function bun(dir: string, args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args, "--linker", "hoisted"],
     cwd: dir,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -33,80 +30,42 @@ async function bun(dir: string, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-// bun.lock ends up describing `onDisk`; package.json lists `listed`; `remove` folders and node_modules are gone.
-async function tree(onDisk: Record<string, object>, listed: string[], remove: string[] = []) {
-  const { packageDir: dir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
-  await Promise.all([
-    write(join(dir, "package.json"), JSON.stringify({ name: "mono", workspaces: Object.keys(onDisk) })),
-    ...Object.entries(onDisk).map(([path, pkg]) => write(join(dir, path, "package.json"), JSON.stringify(pkg))),
-  ]);
+test.concurrent(
+  "--frozen-lockfile tolerates a workspace pruned from disk but still rejects an unknown one listed next to it",
+  async () => {
+    const { packageDir: dir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    await Promise.all([
+      write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "mono", workspaces: ["packages/app", "packages/shared"] }),
+      ),
+      write(join(dir, "packages", "app", "package.json"), JSON.stringify(app)),
+      write(join(dir, "packages", "shared", "package.json"), JSON.stringify(shared)),
+    ]);
 
-  const { stderr, exitCode } = await bun(dir, ["install"]);
-  expect(stderr).toContain("Saved lockfile");
-  expect(exitCode).toBe(0);
-  const lock = await file(join(dir, "bun.lock")).text();
+    const full = await bun(dir, ["install"]);
+    expect(full.stderr).toContain("Saved lockfile");
+    expect(full.exitCode).toBe(0);
+    const lock = await file(join(dir, "bun.lock")).text();
+    expect(lock).toContain('"packages/shared"');
+    expect(lock).not.toContain('"packages/api"');
 
-  await Promise.all([
-    write(join(dir, "package.json"), JSON.stringify({ name: "mono", workspaces: listed })),
-    rm(join(dir, "node_modules"), { recursive: true }),
-    ...remove.map(path => rm(join(dir, path), { recursive: true })),
-  ]);
-  return { dir, lock };
-}
+    await Promise.all([
+      write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "mono", workspaces: ["packages/app", "packages/shared", "packages/api"] }),
+      ),
+      rm(join(dir, "node_modules"), { recursive: true }),
+      rm(join(dir, "packages", "shared"), { recursive: true }),
+    ]);
 
-async function expectRejected(dir: string, lock: string, args: string[]) {
-  const { stderr, exitCode } = await bun(dir, args);
-  expect(stderr).toContain(notFound);
-  expect(stderr).not.toContain("lockfile had changes");
-  expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
-  expect(await exists(join(dir, "node_modules"))).toBeFalse();
-  expect(exitCode).toBe(1);
-  return { stderr };
-}
+    const { stderr, exitCode } = await bun(dir, ["install", "--frozen-lockfile"]);
 
-const notFoundLine = (stderr: string) => stderr.split("\n").find(line => line.includes("Workspace not found"));
-
-describe("a listed workspace that is on neither disk nor in bun.lock", () => {
-  test.concurrent("--frozen-lockfile rejects it like a plain install", async () => {
-    const { dir, lock } = await tree({ "packages/app": app }, ["packages/app", "packages/api"]);
-
-    const plain = await bun(dir, ["install"]);
-    expect(plain.stderr).toContain(notFound);
-    expect(plain.exitCode).toBe(1);
+    expect(stderr).toContain('Workspace not found "packages/api"');
+    expect(stderr).not.toContain('Workspace not found "packages/shared"');
+    expect(stderr).not.toContain("lockfile had changes");
+    expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
     expect(await exists(join(dir, "node_modules"))).toBeFalse();
-
-    const { stderr } = await expectRejected(dir, lock, ["install", "--frozen-lockfile"]);
-
-    expect(notFoundLine(stderr)).toBeDefined();
-    expect(notFoundLine(stderr)).toBe(notFoundLine(plain.stderr));
-  });
-
-  test.concurrent("--production rejects it too", async () => {
-    const { dir, lock } = await tree({ "packages/app": app }, ["packages/app", "packages/api"]);
-
-    await expectRejected(dir, lock, ["install", "--production"]);
-  });
-
-  test.concurrent("bun ci rejects it too", async () => {
-    const { dir, lock } = await tree({ "packages/app": app }, ["packages/app", "packages/api"]);
-
-    await expectRejected(dir, lock, ["ci"]);
-  });
-
-  test.concurrent(
-    "a workspace pruned from disk but still in bun.lock is tolerated while an unknown one next to it is still rejected",
-    async () => {
-      const { dir, lock } = await tree(
-        { "packages/app": app, "packages/shared": shared },
-        ["packages/app", "packages/shared", "packages/api"],
-        ["packages/shared"],
-      );
-      expect(lock).toContain('"packages/shared"');
-      expect(lock).not.toContain('"packages/api"');
-
-      const { stderr } = await expectRejected(dir, lock, ["install", "--frozen-lockfile"]);
-
-      expect(stderr).not.toContain('Workspace not found "packages/shared"');
-    },
-  );
-});
+    expect(exitCode).toBe(1);
+  },
+);

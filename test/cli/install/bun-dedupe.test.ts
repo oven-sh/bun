@@ -45,6 +45,54 @@ function nodeModulesVersion(packageDir: string, ...segments: string[]) {
     .then(pkg => pkg.version);
 }
 
+async function expectAlreadyDeduplicated(dir: string) {
+  const check = await dedupe(dir, "--check");
+  expect(check.stdout).toContain("Already deduplicated.");
+  expect(check.exitCode).toBe(0);
+}
+
+async function expectRefused(dir: string, ...args: string[]) {
+  const { stdout, stderr, exitCode } = await dedupe(dir, ...args);
+  expect(normalizeBunSnapshot(stderr)).toContain(
+    "error: the lockfile is out of date with package.json, nothing was deduplicated",
+  );
+  expect(normalizeBunSnapshot(stderr)).toContain("note: run 'bun install' first");
+  expect(stdout).not.toContain("duplicate");
+  expect(stdout).not.toContain("Removed");
+  expect(exitCode).toBe(1);
+}
+
+// bun.lock writes one package entry per line; edits the entry whose line starts with `entryPrefix`.
+function editLockEntry(lockfile: string, entryPrefix: string, from: string, to: string) {
+  const lines = lockfile.split("\n");
+  const i = lines.findIndex(line => line.trimStart().startsWith(entryPrefix));
+  expect(i).not.toBe(-1);
+  expect(lines[i]).toContain(from);
+  lines[i] = lines[i].replace(from, to);
+  return lines.join("\n");
+}
+
+// Same trick as 'never upgrades past the locked version': widen the range in both files, keeping the locked resolution.
+async function widen(packageDir: string, packageJsonPath: string, name: string, range: string) {
+  const [pkg, lockfile] = await Promise.all([file(packageJsonPath).json(), lock(packageDir)]);
+  const from = `"${name}": "${pkg.dependencies[name]}"`;
+  expect(lockfile.split(from)).toHaveLength(2);
+  pkg.dependencies[name] = range;
+  await Promise.all([
+    write(packageJsonPath, JSON.stringify(pkg)),
+    write(join(packageDir, "bun.lock"), lockfile.replace(from, `"${name}": "${range}"`)),
+  ]);
+}
+
+const noDepsPatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
 // A still-satisfied range edge is never re-resolved by a later install, so adding an exact pin afterwards leaves a duplicate.
 async function installTwice(packageDir: string, packageJson: string, first: object, second: object) {
   await write(packageJson, JSON.stringify(first));
@@ -254,7 +302,17 @@ test.concurrent("override range wins over the edge's own range", async () => {
     '\n  "packages": {',
     '\n  "overrides": {\n    "no-deps": "1.1.0",\n  },\n  "packages": {',
   );
-  await write(join(packageDir, "bun.lock"), withOverride);
+  await Promise.all([
+    write(join(packageDir, "bun.lock"), withOverride),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0" },
+        overrides: { "no-deps": "1.1.0" },
+      }),
+    ),
+  ]);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -304,7 +362,6 @@ test.concurrent("--help", async () => {
 
 test.concurrent("works with the isolated linker", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
-  // `--linker` is passed explicitly: an `install-strategy` in the user's ~/.npmrc overrides the bunfig linker.
   const install = async (...args: string[]) => {
     const result = await run(packageDir, "install", ...args, "--linker", "isolated");
     expect(result.stderr).not.toContain("error:");
@@ -388,7 +445,7 @@ test.concurrent("duplicate held only by an optional peer edge is deduplicated", 
   const after = await lock(packageDir);
   expect(after).toContain('"no-deps@1.0.0"');
   expect(after).not.toContain('"no-deps@1.1.0"');
-  expect((await dedupe(packageDir, "--check")).exitCode).toBe(0);
+  await expectAlreadyDeduplicated(packageDir);
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
@@ -551,7 +608,9 @@ test.concurrent("--check never creates node_modules", async () => {
   expect(await lock(packageDir)).toBe(lockBefore);
 
   await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
-  await dedupe(packageDir);
+  const apply = await dedupe(packageDir);
+  expect(apply.stdout).toContain("Removed 1 duplicate version: no-deps@1.1.0");
+  expect(apply.exitCode).toBe(0);
   const lockDeduped = await lock(packageDir);
   await rm(join(packageDir, "node_modules"), { recursive: true });
 
@@ -589,9 +648,9 @@ test.concurrent("never upgrades past the locked version", async () => {
 });
 
 test.concurrent.each([
-  ["--ignore-scripts", false],
-  [undefined, true],
-])("root lifecycle scripts with %s", async (flag, runs) => {
+  ["skipped with --ignore-scripts", ["--ignore-scripts"], false],
+  ["run by default", [], true],
+])("root lifecycle scripts are %s", async (_, flags, runs) => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await setupRangeDuplicate(packageDir, packageJson);
   // Added after setup so only the dedupe run can create the marker.
@@ -599,7 +658,7 @@ test.concurrent.each([
   await write(packageJson, JSON.stringify({ ...pkg, scripts: { postinstall: "echo ran > postinstall.txt" } }));
   const marker = join(packageDir, "postinstall.txt");
 
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, ...(flag ? [flag] : []));
+  const { stdout, stderr, exitCode } = await dedupe(packageDir, ...flags);
   expect(stdout).toContain("Removed 1 duplicate version: no-deps@1.1.0");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
@@ -607,7 +666,7 @@ test.concurrent.each([
   expect(await exists(marker)).toBe(runs);
 });
 
-// "Fewest versions" policy (pnpm/pnpm#4753, #6762): a direct dependency may be moved to an older version that still satisfies its range.
+// A direct dependency only moves down when that is the only way to drop a version (pnpm would keep both, pnpm/pnpm#4753, #6762).
 test.concurrent("root range collapses onto a transitive exact pin", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(
@@ -739,25 +798,485 @@ test.concurrent("--silent keeps the exit codes", async () => {
   expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
 });
 
-// dedupe runs against the ranges recorded in bun.lock; a stale package.json is applied by the install that follows.
-test.concurrent("stale package.json is resolved after the dedupe", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
-  await setupRangeDuplicate(packageDir, packageJson);
-  await write(
+// The workspace fixture: root pins no-deps@1.0.0, packages/a -> one-range-dep -> no-deps@1.1.0.
+async function setupWorkspaceDuplicate(packageDir: string, packageJson: string, workspacePackageJson: object) {
+  const workspaceDir = join(packageDir, "packages", "a");
+  await write(join(workspaceDir, "package.json"), JSON.stringify(workspacePackageJson));
+  const lockfile = await installTwice(
+    packageDir,
     packageJson,
-    JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "^2.0.0" } }),
+    { name: "root", workspaces: ["packages/*"] },
+    { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
   );
+  expect(lockfile).toContain('"no-deps@1.0.0"');
+  expect(lockfile).toContain('"no-deps@1.1.0"');
+  return workspaceDir;
+}
+
+type StaleFixture = { packageDir: string; cwds: string[]; afterRefusal?: () => Promise<void> };
+
+// Every edit is still satisfied by the locked versions, so the refusal is about the ranges, not about re-resolution.
+test.concurrent.each<[string, () => Promise<StaleFixture>]>([
+  [
+    "a root dependency range",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      await setupRangeDuplicate(packageDir, packageJson);
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "^1.0.0" } }),
+      );
+      const nested = () => nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps");
+      expect(await nested()).toBe("1.1.0");
+      return {
+        packageDir,
+        cwds: [packageDir],
+        async afterRefusal() {
+          expect(await nested()).toBe("1.1.0");
+          // The current range lets root move up onto 1.1.0; the recorded exact range would have removed it instead.
+          await runBunInstall(installEnv(packageDir), packageDir);
+          const { stdout, stderr, exitCode } = await dedupe(packageDir);
+          expect(firstLines(stdout, 2)).toEqual([
+            "bun dedupe <version> (<revision>)",
+            "Removed 1 duplicate version: no-deps@1.0.0",
+          ]);
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+          expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+        },
+      };
+    },
+  ],
+  [
+    "an override",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      await setupRangeDuplicate(packageDir, packageJson);
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0" },
+          overrides: { "no-deps": "1.1.0" },
+        }),
+      );
+      return {
+        packageDir,
+        cwds: [packageDir],
+        async afterRefusal() {
+          await runBunInstall(installEnv(packageDir), packageDir);
+          const lockfile = await lock(packageDir);
+          expect(lockfile).toContain('"overrides"');
+          expect(lockfile).not.toContain('"no-deps@1.0.0"');
+          await expectAlreadyDeduplicated(packageDir);
+        },
+      };
+    },
+  ],
+  [
+    "a catalog entry",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      // Same steps as 'honours catalog ranges', then the catalog entry is edited without installing.
+      const root = (catalogRange: string, dependencies?: Record<string, string>) =>
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          catalog: { "no-deps": catalogRange },
+          dependencies,
+        });
+      await Promise.all([
+        write(packageJson, root("1.0.0")),
+        write(
+          join(packageDir, "packages", "a", "package.json"),
+          JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:" } }),
+        ),
+      ]);
+      await runBunInstall(installEnv(packageDir), packageDir);
+      await write(packageJson, root("^1.0.0"));
+      await runBunInstall(installEnv(packageDir), packageDir);
+      await write(packageJson, root("^1.0.0", { "no-deps": "1.1.0" }));
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const lockfile = await lock(packageDir);
+      expect(lockfile).toContain('"no-deps@1.0.0"');
+      expect(lockfile).toContain('"no-deps@1.1.0"');
+      await write(packageJson, root(">=1.0.0", { "no-deps": "1.1.0" }));
+      return { packageDir, cwds: [packageDir] };
+    },
+  ],
+  [
+    "a workspace package's dependencies",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const workspaceDir = await setupWorkspaceDuplicate(packageDir, packageJson, {
+        name: "a",
+        dependencies: { "one-range-dep": "1.0.0" },
+      });
+      await write(
+        join(workspaceDir, "package.json"),
+        JSON.stringify({ name: "a", dependencies: { "one-range-dep": "^1.0.0" } }),
+      );
+      return { packageDir, cwds: [packageDir, workspaceDir] };
+    },
+  ],
+])("refuses to dedupe when %s changed since the last install", async (_, setup) => {
+  const { packageDir, cwds, afterRefusal } = await setup();
+  const lockBefore = await lock(packageDir);
+
+  for (const cwd of cwds) {
+    await expectRefused(cwd, "--check");
+    expect(await lock(packageDir)).toBe(lockBefore);
+    await expectRefused(cwd);
+    expect(await lock(packageDir)).toBe(lockBefore);
+  }
+
+  await afterRefusal?.();
+});
+
+// The gate is the dependency diff: diffs the differ reports on every install of an in-sync tree must not refuse.
+test.concurrent.each([
+  [
+    "trustedDependencies",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      await setupRangeDuplicate(packageDir, packageJson);
+      const pkg = await file(packageJson).json();
+      await write(packageJson, JSON.stringify({ ...pkg, trustedDependencies: ["no-deps"] }));
+      return packageDir;
+    },
+  ],
+  [
+    "a workspace lifecycle script",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      await setupWorkspaceDuplicate(packageDir, packageJson, {
+        name: "a",
+        dependencies: { "one-range-dep": "1.0.0" },
+        scripts: { postinstall: "exit 0" },
+      });
+      return packageDir;
+    },
+  ],
+  [
+    "package.json formatting",
+    async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      await setupRangeDuplicate(packageDir, packageJson);
+      await write(
+        packageJson,
+        JSON.stringify(
+          { description: "reformatted", dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" }, name: "foo" },
+          null,
+          2,
+        ),
+      );
+      return packageDir;
+    },
+  ],
+])("still dedupes when only %s changed", async (_, setup) => {
+  const packageDir = await setup();
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
-  expect(stdout).toContain("Removed 1 duplicate version: no-deps@1.1.0");
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: no-deps@1.1.0",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+test.concurrent("a direct dependency is not moved when its version survives anyway", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "no-deps": "1.0.1", "dwt": "npm:dep-with-tags@^1.0.0" } },
+    {
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.0.0",
+        "one-dep": "1.0.0",
+        "one-fixed-dep": "1.0.0",
+        "has-bin-entries": "1.0.0",
+        "dwt": "npm:dep-with-tags@^1.0.0",
+        "dwt0": "npm:dep-with-tags@1.0.0",
+      },
+    },
+  );
+  for (const label of ['"no-deps@1.0.0"', '"no-deps@1.0.1"', '"dep-with-tags@1.0.0"', '"dep-with-tags@1.0.1"']) {
+    expect(lockfile).toContain(label);
+  }
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.1");
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: dep-with-tags@1.0.1",
+  ]);
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
   const after = await lock(packageDir);
-  expect(after).toContain('"no-deps@2.0.0"');
+  expect(after).toContain('"no-deps@1.0.0"');
+  expect(after).toContain('"no-deps@1.0.1"');
+  expect(after).not.toContain('"dep-with-tags@1.0.1"');
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.1");
+  expect(await nodeModulesVersion(packageDir, "dwt")).toBe("1.0.0");
+  await expectAlreadyDeduplicated(packageDir);
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+// no-deps ends up as: direct ^1.0.0 @1.1.0, `<=1.0.1` @1.0.1, `>=1.0.1` @1.0.1, exact 1.0.0 — {1.0.0, 1.1.0} and {1.0.0, 1.0.1} are equally small covers.
+test.concurrent.each(["root", "workspace"])(
+  "prefers dropping the version that keeps the direct dependency in place (%s)",
+  async variant => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const rootExtras = { "one-fixed-dep": "1.0.0", "one-dep": "1.0.0", "normal-dep-and-dev-dep": "1.0.0" };
+    if (variant === "root") {
+      await write(packageJson, JSON.stringify({ name: "root", dependencies: { "no-deps": "^1.0.0" } }));
+      await runBunInstall(installEnv(packageDir), packageDir);
+      await write(packageJson, JSON.stringify({ name: "root", dependencies: { "no-deps": "^1.0.0", ...rootExtras } }));
+    } else {
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+        write(
+          join(packageDir, "packages", "a", "package.json"),
+          JSON.stringify({ name: "a", dependencies: { "no-deps": "^1.0.0" } }),
+        ),
+      ]);
+      await runBunInstall(installEnv(packageDir), packageDir);
+      await write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: rootExtras }));
+    }
+    await runBunInstall(installEnv(packageDir), packageDir);
+    let lockfile = await lock(packageDir);
+    for (const label of ['"no-deps@1.0.0"', '"no-deps@1.0.1"', '"no-deps@1.1.0"']) {
+      expect(lockfile).toContain(label);
+    }
+    lockfile = editLockEntry(lockfile, '"one-dep": ["one-dep@1.0.0"', '"no-deps": "1.0.1"', '"no-deps": "<=1.0.1"');
+    lockfile = editLockEntry(
+      lockfile,
+      '"normal-dep-and-dev-dep": ["normal-dep-and-dev-dep@1.0.0"',
+      '"no-deps": "1.0.1"',
+      '"no-deps": ">=1.0.1"',
+    );
+    await write(join(packageDir, "bun.lock"), lockfile);
+
+    const check = await dedupe(packageDir, "--check");
+    expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
+      "bun dedupe <version> (<revision>)
+      1 duplicate version can be removed: no-deps@1.0.1"
+    `);
+    expect(check.exitCode).toBe(1);
+
+    const { stdout, stderr, exitCode } = await dedupe(packageDir);
+    expect(firstLines(stdout, 2)).toEqual([
+      "bun dedupe <version> (<revision>)",
+      "Removed 1 duplicate version: no-deps@1.0.1",
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const after = await lock(packageDir);
+    expect(after).toContain('"no-deps@1.1.0"');
+    expect(after).toContain('"no-deps@1.0.0"');
+    expect(after).not.toContain('"no-deps@1.0.1"');
+    if (variant === "root") {
+      expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+    }
+    await expectAlreadyDeduplicated(packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+  },
+);
+
+// pnpm/pnpm#4753 direct-dependency weighting: when the direct edge's own version is dropped, it moves to the highest survivor.
+test.concurrent("a direct range whose version is dropped moves up, not down", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "a-dep": "1.0.5", "uses-a-dep-3": "1.0.0", "uses-a-dep-10": "1.0.0" },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "b", "package.json"),
+      JSON.stringify({ name: "b", dependencies: { "a-dep": "1.0.3" } }),
+    ),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await widen(packageDir, packageJson, "a-dep", "^1.0.0");
+  const lockfile = await lock(packageDir);
+  for (const label of ['"a-dep@1.0.3"', '"a-dep@1.0.5"', '"a-dep@1.0.10"']) {
+    expect(lockfile).toContain(label);
+  }
+  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.5");
+
+  const check = await dedupe(packageDir, "--check");
+  expect(normalizeBunSnapshot(check.stdout)).toMatchInlineSnapshot(`
+    "bun dedupe <version> (<revision>)
+    1 duplicate version can be removed: a-dep@1.0.5"
+  `);
+  expect(check.exitCode).toBe(1);
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: a-dep@1.0.5",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const after = await lock(packageDir);
+  expect(after).toContain('"a-dep@1.0.3"');
+  expect(after).toContain('"a-dep@1.0.10"');
+  expect(after).not.toContain('"a-dep@1.0.5"');
+  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+  await expectAlreadyDeduplicated(packageDir);
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+// a-dep@1.0.3 has more edges than root's 1.0.10, but both versions must stay, so removing no-deps@1.1.0 must not drag root down.
+test.concurrent("removing one name does not downgrade an unrelated direct dependency", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(
+    join(packageDir, "packages", "b", "package.json"),
+    JSON.stringify({ name: "b", dependencies: { "a-dep": "1.0.3" } }),
+  );
+  const rootDeps = { "a-dep": "^1.0.0", "uses-a-dep-3": "1.0.0", "uses-a-dep-10": "1.0.0", "one-range-dep": "1.0.0" };
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "root", workspaces: ["packages/*"], dependencies: rootDeps },
+    { name: "root", workspaces: ["packages/*"], dependencies: { ...rootDeps, "no-deps": "1.0.0" } },
+  );
+  for (const label of ['"a-dep": ["a-dep@1.0.10"', '"a-dep@1.0.3"', '"no-deps@1.0.0"', '"no-deps@1.1.0"']) {
+    expect(lockfile).toContain(label);
+  }
+  expect(lockfile).not.toContain('"uses-a-dep-10/a-dep"');
+  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: no-deps@1.1.0",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const after = await lock(packageDir);
+  expect(after).toContain('"a-dep": ["a-dep@1.0.10"');
+  expect(after).toContain('"a-dep@1.0.3"');
+  expect(after).not.toContain('"uses-a-dep-10/a-dep"');
   expect(after).not.toContain('"no-deps@1.1.0"');
-  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("2.0.0");
-  expect((await dedupe(packageDir, "--check")).exitCode).toBe(0);
+  expect(await nodeModulesVersion(packageDir, "a-dep")).toBe("1.0.10");
+  await expectAlreadyDeduplicated(packageDir);
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+test.concurrent("a workspace member's own range moves up when run from the member directory", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const memberDir = join(packageDir, "packages", "b");
+  const memberPackageJson = join(memberDir, "package.json");
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "a-dep": "1.0.3", "uses-a-dep-3": "1.0.0", "uses-a-dep-10": "1.0.0" },
+      }),
+    ),
+    write(memberPackageJson, JSON.stringify({ name: "b", dependencies: { "a-dep": "1.0.5" } })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await widen(packageDir, memberPackageJson, "a-dep", "^1.0.0");
+  const lockfile = await lock(packageDir);
+  for (const label of ['"a-dep": ["a-dep@1.0.3"', '"b/a-dep": ["a-dep@1.0.5"', '"a-dep@1.0.10"']) {
+    expect(lockfile).toContain(label);
+  }
+  expect(await nodeModulesVersion(memberDir, "a-dep")).toBe("1.0.5");
+
+  const { stdout, stderr, exitCode } = await dedupe(memberDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: a-dep@1.0.5",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const after = await lock(packageDir);
+  expect(after).toContain('"a-dep": ["a-dep@1.0.3"');
+  expect(after).toContain('"b/a-dep": ["a-dep@1.0.10"');
+  expect(after).not.toContain('"a-dep@1.0.5"');
+  expect(await nodeModulesVersion(memberDir, "a-dep")).toBe("1.0.10");
+  expect(await exists(join(memberDir, "bun.lock"))).toBeFalse();
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+test.concurrent("ranges collapse onto the version a dist-tag resolved to", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "dwt": "npm:dep-with-tags@>=1.0.0" } },
+    { name: "foo", dependencies: { "dwt": "npm:dep-with-tags@>=1.0.0", "dep-with-tags": "latest" } },
+  );
+  expect(lockfile).toContain('"dep-with-tags@3.0.0"');
+  expect(lockfile).toContain('"dep-with-tags@3.0.1"');
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: dep-with-tags@3.0.1",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await lock(packageDir)).not.toContain('"dep-with-tags@3.0.1"');
+  expect(await nodeModulesVersion(packageDir, "dep-with-tags")).toBe("3.0.0");
+  expect(await nodeModulesVersion(packageDir, "dwt")).toBe("3.0.0");
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+// The patched version pins root's now-ranged direct edge, so the transitive edge collapses down onto it.
+test.concurrent("a patched version wins over keeping the direct dependency's higher version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+      }),
+    ),
+    write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await widen(packageDir, packageJson, "no-deps", "^1.0.0");
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"');
+  expect(lockfile).toContain('"no-deps@1.1.0"');
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "patched.txt"))).toBeTrue();
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expect(firstLines(stdout, 2)).toEqual([
+    "bun dedupe <version> (<revision>)",
+    "Removed 1 duplicate version: no-deps@1.1.0",
+  ]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const after = await lock(packageDir);
+  expect(after).toContain('"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"');
+  expect(after).toContain('"no-deps": ["no-deps@1.0.0"');
+  expect(after).not.toContain('"no-deps@1.1.0"');
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "patched.txt"))).toBeTrue();
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
@@ -865,19 +1384,24 @@ test.concurrent("bundled edges are never re-pointed", async () => {
   expect(after).not.toContain('"no-deps@1.1.0"');
 });
 
-// pnpm/pnpm#11238, #10329, #8446: dedupe never re-resolves, so it works with the registry down and ignores minimumReleaseAge.
+// pnpm/pnpm#11238, #10329, #8446: dedupe never re-resolves, so it sends no registry request and ignores minimumReleaseAge.
 test.concurrent("does not contact the registry", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await setupRangeDuplicate(packageDir, packageJson);
-  const closed = Bun.listen({ hostname: "localhost", port: 0, socket: { data() {} } });
-  const port = closed.port;
-  closed.stop(true);
+  const requests: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname);
+      return new Response("registry must not be contacted", { status: 500 });
+    },
+  });
   await write(
     join(packageDir, "bunfig.toml"),
     Bun.TOML.stringify({
       install: {
         cache: join(packageDir, ".bun-cache"),
-        registry: `http://localhost:${port}/`,
+        registry: `http://localhost:${server.port}/`,
         minimumReleaseAge: 60 * 60 * 24 * 365 * 100,
       },
     }),
@@ -905,4 +1429,5 @@ test.concurrent("does not contact the registry", async () => {
   expect(recheck.stdout).toContain("Already deduplicated.");
   expect(recheck.stderr).not.toContain("error:");
   expect(recheck.exitCode).toBe(0);
+  expect(requests).toEqual([]);
 });

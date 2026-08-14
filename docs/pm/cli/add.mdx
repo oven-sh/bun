@@ -83,7 +83,7 @@ bun add --help
 
 ## `--catalog`
 
-In a workspace, `bun add react --catalog` resolves the version as usual, but writes it to the root `package.json` [catalog](/pm/catalogs) (`workspaces.catalog`, or `workspaces.catalogs.<name>` with `--catalog=<name>`) and adds `"react": "catalog:"` (or `"catalog:<name>"`) to the current package. An existing catalog entry is updated. Combine with `--exact`, `--dev`, etc. as usual.
+In a workspace, `bun add react --catalog` resolves the version as usual, but writes it to the root `package.json` [catalog](/pm/catalogs) (`workspaces.catalog`, or `workspaces.catalogs.<name>` with `--catalog=<name>`) and adds `"react": "catalog:"` (or `"catalog:<name>"`) to the current package. An entry that is already in the catalog is reused unless you give a version. Combine with `--exact`, `--dev`, etc. as usual.
 
 ```bash terminal icon="terminal"
 bun add react --catalog
@@ -112,20 +112,23 @@ bun add vitest --catalog=testing
 
 A few things to know, some of which differ from pnpm's `--save-catalog`:
 
-- If the catalog already has an entry for the package, it is replaced with the newly resolved version (`bun add react --catalog` moves every workspace package that depends on `"catalog:"` to the new version). pnpm leaves an existing entry alone.
-- The flag decides which catalog is used. If the current package already depends on `"react": "catalog:legacy"`, `bun add react --catalog` moves it to the default catalog; the old `legacy` entry is left in place.
+- If the catalog already has an entry for the package, `bun add react --catalog` leaves it alone and only writes `"react": "catalog:"` to the current package. `bun add react@19.1.0 --catalog` keeps an entry such as `^19.0.0` that the version satisfies and only changes which version is installed; any other version or range replaces the entry, which moves every package that depends on `"catalog:"` along with it.
+- Without a version, a range the current `package.json` already has (`"react": "^18.2.0"`) is what gets cataloged. The package is only resolved to its latest version when neither the catalog nor the `package.json` mentions it.
+- A package that already depends on `"react": "catalog:legacy"` stays in `legacy`, whatever name the flag carries: the `legacy` entry is reused, or replaced if you gave a version. With `--filter`, this is decided for each selected package.
 - `--catalog` and `--catalog=default` are the same catalog: the entry is written to whichever of `catalog` or `catalogs.default` the root `package.json` already defines (`catalog` is created when there is neither), so a repository migrated from pnpm never ends up with the package in both.
 - The recorded version is the one that was installed, so an entry in [`overrides`](/pm/overrides) for the package ends up in the catalog too.
 - The name must be attached with `=` (`--catalog=testing`); `--catalog testing` adds a package called `testing`.
 - pnpm's `--save-catalog` is spelled `--catalog` and `--save-catalog-name testing` is `--catalog=testing`; Bun silently skips flags it does not know, so the pnpm spellings add the package as an ordinary dependency (and `--save-catalog-name testing` also tries to add a package called `testing`) instead of failing.
-- Packages must be added by name (`react`, `react@^18`, `alias@npm:react`). Bare URLs, paths and `workspace:` versions are rejected.
+- Packages must be added by name (`react`, `react@^18`, `alias@npm:react`, `alias@https://example.com/react.tgz`). Bare URLs and paths, relative `file:`/`link:`/folder specs, and workspace packages (by name or via `workspace:`) are refused before anything is written.
 - The root `package.json` must have a `workspaces` field.
+
+Catalogs are also used without the flag: in a workspace whose default catalog lists `react`, `bun add react` with no version writes `"react": "catalog:"`, and a package that already depends on `"catalog:<name>"` keeps that reference. Pass a version (`bun add react@latest`) to write a concrete range instead.
 
 ## `--filter`
 
 <Note>**Alias** — `-F`</Note>
 
-In a monorepo, `--filter` adds the package to the matching workspace package(s) instead of the package in the current directory. Patterns match workspace names or paths (`./packages/*`), `*` matches every workspace including the root, and `!pattern` excludes. Repeat the flag to combine patterns. Every matching package is edited; if nothing matches, the command fails without touching anything, and a pattern that matches nothing while others do prints a warning. `bun remove` and `bun install <pkg>` accept the same flag. See [filtering](/pm/filter).
+In a monorepo, `--filter` adds the package to the matching workspace package(s) instead of the package in the current directory. Patterns match workspace names or paths (`./packages/*`), `*` matches every workspace package (not the root), and `!pattern` excludes; the `{dir}` and `...` relation selectors from the filtering page work here too (`--filter '{packages}'`, `--filter 'api...'`). Repeat the flag to combine patterns. Every matching package is edited; if nothing matches, the command fails without touching anything, and a pattern that matches nothing while others do prints a warning. `bun remove` and `bun install <pkg>` accept the same flag. See [filtering](/pm/filter).
 
 ```bash terminal icon="terminal"
 bun add zod --filter api
@@ -136,10 +139,11 @@ bun remove zod --filter '*' --filter '!api'
 
 A few things to know, some of which differ from pnpm:
 
-- The workspace root is selected by `*` and by filter sets made only of `!` patterns; exclude it explicitly with `--filter '!<root-name>'`. To target only the root, use its name or `--filter .` from the root directory.
+- The workspace root is only edited when a pattern names it: its name, `--filter .` from the root directory, `{.}`, or a relation that reaches it. `*` and filter sets made only of `!` patterns leave it alone (`--filter '*' --filter '<root-name>'` edits everything). A `package.json` without workspaces is still selected by `*`.
+- With a `...` relation, `bun add` and `bun remove` read the workspace links from `bun.lock`, so run `bun install` first in a fresh clone. The closure includes the named package itself unless you write `^` (`api^...`, `...^api`).
 - A `!` pattern always wins, whatever order the flags are given in: `--filter '!./packages/*' --filter api` selects nothing.
 - Name patterns are globs, and `*` does not cross `/`: `*-utils` does not match `@acme/date-utils`; use `*/*-utils` or `@acme/*`.
-- Path patterns must match a workspace directory exactly, relative to the current directory: `--filter ./packages` selects nothing, `--filter ./packages/*` selects every package in it, and `--filter .` only works from a workspace's own directory.
+- Path patterns must match a workspace directory exactly, relative to the current directory: `--filter ./packages` selects nothing, `--filter ./packages/*` or `--filter '{packages}'` selects every package in it, and `--filter .` only works from a workspace's own directory.
 - Local paths (`./vendor/logger`, `file:../logger`, `./logger.tgz`) are relative to the current directory and are re-spelled relative to each selected package (`"logger": "../../vendor/logger"` in `packages/api/package.json`).
 - The flag chooses which `package.json` files are edited, not what is installed: a single install of the whole workspace runs afterwards. The `package.json` files are written as soon as the lockfile is saved, so they agree with `bun.lock` even if a root `postinstall` script then fails.
 - The install summary is printed from the point of view of one selected workspace (the first one that received every requested package); the other selected `package.json` files get the same edits even though they are not listed in the output.

@@ -69,6 +69,9 @@ serve-static  <1.16.0
 
 21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)
 
+To upgrade only the vulnerable packages, within their declared ranges:
+  bun audit fix
+
 To update all dependencies to the latest compatible versions:
   bun update
 
@@ -418,6 +421,9 @@ exports[`\`bun audit\` should exit 1 and behave exactly the same when there are 
 
 2 vulnerabilities (1 high, 1 moderate)
 
+To upgrade only the vulnerable packages, within their declared ranges:
+  bun audit fix
+
 To update all dependencies to the latest compatible versions:
   bun update
 
@@ -434,6 +440,9 @@ exports[`\`bun audit\` when a project has some safe dependencies and some vulner
   high: Regular Expression Denial of Service in ms - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg
 
 2 vulnerabilities (1 high, 1 moderate)
+
+To upgrade only the vulnerable packages, within their declared ranges:
+  bun audit fix
 
 To update all dependencies to the latest compatible versions:
   bun update

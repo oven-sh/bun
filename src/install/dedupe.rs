@@ -1,8 +1,9 @@
-use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_core::{Global, Output, strings};
+use bun_collections::DynamicBitSet;
+use bun_collections::bit_set::Range;
+use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, LoadStep, Lockfile, PackageIndexEntry};
@@ -16,23 +17,124 @@ struct Pass<'a> {
     lockfile: &'a Lockfile,
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
-    pinned: &'a [bool],
-    edges: Vec<Vec<DependencyID>>,
+    pinned: &'a DynamicBitSet,
+    edges: Vec<Vec<(DependencyID, bool)>>,
     candidates: Vec<PackageID>,
-    sat: Vec<bool>,
-    movable: Vec<bool>,
+    edge_count: usize,
+    sat: DynamicBitSet,
+    movable: DynamicBitSet,
+    cur_c: Vec<usize>,
+    required: DynamicBitSet,
+    chosen: DynamicBitSet,
+    survivors: DynamicBitSet,
+    covered: DynamicBitSet,
+    voters: DynamicBitSet,
+    voted: DynamicBitSet,
     count: Vec<u32>,
+    protected: Vec<usize>,
 }
 
-impl Pass<'_> {
-    // Re-points the group edges owned by `voters` onto the best `live` version; also returns who voted.
-    fn vote(
-        &mut self,
-        cur: &[PackageID],
-        live: &[bool],
-        voters: &[bool],
-    ) -> (Vec<PackageID>, Vec<bool>) {
+impl<'a> Pass<'a> {
+    fn new(
+        lockfile: &'a Lockfile,
+        groups: &'a [Vec<PackageID>],
+        group_of: &'a [u32],
+        pinned: &'a DynamicBitSet,
+        max_candidates: usize,
+        max_edges: usize,
+    ) -> Pass<'a> {
+        let package_count = lockfile.packages.len();
+        Pass {
+            lockfile,
+            groups,
+            group_of,
+            pinned,
+            edges: vec![Vec::new(); groups.len()],
+            candidates: Vec::with_capacity(max_candidates),
+            edge_count: 0,
+            sat: DynamicBitSet::init_empty(max_edges * max_candidates).unwrap_or_oom(),
+            movable: DynamicBitSet::init_empty(max_edges).unwrap_or_oom(),
+            cur_c: Vec::with_capacity(max_edges),
+            required: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
+            chosen: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
+            survivors: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
+            covered: DynamicBitSet::init_empty(max_edges).unwrap_or_oom(),
+            voters: DynamicBitSet::init_empty(package_count).unwrap_or_oom(),
+            voted: DynamicBitSet::init_empty(package_count).unwrap_or_oom(),
+            count: Vec::with_capacity(max_candidates),
+            protected: Vec::new(),
+        }
+    }
+
+    // Greedy minimum cover of the group's edges seeded with `required`; candidates are ordered highest version first.
+    fn cover(&mut self) -> usize {
+        let n = self.candidates.len();
+        let m = self.edge_count;
+        self.required.copy_into(&mut self.chosen);
+        self.covered.unmanaged.set_all(false);
+        let mut uncovered = m;
+        let mut size = 0;
+        for c in 0..n {
+            if self.chosen.is_set(c) {
+                size += 1;
+                uncovered = self.mark_covered(c, uncovered);
+            }
+        }
+        while uncovered > 0 {
+            self.count.clear();
+            self.count.resize(n, 0);
+            for e in 0..m {
+                if self.covered.is_set(e) {
+                    continue;
+                }
+                let row = e * n;
+                for c in 0..n {
+                    self.count[c] += self.sat.is_set(row + c) as u32;
+                }
+            }
+            let mut best: Option<usize> = None;
+            for c in 0..n {
+                if self.chosen.is_set(c) || self.count[c] == 0 {
+                    continue;
+                }
+                if best.is_none_or(|b| self.count[c] > self.count[b]) {
+                    best = Some(c);
+                }
+            }
+            let Some(b) = best else {
+                debug_assert!(false, "every edge is satisfied by its own live target");
+                break;
+            };
+            self.chosen.set(b);
+            size += 1;
+            uncovered = self.mark_covered(b, uncovered);
+        }
+        size
+    }
+
+    fn mark_covered(&mut self, c: usize, mut uncovered: usize) -> usize {
+        let n = self.candidates.len();
+        for e in 0..self.edge_count {
+            if !self.covered.is_set(e) && self.sat.is_set(e * n + c) {
+                self.covered.set(e);
+                uncovered -= 1;
+            }
+        }
+        uncovered
+    }
+
+    fn placement(&self, e: usize) -> Option<usize> {
+        let n = self.candidates.len();
+        let row = e * n;
+        (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
+    }
+
+    // Keeps the fewest versions that satisfy every group edge owned by `voters` and re-points only edges whose version is dropped; `voted` records who voted.
+    fn vote(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
         let lockfile = self.lockfile;
+        let groups = self.groups;
+        let group_of = self.group_of;
+        let pinned = self.pinned;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
         let dep_slices = lockfile.packages.items_dependencies();
@@ -41,137 +143,149 @@ impl Pass<'_> {
         for edges in &mut self.edges {
             edges.clear();
         }
-        let mut voted = vec![false; dep_slices.len()];
+        self.voted.unmanaged.set_all(false);
         for (pkg_id, slice) in dep_slices.iter().enumerate() {
-            if !voters[pkg_id] {
+            if !self.voters.is_set(pkg_id) {
                 continue;
             }
+            let direct = matches!(
+                pkg_res[pkg_id].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
             for dep_id in slice.begin() as usize..slice.end() as usize {
                 let target = cur[dep_id];
                 if target == invalid_package_id {
                     continue;
                 }
-                let Some(&g) = self.group_of.get(target as usize) else {
+                let Some(&g) = group_of.get(target as usize) else {
                     continue;
                 };
                 if g == u32::MAX {
                     continue;
                 }
-                self.edges[g as usize].push(dep_id as DependencyID);
-                voted[pkg_id] = true;
+                self.edges[g as usize].push((dep_id as DependencyID, direct));
+                self.voted.set(pkg_id);
             }
         }
 
         let mut next: Vec<PackageID> = cur.to_vec();
-        for (g, group) in self.groups.iter().enumerate() {
-            let edges = &self.edges[g];
-            if edges.is_empty() {
+        for (g, group) in groups.iter().enumerate() {
+            if self.edges[g].is_empty() {
                 continue;
             }
             self.candidates.clear();
             self.candidates
-                .extend(group.iter().copied().filter(|&id| live[id as usize]));
-            let candidates = self.candidates.as_slice();
-            let n = candidates.len();
+                .extend(group.iter().copied().filter(|&id| live.is_set(id as usize)));
+            let n = self.candidates.len();
             if n < 2 {
                 continue;
             }
+            let edges = core::mem::take(&mut self.edges[g]);
             let m = edges.len();
-            self.sat.clear();
-            self.sat.resize(m * n, false);
-            self.movable.clear();
-            self.movable.resize(m, false);
-            self.count.clear();
-            self.count.resize(n, 0);
+            self.edge_count = m;
+            self.sat.set_range_value(
+                Range {
+                    start: 0,
+                    end: m * n,
+                },
+                false,
+            );
+            self.movable.unmanaged.set_all(false);
+            self.cur_c.clear();
+            self.cur_c.resize(m, 0);
+            self.required.unmanaged.set_all(false);
 
-            for (e, &dep_id) in edges.iter().enumerate() {
+            for (e, &(dep_id, _)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
-                let cur_c = candidates
+                let cur_c = self
+                    .candidates
                     .iter()
                     .position(|&c| c == target)
                     .expect("edge target is a live candidate of its group");
-                let row = &mut self.sat[e * n..(e + 1) * n];
+                self.cur_c[e] = cur_c;
+                let row = e * n;
 
-                let range = if self.pinned[target as usize] || dep.behavior.is_bundled() {
+                let range = if pinned.is_set(target as usize) || dep.behavior.is_bundled() {
                     None
                 } else {
                     effective_npm_range(lockfile, dep_id, dep)
                 };
                 match range {
-                    None => row[cur_c] = true,
+                    None => {
+                        self.sat.set(row + cur_c);
+                        self.required.set(cur_c);
+                    }
                     Some(range) => {
-                        self.movable[e] = true;
+                        self.movable.set(e);
                         let query = &range.npm().version;
-                        for (c, &id) in candidates.iter().enumerate() {
-                            row[c] = query.satisfies(pkg_res[id as usize].npm().version, buf, buf);
+                        for c in 0..n {
+                            let id = self.candidates[c];
+                            if query.satisfies(pkg_res[id as usize].npm().version, buf, buf) {
+                                self.sat.set(row + c);
+                            }
                         }
                     }
-                }
-                for (c, &ok) in row.iter().enumerate() {
-                    self.count[c] += ok as u32;
                 }
             }
 
-            for (e, &dep_id) in edges.iter().enumerate() {
-                if !self.movable[e] {
+            let base_size = self.cover();
+            self.chosen.copy_into(&mut self.survivors);
+
+            self.protected.clear();
+            for (e, &(_, direct)) in edges.iter().enumerate() {
+                if !direct || !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
                     continue;
                 }
-                let row = &self.sat[e * n..(e + 1) * n];
-                let mut best: Option<usize> = None;
-                for c in 0..n {
-                    if !row[c] {
-                        continue;
-                    }
-                    let Some(b) = best else {
-                        best = Some(c);
-                        continue;
-                    };
-                    let better = match self.count[c].cmp(&self.count[b]) {
-                        Ordering::Greater => true,
-                        Ordering::Less => false,
-                        Ordering::Equal => {
-                            let vc = pkg_res[candidates[c] as usize].npm().version;
-                            let vb = pkg_res[candidates[b] as usize].npm().version;
-                            match vc.order(vb, buf, buf) {
-                                Ordering::Greater => true,
-                                Ordering::Less => false,
-                                Ordering::Equal => candidates[c] < candidates[b],
-                            }
-                        }
-                    };
-                    if better {
-                        best = Some(c);
-                    }
-                }
-                if let Some(b) = best {
-                    next[dep_id as usize] = candidates[b];
+                if self.placement(e).is_some_and(|p| p > self.cur_c[e]) {
+                    self.protected.push(self.cur_c[e]);
                 }
             }
+            if !self.protected.is_empty() {
+                self.protected.sort_unstable();
+                self.protected.dedup();
+                for i in 0..self.protected.len() {
+                    let k = self.protected[i];
+                    if self.survivors.is_set(k) {
+                        continue;
+                    }
+                    self.required.set(k);
+                    if self.cover() == base_size {
+                        self.chosen.copy_into(&mut self.survivors);
+                    } else {
+                        self.required.unset(k);
+                    }
+                }
+            }
+
+            for (e, &(dep_id, _)) in edges.iter().enumerate() {
+                if !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
+                    continue;
+                }
+                if let Some(p) = self.placement(e) {
+                    next[dep_id as usize] = self.candidates[p];
+                }
+            }
+            self.edges[g] = edges;
         }
-        (next, voted)
+        next
     }
 
     // Packages the pass itself removes must not vote (pnpm/pnpm#9213): shrink voters until the outcome agrees.
-    fn settle(&mut self, cur: &[PackageID], live: &[bool]) -> Vec<PackageID> {
-        let mut voters = live.to_vec();
+    fn settle(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
+        live.copy_into(&mut self.voters);
         let mut best: Option<Vec<PackageID>> = None;
         loop {
-            let (next, voted) = self.vote(cur, live, &voters);
+            let next = self.vote(cur, live);
             let after = reachable(self.lockfile, &next);
-            if (0..after.len()).any(|p| after[p] && !voters[p]) {
+            if !after.unmanaged.subset_of(&self.voters.unmanaged) {
                 return best.unwrap_or(next);
             }
-            let mut died = false;
-            for p in 0..after.len() {
-                if voted[p] && !after[p] {
-                    voters[p] = false;
-                    died = true;
-                }
-            }
-            if !died {
+            self.voted.unmanaged.set_exclude(&after.unmanaged);
+            if self.voted.count() == 0 {
                 return next;
             }
+            self.voters.unmanaged.set_exclude(&self.voted.unmanaged);
             best = Some(next);
         }
     }
@@ -193,18 +307,20 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
 }
 
 pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let has_patches = lockfile.patched_dependencies.count() > 0;
 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
     let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
-    let mut pinned: Vec<bool> = vec![false; pkg_res.len()];
+    let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+    let mut max_candidates = 0;
 
     for entry in lockfile.package_index.values() {
         let PackageIndexEntry::Ids(ids) = entry else {
             continue;
         };
-        let candidates: Vec<PackageID> = ids
+        let mut candidates: Vec<PackageID> = ids
             .iter()
             .copied()
             .filter(|&id| pkg_res[id as usize].tag == ResolutionTag::Npm)
@@ -212,13 +328,24 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         if candidates.len() < 2 {
             continue;
         }
+        candidates.sort_by(|&a, &b| {
+            pkg_res[b as usize]
+                .npm()
+                .version
+                .order(pkg_res[a as usize].npm().version, buf, buf)
+                .then(a.cmp(&b))
+        });
         for &id in &candidates {
             group_of[id as usize] = groups.len() as u32;
-            pinned[id as usize] = has_patches
+            if has_patches
                 && lockfile.patched_dependencies.contains(
                     &bun_semver::string::Builder::string_hash(&label(lockfile, id)),
-                );
+                )
+            {
+                pinned.set(id as usize);
+            }
         }
+        max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
     }
 
@@ -226,25 +353,33 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         return Vec::new();
     }
 
+    // Re-pointing keeps an edge inside its group, so the initial per-group edge counts bound every pass.
+    let mut edge_counts: Vec<u32> = vec![0; groups.len()];
+    for &target in lockfile.buffers.resolutions.iter() {
+        if let Some(&g) = group_of.get(target as usize)
+            && g != u32::MAX
+        {
+            edge_counts[g as usize] += 1;
+        }
+    }
+    let max_edges = edge_counts.iter().copied().max().unwrap_or(0) as usize;
+
     let initial = reachable(lockfile, &lockfile.buffers.resolutions);
-    let mut live = initial.clone();
+    let mut live = initial.clone().unwrap_or_oom();
     let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
     {
-        let mut pass = Pass {
+        let mut pass = Pass::new(
             lockfile,
-            groups: &groups,
-            group_of: &group_of,
-            pinned: &pinned,
-            edges: vec![Vec::new(); groups.len()],
-            candidates: Vec::new(),
-            sat: Vec::new(),
-            movable: Vec::new(),
-            count: Vec::new(),
-        };
+            &groups,
+            &group_of,
+            &pinned,
+            max_candidates,
+            max_edges,
+        );
         loop {
             cur = pass.settle(&cur, &live);
             let after = reachable(lockfile, &cur);
-            if after == live {
+            if after.unmanaged.eql(&live.unmanaged) {
                 break;
             }
             live = after;
@@ -255,13 +390,12 @@ pub fn dedupe_lockfile(lockfile: &mut Lockfile) -> Vec<Box<[u8]>> {
         .iter()
         .flatten()
         .copied()
-        .filter(|&id| initial[id as usize] && !live[id as usize])
+        .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
         .collect();
     if removed.is_empty() {
         return Vec::new();
     }
 
-    let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     removed.sort_by(|&a, &b| {
         let (a, b) = (a as usize, b as usize);
@@ -306,7 +440,7 @@ pub(crate) fn effective_npm_range(
 }
 
 // Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
-fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> Vec<bool> {
+fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
         resolutions,
@@ -353,17 +487,45 @@ pub fn dedupe_before_install(
         LoadResult::Ok(_) => {}
     }
 
-    let removed = dedupe_lockfile(&mut manager.lockfile);
+    if manager
+        .lockfile
+        .root_package()
+        .is_none_or(|root| root.dependencies.len == 0)
+    {
+        report_already_deduplicated(manager);
+    }
+    Ok(())
+}
 
-    if removed.is_empty() {
+fn report_already_deduplicated(manager: &PackageManager) {
+    if manager.options.log_level != LogLevel::Silent {
+        bun_core::prettyln!("Already deduplicated.");
+        Output::flush();
+    }
+    if manager.options.dry_run {
+        Global::exit(0);
+    }
+}
+
+pub fn dedupe_after_differ(manager: &mut PackageManager) {
+    let quiet = manager.options.log_level == LogLevel::Silent;
+
+    if manager.summary.changes_dependencies() {
         if !quiet {
-            bun_core::prettyln!("Already deduplicated.");
+            Output::err_generic(
+                "the lockfile is out of date with package.json, nothing was deduplicated",
+                (),
+            );
+            bun_core::note!("run 'bun install' first");
             Output::flush();
         }
-        if manager.options.dry_run {
-            Global::exit(0);
-        }
-        return Ok(());
+        Global::exit(1);
+    }
+
+    let removed = dedupe_lockfile(&mut manager.lockfile);
+    if removed.is_empty() {
+        report_already_deduplicated(manager);
+        return;
     }
 
     let n = removed.len();
@@ -423,5 +585,4 @@ pub fn dedupe_before_install(
         .options
         .enable
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
-    Ok(())
 }

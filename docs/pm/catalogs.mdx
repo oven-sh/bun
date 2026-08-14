@@ -91,7 +91,7 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
 }
 ```
 
-`catalog:` and `catalog:<name>` are accepted in `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, and as the value of a root [`overrides` / `resolutions`](/pm/overrides) rule. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own.
+`catalog:` and `catalog:<name>` are accepted in `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, and as the value of a root [`overrides` / `resolutions`](/pm/overrides) rule. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own. If no ancestor provides a satisfying version, the workspace package gets its own copy of whatever the catalog range resolves to, just as it would with the range written inline. `bun.lock` stores the catalog ranges themselves, not a resolved version per reference, so a catalog reference binds to whichever version in the lockfile satisfies the range, again like an inline range. (pnpm additionally pins each catalog entry to the version it first resolved to; Bun does not.)
 
 ### 3. Run Bun Install
 
@@ -238,15 +238,15 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
-To add a new dependency to the catalog (or refresh an existing entry), run `bun add` with `--catalog` (or `--catalog=<name>` for a named catalog) from the workspace package or from the root:
+To add a dependency to the catalog, run `bun add` with `--catalog` (or `--catalog=<name>`) from the workspace package or from the root; an entry that already exists is reused unless you give a version:
 
 ```bash terminal icon="terminal"
 bun add react --catalog
 ```
 
-Bun writes the resolved version to the catalog in the root `package.json` and `"catalog:"` to the `package.json` you ran the command in. See [`bun add --catalog`](/pm/cli/add#--catalog).
+Bun writes the entry to the catalog in the root `package.json` (the range the current `package.json` already declares, otherwise the resolved version) and `"catalog:"` to the `package.json` you ran the command in. See [`bun add --catalog`](/pm/cli/add#--catalog).
 
-The catalog is only consulted when `--catalog` is passed: `bun add react` writes a concrete range to the current `package.json` even if `react` is already in the catalog (Bun has no equivalent of pnpm's `catalogMode`).
+`bun add react` without the flag also uses the default catalog when it lists `react`: the package gets `"catalog:"`, and an existing `"catalog:<name>"` reference is kept. `bun add react@latest` (or any explicit version) writes a concrete range instead. Named catalogs are only used through `--catalog=<name>` or an existing reference, and a version you type is never checked against the catalog (there is no equivalent of pnpm's `catalogMode` setting).
 
 ## Lockfile Integration
 
@@ -296,7 +296,7 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 - Empty strings and whitespace in catalog names are ignored (treated as default catalog)
 - `catalog:default` is the same as `catalog:`; both read the `catalog` field, or `catalogs.default` if that is where the entry is defined (as pnpm names it)
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
-- Catalogs are only available within workspaces; they cannot be used outside the monorepo
+- `catalog:` is only understood in the root `package.json` and in workspace packages. A `catalog:` specifier inside an installed package (from the registry, git, a tarball or a `file:` folder) never reads your catalogs: as a regular dependency it fails to resolve (`x@catalog: failed to resolve`), and as a peer dependency it is treated as unsatisfiable and no copy is installed for it. Publish with `bun publish` or `bun pm pack`, which substitute the ranges (see [Publishing](#publishing))
 
 ## Publishing
 

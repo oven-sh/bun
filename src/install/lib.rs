@@ -125,6 +125,7 @@ pub mod pnpm;
 pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
+pub mod update_scope;
 pub mod update_transitive;
 pub mod yarn;
 

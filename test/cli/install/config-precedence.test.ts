@@ -5,8 +5,12 @@ import { join } from "path";
 
 // Own config dir: other install files' VerdaccioRegistry start()/stop() delete the shared htpasswd, invalidating our token.
 const sharedRegistryDir = join(import.meta.dir, "registry");
+const sharedVerdaccioConfig = readFileSync(join(sharedRegistryDir, "verdaccio.yaml"), "utf8");
+if (!sharedVerdaccioConfig.includes("storage: ./packages")) {
+  throw new Error("registry/verdaccio.yaml no longer has a 'storage: ./packages' line to redirect");
+}
 const registryDir = tempDir("config-precedence-registry", {
-  "verdaccio.yaml": readFileSync(join(sharedRegistryDir, "verdaccio.yaml"), "utf8").replace(
+  "verdaccio.yaml": sharedVerdaccioConfig.replace(
     "storage: ./packages",
     `storage: ${JSON.stringify(join(sharedRegistryDir, "packages"))}`,
   ),
@@ -62,8 +66,6 @@ async function install(root: string, args: string[] = []) {
       USERPROFILE: home,
       XDG_CONFIG_HOME: home,
       BUN_INSTALL_CACHE_DIR: join(root, "cache"),
-      // Authenticated requests leak their header buffer into the HTTP client (NetworkTask.rs); LSan would abort the install.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -83,8 +85,8 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(isIsolated(String(dir))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("project bunfig registry beats project .npmrc registry", async () => {
@@ -96,9 +98,9 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "no-deps", "package.json"))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("project bunfig registry beats ~/.npmrc registry", async () => {
@@ -110,8 +112,9 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
+    expect(existsSync(join(String(dir), "project", "node_modules", "no-deps", "package.json"))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("project .npmrc registry beats ~/.npmrc registry", async () => {
@@ -123,9 +126,9 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "no-deps", "package.json"))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("~/.npmrc _authToken applies to the registry set in project bunfig", async () => {
@@ -136,10 +139,10 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
       true,
     );
+    expect(exitCode).toBe(0);
   });
 
   test("project .npmrc scoped registry and token apply alongside a bunfig registry", async () => {
@@ -151,11 +154,11 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
       true,
     );
+    expect(exitCode).toBe(0);
   });
 
   test("bunfig scoped registry keeps credentials from ~/.npmrc", async () => {
@@ -167,8 +170,11 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
+    expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
+      true,
+    );
+    expect(exitCode).toBe(0);
   });
 
   test("bunfig scoped registry beats the same scope in .npmrc", async () => {
@@ -180,9 +186,9 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@types", "no-deps", "package.json"))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("bunfig registry credentials survive a same-URL registry= line in project .npmrc", async () => {
@@ -193,10 +199,10 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
       true,
     );
+    expect(exitCode).toBe(0);
   });
 
   test("bunfig scoped registry credentials survive the same scope URL in project .npmrc", async () => {
@@ -211,11 +217,11 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(dead.hits).toBe(0);
     expect(existsSync(join(String(dir), "project", "node_modules", "@needs-auth", "test-pkg", "package.json"))).toBe(
       true,
     );
+    expect(exitCode).toBe(0);
   });
 
   test("--linker beats ~/.npmrc, project .npmrc and bunfig", async () => {
@@ -227,8 +233,8 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir), ["--linker", "isolated"]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(isIsolated(String(dir))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("~/.npmrc install-strategy applies when bunfig does not set a linker", async () => {
@@ -239,7 +245,7 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(isIsolated(String(dir))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 });

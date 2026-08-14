@@ -195,8 +195,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    if matches!(subcommand, Subcommand::Add | Subcommand::Remove)
-        && !manager.options.filter_patterns.is_empty()
+    if (matches!(subcommand, Subcommand::Add | Subcommand::Remove)
+        && !manager.options.filter_patterns.is_empty())
+        || (subcommand == Subcommand::Update
+            && !updates.is_empty()
+            && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty()))
     {
         return super::add_remove_with_filter::update_filtered_workspaces_and_install(
             manager,
@@ -257,6 +260,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                 .collect(),
         );
     }
+
+    add_catalog::prepare(manager, &updates);
 
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
@@ -368,7 +373,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             if !updates.is_empty() {
                 let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
-                PackageJSONEditor::edit(
+                add_catalog::edit_target(
                     manager,
                     &mut updates_slice,
                     &mut current_package_json_root,
@@ -379,18 +384,11 @@ fn update_package_json_and_install_with_manager_with_updates(
                         ..Default::default()
                     },
                 )?;
-                // `edit` may shrink the slice.
+                // `edit_target` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
-                if manager.options.add_catalog.is_some() {
-                    add_catalog::rewrite_references(manager, &updates);
-                    if manager.workspace_name_hash.is_none() {
-                        add_catalog::edit_root_before_install(
-                            manager,
-                            &current_package_json_root,
-                            &updates,
-                        )?;
-                    }
+                if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_none() {
+                    add_catalog::edit_root_before_install(manager, &current_package_json_root)?;
                 }
             } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none()
             {
@@ -769,6 +767,7 @@ pub fn update_package_json_and_install_and_cli(
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) -> Result<(), Error> {
+    let update_groups = cli.update_groups;
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,
@@ -826,6 +825,10 @@ pub fn update_package_json_and_install_and_cli(
         if manager.options.global && manager.options.log_level != LogLevel::Silent {
             manager.track_installed_bin = TrackInstalledBin::Pending;
         }
+    }
+
+    if subcommand == Subcommand::Update {
+        crate::update_scope::expand_positionals(manager, original_cwd, update_groups);
     }
 
     update_package_json_and_install_with_manager(manager, ctx, original_cwd)?;

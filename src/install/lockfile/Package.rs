@@ -812,15 +812,17 @@ impl Package<u64> {
                         name: name.value,
                         name_hash: name.hash,
                         behavior,
-                        version: Dependency::parse(
-                            name.value,
-                            Some(name.hash),
-                            sliced.slice,
-                            &sliced,
-                            Some(&mut *log),
-                            Some(&mut *pm),
-                        )
-                        .unwrap_or_default(),
+                        version: lockfile::CatalogMap::strip_reference(
+                            Dependency::parse(
+                                name.value,
+                                Some(name.hash),
+                                sliced.slice,
+                                &sliced,
+                                Some(&mut *log),
+                                Some(&mut *pm),
+                            )
+                            .unwrap_or_default(),
+                        ),
                     };
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
@@ -911,6 +913,7 @@ pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
     pub(crate) update: u32,
+    pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
     pub(crate) catalogs_changed: bool,
 
@@ -940,6 +943,15 @@ impl DiffSummary {
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
     }
+
+    #[inline]
+    pub(crate) fn changes_dependencies(&self) -> bool {
+        self.add > 0
+            || self.remove > 0
+            || self.overrides_changed
+            || self.catalogs_changed
+            || self.update > self.script_only_updates
+    }
 }
 
 impl Diff {
@@ -959,6 +971,16 @@ impl Diff {
     ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
+        let named_update_here = match update_requests {
+            Some(updates) if !updates.is_empty() => crate::update_scope::UpdateScope::of(&*pm)
+                .contains_workspace(
+                    from.resolution.tag == ResolutionTag::Root,
+                    from.name_hash,
+                    from.name
+                        .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                ),
+            _ => true,
+        };
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
         // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
@@ -1002,15 +1024,24 @@ impl Diff {
         }
 
         if is_root {
+            let tolerate_catalog_subset = pm.options.enable.frozen_lockfile();
             'catalogs: {
                 // don't sort if lengths are different
                 if from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count() {
-                    summary.catalogs_changed = true;
+                    summary.catalogs_changed = !(tolerate_catalog_subset
+                        && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
+                            &*from_lockfile,
+                            &*to_lockfile,
+                        ));
                     break 'catalogs;
                 }
 
                 if from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count() {
-                    summary.catalogs_changed = true;
+                    summary.catalogs_changed = !(tolerate_catalog_subset
+                        && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
+                            &*from_lockfile,
+                            &*to_lockfile,
+                        ));
                     break 'catalogs;
                 }
 
@@ -1069,7 +1100,11 @@ impl Diff {
                     }
 
                     if from_catalog_deps.count() != to_catalog_deps.count() {
-                        summary.catalogs_changed = true;
+                        summary.catalogs_changed = !(tolerate_catalog_subset
+                            && lockfile::pruned_workspaces::lockfile_catalogs_are_subset(
+                                &*from_lockfile,
+                                &*to_lockfile,
+                            ));
                         break 'catalogs;
                     }
 
@@ -1347,13 +1382,14 @@ impl Diff {
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
-                        || UpdateRequest::contains_name(
-                            updates,
-                            from_dep.name_hash,
-                            from_dep
-                                .name
-                                .slice(from_lockfile.buffers.string_bytes.as_slice()),
-                        )
+                        || (named_update_here
+                            && UpdateRequest::contains_name(
+                                updates,
+                                from_dep.name_hash,
+                                from_dep
+                                    .name
+                                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                            ))
                     {
                         // Listed as to be updated
                         summary.update += 1;
@@ -1362,6 +1398,7 @@ impl Diff {
                 }
 
                 if let Some(mapping) = id_mapping.as_deref_mut() {
+                    let mut workspace_hooks_only = false;
                     let update_mapping = 'update_mapping: {
                         if !is_root || !from_dep.behavior.is_workspace() {
                             break 'update_mapping true;
@@ -1456,6 +1493,7 @@ impl Diff {
                             );
                         }
 
+                        workspace_hooks_only = !diff.changes_dependencies();
                         !diff.changes_resolutions()
                     };
 
@@ -1463,35 +1501,23 @@ impl Diff {
                         mapping[cur_to_i] = i as PackageID;
                         continue;
                     }
+                    if workspace_hooks_only {
+                        summary.script_only_updates += 1;
+                    }
                 } else {
                     continue;
                 }
             }
 
-            // We found a changed dependency!
-            //
-            // If only the *version literal* changed and the previously-resolved
-            // package still satisfies the new range, keep the existing
-            // resolution. Otherwise widening a range (e.g. `"4.0.0"` → `"*"`)
-            // re-resolves to latest on the next `bun add <unrelated>`, which
-            // surprises migrations from npm/pnpm lockfiles whose package.json
-            // range diverged from the locked version. This matches npm's
-            // sticky-lockfile behaviour and lets `Lockfile::get_package_id`
-            // apply its order-independence guard without overriding a locked
-            // pin.
-            //
-            // Skipped when the dependency is an explicit update target
-            // (`bun update <pkg>` or bare `bun update`): the user is asking
-            // for a fresh resolve and the old resolution must not be
-            // preserved. Same gate as the `Dependency::eql == true` branch
-            // above.
+            // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
             if updates.is_empty()
-                || UpdateRequest::contains_name(
-                    updates,
-                    from_dep.name_hash,
-                    from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
-                ));
+                || (named_update_here
+                    && UpdateRequest::contains_name(
+                        updates,
+                        from_dep.name_hash,
+                        from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
+                    )));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];
@@ -1527,6 +1553,14 @@ impl Diff {
                 .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
         )) as u32;
 
+        if !summary.pruned_workspaces.is_empty() {
+            lockfile::pruned_workspaces::exit_if_survivor_depends_on_pruned(
+                &*from_lockfile,
+                &summary.pruned_workspaces,
+                pm.options.log_level.is_silent(),
+            );
+        }
+
         if !summary.pruned_workspaces.is_empty() && !pm.options.log_level.is_silent() {
             let count = summary.pruned_workspaces.len();
             bun_core::note!(
@@ -1546,6 +1580,7 @@ impl Diff {
                 ) {
                     // We found a changed life-cycle script
                     summary.update += 1;
+                    summary.script_only_updates += 1;
                 }
             }
         }
@@ -1679,6 +1714,9 @@ impl Package<u64> {
             Some(&mut *pm),
         )
         .unwrap_or_default();
+        if !(features.is_main || features.is_workspace) {
+            dependency_version = lockfile::CatalogMap::strip_reference(dependency_version);
+        }
         let mut workspace_range: Option<semver::query::Group> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;

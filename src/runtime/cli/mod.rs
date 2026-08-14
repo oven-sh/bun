@@ -1015,7 +1015,7 @@ pub mod command {
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
             return Tag::AddCommand;
         }
-        if x == RootCommandMatcher::case(b"update") {
+        if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
             return Tag::UpdateCommand;
         }
         if x == RootCommandMatcher::case(b"patch") {

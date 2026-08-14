@@ -311,6 +311,11 @@ _bun_pm_completion() {
                 "--json[output as JSON]"
                 "--prod[omit devDependencies]"
                 "--production[omit devDependencies]"
+                "--dev[list only what devDependencies pull in]"
+                "-D[list only what devDependencies pull in]"
+                "--long[also print author, description and homepage]"
+                "*--filter[list only the matching workspaces' dependencies]:workspace pattern"
+                "*-F[list only the matching workspaces' dependencies]:workspace pattern"
             )
 
             _arguments -s -C \

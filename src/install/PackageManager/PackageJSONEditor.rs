@@ -78,13 +78,52 @@ fn with_alias_of<'a>(
     }
 }
 
-/// `resolved` in the pin style of `original_version_literal`, behind its `npm:<name>@` if any.
+fn skip_ascii_digits(s: &[u8]) -> Option<&[u8]> {
+    let n = s.iter().take_while(|b| b.is_ascii_digit()).count();
+    (n > 0).then(|| &s[n..])
+}
+
+/// A plain `bun update` only rewrites `^x…`, `~x…` and exact versions; every other range is kept as written.
+fn keeps_declared_range(version_literal: &[u8]) -> bool {
+    let mut rest = strings::trim(version_literal, &strings::WHITESPACE_CHARS);
+    while let [
+        b'=' | b'v' | b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C,
+        tail @ ..,
+    ] = rest
+    {
+        rest = tail;
+    }
+    if let [b'^' | b'~', tail @ ..] = rest {
+        return !strings::trim(tail, &strings::WHITESPACE_CHARS)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
+    }
+    let Some(rest) = skip_ascii_digits(rest)
+        .and_then(|r| r.strip_prefix(b"."))
+        .and_then(skip_ascii_digits)
+        .and_then(|r| r.strip_prefix(b"."))
+        .and_then(skip_ascii_digits)
+    else {
+        return true;
+    };
+    match rest {
+        [] => false,
+        [b'-' | b'+', tail @ ..] => strings::index_of_any(tail, b" \t|<>").is_some(),
+        _ => true,
+    }
+}
+
+/// `resolved` in the pin style of the declared literal (None = the literal is kept as written).
 fn updated_version_literal(
     original_version_literal: &[u8],
     resolved: semver::Version,
     resolved_buf: &[u8],
     exact_versions: bool,
-) -> Vec<u8> {
+    update_to_latest: bool,
+) -> Option<Vec<u8>> {
+    if dependency::Tag::infer(original_version_literal) == dependency::Tag::DistTag {
+        return None;
+    }
     let mut v = Vec::new();
     let version_literal = match split_npm_alias(original_version_literal) {
         Some((alias, version_literal)) => {
@@ -93,6 +132,9 @@ fn updated_version_literal(
         }
         None => original_version_literal,
     };
+    if !update_to_latest && keeps_declared_range(version_literal) {
+        return None;
+    }
 
     // `=1.0.0` round-trips as `=2.0.0`; `which_version_is_pinned` skips the `=` and reports Patch.
     let exact_prefix =
@@ -112,7 +154,7 @@ fn updated_version_literal(
     };
     write!(&mut v, "{}{}", range_prefix, resolved.fmt(resolved_buf))
         .expect("infallible: in-memory write");
-    v
+    Some(v)
 }
 
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
@@ -342,6 +384,52 @@ pub(crate) fn edit_update_no_args_in(
     current_package_json: &mut Expr,
     options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
+    edit_update_entries(
+        lockfile,
+        arena,
+        updating_packages,
+        workspace_name_hash,
+        update_to_latest,
+        current_package_json,
+        options,
+        &|_, _| true,
+    )
+}
+
+/// `bun update <name>`: entries declared as `<key>: npm:<name>@…` move like every entry of a bare update does.
+fn edit_update_aliases_of_requests(
+    manager: &mut PackageManager,
+    updates: &[UpdateRequest],
+    current_package_json: &mut Expr,
+    options: EditOptions,
+) -> Result<(), bun_alloc::AllocError> {
+    let is_request = |name: &[u8]| updates.iter().any(|r| r.is_aliased && r.name == name);
+    let is_alias_of_request = |key: &[u8], literal: &[u8]| {
+        split_npm_alias(literal).is_some_and(|(alias, _)| is_request(&alias[b"npm:".len()..]))
+            && !is_request(key)
+    };
+    edit_update_entries(
+        &manager.lockfile,
+        &manager.ast_arena,
+        &mut manager.updating_packages,
+        manager.workspace_name_hash,
+        manager.options.do_.contains(Do::UPDATE_TO_LATEST),
+        current_package_json,
+        options,
+        &is_alias_of_request,
+    )
+}
+
+fn edit_update_entries(
+    lockfile: &crate::Lockfile,
+    arena: &bun_alloc::Arena,
+    updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
+    workspace_name_hash: Option<PackageNameHash>,
+    update_to_latest: bool,
+    current_package_json: &mut Expr,
+    options: EditOptions,
+    selected: &dyn Fn(&[u8], &[u8]) -> bool,
+) -> Result<(), bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
@@ -376,14 +464,15 @@ pub(crate) fn edit_update_no_args_in(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let tag = dependency::Tag::infer(version_literal);
 
-                        // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
-                        if tag != dependency::Tag::Npm
-                            && (tag != dependency::Tag::DistTag || !update_to_latest)
-                        {
+                        // npm ranges only: dist-tags stay as written even with --latest; `catalog:` is handled by edit_catalogs_*.
+                        if tag != dependency::Tag::Npm {
                             continue;
                         }
 
                         let key_str = key.as_utf8_string_literal().expect("unreachable");
+                        if !selected(key_str, version_literal) {
+                            continue;
+                        }
                         // Capture the literal as an owned
                         // copy before borrowing `updating_packages` mutably.
                         let version_literal_owned = Box::<[u8]>::from(version_literal);
@@ -454,6 +543,9 @@ pub(crate) fn edit_update_no_args_in(
                         let key_str = key
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
+                        if !selected(key_str, value_literal) {
+                            continue;
+                        }
 
                         'updated: {
                             // Only the first dependency group naming the package is rewritten.
@@ -493,12 +585,15 @@ pub(crate) fn edit_update_no_args_in(
                                         }
                                     }
 
-                                    let new_version = updated_version_literal(
+                                    let Some(new_version) = updated_version_literal(
                                         &entry.original_version_literal,
                                         resolution.npm().version,
                                         string_buf,
                                         options.exact_versions,
-                                    );
+                                        update_to_latest,
+                                    ) else {
+                                        break 'updated;
+                                    };
                                     dep.value = Some(Expr::allocate(
                                         arena,
                                         E::EString::init(arena_str(arena, &new_version)),
@@ -518,7 +613,7 @@ pub(crate) fn edit_update_no_args_in(
 
 /// Calls `f(catalog_name, entries_object)` for each catalog in the root
 /// package.json, matching the precedence `CatalogMap::parse_append` uses.
-fn for_each_catalog_object(
+pub(crate) fn for_each_catalog_object(
     root_package_json: &Expr,
     mut f: impl FnMut(&[u8], Expr) -> Result<(), bun_alloc::AllocError>,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -597,8 +692,7 @@ pub(crate) fn edit_catalogs_before_update(
             let tag = dependency::Tag::infer(version_literal);
 
             // same tag rule as direct dependencies
-            if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
-            {
+            if tag != dependency::Tag::Npm {
                 continue;
             }
 
@@ -795,13 +889,15 @@ fn resolve_catalog_literals(
             }
         }
 
-        let new_literal = updated_version_literal(
+        if let Some(new_literal) = updated_version_literal(
             &infos[index].original_version_literal,
             resolution.npm().version,
             string_buf,
             exact_versions,
-        );
-        infos[index].new_version_literal = Some(new_literal.into_boxed_slice());
+            update_to_latest,
+        ) {
+            infos[index].new_version_literal = Some(new_literal.into_boxed_slice());
+        }
     }
 }
 
@@ -821,9 +917,6 @@ pub(crate) fn edit(
 
     // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // `arena` is a disjoint-field borrow held across the `&mut manager.updating_packages` accesses below.
-    let arena = &manager.ast_arena;
-
     let update_to_latest = manager.subcommand == Subcommand::Update
         && manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     if update_to_latest && options.before_install {
@@ -841,6 +934,12 @@ pub(crate) fn edit(
             Global::crash();
         }
     }
+    if manager.subcommand == Subcommand::Update {
+        edit_update_aliases_of_requests(manager, &**updates, current_package_json, options)?;
+    }
+
+    // `arena` is a disjoint-field borrow held across the `&mut manager.updating_packages` accesses below.
+    let arena = &manager.ast_arena;
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
@@ -1226,7 +1325,10 @@ pub(crate) fn edit(
                 if let Some(existing) = existing {
                     version_literal = with_alias_of(arena, existing, version_literal);
                 }
-                if update_to_latest {
+                // a declared dist-tag (`next`, `npm:bar@next`) keeps resolving through that tag under --latest
+                let existing_is_dist_tag =
+                    existing.is_some_and(|e| dependency::Tag::infer(e) == dependency::Tag::DistTag);
+                if update_to_latest && !existing_is_dist_tag {
                     version_literal = with_alias_of(arena, version_literal, b"latest");
                 }
                 e_string.data = arena_dup(arena, version_literal).into();
@@ -1239,7 +1341,7 @@ pub(crate) fn edit(
                         let installed = request.version.literal.slice(request.version_buf());
                         let resolved = resolutions[request.package_id as usize].npm().version;
                         let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                        // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
+                        // under --latest the row literal is `latest` for rewritable entries; a declared dist-tag is kept below via updated_version_literal.
                         if manager.subcommand == Subcommand::Update
                             && request.version.tag == dependency::Tag::DistTag
                             && !update_to_latest
@@ -1263,13 +1365,25 @@ pub(crate) fn edit(
                                     ),
                                     None => original,
                                 };
-                                let new_version = updated_version_literal(
+                                match updated_version_literal(
                                     original,
                                     resolved,
                                     string_buf,
                                     options.exact_versions,
-                                );
-                                break 'npm arena_str(arena, &new_version);
+                                    update_to_latest,
+                                ) {
+                                    Some(new_version) => break 'npm arena_str(arena, &new_version),
+                                    // no explicit `@range`: the row still spells the declared literal, which stays as written
+                                    None => {
+                                        if strings::eql_long(
+                                            installed,
+                                            &entry.original_version_literal,
+                                            true,
+                                        ) {
+                                            break 'npm arena_dup(arena, installed);
+                                        }
+                                    }
+                                }
                             }
                         }
                         // `foo@npm:bar` (no version part) is saved like `foo` would be: `npm:bar@^<resolved>`.

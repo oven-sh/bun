@@ -19,7 +19,7 @@ The package is deleted from every one of `dependencies`, `devDependencies`, `opt
 
 <Note>**Alias** — `-F`</Note>
 
-In a monorepo, `--filter` removes the package from the matching workspace package(s) instead of the package in the current directory, using the same patterns as [`bun add --filter`](/pm/cli/add#--filter). To remove a package from every workspace, use `--filter '*'`; there is no `--recursive`/`-r` flag. Selected workspaces that don't list the package are left untouched, and if none of them list it no `package.json` is edited and the command exits 0.
+In a monorepo, `--filter` removes the package from the matching workspace package(s) instead of the package in the current directory, using the same patterns as [`bun add --filter`](/pm/cli/add#--filter). To remove a package from every workspace, use `--filter '*'` (the root `package.json` is only included when a pattern names it, e.g. `--filter '*' --filter '<root-name>'`); there is no `--recursive`/`-r` flag. Selected workspaces that don't list the package are left untouched, and if none of them list it no `package.json` is edited and the command exits 0.
 
 ```bash terminal icon="terminal"
 bun remove zod --filter api

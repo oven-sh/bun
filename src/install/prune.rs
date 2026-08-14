@@ -3,7 +3,8 @@ use core::ops::Range;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_core::{Global, Output, ZStr, strings};
+use bun_collections::DynamicBitSet;
+use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
@@ -12,8 +13,10 @@ use crate::config_version::ConfigVersion;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
-use crate::package_manager::Options::LogLevel;
-use crate::{PackageID, PackageManager, ResolutionTag, invalid_package_id};
+use crate::lockfile_real::package::{Diff, Package};
+use crate::package_manager::Options::{Enable, LogLevel};
+use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
+use crate::{Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
 
@@ -123,7 +126,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-pub fn prune(manager: &mut PackageManager) -> crate::Result<()> {
+pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
@@ -147,15 +150,13 @@ pub fn prune(manager: &mut PackageManager) -> crate::Result<()> {
         Err(Some(name)) => {
             if !quiet {
                 Output::err_generic("failed to load lockfile: {s}", (name,));
-                if manager.log_mut().has_errors() {
-                    let _ = manager
-                        .log_mut()
-                        .print(core::ptr::from_mut(Output::error_writer()));
-                }
+                print_log_errors(manager.log_mut());
             }
             Global::exit(1);
         }
     };
+
+    refuse_unless_lockfile_matches_package_json(manager)?;
 
     let store_present = match Dir::open(b"node_modules") {
         Ok(node_modules) => lstat_kind(&node_modules, b".bun") == EntryKind::Directory,
@@ -188,11 +189,12 @@ pub fn prune(manager: &mut PackageManager) -> crate::Result<()> {
     };
 
     let workspace_names = collect_workspace_names(&manager.lockfile);
+    let selection = select_importers(manager, original_cwd);
 
     let mut plan = Plan::default();
     match layout {
-        Layout::Hoisted => plan_hoisted(manager, &workspace_names, &mut plan),
-        Layout::Isolated => plan_isolated(manager, &workspace_names, &mut plan),
+        Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
+        Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
 
     if layout_mismatch(&plan, layout, store_present) {
@@ -264,6 +266,166 @@ fn collect_workspace_names(lockfile: &Lockfile) -> Vec<Box<[u8]>> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+fn refuse_unless_lockfile_matches_package_json(manager: &mut PackageManager) -> crate::Result<()> {
+    let Some(root) = manager.lockfile.root_package() else {
+        return Ok(());
+    };
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
+
+    let log = manager.log_mut();
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let (source, json) = match manager
+        .workspace_package_json_cache
+        .get_with_path(log, path, Default::default())
+        .unwrap()
+    {
+        Ok(entry) => (entry.source.clone(), entry.root),
+        Err(err) => {
+            if !quiet {
+                print_log_errors(log);
+                Output::err(err, "failed to read {s}", (BStr::new(path),));
+            }
+            Global::exit(1);
+        }
+    };
+
+    let mut to_lockfile = Lockfile::default();
+    let mut to_root = Package::default();
+    let mut resolver: () = ();
+    let pm: *mut PackageManager = manager;
+    // SAFETY: same split as `hoist_filtered`; neither call reaches `lockfile` through `pm`.
+    let summary = unsafe {
+        let parsed = to_root.parse_with_json::<()>(
+            &mut to_lockfile,
+            &mut *pm,
+            log,
+            &source,
+            json,
+            &mut resolver,
+            Features::main(),
+        );
+        match parsed {
+            Ok(()) => {
+                let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
+                let from_lockfile: *mut Lockfile = &raw mut *(*pm).lockfile;
+                Diff::generate(
+                    &mut *pm,
+                    log,
+                    &mut *from_lockfile,
+                    &mut to_lockfile,
+                    &root,
+                    &to_root,
+                    None,
+                    Some(&mut mapping[..]),
+                )
+            }
+            Err(err) => Err(err),
+        }
+    };
+    let summary = match summary {
+        Ok(summary) => summary,
+        Err(err) => {
+            if !quiet {
+                print_log_errors(log);
+            }
+            return Err(err);
+        }
+    };
+
+    if summary.changes_dependencies() {
+        if !quiet {
+            Output::err_generic("bun.lock does not match package.json", ());
+            bun_core::note!("run 'bun install' first, then run 'bun prune' again");
+        }
+        Global::exit(1);
+    }
+    Ok(())
+}
+
+fn print_log_errors(log: &bun_ast::Log) {
+    if log.has_errors() {
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+    }
+}
+
+struct Selection {
+    selected: DynamicBitSet,
+    protected_packages: DynamicBitSet,
+    protected_aliases: Vec<Box<[u8]>>,
+}
+
+fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Selection> {
+    if manager.options.filter_patterns.is_empty() {
+        return None;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let ids =
+        WorkspaceFilter::select_workspaces(lockfile, manager.options.filter_patterns, original_cwd);
+    if ids.is_empty() {
+        if manager.options.log_level != LogLevel::Silent {
+            Output::err_generic("No packages matched the filter", ());
+        }
+        Global::exit(1);
+    }
+
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let dep_slices = lockfile.packages.items_dependencies();
+    let is_importer = |pkg_id: usize| {
+        matches!(
+            pkg_res[pkg_id].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        )
+    };
+
+    let mut selected = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    for id in ids {
+        if (id as usize) < pkg_res.len() {
+            selected.set(id as usize);
+        }
+    }
+
+    let mut protected_packages = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    let mut protected_aliases: Vec<Box<[u8]>> = Vec::new();
+    let mut worklist: Vec<PackageID> = Vec::new();
+    for importer in 0..pkg_res.len() {
+        if selected.is_set(importer) || !is_importer(importer) {
+            continue;
+        }
+        protected_packages.set(importer);
+        worklist.push(importer as PackageID);
+        while let Some(pkg_id) = worklist.pop() {
+            let slice = dep_slices[pkg_id as usize];
+            for dep_id in slice.begin() as usize..slice.end() as usize {
+                protected_aliases.push(deps[dep_id].name.slice(buf).into());
+                let target = resolutions[dep_id];
+                if target == invalid_package_id || (target as usize) >= pkg_res.len() {
+                    continue;
+                }
+                if protected_packages.is_set(target as usize) {
+                    continue;
+                }
+                protected_packages.set(target as usize);
+                if !is_importer(target as usize) {
+                    worklist.push(target);
+                }
+            }
+        }
+    }
+    protected_aliases.sort_unstable();
+    protected_aliases.dedup();
+
+    Some(Selection {
+        selected,
+        protected_packages,
+        protected_aliases,
+    })
 }
 
 fn hoist_filtered(manager: &mut PackageManager) {
@@ -468,8 +630,19 @@ fn without_build(version: &[u8]) -> &[u8] {
     &version[..strings::last_index_of_char(version, b'+').unwrap_or(version.len())]
 }
 
-fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], plan: &mut Plan) {
-    let keep_workspaces = |entry: &Entry| contains(workspace_names, entry.alias);
+fn plan_hoisted(
+    manager: &mut PackageManager,
+    workspace_names: &[Box<[u8]>],
+    selection: Option<&Selection>,
+    plan: &mut Plan,
+) {
+    let root_protected: &[Box<[u8]>] = match selection {
+        Some(sel) => &sel.protected_aliases,
+        None => &[],
+    };
+    let keep_workspaces = |entry: &Entry| {
+        contains(workspace_names, entry.alias) || contains(root_protected, entry.alias)
+    };
     if manager.lockfile.packages.len() == 0 {
         if let Ok(dir) = Dir::open(b"node_modules") {
             scan_folder(dir, b"node_modules", false, &keep_workspaces, plan);
@@ -501,19 +674,48 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
         .collect();
     nested_trees.sort_unstable();
 
-    let mut visited = vec![false; pkg_res.len()];
+    let tree_owner = |tree_idx: usize| -> PackageID {
+        match trees[tree_idx].dependency_id {
+            tree::ROOT_DEP_ID => 0,
+            dep_id => resolutions[dep_id as usize],
+        }
+    };
+    let mut tree_importer: Vec<PackageID> = Vec::new();
+    if selection.is_some() {
+        tree_importer.reserve_exact(trees.len());
+        for tree_idx in 0..trees.len() {
+            let owner = tree_owner(tree_idx);
+            let importer = if tree_idx == 0 {
+                0
+            } else if (owner as usize) < pkg_res.len()
+                && pkg_res[owner as usize].tag == ResolutionTag::Workspace
+            {
+                owner
+            } else {
+                tree_importer
+                    .get(trees[tree_idx].parent as usize)
+                    .copied()
+                    .unwrap_or(0)
+            };
+            tree_importer.push(importer);
+        }
+    }
+
+    let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     for tree_idx in 0..hoisted.folders.len() {
         let folder_path = hoisted.path(tree_idx);
         if folder_path.is_empty() {
             continue;
         }
+        let importer = tree_importer.get(tree_idx).copied().unwrap_or(0);
+        if selection.is_some_and(|sel| importer != 0 && !sel.selected.is_set(importer as usize)) {
+            continue;
+        }
+        let protected: &[Box<[u8]>] = if importer == 0 { root_protected } else { &[] };
         let tree_id = tree_idx as tree::Id;
-        let owner: PackageID = match trees[tree_idx].dependency_id {
-            tree::ROOT_DEP_ID => 0,
-            dep_id => resolutions[dep_id as usize],
-        };
+        let owner = tree_owner(tree_idx);
         if owner != invalid_package_id && (owner as usize) < pkg_res.len() {
-            visited[owner as usize] = true;
+            visited.set(owner as usize);
             let tag = pkg_res[owner as usize].tag;
             if tag != ResolutionTag::Root
                 && tag != ResolutionTag::Workspace
@@ -558,6 +760,7 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
                 false,
                 &|entry: &Entry| {
                     contains(workspace_names, entry.alias)
+                        || contains(protected, entry.alias)
                         || !hoisted.removable(tree_id, entry.alias, &nested_path)
                 },
                 plan,
@@ -574,19 +777,23 @@ fn plan_hoisted(manager: &mut PackageManager, workspace_names: &[Box<[u8]>], pla
                     .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
                     .is_ok()
                     || contains(workspace_names, entry.alias)
+                    || contains(protected, entry.alias)
                     || !hoisted.removable(parent, entry.alias, folder_path)
             },
             plan,
         );
     }
 
-    if !visited[0] {
+    if !visited.is_set(0) {
         if let Ok(dir) = Dir::open(b"node_modules") {
             scan_folder(dir, b"node_modules", false, &keep_workspaces, plan);
         }
     }
     for (pkg_id, res) in pkg_res.iter().enumerate() {
-        if visited[pkg_id] || res.tag != ResolutionTag::Workspace {
+        if visited.is_set(pkg_id)
+            || res.tag != ResolutionTag::Workspace
+            || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
+        {
             continue;
         }
         let path = strings::without_trailing_slash(res.workspace().slice(buf));
@@ -760,7 +967,7 @@ fn scan_folder(
     folder_idx
 }
 
-fn wanted_packages(manager: &PackageManager) -> Vec<bool> {
+fn wanted_packages(manager: &PackageManager) -> DynamicBitSet {
     let lockfile: &Lockfile = &manager.lockfile;
     reachable::packages(
         lockfile,
@@ -769,14 +976,15 @@ fn wanted_packages(manager: &PackageManager) -> Vec<bool> {
     )
 }
 
-fn store_keys(lockfile: &Lockfile, wanted: &[bool]) -> Vec<Box<[u8]>> {
+fn store_keys(lockfile: &Lockfile, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let pkg_res = lockfile.packages.items_resolution();
-    let mut keys: Vec<Box<[u8]>> = Vec::new();
+    let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(wanted.count());
     let mut key: Vec<u8> = Vec::new();
-    for pkg_id in 0..wanted.len() {
-        if !wanted[pkg_id] || pkg_res[pkg_id].tag == ResolutionTag::Workspace {
+    let mut set_bits = wanted.iterator::<true, true>();
+    while let Some(pkg_id) = set_bits.next() {
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace {
             continue;
         }
         let name = names[pkg_id];
@@ -862,8 +1070,18 @@ fn public_hoist_matches(manager: &PackageManager, alias: &[u8]) -> bool {
         .is_some_and(|pattern| pattern.is_match(alias))
 }
 
-fn plan_isolated(manager: &PackageManager, workspace_names: &[Box<[u8]>], plan: &mut Plan) {
-    let wanted = wanted_packages(manager);
+fn plan_isolated(
+    manager: &PackageManager,
+    workspace_names: &[Box<[u8]>],
+    selection: Option<&Selection>,
+    plan: &mut Plan,
+) {
+    let mut wanted = wanted_packages(manager);
+    if let Some(sel) = selection {
+        wanted
+            .unmanaged
+            .set_union(&sel.protected_packages.unmanaged);
+    }
     let keys = store_keys(&manager.lockfile, &wanted);
     let keep_store_entry = |name: &[u8]| {
         contains(&keys, name) || strip_peer_hash(name).is_some_and(|base| contains(&keys, base))
@@ -900,6 +1118,9 @@ fn plan_isolated(manager: &PackageManager, workspace_names: &[Box<[u8]>], plan: 
             }
             _ => continue,
         };
+        if selection.is_some_and(|sel| !sel.selected.is_set(pkg_id)) {
+            continue;
+        }
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
@@ -910,7 +1131,7 @@ fn plan_isolated(manager: &PackageManager, workspace_names: &[Box<[u8]>], plan: 
             store_touched,
             &|entry| {
                 contains(&direct, entry.alias)
-                    || contains(workspace_names, entry.alias)
+                    || (entry.kind != EntryKind::SymLink && contains(workspace_names, entry.alias))
                     || public_hoist_matches(manager, entry.alias)
                     || (entry.kind == EntryKind::SymLink
                         && store_link_target(entry.dir, entry.name)
@@ -1103,7 +1324,6 @@ fn prune_bins(dir: &Dir) {
 }
 
 fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
-    let workspace_names = collect_workspace_names(&manager.lockfile);
     for (idx, folder) in plan.folders.iter().enumerate() {
         if !folder.touched {
             continue;
@@ -1123,7 +1343,7 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 if let (Layout::Isolated, Some(direct)) = (layout, &folder.direct) {
                     if let Ok(dir) = Dir::open(&folder.path) {
                         unlink_links(&dir, &|dir, alias, name| {
-                            if contains(direct, alias) || contains(&workspace_names, alias) {
+                            if contains(direct, alias) {
                                 return false;
                             }
                             if public_hoist_matches(manager, alias) {

@@ -2,7 +2,7 @@ use bstr::BStr;
 use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_collections::{DynamicBitSet, StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
@@ -99,11 +99,14 @@ impl AuditCommand {
         let json_output = manager.options.json_output;
 
         if fix {
-            if json_output {
-                Output::err_generic("--json is not supported by bun audit fix", ());
-                Global::exit(1);
-            }
-            return Self::audit_fix(ctx, manager, audit_level, audit_ignore_list, &original_cwd);
+            return Self::audit_fix(
+                ctx,
+                manager,
+                json_output,
+                audit_level,
+                audit_ignore_list,
+                &original_cwd,
+            );
         }
 
         let code = Self::audit(ctx, manager, json_output, audit_level, audit_ignore_list)?;
@@ -133,9 +136,9 @@ impl AuditCommand {
 
         let dependency_tree = build_dependency_tree(pm)?;
 
-        let packages_result = collect_packages_for_audit(pm, true)?;
-
-        let response_text = send_audit_request(pm, &packages_result.audit_body)?;
+        let collected = collect_packages_for_audit(pm, true)?;
+        let responses = send_audit_requests(pm, &collected)?;
+        let response_text = responses.response_text;
 
         if json_output {
             let _ = Output::writer().write_all(&response_text);
@@ -163,13 +166,13 @@ impl AuditCommand {
                 ignore_list,
             )?;
 
-            print_skipped_packages(&packages_result.skipped_packages);
+            audit_fix::print_unaudited(&responses.unaudited);
 
             return Ok(exit_code);
         } else {
             prettyln!("<green>No vulnerabilities found<r>");
 
-            print_skipped_packages(&packages_result.skipped_packages);
+            audit_fix::print_unaudited(&responses.unaudited);
 
             return Ok(0);
         }
@@ -178,6 +181,7 @@ impl AuditCommand {
     fn audit_fix(
         ctx: Command::Context,
         pm: &mut PackageManager,
+        json_output: bool,
         audit_level: Option<AuditLevel>,
         ignore_list: &[&[u8]],
         original_cwd: &[u8],
@@ -196,8 +200,9 @@ impl AuditCommand {
 
         audit_fix::exit_unless_lockfile_writable(pm);
 
-        let packages_result = collect_packages_for_audit(pm, false)?;
-        let response_text = send_audit_request(pm, &packages_result.audit_body)?;
+        let collected = collect_packages_for_audit(pm, false)?;
+        let responses = send_audit_requests(pm, &collected)?;
+        let response_text = responses.response_text;
 
         let vulnerabilities = if response_text.is_empty() {
             Vec::new()
@@ -213,9 +218,11 @@ impl AuditCommand {
             }
         };
 
-        print_skipped_packages(&packages_result.skipped_packages);
+        if !json_output {
+            audit_fix::print_unaudited(&responses.unaudited);
+        }
 
-        if vulnerabilities.is_empty() {
+        if vulnerabilities.is_empty() && !json_output {
             prettyln!("<green>No vulnerabilities found<r>");
             Output::flush();
             Global::exit(0);
@@ -229,16 +236,17 @@ impl AuditCommand {
             })
             .collect();
         let dry_run = pm.options.dry_run;
-        let plan = audit_fix::plan_fixes(pm, &advisories)?;
-        plan.print_sections();
-
-        if dry_run || plan.fixes.is_empty() {
-            plan.print_summary(dry_run);
-            Output::flush();
-            Global::exit(plan.exit_code());
+        let mut plan = audit_fix::plan_fixes(pm, &advisories)?;
+        plan.unaudited = responses.unaudited;
+        if !json_output {
+            plan.print_sections();
         }
 
-        pm.audit_fix_pins = plan.pins();
+        if dry_run || plan.fixes.is_empty() {
+            Global::exit(plan.finish_planned(json_output, dry_run));
+        }
+
+        audit_fix::prepare_install(pm, &plan)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
         let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
@@ -251,29 +259,7 @@ impl AuditCommand {
             Global::exit(1);
         }
 
-        plan.print_summary(false);
-        Output::flush();
-        Global::exit(plan.exit_code());
-    }
-}
-
-fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
-    if !skipped_packages.is_empty() {
-        pretty!("<d>Skipped<r> ");
-        for (i, package_name) in skipped_packages.iter().enumerate() {
-            if i > 0 {
-                pretty!(", ");
-            }
-            pretty!("{}", BStr::new(package_name));
-        }
-
-        if skipped_packages.len() > 1 {
-            prettyln!(" <d>because they do not come from the default registry<r>");
-        } else {
-            prettyln!(" <d>because it does not come from the default registry<r>");
-        }
-
-        prettyln!("");
+        Global::exit(plan.finish_installed(&pm.lockfile, json_output));
     }
 }
 
@@ -317,9 +303,39 @@ fn build_dependency_tree(
     Ok(dependency_tree)
 }
 
+struct AuditRegistry {
+    href: Box<[u8]>,
+    url_hash: u64,
+    token: Box<[u8]>,
+    auth: Box<[u8]>,
+    is_default: bool,
+}
+
+impl AuditRegistry {
+    fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
+        AuditRegistry {
+            href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
+            url_hash: scope.url_hash,
+            token: scope.token.clone(),
+            auth: scope.auth.clone(),
+            is_default,
+        }
+    }
+}
+
+struct AuditRequest {
+    registry: AuditRegistry,
+    package_names: Vec<Box<[u8]>>,
+    body: Box<[u8]>,
+}
+
 struct CollectPackagesResult {
-    audit_body: Box<[u8]>,
-    skipped_packages: Vec<Box<[u8]>>,
+    requests: Vec<AuditRequest>,
+}
+
+struct AuditResponses {
+    response_text: Box<[u8]>,
+    unaudited: Vec<audit_fix::UnauditedRegistry>,
 }
 
 struct PackageVersions {
@@ -333,15 +349,17 @@ fn collect_packages_for_audit(
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
-    let mut packages_list: Vec<PackageVersions> = Vec::new();
-    let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
+    let mut groups: Vec<(AuditRegistry, Vec<PackageVersions>)> = vec![(
+        AuditRegistry::from_scope(&pm.options.scope, true),
+        Vec::new(),
+    )];
 
     let features = pm.options.local_package_features;
     let omits_something = apply_omit
         && !(features.dev_dependencies
             && features.optional_dependencies
             && features.peer_dependencies);
-    let wanted_packages: Option<Vec<bool>> = omits_something.then(|| {
+    let wanted_packages: Option<DynamicBitSet> = omits_something.then(|| {
         reachable::packages(
             &pm.lockfile,
             pm.lockfile.buffers.resolutions.as_slice(),
@@ -358,7 +376,6 @@ fn collect_packages_for_audit(
     });
 
     let options = &pm.options;
-    let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
     let pkg_resolutions = packages.items_resolution();
@@ -372,17 +389,27 @@ fn collect_packages_for_audit(
             continue;
         }
 
-        if wanted_packages.as_ref().is_some_and(|wanted| !wanted[idx]) {
+        if wanted_packages
+            .as_ref()
+            .is_some_and(|wanted| !wanted.is_set(idx))
+        {
             continue;
         }
 
         let name_slice = name.slice(buf);
 
         let package_scope = options.scope_for_package_name(name_slice);
-        if package_scope.url_hash != default_url_hash {
-            skipped_packages.push(Box::<[u8]>::from(name_slice));
-            continue;
-        }
+        let group_idx = match groups
+            .iter()
+            .position(|(registry, _)| registry.url_hash == package_scope.url_hash)
+        {
+            Some(i) => i,
+            None => {
+                groups.push((AuditRegistry::from_scope(package_scope, false), Vec::new()));
+                groups.len() - 1
+            }
+        };
+        let packages_list = &mut groups[group_idx].1;
 
         let mut ver_str: Vec<u8> = Vec::new();
         // `res.tag == ResolutionTag::Npm` checked above.
@@ -415,6 +442,21 @@ fn collect_packages_for_audit(
         }
     }
 
+    let requests = groups
+        .into_iter()
+        .enumerate()
+        .filter(|(i, (_, list))| *i == 0 || !list.is_empty())
+        .map(|(_, (registry, list))| AuditRequest {
+            registry,
+            package_names: list.iter().map(|package| package.name.clone()).collect(),
+            body: build_body(&list),
+        })
+        .collect();
+
+    Ok(CollectPackagesResult { requests })
+}
+
+fn build_body(packages_list: &[PackageVersions]) -> Box<[u8]> {
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 
@@ -445,16 +487,72 @@ fn collect_packages_for_audit(
     }
     body.push(b'}');
 
-    Ok(CollectPackagesResult {
-        audit_body: body.into_boxed_slice(),
-        skipped_packages,
+    body.into_boxed_slice()
+}
+
+fn send_audit_requests(
+    pm: &mut PackageManager,
+    collected: &CollectPackagesResult,
+) -> Result<AuditResponses, bun_alloc::AllocError> {
+    let mut bodies: Vec<Box<[u8]>> = Vec::with_capacity(collected.requests.len());
+    let mut unaudited: Vec<audit_fix::UnauditedRegistry> = Vec::new();
+
+    for request in &collected.requests {
+        match send_audit_request(pm, &request.registry, &request.body)? {
+            Some(body) => bodies.push(body),
+            None => unaudited.push(audit_fix::UnauditedRegistry {
+                registry: request.registry.href.clone(),
+                packages: request.package_names.clone(),
+            }),
+        }
+    }
+
+    Ok(AuditResponses {
+        response_text: merge_bulk_bodies(&bodies),
+        unaudited,
     })
+}
+
+fn is_empty_bulk_body(body: &[u8]) -> bool {
+    let body = body.trim_ascii();
+    body.is_empty()
+        || body
+            .strip_prefix(b"{")
+            .and_then(|rest| rest.strip_suffix(b"}"))
+            .is_some_and(|inner| inner.trim_ascii().is_empty())
+}
+
+fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
+    let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
+    let Some(first) = non_empty.next() else {
+        return Box::default();
+    };
+    let Some(second) = non_empty.next() else {
+        return first.clone();
+    };
+
+    let mut merged: Vec<u8> = Vec::with_capacity(bodies.iter().map(|body| body.len()).sum());
+    merged.push(b'{');
+    for (i, body) in [first, second].into_iter().chain(non_empty).enumerate() {
+        let body = body.trim_ascii();
+        let inner = body
+            .strip_prefix(b"{")
+            .and_then(|rest| rest.strip_suffix(b"}"))
+            .unwrap_or(body);
+        if i > 0 {
+            merged.push(b',');
+        }
+        merged.extend_from_slice(inner);
+    }
+    merged.push(b'}');
+    merged.into_boxed_slice()
 }
 
 fn send_audit_request(
     pm: &mut PackageManager,
+    registry: &AuditRegistry,
     body: &[u8],
-) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+) -> Result<Option<Box<[u8]>>, bun_alloc::AllocError> {
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
@@ -468,26 +566,26 @@ fn send_audit_request(
     headers.count(b"accept", b"application/json");
     headers.count(b"content-type", b"application/json");
     headers.count(b"content-encoding", b"gzip");
-    if !pm.options.scope.token.is_empty() {
+    if !registry.token.is_empty() {
         headers.count(b"authorization", b"");
-        headers.content.cap += b"Bearer ".len() + pm.options.scope.token.len();
-    } else if !pm.options.scope.auth.is_empty() {
+        headers.content.cap += b"Bearer ".len() + registry.token.len();
+    } else if !registry.auth.is_empty() {
         headers.count(b"authorization", b"");
-        headers.content.cap += b"Basic ".len() + pm.options.scope.auth.len();
+        headers.content.cap += b"Basic ".len() + registry.auth.len();
     }
     headers.allocate()?;
     headers.append(b"accept", b"application/json");
     headers.append(b"content-type", b"application/json");
     headers.append(b"content-encoding", b"gzip");
-    if !pm.options.scope.token.is_empty() {
+    if !registry.token.is_empty() {
         headers.append_fmt(
             b"authorization",
-            format_args!("Bearer {}", BStr::new(&pm.options.scope.token)),
+            format_args!("Bearer {}", BStr::new(&registry.token)),
         );
-    } else if !pm.options.scope.auth.is_empty() {
+    } else if !registry.auth.is_empty() {
         headers.append_fmt(
             b"authorization",
-            format_args!("Basic {}", BStr::new(&pm.options.scope.auth)),
+            format_args!("Basic {}", BStr::new(&registry.auth)),
         );
     }
 
@@ -495,7 +593,7 @@ fn send_audit_request(
     write!(
         &mut url_str,
         "{}/-/npm/v1/security/advisories/bulk",
-        BStr::new(strings::without_trailing_slash(pm.options.scope.url.href()))
+        BStr::new(&registry.href)
     )
     .expect("unreachable");
     let url = URL::parse(&url_str);
@@ -520,12 +618,18 @@ fn send_audit_request(
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
+            if !registry.is_default {
+                return Ok(None);
+            }
             Output::err(err, "audit request failed", ());
             Global::crash();
         }
     };
 
     if res.status_code() >= 400 {
+        if !registry.is_default {
+            return Ok(None);
+        }
         bun_core::pretty_errorln!(
             "<red>error<r>: audit request failed (status {})",
             res.status_code()
@@ -533,7 +637,15 @@ fn send_audit_request(
         Global::crash();
     }
 
-    Ok(Box::<[u8]>::from(response_buf.list.as_slice()))
+    let response = response_buf.list.as_slice();
+    if !registry.is_default {
+        let trimmed = response.trim_ascii();
+        if !trimmed.is_empty() && trimmed[0] != b'{' {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(Box::<[u8]>::from(response)))
 }
 
 fn parse_vulnerability(

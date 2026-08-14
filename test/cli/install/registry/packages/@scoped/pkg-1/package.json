@@ -16,15 +16,15 @@
 			"dist": {
 				"integrity": "sha512-ZukE1diuSo8MITnpi03IfVcMXL9cUr4oxvGuuVnIga3ju9ctyntuWqJSi6BKdzyvvV1qpeRkduDDNZ6ZDtly2A==",
 				"shasum": "096b75abed5582b7c73a93578f891e588b82987a",
-				"tarball": "http://localhost:45907/@scoped/pkg-1/-/@scoped/pkg-1-1.1.1.tgz"
+				"tarball": "http://localhost:28551/@scoped/pkg-1/-/@scoped/pkg-1-1.1.1.tgz"
 			},
 			"contributors": []
 		}
 	},
 	"time": {
-		"modified": "2026-08-14T04:24:23.926Z",
-		"created": "2026-08-14T04:24:23.926Z",
-		"1.1.1": "2026-08-14T04:24:23.926Z"
+		"modified": "2026-08-14T05:25:07.737Z",
+		"created": "2026-08-14T05:25:07.737Z",
+		"1.1.1": "2026-08-14T05:25:07.737Z"
 	},
 	"users": {},
 	"dist-tags": {

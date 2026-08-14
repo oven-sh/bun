@@ -13,11 +13,11 @@ afterAll(() => {
   verdaccio.stop();
 });
 
-async function migrate(cwd: string) {
+async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "pm", "migrate"],
+    cmd: [bunExe(), ...args],
     cwd,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -25,6 +25,10 @@ async function migrate(cwd: string) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   return { stdout, stderr, exitCode };
+}
+
+function migrate(cwd: string) {
+  return run(cwd, "pm", "migrate");
 }
 
 function fixture(name: string) {
@@ -35,9 +39,48 @@ async function bunLockOf(dir: string) {
   return await Bun.file(join(dir, "bun.lock")).text();
 }
 
+function workspacesSection(bunLock: string) {
+  const start = bunLock.indexOf(`  "workspaces": {`);
+  const end = bunLock.indexOf(`  "packages": {`);
+  expect(start).not.toBe(-1);
+  expect(end).not.toBe(-1);
+  return bunLock.slice(start, end);
+}
+
+function workspaceBlock(bunLock: string, key: string) {
+  const start = bunLock.indexOf(`    "${key}": {\n`);
+  expect(start).not.toBe(-1);
+  const end = bunLock.indexOf("\n    },", start);
+  expect(end).not.toBe(-1);
+  return bunLock.slice(start, end + "\n    },".length);
+}
+
+async function installedPackageJson(root: string, workspace: string, name: string) {
+  const nested = Bun.file(join(root, workspace, "node_modules", name, "package.json"));
+  return await ((await nested.exists()) ? nested : Bun.file(join(root, "node_modules", name, "package.json"))).json();
+}
+
 const PKG_A_GIT = "pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567";
+const NO_DEPS_1_0_0_INTEGRITY =
+  "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
 const NO_DEPS_1_0_1_INTEGRITY =
   "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==";
+const NO_DEPS_2_0_0_INTEGRITY =
+  "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==";
+const ONE_DEP_1_0_0_INTEGRITY =
+  "sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg==";
+const A_DEP_1_0_1_INTEGRITY =
+  "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg==";
+const PEER_DEPS_1_0_0_INTEGRITY =
+  "sha512-CHQ5sQXwUo38G++dkzJ/rJ9Ge98MeMTQjjC9UK2t0frp8Lrhm3zNooOLakFyHW4UcyD3vuTS3Qv324Bj6B5Tjw==";
+const PEER_DEPS_FIXED_1_0_0_INTEGRITY =
+  "sha512-gVs9cSdy6TAQIEWu1tVEK1mAspCQxYziTGQlv4a2XQpzOBZvoQ/y6lOeu3tqNNrNQnLwdvwAQTlvazV5+HfV7g==";
+const PEER_DEPS_TOO_1_0_0_INTEGRITY =
+  "sha512-sBx0TKrsB8FkRN2lzkDjMuctPGEKn1TmNUBv3dJOtnZM8nd255o5ZAPRpAI2XFLHZAavBlK/e73cZNwnUxlRog==";
+const ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY =
+  "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==";
+const LOCAL_TARBALL_INTEGRITY =
+  "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==";
 
 function registryLockfileWithTarball(tarball: string) {
   return `lockfileVersion: '9.0'
@@ -58,6 +101,28 @@ packages:
 snapshots:
 
   no-deps@1.0.1: {}
+`;
+}
+
+function registryQualifiedNoDepsLockfile(registry: string) {
+  return `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: ${registry}:1.0.1
+
+packages:
+
+  no-deps@${registry}:1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@${registry}:1.0.1: {}
 `;
 }
 
@@ -106,23 +171,11 @@ describe("pnpm-lock.yaml v9", () => {
     expect(bunLock).toContain(`"aliased-no-deps": "npm:no-deps@2.0.0"`);
     expect(bunLock).toContain(`"aliased-no-deps": ["no-deps@2.0.0"`);
 
-    await using install = Bun.spawn({
-      cmd: [bunExe(), "install", "--frozen-lockfile"],
-      cwd: packageDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const install = await run(packageDir, "install", "--frozen-lockfile");
 
-    const [installStdout, installStderr, installExitCode] = await Promise.all([
-      install.stdout.text(),
-      install.stderr.text(),
-      install.exited,
-    ]);
-
-    expect(installStderr).not.toContain("error:");
-    expect(installStdout).toContain("packages installed");
-    expect(installExitCode).toBe(0);
+    expect(install.stderr).not.toContain("error:");
+    expect(install.stdout).toContain("packages installed");
+    expect(install.exitCode).toBe(0);
 
     expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
       "node_modules/aliased-no-deps/no-deps@2.0.0
@@ -187,32 +240,14 @@ describe("pnpm-lock.yaml v9", () => {
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({ name: "registry-qualified", dependencies: { "no-deps": "^1.0.0" } }),
-        "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-importers:
-
-  .:
-    dependencies:
-      no-deps:
-        specifier: ^1.0.0
-        version: work:1.0.1
-
-packages:
-
-  no-deps@work:1.0.1:
-    resolution: {integrity: sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==}
-
-snapshots:
-
-  no-deps@work:1.0.1: {}
-`,
+        "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
       },
     });
 
     const { stderr, exitCode } = await migrate(packageDir);
 
     expect(stderr).toContain(
-      "pnpm-lock.yaml package 'no-deps@work:1.0.1' is from pnpm registry 'work', resolving it from the configured registry instead",
+      "pnpm-lock.yaml packages from pnpm registry 'work' are not in namedRegistries of pnpm-workspace.yaml, resolving them from the configured registry instead",
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -221,6 +256,188 @@ snapshots:
     expect(bunLock).toContain(`"no-deps@1.0.1"`);
     expect(bunLock).not.toContain("work:");
     expect(bunLock).not.toContain("git+ssh");
+  });
+
+  describe("named registries", () => {
+    // pnpm11/lockfile/utils/src/pkgSnapshotToResolution.ts: named registry -> scope registry -> default
+    test("built-in npmjs: entries record the npmjs registry", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "npmjs-qualified", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("npmjs"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        "pnpm-lock.yaml packages from pnpm registry 'npmjs' will be fetched from https://registry.npmjs.org/; add that registry to bunfig.toml or .npmrc if it needs authentication",
+      );
+      expect(stderr).not.toContain("not in namedRegistries");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      // bun.lock spells the default registry as "" (bun.lock.rs url_is_under_registry(DEFAULT_URL)).
+      expect(bunLock).toContain(`["no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
+      expect(bunLock).not.toContain(verdaccio.registryUrl());
+      expect(bunLock).not.toContain("npmjs:");
+    });
+
+    test("namedRegistries entry pointing at the configured registry needs no warning", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "named-registry-same", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${verdaccio.registryUrl()}\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("pnpm registry");
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("work:");
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
+    });
+
+    test("namedRegistries entry pointing at another registry is used for the tarballs", async () => {
+      const named = `http://127.0.0.1:${verdaccio.port}/`;
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "named-registry-other",
+            dependencies: { "no-deps": "^1.0.0", "peer-deps-fixed": "^1.0.0" },
+          }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${named}\n`,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: work:1.0.1
+      peer-deps-fixed:
+        specifier: ^1.0.0
+        version: work:1.0.0(no-deps@work:1.0.1)
+
+packages:
+
+  no-deps@work:1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  peer-deps-fixed@work:1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+
+snapshots:
+
+  no-deps@work:1.0.1: {}
+
+  peer-deps-fixed@work:1.0.0(no-deps@work:1.0.1):
+    dependencies:
+      no-deps: work:1.0.1
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        `pnpm-lock.yaml packages from pnpm registry 'work' will be fetched from ${named}; add that registry to bunfig.toml or .npmrc if it needs authentication`,
+      );
+      expect(stderr.split("pnpm registry 'work'").length - 1).toBe(1);
+      expect(stderr).not.toContain("not in namedRegistries");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `["no-deps@1.0.1", "${named}no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(
+        `["peer-deps-fixed@1.0.0", "${named}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).not.toContain(verdaccio.registryUrl());
+      expect(bunLock).not.toContain("work:");
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/peer-deps-fixed/peer-deps-fixed@1.0.0"
+      `);
+    });
+
+    test("two packages from one unknown registry warn once", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unknown-registry-twice",
+            dependencies: { "no-deps": "^1.0.0", "one-dep": "^1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: work:1.0.1
+      one-dep:
+        specifier: ^1.0.0
+        version: work:1.0.0
+
+packages:
+
+  no-deps@work:1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@work:1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@work:1.0.1: {}
+
+  one-dep@work:1.0.0:
+    dependencies:
+      no-deps: work:1.0.1
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr.split("pnpm registry 'work'").length - 1).toBe(1);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).toContain(`"one-dep@1.0.0"`);
+      expect(bunLock).not.toContain("work:");
+    });
   });
 
   test.concurrent("reports a package whose resolution cannot be parsed", async () => {
@@ -440,21 +657,64 @@ importers:
     expect(bunLock).toMatchSnapshot("bun.lock");
   });
 
-  test.concurrent("local file: tarballs with tarball+integrity and integrity-only .tar.gz resolutions", async () => {
-    // tar-pkg entry ported from pnpm11/installing/deps-restorer/test/fixtures/has-local-dep/pkg/pnpm-lock.yaml
-    using dir = fixture("v9-local-tarballs");
+  describe("local file: tarballs", () => {
+    test.concurrent("tarball+integrity, integrity-only .tar.gz, and upper-case / .tar spellings", async () => {
+      // tar-pkg entry ported from pnpm11/installing/deps-restorer/test/fixtures/has-local-dep/pkg/pnpm-lock.yaml
+      using dir = fixture("v9-local-tarballs");
 
-    const { stderr, exitCode } = await migrate(String(dir));
+      const { stderr, exitCode } = await migrate(String(dir));
 
-    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(exitCode).toBe(0);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
 
-    const bunLock = await bunLockOf(String(dir));
-    expect(bunLock).toContain(
-      `["tar-pkg@../tar-pkg-1.0.0.tgz", {}, "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw=="]`,
+      const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`["tar-pkg@../tar-pkg-1.0.0.tgz", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
+      expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", {}, "sha512-`);
+      expect(bunLock).toContain(`["plain@../plain-1.0.0.tar", {}, "sha512-`);
+      expect(bunLock).toContain(`["upper@../UPPER-1.0.0.TGZ", {}, "sha512-`);
+      expect(bunLock).not.toContain("tar-gz-pkg@file:");
+      expect(bunLock).not.toContain("plain@file:");
+      expect(bunLock).not.toContain("upper@file:");
+    });
+
+    // pnpm11/lockfile/utils/src/refIsLocalTarball.ts is case-insensitive and accepts .tar
+    test.concurrent.each(["up-1.0.0.TGZ", "mixed-1.0.0.Tar.Gz", "plain-1.0.0.tar"])(
+      "integrity-only file: entry ending in %s is a tarball, not a folder",
+      async file => {
+        using dir = tempDir("pnpm-v9-local-tarball-spelling", {
+          "package.json": JSON.stringify({ name: "tarball-spelling", dependencies: { pkg: `file:vendor/${file}` } }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      pkg:
+        specifier: file:vendor/${file}
+        version: file:vendor/${file}
+
+packages:
+
+  pkg@file:vendor/${file}:
+    resolution: {integrity: ${LOCAL_TARBALL_INTEGRITY}}
+    version: 1.0.0
+
+snapshots:
+
+  pkg@file:vendor/${file}: {}
+`,
+        });
+
+        const { stderr, exitCode } = await migrate(String(dir));
+
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(exitCode).toBe(0);
+
+        const bunLock = await bunLockOf(String(dir));
+        expect(bunLock).toContain(`["pkg@vendor/${file}", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
+        expect(bunLock).not.toContain(`pkg@file:vendor/${file}`);
+      },
     );
-    expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", {}, "sha512-`);
-    expect(bunLock).not.toContain("tar-gz-pkg@file:");
   });
 
   test.concurrent("file: directory with type: directory and a nested file: dependency", async () => {
@@ -516,16 +776,11 @@ importers:
       expect(bunLock).toContain(`"foo": ["foo@workspace:packages/foo"]`);
       expect(bunLock).not.toContain("foo@file:");
 
-      await using install = Bun.spawn({
-        cmd: [bunExe(), "install", "--frozen-lockfile", "--linker", "hoisted"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [installStderr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
-      expect(installStderr).not.toContain("error:");
-      expect(installExitCode).toBe(0);
+      const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(await installedPackageJson(String(dir), "", "foo")).toEqual({ name: "foo", version: "1.0.0" });
+      expect(install.exitCode).toBe(0);
     });
 
     test.concurrent(
@@ -546,6 +801,873 @@ importers:
         expect(bunLock).not.toContain("peer@1.0.0");
       },
     );
+  });
+
+  describe("pruned snapshots", () => {
+    // pnpm11/lockfile/fs convertToLockfileObject rebuilds `file:` directories whose packages: entry turbo prune dropped
+    test("file: variants without a packages entry are rebuilt", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-snapshot-only-file-variants"),
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("no package entry");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"dir": ["dir@workspace:packages/dir"]`);
+      expect(bunLock).toContain(`["local@file:vendor/local", { "dependencies": { "no-deps": "1.0.0" } }]`);
+      expect(bunLock).not.toContain("dir@file:");
+      expect(bunLock).not.toContain("tb@");
+    });
+
+    test.concurrent("a lockfile with snapshots but no packages section migrates", async () => {
+      using dir = tempDir("pnpm-v9-snapshots-only", {
+        "package.json": JSON.stringify({ name: "snapshots-only", dependencies: { local: "file:vendor/local" } }),
+        "vendor/local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      local:
+        specifier: file:vendor/local
+        version: file:vendor/local(x@1.0.0)
+
+snapshots:
+
+  local@file:vendor/local(x@1.0.0): {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("no package entry");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`["local@file:vendor/local", {}]`);
+    });
+
+    // guard: only directories are rebuilt; a tarball needs the integrity its packages: entry carried
+    test.concurrent.each(["tb-1.0.0.tgz", "tb-1.0.0.TGZ", "tb-1.0.0.Tar.Gz"])(
+      "a referenced snapshot-only tarball variant (%s) is still reported",
+      async file => {
+        using dir = tempDir("pnpm-v9-snapshot-only-tarball", {
+          "package.json": JSON.stringify({
+            name: "snapshot-only-tarball",
+            dependencies: { tb: `file:vendor/${file}` },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      tb:
+        specifier: file:vendor/${file}
+        version: file:vendor/${file}(x@1.0.0)
+
+snapshots:
+
+  tb@file:vendor/${file}(x@1.0.0): {}
+`,
+        });
+
+        const { stderr, exitCode } = await migrate(String(dir));
+
+        expect(stderr).toContain(
+          `pnpm-lock.yaml has no package entry 'tb@file:vendor/${file}' for dependency 'tb' of importer '.'`,
+        );
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+      },
+    );
+  });
+
+  describe("peer dependencies", () => {
+    test("packages keep their declared peer ranges and optional peers", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "declared-peers",
+            dependencies: {
+              "a-dep": "1.0.1",
+              "no-deps": "^1.0.0",
+              "peer-deps": "^1.0.0",
+              "peer-deps-fixed": "^1.0.0",
+            },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+importers:
+
+  .:
+    dependencies:
+      a-dep:
+        specifier: 1.0.1
+        version: 1.0.1
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+      peer-deps:
+        specifier: ^1.0.0
+        version: 1.0.0(a-dep@1.0.1)(no-deps@1.0.1)
+      peer-deps-fixed:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  peer-deps@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+      a-dep: '*'
+      d: '>=2'
+    peerDependenciesMeta:
+      a-dep:
+        optional: true
+      d:
+        optional: true
+      e:
+        optional: true
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      g: ^1
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.1: {}
+
+  peer-deps@1.0.0(a-dep@1.0.1)(no-deps@1.0.1):
+    dependencies:
+      no-deps: 1.0.1
+    optionalDependencies:
+      a-dep: 1.0.1
+
+  peer-deps-fixed@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `{ "peerDependencies": { "a-dep": "*", "d": ">=2", "e": "*", "no-deps": "^1.0.0" }, "optionalPeers": ["a-dep", "d", "e"] }`,
+      );
+      expect(bunLock).toContain(`{ "peerDependencies": { "g": "^1" }, "optionalPeers": ["g"] }`);
+      expect(bunLock).not.toContain(`"optionalDependencies"`);
+      expect(bunLock).not.toContain(`"no-deps": "1.0.1"`);
+    });
+
+    // pnpm11/__fixtures__/with-peer: the packages entry declares `ajv: ^6.9.1`, the snapshot resolves 6.10.2
+    test("declared ranges win over the snapshot's resolved versions; peers pnpm left out are still emitted", async () => {
+      const registry = verdaccio.registryUrl();
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "declared-ranges",
+            dependencies: {
+              "no-deps": "^1.0.0",
+              "one-optional-peer-dep": "1.0.2",
+              "peer-deps-fixed": "^1.0.0",
+              "peer-deps-too": "^1.0.0",
+            },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+      one-optional-peer-dep:
+        specifier: 1.0.2
+        version: 1.0.2
+      peer-deps-fixed:
+        specifier: ^1.0.0
+        version: 1.0.0(no-deps@1.0.1)
+      peer-deps-too:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-optional-peer-dep@1.0.2:
+    resolution: {integrity: ${ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+    peerDependenciesMeta:
+      no-deps:
+        optional: true
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+
+  peer-deps-too@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_TOO_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: '*'
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  one-optional-peer-dep@1.0.2: {}
+
+  peer-deps-fixed@1.0.0(no-deps@1.0.1):
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps-too@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `["peer-deps-fixed@1.0.0", "${registry}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(
+        `["one-optional-peer-dep@1.0.2", "${registry}one-optional-peer-dep/-/one-optional-peer-dep-1.0.2.tgz", { "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }, "${ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(
+        `["peer-deps-too@1.0.0", "${registry}peer-deps-too/-/peer-deps-too-1.0.0.tgz", { "peerDependencies": { "no-deps": "*" } }, "${PEER_DEPS_TOO_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).not.toContain(`"no-deps": "1.0.1"`);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/one-optional-peer-dep/one-optional-peer-dep@1.0.2
+        node_modules/peer-deps-fixed/peer-deps-fixed@1.0.0
+        node_modules/peer-deps-too/peer-deps-too@1.0.0"
+      `);
+    });
+
+    test("a peer range dedupes onto the hoisted version like a fresh install", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-peer-range-dedupe"),
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"peer-deps": ["peer-deps@1.0.0"`);
+      expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "*" } }`);
+      expect(bunLock).toContain(`"provides-peer-deps-1-0-0/no-deps": ["no-deps@1.0.0"`);
+      expect(bunLock).not.toContain(`"peer-deps/no-deps"`);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/one-dep/one-dep@1.0.0
+        node_modules/peer-deps/peer-deps@1.0.0
+        node_modules/provides-peer-deps-1-0-0/node_modules/no-deps/no-deps@1.0.0
+        node_modules/provides-peer-deps-1-0-0/provides-peer-deps-1-0-0@1.0.0"
+      `);
+    });
+
+    test("peer variants of one package migrate identically regardless of snapshot order", async () => {
+      // pnpm11/lockfile/fs convertToLockfileObject: every variant joins packages[removeSuffix(key)]
+      const packageJsons = {
+        "package.json": JSON.stringify({ name: "v9-peer-variants", workspaces: ["apps/*"] }),
+        "apps/a/package.json": JSON.stringify({
+          name: "a",
+          dependencies: { "no-deps": "1.0.1", "peer-deps": "^1.0.0" },
+        }),
+        "apps/b/package.json": JSON.stringify({
+          name: "b",
+          dependencies: { "no-deps": "2.0.0", "peer-deps": "^1.0.0" },
+        }),
+      };
+      const variant101 = `  peer-deps@1.0.0(no-deps@1.0.1):
+    dependencies:
+      no-deps: 1.0.1
+`;
+      const variant200 = `  peer-deps@1.0.0(no-deps@2.0.0):
+    dependencies:
+      no-deps: 2.0.0
+`;
+      const lockfile = (variants: string) => `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  apps/a:
+    dependencies:
+      no-deps:
+        specifier: 1.0.1
+        version: 1.0.1
+      peer-deps:
+        specifier: ^1.0.0
+        version: 1.0.0(no-deps@1.0.1)
+
+  apps/b:
+    dependencies:
+      no-deps:
+        specifier: 2.0.0
+        version: 2.0.0
+      peer-deps:
+        specifier: ^1.0.0
+        version: 1.0.0(no-deps@2.0.0)
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@2.0.0:
+    resolution: {integrity: ${NO_DEPS_2_0_0_INTEGRITY}}
+
+  peer-deps@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: '*'
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  no-deps@2.0.0: {}
+
+${variants}`;
+
+      const { packageDir: forward } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { ...packageJsons, "pnpm-lock.yaml": lockfile(`${variant101}\n${variant200}`) },
+      });
+      const { packageDir: swapped } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { ...packageJsons, "pnpm-lock.yaml": lockfile(`${variant200}\n${variant101}`) },
+      });
+
+      const [forwardResult, swappedResult] = await Promise.all([migrate(forward), migrate(swapped)]);
+
+      expect(forwardResult.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(swappedResult.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(forwardResult.exitCode).toBe(0);
+      expect(swappedResult.exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(forward);
+      expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "*" } }`);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).toContain(`"no-deps@2.0.0"`);
+      expect(await bunLockOf(swapped)).toBe(bunLock);
+
+      const install = await run(forward, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect((await installedPackageJson(forward, "apps/a", "no-deps")).version).toBe("1.0.1");
+      expect((await installedPackageJson(forward, "apps/b", "no-deps")).version).toBe("2.0.0");
+    });
+
+    test("root and workspace peerDependencies come from package.json", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-importer-peers"),
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("does not record peer dependency");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(workspaceBlock(bunLock, "")).toBe(
+        [
+          `    "": {`,
+          `      "name": "v9-importer-peers",`,
+          `      "dependencies": {`,
+          `        "no-deps": "^1.0.0",`,
+          `      },`,
+          `      "peerDependencies": {`,
+          `        "@types/is-number": "*",`,
+          `        "@types/no-deps": "*",`,
+          `        "no-deps": "^1.0.0",`,
+          `        "peer-deps-fixed": "^1.0.0",`,
+          `      },`,
+          `      "optionalPeers": [`,
+          `        "@types/is-number",`,
+          `        "@types/no-deps",`,
+          `      ],`,
+          `    },`,
+        ].join("\n"),
+      );
+      expect(workspaceBlock(bunLock, "packages/a")).toBe(
+        [
+          `    "packages/a": {`,
+          `      "name": "a",`,
+          `      "peerDependencies": {`,
+          `        "no-deps": "^1.0.0",`,
+          `      },`,
+          `    },`,
+        ].join("\n"),
+      );
+    });
+
+    test("a name in both devDependencies and peerDependencies gets both entries, like a fresh install", async () => {
+      const packageJson = JSON.stringify({
+        name: "dev-and-peer",
+        devDependencies: { "no-deps": "^1.0.0" },
+        peerDependencies: { "no-deps": "^1.0.0" },
+      });
+      const { packageDir: migrated } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": packageJson,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+importers:
+
+  .:
+    devDependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(migrated);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migratedRoot = workspaceBlock(await bunLockOf(migrated), "");
+      expect(migratedRoot).toContain(`      "devDependencies": {\n        "no-deps": "^1.0.0",\n      },`);
+      expect(migratedRoot).toContain(`      "peerDependencies": {\n        "no-deps": "^1.0.0",\n      },`);
+
+      const { packageDir: fresh } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson },
+      });
+
+      const install = await run(fresh, "install");
+
+      expect(install.stderr).toContain("Saved lockfile");
+      expect(install.exitCode).toBe(0);
+      expect(migratedRoot).toBe(workspaceBlock(await bunLockOf(fresh), ""));
+    });
+
+    test("workspace peers pnpm did not auto-install are merged from the member's package.json", async () => {
+      // port of pnpm11/installing/deps-installer/test/install/injectLocalPackages.ts 'inject local packages'
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "v9-workspace-peers", workspaces: ["packages/*"] }),
+          "packages/project-1/package.json": JSON.stringify({
+            name: "project-1",
+            version: "1.0.0",
+            dependencies: { "a-dep": "1.0.1" },
+            peerDependencies: { "no-deps": ">=1.0.0" },
+          }),
+          "packages/project-2/package.json": JSON.stringify({
+            name: "project-2",
+            version: "1.0.0",
+            dependencies: { "project-1": "workspace:*" },
+            devDependencies: { "no-deps": "1.0.1" },
+            dependenciesMeta: { "project-1": { injected: true } },
+          }),
+          "packages/project-3/package.json": JSON.stringify({
+            name: "project-3",
+            version: "1.0.0",
+            dependencies: { "project-2": "workspace:*" },
+            devDependencies: { "no-deps": "2.0.0" },
+            dependenciesMeta: { "project-2": { injected: true } },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+  injectWorkspacePackages: true
+
+importers:
+
+  .: {}
+
+  packages/project-1:
+    dependencies:
+      a-dep:
+        specifier: 1.0.1
+        version: 1.0.1
+
+  packages/project-2:
+    dependencies:
+      project-1:
+        specifier: workspace:*
+        version: file:packages/project-1(no-deps@1.0.1)
+    devDependencies:
+      no-deps:
+        specifier: 1.0.1
+        version: 1.0.1
+
+  packages/project-3:
+    dependencies:
+      project-2:
+        specifier: workspace:*
+        version: file:packages/project-2(no-deps@2.0.0)
+    devDependencies:
+      no-deps:
+        specifier: 2.0.0
+        version: 2.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@2.0.0:
+    resolution: {integrity: ${NO_DEPS_2_0_0_INTEGRITY}}
+
+  project-1@file:packages/project-1:
+    resolution: {directory: packages/project-1, type: directory}
+    version: 1.0.0
+    peerDependencies:
+      no-deps: '>=1.0.0'
+
+  project-2@file:packages/project-2:
+    resolution: {directory: packages/project-2, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.1: {}
+
+  no-deps@2.0.0: {}
+
+  project-1@file:packages/project-1(no-deps@1.0.1):
+    dependencies:
+      a-dep: 1.0.1
+      no-deps: 1.0.1
+
+  project-1@file:packages/project-1(no-deps@2.0.0):
+    dependencies:
+      a-dep: 1.0.1
+      no-deps: 2.0.0
+
+  project-2@file:packages/project-2(no-deps@2.0.0):
+    dependencies:
+      project-1: file:packages/project-1(no-deps@2.0.0)
+    transitivePeerDependencies:
+      - no-deps
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        "pnpm-lock.yaml does not record peer dependency 'no-deps' of importer 'packages/project-1'; the next bun install will resolve it",
+      );
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(workspaceBlock(bunLock, "packages/project-1")).toContain(
+        `      "peerDependencies": {\n        "no-deps": ">=1.0.0",\n      },`,
+      );
+      expect(bunLock).toContain(`"project-1": ["project-1@workspace:packages/project-1"]`);
+      expect(bunLock).toContain(`"project-2": ["project-2@workspace:packages/project-2"]`);
+      expect(bunLock).not.toContain("@file:packages/");
+      // the injected packages: entry declares the same peer; it must not become package-level metadata too
+      expect(bunLock.split(`"no-deps": ">=1.0.0"`).length - 1).toBe(1);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await Bun.file(join(packageDir, "packages/project-2/node_modules/project-1/package.json")).json()).toEqual(
+        expect.objectContaining({ name: "project-1" }),
+      );
+      expect(await Bun.file(join(packageDir, "packages/project-3/node_modules/project-2/package.json")).json()).toEqual(
+        expect.objectContaining({ name: "project-2" }),
+      );
+    });
+
+    test("an unrecorded required peer is reported and left for bun install", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unrecorded-peer",
+            dependencies: { "no-deps": "^1.0.0" },
+            peerDependencies: { "has-peer": "^1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        "pnpm-lock.yaml does not record peer dependency 'has-peer' of importer '.'; the next bun install will resolve it",
+      );
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(workspaceBlock(await bunLockOf(packageDir), "")).toContain(
+        [
+          `      "peerDependencies": {`,
+          `        "has-peer": "^1.0.0",`,
+          `      },`,
+          `      "optionalPeers": [`,
+          `        "has-peer",`,
+          `      ],`,
+        ].join("\n"),
+      );
+    });
+
+    test("peers declared with a catalog: range keep the catalog reference", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "catalog-peer",
+            workspaces: { catalog: { "no-deps": "^1.0.0" } },
+            peerDependencies: { "no-deps": "catalog:" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+catalogs:
+  default:
+    no-deps:
+      specifier: ^1.0.0
+      version: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: 'catalog:'
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("missing entry");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      const root = workspaceBlock(bunLock, "");
+      expect(root).toContain(`      "peerDependencies": {\n        "no-deps": "catalog:",\n      },`);
+      expect(root).not.toContain(`"dependencies"`);
+      expect(bunLock).toContain(`"catalog": {\n    "no-deps": "^1.0.0",\n  }`);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("Saved lockfile");
+      expect(install.exitCode).toBe(0);
+      expect(workspaceBlock(await bunLockOf(packageDir), "")).toBe(root);
+    });
+
+    test("bun install after bun pm migrate does not rewrite bun.lock", async () => {
+      // real pnpm output: the root's peer-only `a-dep` sits under the importer's dependencies
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/basic"),
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      const root = workspaceBlock(migrated, "");
+      expect(root).toContain(`      "peerDependencies": {\n        "a-dep": "1.0.1",\n      },`);
+      expect(root).toContain(`      "dependencies": {\n        "no-deps": "~1.0.0",\n      },`);
+      expect(root.split(`"a-dep"`).length - 1).toBe(1);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("Saved lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(migrated);
+      expect(await installedPackageJson(packageDir, "", "a-dep")).toEqual(
+        expect.objectContaining({ name: "a-dep", version: "1.0.1" }),
+      );
+    });
+
+    test("bun install straight from pnpm-lock.yaml writes the same importers as bun pm migrate", async () => {
+      const files = join(import.meta.dir, "pnpm/basic");
+      const { packageDir: viaMigrate } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+      const { packageDir: viaInstall } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+
+      const migrated = await migrate(viaMigrate);
+      expect(migrated.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(migrated.exitCode).toBe(0);
+
+      const [installAfterMigrate, directInstall] = await Promise.all([
+        run(viaMigrate, "install"),
+        run(viaInstall, "install"),
+      ]);
+
+      expect(installAfterMigrate.stderr).not.toContain("Saved lockfile");
+      expect(installAfterMigrate.exitCode).toBe(0);
+      expect(directInstall.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(directInstall.stderr.split("Saved lockfile").length - 1).toBe(1);
+      expect(directInstall.exitCode).toBe(0);
+
+      const importers = workspacesSection(await bunLockOf(viaMigrate));
+      expect(importers).toContain(`      "peerDependencies": {\n        "a-dep": "1.0.1",\n      },`);
+      expect(workspacesSection(await bunLockOf(viaInstall))).toBe(importers);
+    });
+  });
+
+  test("excludeLinksFromLockfile omissions are reported", async () => {
+    // pnpm11/installing/deps-installer/test/install/excludeLinksFromLockfile.ts
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "exclude-links",
+          dependencies: { "no-deps": "^1.0.0", linked: "link:../linked" },
+        }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  excludeLinksFromLockfile: true
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+      },
+    });
+
+    const { stderr, exitCode } = await migrate(packageDir);
+
+    expect(stderr).toContain(
+      "pnpm-lock.yaml omits linked dependency 'linked' of importer '.' (excludeLinksFromLockfile); it is not migrated",
+    );
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(exitCode).toBe(0);
+
+    const bunLock = await bunLockOf(packageDir);
+    expect(bunLock).toContain(`"no-deps@1.0.0"`);
+    expect(bunLock).not.toContain("linked");
   });
 
   describe("registry tarball: urls", () => {
@@ -570,7 +1692,7 @@ importers:
       expect(bunLock).toContain(`["no-deps@1.0.1", "${tarball}", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
     });
 
-    // pnpm/pnpm#5920 / #4361: a stale or injected off-registry tarball is rebuilt from the configured registry
+    // guards for the keep-tarball path above (pnpm/pnpm#5920 / #4361): off-registry urls are rebuilt
     test("recorded on a foreign host is rebuilt from the configured registry", async () => {
       const registry = verdaccio.registryUrl();
       const { packageDir } = await verdaccio.createTestDir({
@@ -714,14 +1836,22 @@ importers:
 
       const bunLock = await bunLockOf(String(dir));
       expect(bunLock).toContain(`"lockfileVersion": 3`);
-      expect(bunLock).toContain(`"semver@<7.5.2": {`);
-      expect(bunLock).toContain(`".": "7.5.2"`);
-      expect(bunLock).toContain(`"@scope/pkg@^1": {`);
-      expect(bunLock).toContain(`".": "1.9.0"`);
-      expect(bunLock).toContain(`"foo": {`);
-      expect(bunLock).toContain(`"bar": "2.0.0"`);
-      expect(bunLock).toContain(`"plain": "1.0.0"`);
-      expect(bunLock).toContain(`"@scope/plain": "3.0.0"`);
+      expect(bunLock).not.toContain("left-pad");
+      expect(overridesSection(bunLock)).toMatchInlineSnapshot(`
+        "  "overrides": {
+            "@scope/pkg@^1": {
+              ".": "1.9.0",
+            },
+            "@scope/plain": "3.0.0",
+            "foo": {
+              "bar": "2.0.0",
+            },
+            "plain": "1.0.0",
+            "semver@<7.5.2": {
+              ".": "7.5.2",
+            },
+          },"
+      `);
     });
 
     test.concurrent("parent selectors become nested rules", async () => {
@@ -795,19 +1925,14 @@ importers:
     expect(bunLock).toContain(`"common": ["common@workspace:shared/common"]`);
     expect(bunLock).not.toContain("link:");
 
-    await using install = Bun.spawn({
-      cmd: [bunExe(), "install", "--frozen-lockfile", "--linker", "hoisted"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [installStderr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
-    expect(installStderr).not.toContain("error:");
-    expect(installExitCode).toBe(0);
+    const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
+
+    expect(install.stderr).not.toContain("error:");
+    expect(await installedPackageJson(String(dir), "apps/web", "common")).toEqual({ name: "common", version: "1.2.0" });
+    expect(install.exitCode).toBe(0);
   });
 
-  test.concurrent("prettier-style multi-line resolution mappings migrate identically (pnpm/pnpm#4084)", async () => {
+  test.concurrent("prettier-style multi-line resolution mappings migrate identically", async () => {
     using plain = fixture("v9-git-references");
     using formatted = fixture("v9-git-references");
 
@@ -831,6 +1956,7 @@ importers:
 
     expect(formattedResult.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(formattedResult.exitCode).toBe(0);
+    expect(plainResult.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(plainResult.exitCode).toBe(0);
     expect(await bunLockOf(String(formatted))).toBe(await bunLockOf(String(plain)));
   });

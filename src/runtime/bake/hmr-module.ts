@@ -935,9 +935,8 @@ declare global {
   }
 }
 
-// bun:bake/server, bun:bake/client, and bun:wrap are provided by this file
-// instead of the bundler. Transpiled output imports whichever lowering helpers
-// it uses from bun:wrap, so it gets all of runtime.bun.js, like `bun run`.
+// bun:bake/server, bun:bake/client, and bun:wrap are
+// provided by this file instead of the bundler
 registerSynthetic("bun:wrap", runtimeHelpers);
 
 if (side === "server") {

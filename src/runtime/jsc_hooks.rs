@@ -2845,6 +2845,13 @@ fn transpile_source_code_inner(
                     return Err(crate::Error::ParseError);
                 }
 
+                // Set before the early returns below (cache hit, `// @bun`, async queue):
+                // every later module load is gated on this flag.
+                if is_main && !disable_transpilying {
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unsafe { (*jsc_vm).has_loaded = true };
+                }
+
                 let source = &parse_result.source;
 
                 // Raw JSON: hand the source bytes straight to JSC.
@@ -3267,11 +3274,6 @@ fn transpile_source_code_inner(
                         drop(module_info.take());
                     }
                     print_result?;
-                }
-
-                if is_main {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    unsafe { (*jsc_vm).has_loaded = true };
                 }
 
                 // `module_info.asDeserialized()`: finalize the

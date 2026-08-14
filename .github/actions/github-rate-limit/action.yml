@@ -3,16 +3,13 @@ description: "Check the remaining GitHub API quota before a release job, or repo
 
 inputs:
   mode:
-    type: string
     description: "'check' records the remaining quota and fails when it is below 'floor'; 'report' prints the calls used since 'check'."
     required: true
   floor:
-    type: string
     description: "Minimum remaining API calls 'check' requires before letting the job proceed."
     default: "200"
     required: false
   token:
-    type: string
     description: "Token whose quota is checked."
     required: true
 
@@ -27,6 +24,16 @@ runs:
         FLOOR: ${{ inputs.floor }}
       # The rate_limit endpoint itself does not count against the quota.
       run: |
+        # Inputs are validated before the API read so a misconfigured step
+        # fails loudly instead of riding the cannot-read-quota warning path.
+        if [[ "$MODE" != "check" && "$MODE" != "report" ]]; then
+          echo "error: Unknown mode: $MODE"
+          exit 1
+        fi
+        if ! [[ "$FLOOR" =~ ^[0-9]+$ ]]; then
+          echo "error: floor must be a non-negative integer, got: $FLOOR"
+          exit 1
+        fi
         remaining="$(gh api rate_limit --jq '.resources.core.remaining' 2> /dev/null || true)"
         if ! [[ "$remaining" =~ ^[0-9]+$ ]]; then
           echo "warning: Cannot read GitHub API rate limit, skipping quota $MODE"
@@ -55,9 +62,5 @@ runs:
             else
               echo "GitHub API quota remaining after this job: $remaining"
             fi
-            ;;
-          *)
-            echo "error: Unknown mode: $MODE"
-            exit 1
             ;;
         esac

@@ -1224,6 +1224,19 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           send("[...cons");
           await waitFor(`${DIM}ole`);
+          // Nor do they swallow the chain that follows them.
+          send("\x15[...console.l");
+          await waitFor(`${DIM}og`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a chain starting with `this` completes against the global object", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("this.cons");
+          await waitFor(`${DIM}ole`);
         },
         { env: colorEnv },
       );

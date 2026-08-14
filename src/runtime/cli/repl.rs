@@ -1304,7 +1304,11 @@ impl<'a> Repl<'a> {
         }
 
         let mut current = global.to_js_value();
-        for part in strings::split(expr, b".") {
+        for (index, part) in strings::split(expr, b".").enumerate() {
+            // Top-level `this` evaluates to globalThis in the REPL, which is where the walk starts.
+            if index == 0 && part == b"this" {
+                continue;
+            }
             if !identifier::is_identifier(part) || !current.is_object() {
                 return JSValue::UNDEFINED;
             }
@@ -2810,8 +2814,11 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
     let prefix_start = i;
     let prefix = &line[prefix_start..cursor];
 
-    // `..` before the word is the tail of a spread (`[...args`), not member access.
-    if i == 0 || line[i - 1] != b'.' || (i >= 2 && line[i - 2] == b'.') {
+    // A `..` ending at `end` is the tail of a spread (`[...args`, `[...a.b`), not member access.
+    let member_dot_ends_at =
+        |end: usize| end >= 1 && line[end - 1] == b'.' && (end < 2 || line[end - 2] != b'.');
+
+    if !member_dot_ends_at(i) {
         return Some(CompletionContext {
             object_expr: b"",
             prefix,
@@ -2829,7 +2836,7 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
         if i == ident_end {
             return None;
         }
-        if i == 0 || line[i - 1] != b'.' {
+        if !member_dot_ends_at(i) {
             break;
         }
         i -= 1;

@@ -35,6 +35,7 @@ use bun_url::URL;
 use bun_spawn::process::WaiterThread;
 
 use crate::RunCommand;
+use crate::dependency::TagExt;
 
 /// `Command::Context` shim — the option-carrying `ContextData` shape was lifted
 /// into `bun_options_types::context` so install can reference it without the CLI
@@ -486,11 +487,32 @@ impl Subcommand {
     pub(crate) fn supports_json_output(self) -> bool {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
+}
 
-    // TODO: make all subcommands find root and chdir
-    pub(crate) fn should_chdir_to_root(self) -> bool {
-        !matches!(self, Self::Link)
-    }
+fn has_workspace_dependencies(root: &bun_ast::Expr) -> bool {
+    const DEPENDENCY_GROUPS: [&[u8]; 4] = [
+        b"dependencies",
+        b"devDependencies",
+        b"optionalDependencies",
+        b"peerDependencies",
+    ];
+
+    DEPENDENCY_GROUPS.iter().any(|group| {
+        root.get(group)
+            .and_then(|dependencies| dependencies.data.e_object())
+            .is_some_and(|dependencies| {
+                dependencies.properties.iter().any(|dependency| {
+                    dependency
+                        .value
+                        .as_ref()
+                        .and_then(|value| value.as_utf8_string_literal())
+                        .is_some_and(|version| {
+                            crate::dependency::Tag::infer(version)
+                                == crate::dependency::Tag::Workspace
+                        })
+                })
+            })
+    })
 }
 
 pub enum WorkspaceFilter {
@@ -1631,8 +1653,23 @@ pub fn init(
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
 
+        let link_has_workspace_dependencies = subcommand == Subcommand::Link
+            && cli.positionals.len() > 1
+            && match workspace_package_json_cache.get_with_path(
+                // SAFETY: `ctx.log` is the process-lifetime CLI log initialized before `init`.
+                unsafe { &mut *ctx.log },
+                original_package_json_path.as_bytes(),
+                Default::default(),
+            ) {
+                workspace_package_json_cache::GetResult::Entry(entry) => {
+                    has_workspace_dependencies(&entry.root)
+                }
+                workspace_package_json_cache::GetResult::ParseErr(_)
+                | workspace_package_json_cache::GetResult::ReadErr(_) => false,
+            };
+
         // Check if this is a workspace; if so, use root package
-        if subcommand.should_chdir_to_root() {
+        if subcommand != Subcommand::Link || link_has_workspace_dependencies {
             if !created_package_json {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);

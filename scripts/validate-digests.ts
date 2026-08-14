@@ -186,12 +186,17 @@ async function verifySigner(ascContent: string, fingerprint: string, pubkeyPath?
     console.log(`✅ Signature verified: signed by ${fingerprint}.`);
   } finally {
     if (gnupghome) {
-      Bun.spawnSync({
-        cmd: ["gpgconf", "--kill", "all"],
-        env: { ...process.env, GNUPGHOME: gnupghome } as Record<string, string>,
-        stdout: "ignore",
-        stderr: "ignore",
-      });
+      // Best-effort: spawnSync throws ENOENT when gpgconf is absent
+      // (GnuPG 1.x, stripped containers), and a throw here would mask
+      // the try body's real diagnostic and skip the rmSync below.
+      try {
+        Bun.spawnSync({
+          cmd: ["gpgconf", "--kill", "all"],
+          env: { ...process.env, GNUPGHOME: gnupghome } as Record<string, string>,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+      } catch {}
     }
     rmSync(work, { recursive: true, force: true });
   }

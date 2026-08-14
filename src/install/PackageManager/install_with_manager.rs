@@ -1480,23 +1480,16 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
                 continue;
             }
 
+            // clone because don't know if lockfile buffer will reallocate
+            let mut tag_buf = Vec::new();
             // SAFETY: `original_resolution.tag == ResolutionTag::Npm` was checked
             // immediately above, so the `.npm` arm of the value union is active.
-            let mut original = original_resolution.npm().version;
-            let tag_total = original.tag.pre.len() + original.tag.build.len();
-            if tag_total > 0 {
-                // clone because don't know if lockfile buffer will reallocate
-                let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                let mut ptr = &mut tag_buf[..];
-                original.tag = original_resolution
-                    .npm()
-                    .version
-                    .tag
-                    .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
+            let original = original_resolution
+                .npm()
+                .version
+                .clone_into(&lockfile.buffers.string_bytes, &mut tag_buf);
 
-                entry_ptr.original_version_string_buf = tag_buf;
-            }
-
+            entry_ptr.original_version_string_buf = tag_buf.into_boxed_slice();
             entry_ptr.original_version = Some(original);
         }
     }

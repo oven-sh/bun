@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -4070,6 +4070,83 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+// Rejected values paired with how node v26.3.0's ERR_INVALID_ARG_TYPE describes each of them.
+const invalidArgTypeCases = [
+  [1n, "type bigint (1n)"],
+  ["a".repeat(40), "type string ('aaaaaaaaaaaaaaaaaaaaaaaaa...')"],
+  ["it's", `type string ("it's")`],
+  [Object.create(null), "[Object: null prototype] {}"],
+  [undefined, "undefined"],
+  [null, "null"],
+  [true, "type boolean (true)"],
+  [{}, "an instance of Object"],
+  [new DataView(new ArrayBuffer(6)), "an instance of DataView"],
+];
+
+function collectInvalidArgTypeErrors(cases, invoke) {
+  return cases.map(([value]) => {
+    try {
+      invoke(value);
+      return "did not throw";
+    } catch (err) {
+      return { name: err.constructor.name, code: err.code, message: err.message };
+    }
+  });
+}
+
+it("http2 getUnpackedSettings() reports a bad buf argument like node", () => {
+  expect(collectInvalidArgTypeErrors(invalidArgTypeCases, value => http2.getUnpackedSettings(value))).toEqual(
+    invalidArgTypeCases.map(([, received]) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "buf" argument must be an instance of Buffer or TypedArray. Received ${received}`,
+    })),
+  );
+});
+
+it("http2 stream.respondWithFD() reports a bad fd argument like node and accepts a FileHandle", async () => {
+  using dir = tempDir("http2-respond-with-fd", { "body.txt": "served from a FileHandle" });
+  const fileHandle = await fs.promises.open(path.join(String(dir), "body.txt"), "r");
+  // Only a real FileHandle stands in for a number; node rejects other objects carrying an fd property.
+  const cases = [...invalidArgTypeCases, [{ fd: fileHandle.fd }, "an instance of Object"]];
+  let errors;
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    errors = collectInvalidArgTypeErrors(cases, value => stream.respondWithFD(value));
+    stream.respondWithFD(fileHandle, { "content-type": "text/plain" });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+
+  try {
+    const req = client.request({ ":path": "/" });
+    const response = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", chunk => (body += chunk));
+    await new Promise(resolve => req.on("end", resolve));
+
+    expect(errors).toEqual(
+      cases.map(([, received]) => ({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "fd" argument must be of type number or an instance of FileHandle. Received ${received}`,
+      })),
+    );
+    expect(response[":status"]).toBe(200);
+    expect(body).toBe("served from a FileHandle");
+  } finally {
+    client.close();
+    server.close();
+    await fileHandle.close();
+  }
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

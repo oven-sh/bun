@@ -5724,7 +5724,7 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
+                exception.collect_source_lines(error_instance, global, top as u8);
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -5768,7 +5768,9 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+            // Nothing to remap through (node:vm script, eval, new Function):
+            // excerpt the frame picked above straight from its JSC source.
+            exception.collect_source_lines(error_instance, global, top as u8);
         }
 
         drop(top_source_url);

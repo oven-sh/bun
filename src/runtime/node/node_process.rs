@@ -315,11 +315,8 @@ mod _impl {
             },
         );
 
-        // Options that take their value from the next argv token (`--conditions x`,
-        // `-e code`), so that token is not mistaken for the script name. Built lazily
-        // from the `AUTO_PARAMS` table: `--long` / `-s` for every such param.
-        // `OneOptional` params (`--inspect`, `-c`) only accept `=value` and leave the
-        // next token alone, so they are not in the set.
+        // Options whose value is the next argv token (`-e code`). `OneOptional` ones
+        // (`-c`, `--inspect`) only take `=value`, so they are not in here.
         static CONSUMES_NEXT_ARG: std::sync::LazyLock<bun_collections::StringSet> =
             std::sync::LazyLock::new(|| {
                 let mut set = bun_collections::StringSet::new();
@@ -339,8 +336,7 @@ mod _impl {
                         }
                     }
                 }
-                // Node's whole-token aliases are not params, so they never
-                // land above; an alias takes a value iff its target does.
+                // Aliases are not params; one takes a value iff its target does.
                 for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
                     if set.contains(to) {
                         bun_core::handle_oom(set.insert(from));
@@ -359,16 +355,15 @@ mod _impl {
         for arg in iter {
             let arg: &[u8] = arg;
 
-            // The value of the previous option, however it is spelled (`--conditions -`).
+            // The previous option's value, whatever it looks like (`--conditions -`).
             if awaiting_value {
                 args.push(BunString::clone_utf8(arg));
                 awaiting_value = false;
                 continue;
             }
 
-            // The CLI parses neither of these as a flag: a bare `-` is the script
-            // positional itself (run stdin) and `--` makes the next token the script,
-            // so both end execArgv the same way a script name does.
+            // Not flags: `-` is the script positional (stdin) and `--` ends the options,
+            // so both stop the scan like a script name does.
             if arg == b"-" || arg == b"--" {
                 break;
             }

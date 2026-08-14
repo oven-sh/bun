@@ -887,6 +887,22 @@ describe("bounded output per input chunk", () => {
     expect(await reader.read()).toEqual({ value: undefined, done: true });
   });
 
+  test("a >128 KiB chunk that is not valid input errors both sides through the thread-pool path", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const readAll = new Response(ds.readable).arrayBuffer().then(
+      () => null,
+      e => e,
+    );
+    const write = writer.write(randomBytes(200 * 1024)).then(
+      () => null,
+      e => e,
+    );
+    const [readError, writeError] = await Promise.all([readAll, write]);
+    expect(readError).toBeInstanceOf(TypeError);
+    expect(writeError).toBe(readError);
+  });
+
   // The encoders are stepped the same way. Incompressible input comes out
   // slightly larger than it went in, so kStepOutput-sized chunks overflow a
   // step by a few bytes; brotli and zstd hold everything back until the flush,

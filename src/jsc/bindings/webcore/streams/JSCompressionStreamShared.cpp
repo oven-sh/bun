@@ -309,6 +309,7 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
         stream->m_codecPromise.set(vm, stream, promise);
         stream->m_codecChunkOffThread = true;
         dispatchStepOffThread(globalObject, stream, coder, chunk, input, inputLen, finish);
+        scope.assertNoException();
         return promise;
     }
 
@@ -340,20 +341,16 @@ static void resumeCodecChunk(JSGlobalObject* globalObject, JSTransformStream* st
         return;
     void* coder = coderOf(stream);
     ASSERT(coder);
-    if (!coder || !codecOutputWanted(stream)) {
-        settleCodecChunk(globalObject, stream, JSValue());
-        return;
-    }
-    if (stream->m_codecChunkOffThread) {
-        dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
-        return;
-    }
+    if (!coder || !codecOutputWanted(stream))
+        RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, JSValue()));
+    if (stream->m_codecChunkOffThread)
+        RELEASE_AND_RETURN(scope, dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false));
     JSValue thrown;
     stream->m_nativeStateInUse = true;
     CodecVerdict verdict = stepChunkHere(globalObject, stream, coder, nullptr, 0, false, thrown);
     stream->m_nativeStateInUse = false;
     RETURN_IF_EXCEPTION(scope, void());
-    continuePendingChunk(globalObject, stream, verdict, thrown);
+    RELEASE_AND_RETURN(scope, continuePendingChunk(globalObject, stream, verdict, thrown));
 }
 
 template<typename JSStream>
@@ -400,11 +397,11 @@ JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressio
 
 // JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
 // consumed BEFORE m_asyncCodecInFlight is cleared and the verdict may release or re-dispatch
-// the coder.
+// the coder. Returns into Rust, so this is an exception boundary rather than a throw scope.
 extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(streamCell));
     ASSERT(stream);
     if (!stream) [[unlikely]]
@@ -416,10 +413,9 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     if (error) {
         step.thrown = JSValue::decode(error);
     } else if (outLen) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             JSValue wrote = JSValue::decode(Bun__NativeTransformSink__writeBytes(stream->m_nativeSinkId, sinkPtr, globalObject, out, outLen));
-            if (!catchScope.exception())
+            if (!scope.exception())
                 step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         } else {
             auto copied = JSC::ArrayBuffer::tryCreate(std::span<const uint8_t>(out, outLen));
@@ -427,18 +423,23 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
                 step.thrown = JSC::createOutOfMemoryError(globalObject);
             } else {
                 auto* view = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(copied), 0, outLen);
-                if (!catchScope.exception())
+                if (!scope.exception())
                     transformStreamDefaultControllerEnqueue(globalObject, stream->m_controller.get(), JSValue(view));
             }
         }
-        if (catchScope.exception()) [[unlikely]]
-            step.thrown = takeAbruptCompletion(globalObject, catchScope);
+        if (scope.exception()) [[unlikely]] {
+            step.thrown = takeAbruptCompletion(globalObject, scope);
+            if (step.thrown.isEmpty()) {
+                // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
+                stream->m_asyncCodecInFlight = false;
+                return;
+            }
+        }
     }
 
     stream->m_asyncCodecInFlight = false;
-    // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
-    RETURN_IF_EXCEPTION(scope, void());
     continuePendingChunk(globalObject, stream, verdictAfterStep(stream, step), step.thrown);
+    scope.assertNoException();
 }
 
 } // namespace WebStreams

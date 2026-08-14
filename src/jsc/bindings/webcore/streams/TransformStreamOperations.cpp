@@ -283,6 +283,7 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
         // as the readable this cancel just closed will never pull again. Nothing else waits on
         // that promise once a close has started.
         transformStreamUnblockWrite(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return finishPromise;
     }
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());

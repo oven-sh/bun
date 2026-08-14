@@ -297,15 +297,18 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
+                let fd = result.unwrap();
                 // `create` returns a freshly-boxed non-null pointer.
-                let pipe_nn = NonNull::new(FileSink::create(evtloop, result.unwrap()))
+                let pipe_nn = NonNull::new(FileSink::create(evtloop, fd))
                     .expect("FileSink::create returns non-null");
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
 
-                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
+                match pipe.writer.with_mut(|w| w.start(fd, true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
                         Self::pipe_release(pipe_nn);
+                        // The writer did not take `fd`; nothing else closes it.
+                        fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global);
                         }

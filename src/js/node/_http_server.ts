@@ -1349,6 +1349,11 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
+// Set while onResponseFinishHandleSocket ends a connection that must close
+// after its response (Node's resOnFinish -> destroySoon), so _final can tell
+// that end() from one issued by user code: for it, native lets a request body
+// that is still being parsed out of the current read reach the request first.
+const kEndAfterResponse = Symbol("kEndAfterResponse");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
@@ -1487,6 +1492,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
+    [kEndAfterResponse] = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1767,7 +1773,7 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
-      handle.end();
+      handle.end(this[kEndAfterResponse]);
       callback();
     }
 
@@ -2414,7 +2420,10 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
-    socket?.end();
+    if (socket != null) {
+      socket[kEndAfterResponse] = true;
+      socket.end();
+    }
     return;
   }
   if (!socket || socket.destroyed || typeof socket.setTimeout !== "function") {

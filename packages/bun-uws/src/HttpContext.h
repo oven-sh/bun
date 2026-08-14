@@ -655,6 +655,16 @@ private:
                 /* Flush anything the 'clientError' handler wrote (uncorking a
                  * closed socket is a no-op). */
                 ((AsyncSocket<SSL> *) s)->uncork();
+                /* A connection whose close was already decided and deferred to
+                 * the gates (Connection: close, or socket.end() while its last
+                 * message was still being parsed) must still get closed when the
+                 * parse ends in an error instead of reaching the gate below; the
+                 * 'clientError' listener is not required to destroy it. Closed or
+                 * shut-down sockets, and responses still in flight, are left to
+                 * the listener exactly as before. */
+                if (!us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
+                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                }
                 return s;
             }
             if(httpContextData->onClientError) {

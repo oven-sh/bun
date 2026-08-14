@@ -664,6 +664,51 @@ describe("request body arriving after the response was ended", () => {
         server.close();
       }
     });
+
+    // A second request pipelined behind the one that closes the connection, in
+    // the same packet as its body: the body is still delivered, and the
+    // connection closes after the first response without answering the second
+    // request, whether the request or the response asked for the close, and
+    // whether or not a 'clientError' listener (which sees the rejected second
+    // request) takes care of destroying the connection itself.
+    const pipelined = "GET /second HTTP/1.1\r\nHost: x\r\n\r\n";
+    test.each([
+      ["the request asked to close", "Connection: close\r\n", false, false],
+      ["the response asked to close", "", true, false],
+      [
+        "the request asked to close and a 'clientError' listener ignores the rest",
+        "Connection: close\r\n",
+        false,
+        true,
+      ],
+    ])(
+      "a request pipelined behind it is not answered (%s)",
+      async (_, closeHeader, closeFromResponse, ignoreClientErrors) => {
+        const { promise: body, resolve: resolveBody } = Promise.withResolvers<string>();
+        const server = createServer((req, res) => {
+          if (req.url === "/first") {
+            const chunks: Buffer[] = [];
+            req.on("data", chunk => chunks.push(chunk));
+            req.on("end", () => resolveBody(Buffer.concat(chunks).toString()));
+            if (closeFromResponse) res.setHeader("Connection", "close");
+          }
+          res.end("first");
+        });
+        if (ignoreClientErrors) server.on("clientError", () => {});
+        try {
+          const response = await requestUntilClosed(
+            server,
+            `POST /first HTTP/1.1\r\nHost: x\r\n${closeHeader}Content-Length: 5\r\n\r\nhello${pipelined}`,
+          );
+          expect(await body).toBe("hello");
+          expect(response.match(/HTTP\/1\.1 200 OK/g)).toHaveLength(1);
+          await closeServer(server);
+        } finally {
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
   });
 
   // The body outliving the response must not leave anything holding the event

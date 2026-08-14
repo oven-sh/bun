@@ -1523,7 +1523,7 @@ describe.concurrent(() => {
   // instead of acting on the error first. (A due timer is the wakeup here; in
   // real programs the poll waits for whatever the program is waiting on, which
   // used to delay these errors by up to the idle GC timer, or forever.)
-  describe("errors nothing handled are acted on before the event loop polls again", () => {
+  describe.concurrent("errors nothing handled are acted on before the event loop polls again", () => {
     const runPastTheTimer = `Bun.sleepSync(5);`;
 
     async function run(script) {

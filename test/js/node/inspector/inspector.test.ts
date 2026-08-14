@@ -641,9 +641,6 @@ test.skipIf(!isLinux)(
     // The tallied error fails the file; that it was tallied is the case under test.
     expect(exitCode).toBe(1);
   },
-  // Boots a `bun test` child with the inspector, then holds it for the window;
-  // several seconds on a debug build.
-  30_000,
 );
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {

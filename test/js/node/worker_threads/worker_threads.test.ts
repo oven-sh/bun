@@ -726,7 +726,7 @@ describe("error event", () => {
 //
 // Run in a separate process: under `bun test` itself, a worker's rejections are
 // routed to the test runner instead of the worker's own listeners.
-describe("a rejection left by a setImmediate callback is reported before the worker's loop polls", () => {
+describe.concurrent("a rejection left by a setImmediate callback is reported before the worker's loop polls", () => {
   // Resolves to what the parent thread saw from the worker, in order, once it exited.
   async function observeWorker(workerSource: string) {
     await using proc = Bun.spawn({

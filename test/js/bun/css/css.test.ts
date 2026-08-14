@@ -7729,6 +7729,9 @@ describe("css tests", () => {
     describe("a98-rgb", () => {
       minify_test(".foo { color: color(A98-RGB 0 1 0 / 50%) }", ".foo{color:color(a98-rgb 0 1 0/.5)}");
       minify_test(".foo { color: color(a98-rgb 100% 50% 0%) }", ".foo{color:color(a98-rgb 1 .5 0)}");
+      // The misspelling the parser used to accept (and rewrite to a98-rgb) is an
+      // unknown color space like any other.
+      minify_test(".foo { color: color(a99-rgb 1 0 0) }", ".foo{color:color(a99-rgb 1 0 0)}");
       minify_test(
         ".foo { color: color(from #c86432 a98-rgb r g b) }",
         ".foo{color:color(a98-rgb .695066 .391898 .220089)}",

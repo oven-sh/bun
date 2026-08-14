@@ -654,7 +654,9 @@ impl Config {
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
-    pub output_code: BunString,
+    /// Transferred to the promise by `finish`; released with the task on
+    /// every other path (a log with messages, a VM gone before `then`).
+    pub output_code: OwnedString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
@@ -719,7 +721,7 @@ impl TransformTask {
 
         let task = TransformTask {
             input_code,
-            output_code: BunString::empty(),
+            output_code: OwnedString::default(),
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
@@ -831,7 +833,6 @@ impl TransformTask {
         };
 
         if parse_result.empty {
-            self.output_code = BunString::empty();
             return;
         }
 
@@ -861,9 +862,7 @@ impl TransformTask {
             buffer_writer = printer.ctx;
             // `written()` reslices via `written_len`; copy out the printed
             // bytes, then the local writer is dropped.
-            self.output_code = BunString::clone_utf8(buffer_writer.written());
-        } else {
-            self.output_code = BunString::empty();
+            self.output_code = OwnedString::new(BunString::clone_utf8(buffer_writer.written()));
         }
     }
 
@@ -872,8 +871,7 @@ impl TransformTask {
         promise: &mut JSPromise,
         global: &JSGlobalObject,
     ) -> Result<(), bun_jsc::JsTerminated> {
-        // The job drops this `TransformTask` (running its `Drop`: transpiler
-        // deref etc.) right after `then` returns.
+        // The job drops this `TransformTask` right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = &self.err {

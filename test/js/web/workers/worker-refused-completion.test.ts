@@ -7,14 +7,17 @@
 // stderr. A row passes only if the named refusal happened (the work really was
 // on another thread and its release path ran) and the process exited cleanly;
 // on the ASAN build the release path is also checked for use-after-free and
-// leaks. Builds with debug assertions only (debug, ASAN): the gate does not
-// exist in release builds.
+// leaks (LSan is turned on below, as CI's ASAN lane does for every test).
+// Builds with debug assertions only (debug, ASAN): the gate does not exist in
+// release builds.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 type Row = {
   name: string;
-  // Runs in the worker before it exits; starts exactly one piece of off-thread work.
+  // Runs in the worker before it exits (cwd: a scratch directory holding
+  // SCRATCH_FILES); starts exactly one piece of off-thread work.
   worker: string;
   // Substring of the refusal the runtime must log for it.
   refused: string;
@@ -47,6 +50,30 @@ const ROWS: Row[] = [
     name: "Bun.Image(Bun.file()).metadata()",
     worker: `new Bun.Image(Bun.file(process.execPath).slice(0, 65536)).metadata().catch(() => {});`,
     refused: "blob::read_file::ReadFile",
+  },
+  {
+    // A Blob source: a string or buffer this small is written synchronously instead.
+    name: "Bun.write()",
+    worker: `Bun.write("written-by-the-pool", new Blob(["refused"]));`,
+    refused: "blob::write_file::WriteFile",
+  },
+  // The result the pool produced (names / Dirents / the created path / the
+  // transpiled code) is what must be released along with the refused job.
+  { name: "fs.promises.readdir", worker: `require("node:fs").promises.readdir(".");`, refused: "args::Readdir" },
+  {
+    name: "fs.promises.readdir withFileTypes",
+    worker: `require("node:fs").promises.readdir(".", { withFileTypes: true });`,
+    refused: "args::Readdir",
+  },
+  {
+    name: "fs.promises.mkdir recursive",
+    worker: `require("node:fs").promises.mkdir("made/by/the/pool", { recursive: true });`,
+    refused: "args::Mkdir",
+  },
+  {
+    name: "Bun.Transpiler transform()",
+    worker: `new Bun.Transpiler({ loader: "ts" }).transform("export const refused: number = 1;");`,
+    refused: "TransformTask",
   },
   {
     name: "crypto.pbkdf2",
@@ -107,11 +134,19 @@ const ROWS: Row[] = [
   },
 ];
 
+// The host's cwd: what the readdir rows list, where the write and mkdir rows
+// put what the pool produces; thrown away with the row.
+const SCRATCH_FILES = { "a.txt": "", "b.txt": "", "c.txt": "", "d.txt": "" };
+
 // The host: one worker, armed gate. The worker starts its work, reports
 // "armed" and exits by itself two turns later; the parent never posts anything
 // the worker waits for (with the gate armed, a parent→worker post is itself a
 // cross-thread completion that waits for the worker's close). Rows with a
 // parent side post in response to "armed": that post is what gets refused.
+//
+// The row's work starts from a microtask: test/leaksan.supp suppresses every
+// allocation made under the module evaluation (leak:Bun::evaluateCommonJSModuleOnce),
+// which would also hide what a row allocates while starting its work.
 function host(row: Row) {
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");
@@ -119,7 +154,7 @@ function host(row: Row) {
     const w = new Worker(\`
       const { parentPort, workerData } = require("node:worker_threads");
       parentPort.on("message", () => {});
-      ${row.worker.replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}
+      queueMicrotask(() => { ${row.worker.replace(/`/g, "\\`").replace(/\$\{/g, "\\${")} });
       parentPort.postMessage("armed");
       setImmediate(() => setImmediate(() => process.exit(0)));
     \`, { eval: true, workerData: { port: port2 }, transferList: [port2] });
@@ -129,26 +164,47 @@ function host(row: Row) {
   `;
 }
 
+// What a refused job failed to release shows up as an LSan report, and a
+// non-zero exit, on the ASAN build (the same options CI's ASAN lane sets).
+// LSan cannot see into the JS heap, so the host's own VM has to be torn down
+// at exit too, or everything its wrappers still own would be reported.
+const LEAK_CHECK_ENV = isASAN
+  ? {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    }
+  : {};
+
 describe.skipIf(!isDebug && !isASAN)(
   "a completion for a worker that is gone is refused and released by its producer",
   () => {
     for (const row of ROWS) {
-      test.concurrent.skipIf(!!row.skip)(row.name, async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", host(row)],
-          env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_REFUSAL_GATE: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const refusals = stderr.split("\n").filter(l => l.startsWith("[vm_handle] refused "));
-        expect({
-          exitCode,
-          refused: refusals.some(l => l.includes(row.refused)),
-          // On a failure, everything the host printed.
-          detail: exitCode === 0 && refusals.some(l => l.includes(row.refused)) ? "" : stdout + stderr,
-        }).toEqual({ exitCode: 0, refused: true, detail: "" });
-      });
+      test.concurrent.skipIf(!!row.skip)(
+        row.name,
+        async () => {
+          using scratch = tempDir("worker-refused-completion", SCRATCH_FILES);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", host(row)],
+            cwd: String(scratch),
+            env: { ...bunEnv, ...LEAK_CHECK_ENV, ...row.env, BUN_DEBUG_TEST_WORKER_REFUSAL_GATE: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const refusals = stderr.split("\n").filter(l => l.startsWith("[vm_handle] refused "));
+          expect({
+            exitCode,
+            refused: refusals.some(l => l.includes(row.refused)),
+            // On a failure, everything the host printed.
+            detail: exitCode === 0 && refusals.some(l => l.includes(row.refused)) ? "" : stdout + stderr,
+          }).toEqual({ exitCode: 0, refused: true, detail: "" });
+        },
+        // Only debug and ASAN builds get here (see the describe), and on those
+        // one worker lifecycle is a few seconds of CPU; bun test starts twenty
+        // of these hosts at once, so the slowest rows pass 5s on a busy box.
+        15_000,
+      );
     }
   },
 );

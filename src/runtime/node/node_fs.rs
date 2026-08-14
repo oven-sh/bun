@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{String as BunString, ZStr};
+use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
@@ -1197,10 +1197,7 @@ mod _async_tasks {
     impl FsReturn for ret::Readdir {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            // `Readdir::to_js` consumes by value (the boxed slices are handed to
-            // JS). Swap in an empty `Files` payload so `&mut self` stays valid.
-            let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
-            owned.to_js(global)
+            self.to_js(global)
         }
     }
     impl FsReturn for StatOrNotFound {
@@ -2220,7 +2217,7 @@ mod _async_tasks {
                     }
                 }
             } else {
-                let res = match core::mem::replace(
+                let mut res = match core::mem::replace(
                     &mut this.result_list,
                     ResultListEntryValue::Files(Vec::new()),
                 ) {
@@ -4430,8 +4427,11 @@ impl StatOrNotFound {
     }
 }
 
+/// The string is owned until `to_js` transfers it; a result dropped
+/// undelivered (its worker was gone before the completion could run)
+/// releases it.
 pub enum StringOrUndefined {
-    String(BunString),
+    String(OwnedString),
     None,
 }
 impl StringOrUndefined {
@@ -4508,15 +4508,18 @@ pub mod ret {
         Files,
     }
 
+    /// The entries are owned until `to_js` hands them to JS; whatever it did
+    /// not hand over (a conversion that failed part-way, a result dropped
+    /// undelivered because its worker was gone) is released by `Drop`.
     pub enum Readdir {
         WithFileTypes(Box<[Dirent]>),
         Buffers(Box<[Buffer]>),
         Files(Box<[BunString]>),
     }
     impl Readdir {
-        pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
-                Readdir::WithFileTypes(mut items) => {
+                Readdir::WithFileTypes(items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
                     for (i, item) in items.iter_mut().enumerate() {
@@ -4524,14 +4527,12 @@ pub mod ret {
                             item.to_js_newly_created(global_object, Some(&mut previous_jsstring))?;
                         array.put_index(global_object, i as u32, res)?;
                     }
-                    // items dropped here (auto free)
                     Ok(array)
                 }
-                Readdir::Buffers(mut items) => {
+                Readdir::Buffers(items) => {
                     // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
                     // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
-                    // transfers to JSC via `to_node_buffer`; the boxed slice
-                    // itself is freed when `items` drops.
+                    // transfers to JSC via `to_node_buffer`.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_node_buffer(global_object)?;
@@ -4539,12 +4540,19 @@ pub mod ret {
                     }
                     Ok(array)
                 }
-                Readdir::Files(items) => {
-                    // Converted to a JS array, then every element is
-                    // deref'd and the slice freed (handled by the `FromAny
-                    // for Box<[bun_core::String]>` impl).
-                    JSValue::from_any(global_object, items)
-                }
+                // The array takes its own refs; ours go in `Drop`.
+                Readdir::Files(items) => bun_jsc::bun_string_jsc::to_js_array(global_object, items),
+            }
+        }
+    }
+    impl Drop for Readdir {
+        fn drop(&mut self) {
+            match self {
+                // Transferred entries are empty by now; `deref` on those is a no-op.
+                Readdir::WithFileTypes(items) => items.iter().for_each(Dirent::deref),
+                // `Buffer` frees whatever it still owns itself.
+                Readdir::Buffers(_) => {}
+                Readdir::Files(items) => items.iter().for_each(BunString::deref),
             }
         }
     }
@@ -5711,8 +5719,8 @@ impl NodeFS {
                 if !RETURN_PATH {
                     return Ok(StringOrUndefined::None);
                 }
-                return Ok(StringOrUndefined::String(BunString::create_from_os_path(
-                    &path[..],
+                return Ok(StringOrUndefined::String(OwnedString::new(
+                    BunString::create_from_os_path(&path[..]),
                 )));
             }
         }
@@ -5881,8 +5889,8 @@ impl NodeFS {
         if !RETURN_PATH {
             return Ok(StringOrUndefined::None);
         }
-        Ok(StringOrUndefined::String(BunString::create_from_os_path(
-            &working_mem[..first_match as usize],
+        Ok(StringOrUndefined::String(OwnedString::new(
+            BunString::create_from_os_path(&working_mem[..first_match as usize]),
         )))
     }
 

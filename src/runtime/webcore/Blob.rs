@@ -4634,26 +4634,16 @@ pub(crate) fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
-        let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
-            promise: jsc::JSPromiseStrong::default(),
-            global_this: ctx,
-        }));
-
-        // The borrowed views below are +0 on the store ref;
-        // `WriteFile::create` takes its own ref.
         #[cfg(windows)]
         {
-            let promise = JSPromise::create(ctx);
-            let promise_value = promise.as_value(ctx);
+            let promise = WriteFilePromise::init(ctx);
+            let promise_value = promise.value();
             promise_value.ensure_still_alive();
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
+                promise,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
@@ -4670,18 +4660,13 @@ pub(crate) fn write_file_with_source_destination(
             let file_copier = write_file_mod::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
-            // Defer promise creation until we're just about to schedule the task.
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
-            // SAFETY: same `write_file_promise` as above; still solely owned here.
-            let promise_value = unsafe { (*write_file_promise).promise.value() };
+            let promise = WriteFilePromise::init(ctx);
+            let promise_value = promise.value();
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, ctx);
+            write_file_mod::WriteFile::schedule(file_copier, promise, ctx);
             return Ok(promise_value);
         }
     }

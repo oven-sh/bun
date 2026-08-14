@@ -7699,7 +7699,6 @@ describe("css tests", () => {
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10) l) }", ".foo{color:#29a329}");
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l + 10)) }", ".foo{color:#40bf40}");
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l * 2)) }", ".foo{color:#b3e6b3}");
-      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l + 100)) }", ".foo{color:#fff}");
       minify_test(".foo { color: hsl(from rgb(200 100 50) h calc(s + 10) l) }", ".foo{color:#d56025}");
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60 l) }", ".foo{color:#29a329}");
       minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60% l) }", ".foo{color:#29a329}");

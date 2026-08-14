@@ -1126,17 +1126,19 @@ pub(crate) fn parse_color_function(
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
+    // The lightness percent basis: `lab()`/`lch()` write lightness as 0..100,
+    // the ok variants as 0..1.
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, LAB_LIGHTNESS_RANGE, |l, a, b, alpha| {
+        b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
         }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, OKLAB_LIGHTNESS_RANGE, |l, a, b, alpha| {
+        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, 1.0, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
         }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, LAB_LIGHTNESS_RANGE, |l, c, h, alpha| {
+        b"lch" => parse_lch::<LCH>(input, &mut parser, 100.0, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
         }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, OKLAB_LIGHTNESS_RANGE, |l, c, h, alpha| {
+        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, 1.0, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
@@ -1174,26 +1176,19 @@ pub(crate) fn parse_color_function(
     }}
 }
 
-// The value a channel's `100%` stands for in each color function. The colorspace
-// structs store these channels as unit values, and in the relative color syntax
-// the channel keywords (`r`, `l`, `alpha`, ...) are `<number>`s in the range of
-// the function being parsed: `r` is 0..255 in `rgb()` but 0..1 in
-// `color(srgb ...)`, `l` is 0..100 in `lab()` but 0..1 in `oklab()`. Each
-// function tells its `RelativeComponentParser` the ranges of its channels and
-// divides the `<number>`s it parses by the same ranges.
-// https://drafts.csswg.org/css-color-5/#relative-colors
-const RGB_CHANNEL_RANGE: f32 = 255.0;
-/// `hsl()` saturation and lightness, `hwb()` whiteness and blackness.
-const HSL_CHANNEL_RANGE: f32 = 100.0;
-const LAB_LIGHTNESS_RANGE: f32 = 100.0;
-const OKLAB_LIGHTNESS_RANGE: f32 = 1.0;
+/// Percent basis (what `100%` stands for, see `RelativeComponentParser`) of the
+/// `rgb()` channels.
+const RGB_PERCENT_BASIS: f32 = 255.0;
+/// Percent basis of `hsl()` saturation and lightness and `hwb()` whiteness and
+/// blackness.
+const HSL_PERCENT_BASIS: f32 = 100.0;
 
 pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
 ) -> CssResult<(f32, f32, f32, bool)> {
     if let Some(from) = &mut parser.from {
-        from.ranges = (RGB_CHANNEL_RANGE, RGB_CHANNEL_RANGE, RGB_CHANNEL_RANGE);
+        from.percent_basis = (RGB_PERCENT_BASIS, RGB_PERCENT_BASIS, RGB_PERCENT_BASIS);
     }
 
     let red = parser.parse_number_or_percentage(input)?;
@@ -1230,7 +1225,7 @@ pub(crate) fn parse_rgb_components(
                     if v.is_nan() {
                         v
                     } else {
-                        v.round().clamp(0.0, RGB_CHANNEL_RANGE) / RGB_CHANNEL_RANGE
+                        v.round().clamp(0.0, RGB_PERCENT_BASIS) / RGB_PERCENT_BASIS
                     }
                 }
                 NumberOrPercentage::Percentage { unit_value } => unit_value.clamp(0.0, 1.0),
@@ -1329,7 +1324,7 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
 pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    l_range: f32,
+    l_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1339,11 +1334,11 @@ where
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
-                from.ranges.0 = l_range;
+                from.percent_basis.0 = l_basis;
             }
 
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_unit_channel(i, l_range)?.clamp(0.0, f32::MAX);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, f32::MAX);
             let a = p.parse_number(i)?;
             let b = p.parse_number(i)?;
             let alpha = parse_alpha(i, p)?;
@@ -1356,13 +1351,13 @@ where
 pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    l_range: f32,
+    l_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
-                from.ranges.0 = l_range;
+                from.percent_basis.0 = l_basis;
 
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
@@ -1372,7 +1367,7 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
                 }
             }
 
-            let l = p.parse_unit_channel(i, l_range)?.clamp(0.0, f32::MAX);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, f32::MAX);
             let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
@@ -1414,8 +1409,8 @@ pub(crate) fn parse_hsl_hwb_components<T>(
 ) -> CssResult<(f32, f32, f32, bool)> {
     let _ = core::marker::PhantomData::<T>; // autofix
     if let Some(from) = &mut parser.from {
-        from.ranges.1 = HSL_CHANNEL_RANGE;
-        from.ranges.2 = HSL_CHANNEL_RANGE;
+        from.percent_basis.1 = HSL_PERCENT_BASIS;
+        from.percent_basis.2 = HSL_PERCENT_BASIS;
     }
 
     let h = parse_angle_or_number(input, parser)?;
@@ -1425,7 +1420,7 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
     let a = parser
-        .parse_unit_channel(input, HSL_CHANNEL_RANGE)?
+        .parse_unit_channel(input, HSL_PERCENT_BASIS)?
         .clamp(0.0, 1.0);
 
     if is_legacy_syntax {
@@ -1433,7 +1428,7 @@ pub(crate) fn parse_hsl_hwb_components<T>(
     }
 
     let b = parser
-        .parse_unit_channel(input, HSL_CHANNEL_RANGE)?
+        .parse_unit_channel(input, HSL_PERCENT_BASIS)?
         .clamp(0.0, 1.0);
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
@@ -2022,12 +2017,17 @@ impl ComponentParser {
 
     /// Parses a channel that is stored as a unit value and written as a
     /// `<percentage>`, or, in the relative color syntax, as a `<number>` (a
-    /// channel keyword, a calc() over them, or a literal) whose `100%` is
-    /// `range`.
-    fn parse_unit_channel(&self, input: &mut css::Parser, range: f32) -> CssResult<f32> {
+    /// channel keyword, a calc() over them, or a literal) out of `percent_basis`.
+    ///
+    /// css-color-4 also allows the `<number>` outside the relative syntax. That
+    /// is left for the change that stops folding out-of-gamut origin colors:
+    /// today `rgb(from lab(100 104 -51) r g b)` is left alone only because the
+    /// origin does not parse, and accepting it would fold it to a gamut-mapped
+    /// color, which browsers do not do.
+    fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
-                return Ok(value / range);
+                return Ok(value / percent_basis);
             }
             if let Ok(unit_value) =
                 input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
@@ -2109,14 +2109,20 @@ impl NumberOrPercentage {
 // RelativeComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Resolves the channel keywords of a relative color (`rgb(from red r g b)`).
+/// https://drafts.csswg.org/css-color-5/#relative-colors
 pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
     /// The origin color's channels as the colorspace struct stores them.
     pub(crate) components: (f32, f32, f32, f32),
-    /// What each stored channel is multiplied by to get the `<number>` its
-    /// keyword stands for in the function being parsed (`RGB_CHANNEL_RANGE` and
-    /// friends). Set by that function's component parser; 1 where the two agree.
-    pub(crate) ranges: (f32, f32, f32),
+    /// What `100%` of each channel is in the function being parsed: 255 for the
+    /// `rgb()` channels, 100 for `hsl()` saturation/lightness and `lab()`
+    /// lightness, 1 for `color()`, the ok variants and everything unscaled. The
+    /// structs store those channels as unit values, and a keyword is a
+    /// `<number>` in the function's own range, so a keyword resolves to
+    /// `component * percent_basis`. `r` is 200 in `rgb()` but 0.784 in
+    /// `color(srgb ...)`, which is why the function being parsed sets this.
+    pub(crate) percent_basis: (f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
 }
 
@@ -2125,7 +2131,7 @@ impl RelativeComponentParser {
         RelativeComponentParser {
             names: color.channels(),
             components: color.components(),
-            ranges: (1.0, 1.0, 1.0),
+            percent_basis: (1.0, 1.0, 1.0),
             types: color.types(),
         }
     }
@@ -2185,12 +2191,12 @@ impl RelativeComponentParser {
     }
 
     /// A math function the `<number>` pass could not fold, evaluated as a
-    /// `<percentage>` and returned as a unit value. A keyword is its channel as
-    /// a percentage of the channel's range here, which is what folds
-    /// `min(r, g)` (`reduce_args` only compares values) and what gives
-    /// `calc(l + 10%)` its pre-existing meaning. Callers try `parse_number`
-    /// first, so a math function over plain numbers gets the CSS Color 5
-    /// meaning, in which the keywords are `<number>`s.
+    /// `<percentage>` and returned as a unit value. Callers try `parse_number`
+    /// first, so this only sees functions with a percentage in them, plus
+    /// `min(r, g)`, which `reduce_args` folds here because it only compares
+    /// values. A keyword is its channel as a percentage of its basis here, as
+    /// before this parser had a basis; typing it as a `<number>` like upstream
+    /// does needs `Percentage::from_calc` to reject a number first (#38513).
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         match Calc::<Percentage>::parse_with(input, this, |ctx, ident| {
             let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;
@@ -2235,29 +2241,28 @@ impl RelativeComponentParser {
 
     /// The `<number>` a channel keyword stands for in the function being parsed.
     fn get_number(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
-        let (value, range) = self.get_ident(ident, allowed_types)?;
-        Some(value * range)
+        let (component, percent_basis) = self.get_ident(ident, allowed_types)?;
+        Some(component * percent_basis)
     }
 
-    /// A channel keyword's stored value and the range it is scaled by to become
-    /// a `<number>`.
+    /// A channel keyword's stored component and its percent basis.
     fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<(f32, f32)> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
         {
-            return Some((self.components.0, self.ranges.0));
+            return Some((self.components.0, self.percent_basis.0));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.1)
             && allowed_types.intersects(self.types.1)
         {
-            return Some((self.components.1, self.ranges.1));
+            return Some((self.components.1, self.percent_basis.1));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.2)
             && allowed_types.intersects(self.types.2)
         {
-            return Some((self.components.2, self.ranges.2));
+            return Some((self.components.2, self.percent_basis.2));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"alpha")
@@ -2278,7 +2283,8 @@ bitflags::bitflags! {
         /// A hue in degrees.
         const ANGLE = 1 << 0;
         /// A `<number>` in the range of the function being parsed (see
-        /// `RGB_CHANNEL_RANGE`); every channel other than a hue, and `alpha`.
+        /// `RelativeComponentParser::percent_basis`); every channel other than
+        /// a hue, and `alpha`.
         const NUMBER = 1 << 1;
     }
 }

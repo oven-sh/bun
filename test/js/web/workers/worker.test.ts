@@ -369,6 +369,18 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+
+    // The rejection is left by the turn after which nothing keeps the worker's
+    // loop alive; it used to go unreported and the worker closed with code 0.
+    test("is fired for an unhandled rejection in the worker's last task, and close reports code 1", async () => {
+      const worker = new Worker("data:text/javascript,setTimeout(() => { Promise.reject(new Error('boom')) }, 1)");
+      const errors: string[] = [];
+      worker.addEventListener("error", e => errors.push(e.message));
+      const [closed] = await once(worker, "close");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("error: boom");
+      expect(closed.code).toBe(1);
+    });
   });
 
   describe("terminate() races and lifecycle edges", () => {

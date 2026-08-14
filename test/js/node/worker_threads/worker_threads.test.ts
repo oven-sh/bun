@@ -2352,6 +2352,99 @@ describe("a worker that stops itself from an immediate exits right away", () => 
   });
 });
 
+// Unhandled rejections are reported between turns of the worker's loop. When the
+// rejection is left by the turn after which nothing is alive any more (the last
+// timer or immediate, an async function resuming after its last await, a
+// 'beforeExit' listener), there used to be no later turn to report it in: the
+// worker exited 0 with no 'error'. Node reports it like a throw: 'error' on the
+// Worker and exit code 1 (which the worker's own 'exit' listeners see and may
+// change), and 'beforeExit' is not emitted for a worker stopped that way.
+describe("an unhandled rejection in the worker's last task is reported", () => {
+  const reject = `setTimeout(() => { Promise.reject(new Error("boom")); }, 1);`;
+  const parentPort = `const { parentPort } = require("node:worker_threads");`;
+  test.concurrent.each([
+    [
+      "an async function resuming after its last await",
+      `(async () => { await new Promise(r => setTimeout(r, 1)); throw new Error("boom"); })();`,
+      { messages: [], errors: ["boom"], code: 1 },
+    ],
+    ["Promise.reject() from the last timer", reject, { messages: [], errors: ["boom"], code: 1 }],
+    [
+      "an async setImmediate callback",
+      `setImmediate(async () => { throw new Error("boom"); });`,
+      { messages: [], errors: ["boom"], code: 1 },
+    ],
+    [
+      "Promise.reject() from a 'beforeExit' listener",
+      `process.on("beforeExit", () => { Promise.reject(new Error("boom")); });`,
+      { messages: [], errors: ["boom"], code: 1 },
+    ],
+    [
+      "a rejection while something else still keeps the loop alive exits 1 too",
+      `setTimeout(() => {}, 1000); ${reject}`,
+      { messages: [], errors: ["boom"], code: 1 },
+    ],
+    [
+      "'exit' listeners see code 1 and 'beforeExit' is skipped",
+      `${parentPort}
+       process.on("beforeExit", () => parentPort.postMessage("beforeExit"));
+       process.on("exit", code => parentPort.postMessage("exit " + code + " " + process.exitCode));
+       ${reject}`,
+      { messages: ["exit 1 1"], errors: ["boom"], code: 1 },
+    ],
+    [
+      "an 'exit' listener can still choose the code",
+      `process.on("exit", () => { process.exitCode = 42; }); ${reject}`,
+      { messages: [], errors: ["boom"], code: 42 },
+    ],
+    [
+      "an 'unhandledRejection' listener in the worker gets it instead",
+      `${parentPort}
+       process.on("unhandledRejection", e => parentPort.postMessage("handled " + e.message));
+       ${reject}`,
+      { messages: ["handled boom"], errors: [], code: 0 },
+    ],
+  ])("%s", async (_label, workerSrc, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const seen = { messages: [], errors: [] };
+         w.on("message", m => seen.messages.push(m));
+         w.on("error", e => seen.errors.push(e.message));
+         w.on("exit", code => console.log(JSON.stringify({ ...seen, code })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // As for a throw: with nobody listening for 'error', the Worker's error is the
+  // parent's uncaught error.
+  test.concurrent("with no 'error' listener it takes the parent down", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         new Worker(${JSON.stringify(reject)}, { eval: true });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: boom");
+    expect(exitCode).toBe(1);
+  });
+});
+
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
 test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {

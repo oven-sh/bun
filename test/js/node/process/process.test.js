@@ -913,6 +913,27 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it("is skipped after an unhandled rejection left by the last task", async () => {
+      // The rejection is reported when the turn that ran the timer ends, so the
+      // drain sees a fatal error and (as for the throw above) does not emit
+      // 'beforeExit'. It used to be noticed only after 'beforeExit' had fired.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", () => console.log("exit"));
+           setTimeout(() => { Promise.reject(new Error("boom")); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [

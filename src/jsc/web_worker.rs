@@ -964,6 +964,11 @@ impl WebWorker {
             // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
+            // A 'beforeExit' listener that rejects a promise and schedules nothing
+            // leaves no loop turn to report it in; look once more, as the main
+            // thread's run loop does. Reporting stops the worker with exit code 1
+            // (`on_unhandled_rejection`), so it comes before the exit-13 check.
+            vm.global().handle_rejected_promises();
             // Drained with the entry still pending: an unsettled top-level await,
             // Node's exit 13 (unless the user chose a nonzero exit code).
             // SAFETY: rooted by `entry_promise`.
@@ -1163,6 +1168,12 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    // Node: an error that stops a worker exits it with 1 whether it was thrown
+    // or an unhandled rejection (`uncaught_exception` only sets it for the
+    // former); set before anything below runs script, so a process.exit() or
+    // process.exitCode from the 'error' or 'exit' listeners still wins.
+    vm.exit_handler.exit_code = 1;
 
     let mut error_instance = error_instance_or_exception
         .to_error()

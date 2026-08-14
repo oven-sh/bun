@@ -1528,6 +1528,37 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
+/// Bins are queued straight from package.json, so unlike everything the tree
+/// walkers find they never went through the readdir kind check that drops
+/// symlinks (npm packs no symlinks either). Without this, a `bin` pointing at a
+/// symlink, or through a symlinked directory, packs the link's target, which can
+/// be any file on the machine.
+fn bin_path_is_real(abs_workspace_path: &[u8], bin_path: &[u8], kind: bun_sys::FileKind) -> bool {
+    // By absolute path rather than `lstatat(root_dir, ..)`: on Windows `lstatat`
+    // never reports `SymLink`, a reparse point comes back as a file or directory.
+    let mut spill: Vec<u8> = Vec::new();
+    let mut lstat_kind = |subpath: &[u8]| -> bun_sys::FileKind {
+        let abs_path = resolve_path::join_z_spill::<resolve_path::platform::Auto>(
+            &mut spill,
+            &[abs_workspace_path, subpath],
+        );
+        match bun_sys::lstat(abs_path) {
+            Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+            Err(_) => bun_sys::FileKind::Unknown,
+        }
+    };
+
+    for (i, &c) in bin_path.iter().enumerate() {
+        if resolve_path::Platform::AUTO.is_separator(c)
+            && lstat_kind(&bin_path[..i]) != bun_sys::FileKind::Directory
+        {
+            return false;
+        }
+    }
+
+    lstat_kind(bin_path) == kind
+}
+
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     for bin in bins {
         match bin.ty {
@@ -2268,6 +2299,15 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let bins = get_package_bins(&json.root)?;
 
     for bin in &bins {
+        let kind = match bin.ty {
+            BinType::File => bun_sys::FileKind::File,
+            BinType::Dir => bun_sys::FileKind::Directory,
+        };
+        // non-existent bins are ignored, and so are symlinked ones
+        if !bin_path_is_real(abs_workspace_path, bin.path.as_bytes(), kind) {
+            continue;
+        }
+
         match bin.ty {
             BinType::File => {
                 pack_queue.add(PackQueueItem {
@@ -2285,10 +2325,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     },
                 ) {
                     Ok(d) => d,
-                    Err(_) => {
-                        // non-existent bins are ignored
-                        continue;
-                    }
+                    Err(_) => continue,
                 };
 
                 iterate_project_tree(

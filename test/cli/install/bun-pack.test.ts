@@ -1597,6 +1597,135 @@ describe("bins", () => {
       },
     ]);
   });
+
+  // Symlinks are never packed (the tree walkers skip them, as does npm). Bins are
+  // queued from package.json without going through the walkers, so a bin that is
+  // a symlink, or sits below a symlinked directory, must be skipped there too
+  // instead of dereferenced, otherwise `bin` can pull files from outside the
+  // package (or anywhere on disk) into the tarball.
+  const SECRET = "OUTSIDE_SECRET_CANARY_777";
+
+  async function writeSymlinkedBinsFixture() {
+    const outside = join(packageDir, "outside");
+    const pkg = join(packageDir, "pkg");
+    await Promise.all([
+      write(join(outside, "secret.txt"), SECRET),
+      write(join(outside, "bindir", "tool"), `#!/bin/sh\necho ${SECRET}\n`),
+      write(join(outside, "bindir", "creds"), SECRET),
+      write(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "pack-symlinked-bins",
+          version: "1.0.0",
+          bin: {
+            relative: "cli.js",
+            absolute: "abs.js",
+            "through-dir": "linkdir/tool",
+            "inside-package": "inner.js",
+            real: "real.js",
+          },
+        }),
+      ),
+      write(join(pkg, "index.js"), "console.log('index')"),
+      write(join(pkg, "real.js"), "console.log('real bin')"),
+    ]);
+    await Promise.all([
+      fs.symlink(join("..", "outside", "secret.txt"), join(pkg, "cli.js"), "file"),
+      fs.symlink(join(outside, "secret.txt"), join(pkg, "abs.js"), "file"),
+      fs.symlink(join("..", "outside", "bindir"), join(pkg, "linkdir"), "dir"),
+      fs.symlink("index.js", join(pkg, "inner.js"), "file"),
+      // not a bin; the tree walk has always skipped these
+      fs.symlink(join("..", "outside", "secret.txt"), join(pkg, "plain-link.js"), "file"),
+    ]);
+    return pkg;
+  }
+
+  test("symlinked bins are not packed", async () => {
+    const pkg = await writeSymlinkedBinsFixture();
+
+    await pack(pkg, bunEnv);
+
+    const tarball = readTarball(join(pkg, "pack-symlinked-bins-1.0.0.tgz"));
+    expect(tarball.entries.map(({ pathname }) => pathname)).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/real.js",
+    ]);
+    for (const entry of tarball.entries) {
+      expect(entry.contents).not.toContain(SECRET);
+    }
+    expect(tarball.entries[2].contents).toBe("console.log('real bin')");
+    expect(tarball.entries[2].perm & 0o111).toBe(0o111);
+  });
+
+  test("symlinked bins are not listed by --dry-run", async () => {
+    const pkg = await writeSymlinkedBinsFixture();
+
+    const { out } = await pack(pkg, bunEnv, "--dry-run");
+
+    const packed = out
+      .split("\n")
+      .filter(line => line.startsWith("packed "))
+      .map(line => line.split(" ").at(-1));
+    expect(packed).toEqual(["package.json", "index.js", "real.js"]);
+    expect(out).toContain("Total files: 3");
+  });
+
+  test('symlinked "directories.bin" is not packed', async () => {
+    const outside = join(packageDir, "outside");
+    const pkg = join(packageDir, "pkg");
+    await Promise.all([
+      write(join(outside, "bindir", "tool"), `#!/bin/sh\necho ${SECRET}\n`),
+      write(join(outside, "bindir", "creds"), SECRET),
+      write(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "pack-symlinked-bin-dir",
+          version: "1.0.0",
+          directories: {
+            bin: "./tools",
+          },
+        }),
+      ),
+      write(join(pkg, "index.js"), "console.log('index')"),
+    ]);
+    await fs.symlink(join(outside, "bindir"), join(pkg, "tools"), "junction");
+
+    await pack(pkg, bunEnv);
+
+    const tarball = readTarball(join(pkg, "pack-symlinked-bin-dir-1.0.0.tgz"));
+    expect(tarball.entries.map(({ pathname }) => pathname)).toEqual(["package/package.json", "package/index.js"]);
+  });
+
+  test("bins that are not regular files are skipped", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bin-not-a-file",
+          version: "1.0.0",
+          bin: {
+            "a-directory": "lib",
+            "empty": "",
+            "real": "real.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "lib", "index.js"), "console.log('lib')"),
+      write(join(packageDir, "real.js"), "console.log('real bin')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bin-not-a-file-1.0.0.tgz"));
+    expect(tarball.entries.map(({ pathname }) => pathname)).toEqual([
+      "package/package.json",
+      "package/lib/index.js",
+      "package/real.js",
+    ]);
+    expect(tarball.entries[1].perm & 0o111).toBe(0);
+    expect(tarball.entries[2].perm & 0o111).toBe(0o111);
+  });
 });
 
 test("unicode", async () => {

@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
+use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
@@ -1107,7 +1108,7 @@ impl CreateCommand {
             }
         }
 
-        let mut install_ok = true;
+        let mut failed_install: Option<Status> = None;
         if let Some(ref npm_client) = npm_client_ {
             let start_time = bun_core::time::nano_timestamp();
             let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
@@ -1158,10 +1159,13 @@ impl CreateCommand {
                 windows: (),
                 ..Default::default()
             })?;
-            install_ok = process?.status.is_ok();
+            let status = process?.status;
+            if !status.is_ok() {
+                failed_install = Some(status);
+            }
         }
 
-        if install_ok && !user_skipped_install && !postinstall_tasks.is_empty() {
+        if failed_install.is_none() && !user_skipped_install && !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }
@@ -1172,8 +1176,19 @@ impl CreateCommand {
         }
 
         // Only after the git thread is joined: exiting earlier would abandon git mid-commit.
-        if !install_ok {
-            Global::exit(1);
+        if let Some(status) = failed_install {
+            pretty_errorln!(
+                "<r><red>error<r><d>:<r> <b>bun install<r> failed in \"{}\" ({})\n<blue>note<r><d>:<r> the template files were written; run <b>bun install<r> there once the error above is fixed",
+                bstr::BStr::new(destination),
+                status,
+            );
+            Global::exit(match status {
+                Status::Exited(exited) => u32::from(exited.code),
+                Status::Signaled(signal) => {
+                    u32::from(bun_sys::SignalCode(signal).to_exit_code().unwrap_or(1))
+                }
+                _ => 1,
+            });
         }
 
         Output::print_error("\n");

@@ -2272,8 +2272,6 @@ impl Default for PropertyUsage {
 }
 
 impl PropertyUsage {
-    /// Called once per style rule selecting the class, so both the bitset and
-    /// the custom property list accumulate across all of the class's rules.
     #[inline]
     pub(crate) fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
         self.bitset.set_union(used);

@@ -30,8 +30,7 @@ pub struct Options {
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
-    /// `BunInstall::registry_credentials`, for registries picked after loading
-    /// (`--registry`, `publishConfig`); see `scope_for_registry_url`.
+    /// `BunInstall::registry_credentials`, read by `scope_for_registry_url`.
     pub(crate) registry_credentials: Vec<Api::NpmRegistry>,
     pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
@@ -264,12 +263,8 @@ impl Options {
         }
     }
 
-    /// The scope that uses `url` as its registry once it replaces `current`
-    /// (`--registry`, `publishConfig`). It gets the credentials configured for `url`
-    /// itself: those of the registry in bunfig.toml/.npmrc with that URL, else those
-    /// of the `.npmrc` `//host/path/:` lines naming it. With neither, `current`'s
-    /// credentials carry over only when `url` is same-origin with it (and not an
-    /// https -> http downgrade), so they never reach a host they were not set up for.
+    /// The scope for `url` when it replaces `current` (`--registry`, `publishConfig`),
+    /// carrying whatever credentials are configured for `url` itself.
     fn scope_for_registry_url(
         &self,
         name: &[u8],
@@ -307,6 +302,8 @@ impl Options {
             url_hash,
             ..Default::default()
         };
+        // Nothing is configured for `url`: `current`'s credentials follow it only within
+        // its origin, and never down from https to http.
         let new_url = scope.url.url();
         let current_url = current.url.url();
         if bun_core::without_trailing_slash(new_url.host)
@@ -347,12 +344,9 @@ impl Options {
         self.registries.put(key, scope)
     }
 
-    /// Reads the `publishConfig` of the package.json being published. As in npm, a key
-    /// is skipped when the matching command-line flag was given, and the registry keys
-    /// mean what they mean in `.npmrc`: `registry` replaces the default registry, so a
-    /// registry configured for the package's scope still wins over it, while
-    /// `@scope:registry` replaces that one. `scope_for_package_name` then picks the
-    /// registry to publish to.
+    /// Applies the `publishConfig` of the package being published, with npm's precedence: flags
+    /// win over it, its `registry` only replaces the default registry (a registry configured for
+    /// the package's scope still wins), and its `@scope:registry` replaces that one.
     pub fn apply_publish_config(
         &mut self,
         package_json: &Expr,
@@ -400,9 +394,8 @@ impl Options {
     }
 }
 
-/// `publishConfig[key]`, which must be an http(s) URL when present. A key that is
-/// present but unusable is an error rather than ignored: falling back to another
-/// registry is exactly what the key exists to prevent.
+/// `publishConfig[key]` as an http(s) URL. An unusable value is an error, not ignored:
+/// quietly publishing somewhere else is what the key exists to prevent.
 fn publish_config_registry<'b>(
     config: &Expr,
     bump: &'b Arena,

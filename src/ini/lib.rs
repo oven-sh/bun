@@ -1597,9 +1597,7 @@ mod draft {
                         }
                         _ => {}
                     }
-                    // `source` is the file this line is in, so a line that fails to
-                    // decode is reported here, once, and dropped: the loop below
-                    // revisits every file's lines and must never see it.
+                    // Undecodable lines are reported once, against their own file, and not kept.
                     let entry = credentials_entry(
                         &mut install.registry_credentials,
                         &conf_item.registry_url,
@@ -1787,9 +1785,7 @@ mod draft {
         })
     }
 
-    /// Whether a `//host/path/:option=` line parsed into `conf_item_url` names the
-    /// registry at `host` + `pathname`: same host (port included) and same pathname,
-    /// ignoring a trailing slash.
+    /// Whether a `//host/path/:` line names the registry at `host` + `pathname`, trailing `/` aside.
     fn names_registry(conf_item_url: &URL<'_>, host: &[u8], pathname: &[u8]) -> bool {
         bun_core::without_trailing_slash(conf_item_url.host)
             == bun_core::without_trailing_slash(host)
@@ -1797,9 +1793,7 @@ mod draft {
                 == bun_core::without_trailing_slash(pathname)
     }
 
-    /// The entry of `BunInstall::registry_credentials` for the registry that
-    /// `registry_url` (the `host/path/` part of a `//host/path/:option=` line) names,
-    /// added if this is the first line naming it.
+    /// The credentials entry for the registry a `//host/path/:` line names, created on first use.
     fn credentials_entry<'a>(
         entries: &'a mut Vec<NpmRegistry>,
         registry_url: &[u8],
@@ -1818,11 +1812,8 @@ mod draft {
         &mut entries[index]
     }
 
-    /// The credentials that `.npmrc` `//host/path/:option=` lines configure for the
-    /// registry at `registry_url`. `entries` is `BunInstall::registry_credentials`; the
-    /// returned `url` is the lines' `host/path/`, not `registry_url`. As in npm, a
-    /// token or a complete username + password pair counts as credentials; an entry
-    /// holding only an email or half of a pair does not.
+    /// The `BunInstall::registry_credentials` entry for `registry_url`, if it holds a token or a
+    /// username + password pair (npm's definition of having credentials).
     pub fn credentials_for_registry<'a>(
         entries: &'a [NpmRegistry],
         registry_url: &[u8],
@@ -1835,8 +1826,7 @@ mod draft {
         })
     }
 
-    /// Applies one `//host/path/:option=` line to `v`. Returns `false` (after
-    /// reporting it) when the value cannot be decoded, in which case `v` is untouched.
+    /// Applies one `//host/path/:` line to `v`; `false` (already reported) if it does not decode.
     fn apply_conf_item(
         v: &mut NpmRegistry,
         conf_item: &ConfigItem,

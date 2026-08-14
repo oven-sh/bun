@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, resolve_path};
+use bun_paths::{self, PathBuffer, SEP, SEP_STR, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -35,7 +35,6 @@ pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut joined = [0u8; MAX_PATH_BYTES + 2];
         // Caller constructs this formatter only when
         // `self.version.tag == .workspace`.
         let workspace = self.version.workspace();
@@ -50,23 +49,21 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 
         let search_path = self.manager.lockfile.str(str_to_use);
 
-        // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
-        let joined_path: &mut PathBuffer =
-            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
+        let mut joined = PathBuffer::uninit();
+        let mut dot_slash_rel = Vec::new();
         let rel: &[u8] = match normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-            joined_path,
+            &mut joined,
             search_path,
         ) {
             Some(paths)
                 if !strings::starts_with_char(paths.rel, b'.')
                     && !strings::starts_with_char(paths.rel, SEP) =>
             {
-                joined[0] = b'.';
-                joined[1] = SEP;
-                // `paths.rel` points into `joined[2..]`; extend the view backward
-                // by the two bytes just written via safe slicing of `joined`.
-                &joined[..paths.rel.len() + 2]
+                dot_slash_rel.push(b'.');
+                dot_slash_rel.push(SEP);
+                dot_slash_rel.extend_from_slice(paths.rel);
+                dot_slash_rel.as_slice()
             }
             Some(paths) => paths.rel,
             // Too long to be a path; show it as written.
@@ -180,8 +177,6 @@ struct Paths<'a> {
 }
 
 /// Returns `None` when the `package.json` path does not fit `joined`.
-/// `non_normalized_path` is taken from the user's package.json, so it can be
-/// arbitrarily long.
 fn normalize_package_json_path<'a>(
     global_or_relative: GlobalOrRelative<'_>,
     joined: &'a mut PathBuffer,
@@ -439,9 +434,8 @@ pub(crate) fn get_or_put(
 
     let result: crate::Result<LockfilePackage> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
-            // `non_normalized_path` may point into the lockfile's string buffer,
-            // which `read_package_json_from_disk` grows before the resolver
-            // copies `folder_path` into it.
+            // Copied because reading the package.json may reallocate the lockfile
+            // string buffer `non_normalized_path` points into.
             let folder_path: Box<[u8]> = Box::from(non_normalized_path);
             let mut resolver: SymlinkResolver = NewResolver {
                 folder_path: &folder_path,

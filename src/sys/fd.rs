@@ -195,6 +195,14 @@ impl FdExt for Fd {
 
         #[cfg(debug_assertions)]
         {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            match result {
+                Some(ref err) if err.errno == sys::E::EBADF as _ => {
+                    sys::close_ledger::report_ebadf("FdExt::close", self.native());
+                }
+                Some(_) => {}
+                None => sys::close_ledger::record_closed(self.native()),
+            }
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {
                     bun_core::debug_warn!(

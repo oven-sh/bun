@@ -2234,6 +2234,10 @@ pub mod closer {
     pub struct Closer {
         pub(crate) fd: Fd,
         task: WorkPoolTask,
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_from: std::backtrace::Backtrace,
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_on: String,
     }
 
     #[cfg(not(windows))]
@@ -2243,6 +2247,28 @@ pub mod closer {
     unsafe impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
+            #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+            {
+                #[allow(clippy::print_stderr)]
+                if let Some(err) = self.fd.close_allowing_bad_file_descriptor(None) {
+                    if err.errno == bun_sys::E::EBADF as _ {
+                        std::eprintln!(
+                            "\n==================== Closer: close({}) = EBADF ====================\n\
+                             this Closer was scheduled on thread {} from:\n{}\n\
+                             ======================================================================\n",
+                            self.fd.native(),
+                            self.scheduled_on,
+                            self.scheduled_from,
+                        );
+                        panic!(
+                            "Closer: fd {} was already closed when the async close ran (see report above)",
+                            self.fd.native()
+                        );
+                    }
+                }
+                return;
+            }
+            #[allow(unreachable_code)]
             self.fd.close();
         }
     }
@@ -2257,6 +2283,16 @@ pub mod closer {
                 task: WorkPoolTask {
                     node: Default::default(),
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
+                },
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_from: std::backtrace::Backtrace::force_capture(),
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_on: {
+                    let t = std::thread::current();
+                    match t.name() {
+                        Some(name) => std::format!("{name} ({:?})", t.id()),
+                        None => std::format!("{:?}", t.id()),
+                    }
                 },
             }));
         }

@@ -80,6 +80,9 @@ beforeAll(() => {
       if (brokenTarballPaths.has(pathname)) {
         return new Response("gone", { status: 404 });
       }
+      if (pathname.startsWith("/failing/")) {
+        return new Response("try again", { status: 500 });
+      }
       if (pathname.endsWith(".tgz")) {
         return new Response(await tarball);
       }
@@ -186,6 +189,21 @@ test.concurrent("a tarball specifier bun rejects is reported with the specifier 
   expect(stderr).toContain(`InvalidURL downloading tarball dep@${registryUrl}/tarballs/dep-${ESC_ESCAPED}.tgz`);
   expect(stderr).toContain(`dep@${registryUrl}/tarballs/dep-${ESC_ESCAPED}.tgz failed to resolve`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("the verbose retry warning escapes the resolution", async () => {
+  // A 5xx is retried, and each retry is reported under --verbose before the final error.
+  const spec = `${registryUrl}/failing/dep-${C1}.tgz`;
+  const specEscaped = `${registryUrl}/failing/dep-${C1_ESCAPED}.tgz`;
+  using dir = project("retry", { dependencies: { dep: spec } });
+  const { stderr, exitCode } = await run(String(dir), "install", "--verbose");
+  // --verbose also dumps the HTTP client's request trace, which is not package
+  // manager output, so only the package manager's own lines are checked here.
+  expect(stderr).toContain(`downloading tarball dep@${specEscaped}. Retrying 1/`);
+  expect(stderr).toContain(`GET ${specEscaped} - 500`);
+  expect(stderr).not.toContain(`dep@${spec}`);
+  expect(stderr).not.toContain(`${spec} - 500`);
   expect(exitCode).toBe(1);
 });
 

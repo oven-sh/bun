@@ -676,10 +676,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bun_ast::Loc::EMPTY,
                                 "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bstr::BStr::new(extract.name.slice()),
-                                extract
-                                    .resolution
-                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                                escape_control_chars(extract.name.slice()),
+                                EscapeControlChars(
+                                    extract
+                                        .resolution
+                                        .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                ),
                                 task.retried,
                                 manager.options.max_retry_count,
                             );

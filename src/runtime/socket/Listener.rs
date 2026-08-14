@@ -557,11 +557,8 @@ impl Listener {
                     // hint for sni_cb, not load-bearing — sni_find() miss falls
                     // through to the default SSL_CTX anyway.
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
-                        server_name,
-                        secure.as_ptr().cast(),
-                        core::ptr::null_mut(),
-                    );
+                    let _ = bun_opaque::opaque_deref_mut(listen_socket)
+                        .add_server_name(server_name, secure.as_ptr().cast());
                 }
             }
             // Register the dynamic SNI dispatch when the JS config provided a
@@ -783,7 +780,7 @@ impl Listener {
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let ls_ref = bun_opaque::opaque_deref_mut(ls);
         ls_ref.remove_server_name(server_name);
-        let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
+        let ok = ls_ref.add_server_name(server_name, sni_ctx.cast());
         // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
         unsafe { boring_sys::SSL_CTX_free(sni_ctx) };
         if !ok {

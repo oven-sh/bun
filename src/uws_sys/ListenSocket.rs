@@ -57,27 +57,18 @@ impl ListenSocket {
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
-    /// that ref on close / `remove_server_name`. `user` is the per-domain handle
-    /// `find_server_name_userdata` recovers (both uWS and Bun.listen pass null).
+    /// that ref on close / `remove_server_name`. Returns false if `hostname`
+    /// is already registered.
     ///
     /// `ssl_ctx` is taken as a raw `*mut SslCtx` (not `&mut SslCtx`) because
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
     /// stores the pointer past this call, so the caller cannot legitimately
-    /// hold exclusive `&mut` access. `user` is likewise raw `*mut` because the
-    /// C side stores it and `find_server_name_userdata` later hands it back as
-    /// a mutable pointer; accepting `&U` and const-casting would make that
-    /// round-trip UB.
-    pub fn add_server_name(
-        &mut self,
-        hostname: &core::ffi::CStr,
-        ssl_ctx: *mut SslCtx,
-        user: *mut c_void,
-    ) -> bool {
+    /// hold exclusive `&mut` access.
+    pub fn add_server_name(&mut self, hostname: &core::ffi::CStr, ssl_ctx: *mut SslCtx) -> bool {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
-        // (C up-refs and stores it); `user` is an opaque caller-owned pointer
-        // stored verbatim by C.
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
+        // (C up-refs and stores it).
+        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx) == 0 }
     }
 
     pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
@@ -105,7 +96,6 @@ unsafe extern "C" {
         ls: *mut ListenSocket,
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
-        user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
     safe fn us_listen_socket_on_server_name(

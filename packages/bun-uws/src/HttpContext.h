@@ -459,9 +459,8 @@ private:
             }
 
             /* Route the method and URL */
-            auto *router = &httpContextData->router;
-            router->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!router->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            httpContextData->router.getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+            if (!httpContextData->router.route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
                 /* We have to force close this socket as we have no handler for it */
                 us_socket_close((us_socket_t *) s, 0, nullptr);
                 return nullptr;

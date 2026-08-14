@@ -384,11 +384,11 @@ impl App {
     }
     pub fn add_server_name_with_options(
         &mut self,
-        hostname: &bun_core::ZStr,
+        hostname: &core::ffi::CStr,
         opts: &BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed by value
-        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), *opts) } {
+        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr(), *opts) } {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())

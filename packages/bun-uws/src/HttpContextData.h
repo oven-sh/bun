@@ -73,7 +73,6 @@ private:
      * checks the parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
-    /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */

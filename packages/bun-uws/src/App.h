@@ -154,15 +154,10 @@ public:
             }
             int result = 0;
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, nullptr);
+                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx);
             });
             if (result != 0) {
-                /* At least one listener rejected the entry (duplicate hostname).
-                 * Roll back any that succeeded so every listener agrees with
-                 * pendingServerNames. */
-                forEachListenSocket([&](us_listen_socket_t *ls) {
-                    us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-                });
+                /* Duplicate hostname; sni_add() left the existing entry in place. */
                 us_internal_ssl_ctx_unref(domainCtx);
                 if (success) *success = false;
                 return std::move(*this);
@@ -677,7 +672,7 @@ private:
         if (!ls) return nullptr;
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, nullptr);
+                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx);
             }
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);

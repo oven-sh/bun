@@ -157,7 +157,7 @@ describe("Bun.serve SSL validations", () => {
 // Connections whose SNI matched a serverName must see the same route table as
 // everything else, including after routes are (re)registered post-listen.
 describe("Bun.serve routes across serverNames", () => {
-  const tls = [
+  const tlsConfigs = [
     { key: privateKey, cert: publicKey, serverName: "localhost" },
     { key: privateKey, cert: publicKey, serverName: "sni.example.com" },
   ];
@@ -174,7 +174,7 @@ describe("Bun.serve routes across serverNames", () => {
   test("reload()", async () => {
     using server = Bun.serve({
       port: 0,
-      tls,
+      tls: tlsConfigs,
       routes: {
         "/static-old": new Response("static-old"),
         "/fn-old": () => new Response("fn-old"),
@@ -206,7 +206,7 @@ describe("Bun.serve routes across serverNames", () => {
     const { default: html } = await import(join(String(dir), "index.html"));
     using server = Bun.serve({
       port: 0,
-      tls,
+      tls: tlsConfigs,
       development: false,
       routes: { "/": html },
       fetch: () => new Response("fallback", { status: 404 }),

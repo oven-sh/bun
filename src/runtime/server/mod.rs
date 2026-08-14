@@ -2750,8 +2750,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // next derive.
         //
         // SAFETY (applies to every `&mut *this` below): `this` was produced by
-        // `init()` and is live for this call; only one reference derived from
-        // it is alive at a time. Read-only access goes through `this_ref`
+        // `init()` and is live for this call; no reference derived from it is
+        // used across a `&mut *this` re-derive or after `deinit(this)`.
+        // Read-only access goes through `this_ref`
         // (`BackRef<Self>`) — each `Deref` materialises a fresh short-lived
         // `&Self` from the same raw provenance, so the listen-trampoline /
         // `set_routes()` `&mut *this` re-derives never overlap an outstanding
@@ -2822,60 +2823,33 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // borrow is live — `&mut` scoped to this call.
             route_list_value = unsafe { (*this).set_routes() };
 
-            // add serverName to the SSL context using the default ssl options
-            if let Some(server_name) = this_ref
+            // Register the default `tls.serverName` and each SNI entry. Only
+            // SNI entries get their own client-certificate policy and H3
+            // registration.
+            let tls_configs = this_ref
                 .config
                 .ssl_config
-                .as_ref()
-                .and_then(|c| c.server_name_cstr())
-                .filter(|n| !n.to_bytes().is_empty())
-            {
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, &ssl_options, false)
-                    .is_err()
-                {
-                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                        let _ = global.throw(format_args!(
-                            "Failed to add serverName: {}",
-                            bstr::BStr::new(server_name.to_bytes())
-                        ));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-            }
-
-            // SNI: per-hostname contexts
-            for sni_ssl_config in this_ref.config.sni.as_deref().unwrap_or_default() {
-                let Some(sni_name) = sni_ssl_config
-                    .server_name_cstr()
-                    .filter(|n| !n.to_bytes().is_empty())
+                .iter()
+                .map(|c| (c, false))
+                .chain(this_ref.config.sni.iter().flatten().map(|c| (c, true)));
+            for (tls_config, is_sni) in tls_configs {
+                let Some(server_name) = tls_config.server_name_cstr().filter(|n| !n.is_empty())
                 else {
                     continue;
                 };
-                let sni_opts = sni_ssl_config.as_usockets();
+                let options = tls_config.as_usockets();
 
-                if Self::HAS_H3 {
+                if is_sni && Self::HAS_H3 {
                     if let Some(h3_app) = this_ref.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(
-                                bun_core::ZStr::from_cstr(sni_name),
-                                &sni_opts,
-                            )
+                            .add_server_name_with_options(server_name, &options)
                             .is_err()
                         {
                             if !global.has_exception() {
                                 let _ = global.throw(format_args!(
                                     "Failed to add serverName \"{}\" for HTTP/3",
-                                    bstr::BStr::new(sni_name.to_bytes())
+                                    bstr::BStr::new(server_name.to_bytes())
                                 ));
                             }
                             // SAFETY: caller contract — `this` is the live boxed server from `init()`.
@@ -2886,13 +2860,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, &sni_opts, true)
+                    .add_server_name_with_options(server_name, &options, is_sni)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!(
                             "Failed to add serverName: {}",
-                            bstr::BStr::new(sni_name.to_bytes())
+                            bstr::BStr::new(server_name.to_bytes())
                         ));
                     }
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.

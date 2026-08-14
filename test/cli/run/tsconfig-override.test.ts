@@ -302,4 +302,30 @@ describe("bun run --tsconfig-override", () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  test("applies the override's compilerOptions instead of the cwd tsconfig.json's", async () => {
+    await using dir = tempDir("run-tsconfig-compiler-options", {
+      "index.tsx": `
+        const fromOverride = (tag: string, props: unknown) => JSON.stringify([tag, props]);
+        console.log(<main id="x" />);
+      `,
+      // fromTsconfigJson is not defined: picking this file up would throw.
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromTsconfigJson" } }),
+      "custom-tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromOverride" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--tsconfig-override", "custom-tsconfig.json", "index.tsx"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["main",{"id":"x"}]\n');
+    expect(exitCode).toBe(0);
+  });
 });

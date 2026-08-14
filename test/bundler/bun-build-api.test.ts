@@ -1366,9 +1366,33 @@ export { greeting };`,
 describe.concurrent("tsconfig option overrides the tsconfig.json found on disk", () => {
   const pathsTo = (target: string) => JSON.stringify({ compilerOptions: { paths: { "@/*": [`./${target}/*`] } } });
 
-  // The shape from https://github.com/oven-sh/bun/issues/26793: a build script in the project
-  // root, which the runtime has already resolved (and cached the directory of) before
-  // Bun.build() runs.
+  // Runs `build.ts` from the project root, the shape from
+  // https://github.com/oven-sh/bun/issues/26793: the runtime has resolved the script, and so
+  // cached its directory, before Bun.build() runs. Returns the JSON the script prints.
+  async function runBuildScript(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  // Bundles `entry` and reports which `where.ts` ended up in the output; `resolvedFrom` reports
+  // which one the runtime's own resolver picks from a directory.
+  const whereHelpers = (entry: string) => `
+    const where = async (config: Partial<Parameters<typeof Bun.build>[0]>) => {
+      const result = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], ...config });
+      return /where = "([^"]+)"/.exec(await result.outputs[0].text())![1];
+    };
+    const resolvedFrom = (dir: string) => Bun.resolveSync("@/where", dir).split(/[\\\\/]/).slice(-2).join("/");
+  `;
+
   test("resolves paths from a tsconfig that is not the project's tsconfig.json", async () => {
     using dir = tempDir("build-api-tsconfig-custom", {
       "tsconfig.custom.json": pathsTo("src"),
@@ -1387,17 +1411,7 @@ describe.concurrent("tsconfig option overrides the tsconfig.json found on disk",
         }));
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [], bundlesCustom: true });
-    expect(exitCode).toBe(0);
+    expect(await runBuildScript(String(dir))).toEqual({ success: true, logs: [], bundlesCustom: true });
   });
 
   test("wins over the project's tsconfig.json for that build only", async () => {
@@ -1408,34 +1422,47 @@ describe.concurrent("tsconfig option overrides the tsconfig.json found on disk",
       "from-tsconfig-json/where.ts": `export const where = "tsconfig.json";`,
       "from-override/where.ts": `export const where = "override";`,
       "build.ts": `
-        const where = async (config: Partial<Parameters<typeof Bun.build>[0]>) => {
-          const result = await Bun.build({ entrypoints: ["./index.ts"], ...config });
-          return /where = "([^"]+)"/.exec(await result.outputs[0].text())![1];
-        };
+        ${whereHelpers("./index.ts")}
         console.log(JSON.stringify({
           withOverride: await where({ tsconfig: "./tsconfig.build.json" }),
           // Neither a later build nor the runtime's own resolver may see the override: the
           // directory cache they all share still describes what is on disk.
           withoutOverride: await where({}),
-          runtime: Bun.resolveSync("@/where", import.meta.dir).split(/[\\\\/]/).slice(-2).join("/"),
+          runtime: resolvedFrom(import.meta.dir),
         }));
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    expect(await runBuildScript(String(dir))).toEqual({
       withOverride: "override",
       withoutOverride: "tsconfig.json",
       runtime: "from-tsconfig-json/where.ts",
     });
-    expect(exitCode).toBe(0);
+  });
+
+  test("a directory first scanned by an override build still gets its own tsconfig.json cached", async () => {
+    // Nothing has looked at sub/ before the override build: the entry it writes into the shared
+    // directory cache must still record sub/tsconfig.json for everyone else.
+    using dir = tempDir("build-api-tsconfig-cache-fill", {
+      "tsconfig.build.json": pathsTo("from-override"),
+      "from-override/where.ts": `export const where = "override";`,
+      "sub/tsconfig.json": pathsTo("from-sub"),
+      "sub/index.ts": `export { where } from "@/where";`,
+      "sub/from-sub/where.ts": `export const where = "sub/tsconfig.json";`,
+      "build.ts": `
+        import { join } from "path";
+        ${whereHelpers("./sub/index.ts")}
+        console.log(JSON.stringify({
+          withOverride: await where({ tsconfig: "./tsconfig.build.json" }),
+          withoutOverride: await where({}),
+          runtime: resolvedFrom(join(import.meta.dir, "sub")),
+        }));
+      `,
+    });
+    expect(await runBuildScript(String(dir))).toEqual({
+      withOverride: "override",
+      withoutOverride: "sub/tsconfig.json",
+      runtime: "from-sub/where.ts",
+    });
   });
 
   test("follows the override's extends chain", async () => {

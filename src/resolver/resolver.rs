@@ -484,11 +484,11 @@ pub use bun_watcher::AnyResolveWatcher;
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     /// `opts.tsconfig_override` (`--tsconfig-override` / `Bun.build({ tsconfig })`), parsed
-    /// once in [`Self::init1`] and shared with the worker resolvers. It replaces the
-    /// `tsconfig.json` files found on disk for every directory this resolver looks at
-    /// ([`Self::enclosing_tsconfig`]) and is deliberately kept out of `dir_cache`: that cache
-    /// is process-wide, so it is usually already populated by the time a `Bun.build()` resolver
-    /// is created, and the runtime and other builds keep resolving through it concurrently.
+    /// once in [`Self::init1`] and shared with the worker resolvers. Wherever this resolver
+    /// would read a tsconfig recorded in `dir_cache` ([`Self::enclosing_tsconfig`],
+    /// [`Self::tsconfig_in`]) it reads this instead. `dir_cache` itself keeps describing the
+    /// files on disk: it is process-wide, usually populated before a `Bun.build()` resolver
+    /// exists, and the runtime and other builds keep resolving through it at the same time.
     pub tsconfig_override_json: Option<Arc<TSConfigJSON>>,
     // NOTE: `fs` / `log` are raw aliasing
     // pointers — the bundler builds a `Resolver` per worker thread sharing the
@@ -984,8 +984,17 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The tsconfig that applies to files in `dir`: the configured override (unless tsconfig
-    /// loading is switched off altogether, as standalone executables do), otherwise the nearest
+    /// `load_tsconfig_json == false` (standalone executables built without `autoloadTsconfig`)
+    /// switches the override off together with the files on disk.
+    #[inline]
+    fn active_tsconfig_override(&self) -> Option<&TSConfigJSON> {
+        if !self.opts.load_tsconfig_json {
+            return None;
+        }
+        self.tsconfig_override_json.as_deref()
+    }
+
+    /// The tsconfig that applies to files in `dir`: the override, otherwise the nearest
     /// `tsconfig.json` / `jsconfig.json` recorded while scanning `dir` and its parents.
     ///
     /// The returned borrow is decoupled from `&self` so callers can pass it to the `&mut self`
@@ -995,15 +1004,23 @@ impl<'a> Resolver<'a> {
         &self,
         dir: &DirInfo::DirInfo,
     ) -> Option<&'r TSConfigJSON> {
-        match self.tsconfig_override_json.as_deref() {
-            Some(tsconfig) if self.opts.load_tsconfig_json => {
+        match self.active_tsconfig_override() {
+            Some(tsconfig) => {
                 // SAFETY: the `Arc` is set while the resolver is constructed and released only
                 // when it is torn down (its drop, or `Transpiler::deinit`); every caller uses the
                 // borrow within a method running on this resolver, so the pointee outlives it.
                 Some(unsafe { bun_ptr::detach_lifetime_ref(tsconfig) })
             }
-            _ => dir.enclosing_tsconfig_json,
+            None => dir.enclosing_tsconfig_json,
         }
+    }
+
+    /// The tsconfig the transpiler as a whole is configured from (jsx and decorator settings):
+    /// the override, otherwise the one found in `dir` itself, which callers pass as the
+    /// top-level directory.
+    pub fn tsconfig_in(&self, dir: &DirInfo::DirInfo) -> Option<&TSConfigJSON> {
+        self.active_tsconfig_override()
+            .or_else(|| dir.tsconfig_json())
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
@@ -6659,42 +6676,27 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Record if this directory has a tsconfig.json or jsconfig.json file
+        // Record if this directory has a tsconfig.json or jsconfig.json file. A resolver with a
+        // tsconfig override never reads what it records here, but the resolvers sharing the
+        // cache with it do.
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
-            // With an override this resolver never consults the tsconfigs on disk (`enclosing_tsconfig`).
-            if self.opts.tsconfig_override.is_none() {
-                if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                    // dies (NLL) before any later `&mut` to this slot.
-                    let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
-                    {
-                        let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
-                    }
-                }
-                if tsconfig_path.is_none() {
-                    if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
-                        {
-                            let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(
-                                self.fs_ref()
-                                    .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                            );
-                        }
-                    }
+            for filename in [b"tsconfig.json".as_slice(), b"jsconfig.json"] {
+                let Some(lookup) = entries!().get_comptime_query(filename) else {
+                    continue;
+                };
+                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = lookup.entry();
+                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                {
+                    let parts = [path, filename];
+                    tsconfig_path = Some(
+                        self.fs_ref()
+                            .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
+                    );
+                    break;
                 }
             }
 

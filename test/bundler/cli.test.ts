@@ -178,6 +178,28 @@ console.log(utils());`,
       expect(output).toContain("Hello from nested!");
     });
 
+    test("--tsconfig-override replaces the cwd tsconfig.json's compilerOptions as well", async () => {
+      using dir = tempDir("tsconfig-override-compiler-options", {
+        "index.tsx": `export const element = <main />;`,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromTsconfigJson" } }),
+        // Says nothing about the factory, so the cwd file's factory must not fill it in.
+        "custom-tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react" } }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.tsx", "--tsconfig-override", "custom-tsconfig.json"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain('React.createElement("main", null)');
+      expect(stdout).not.toContain("fromTsconfigJson");
+      expect(exitCode).toBe(0);
+    });
+
     test("__dirname and __filename are printed correctly", async () => {
       using baseDirPath = tempDir("bun-build-dirname-filename", {
         "我": {

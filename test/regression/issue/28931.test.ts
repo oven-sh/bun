@@ -25,13 +25,14 @@
 // caller running `ls SHASUMS256.txt.asc` cannot find one left behind.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
+const validateScript = join(repoRoot, "scripts", "validate-digests.ts");
 
 // Shared manifest-line regex. Pinned to `hex *name` (the only form
 // scripts/sign-release-manifest.sh ever emits — see its `printf '%s
@@ -1070,4 +1071,83 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     expect(parsed.reduce<Record<string, string>>((acc, p) => ((acc[p.name] = p.hex), acc), {})).toEqual(expectedByName);
   });
+
+  test("validate-digests.ts verifies a signed directory and enforces the signer fingerprint", async () => {
+    // End-to-end through the real validator script in --dir mode:
+    // default level (checksums + signed-body identity, no key trust),
+    // then the opt-in signer level with the right and wrong fingerprint.
+    using dir = tempDir("bun-28931-validate-", {
+      "bun-linux-x64.zip": "validator-linux",
+      "bun-darwin-aarch64.zip": "validator-darwin",
+    });
+    const dirStr = String(dir);
+
+    const sign = await sh([script, dirStr, "bun-linux-x64.zip", "bun-darwin-aarch64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(sign.stderr).not.toContain("error:");
+    expect(sign.exitCode).toBe(0);
+
+    // Default level: no flags, no key material.
+    const base = await sh([bunExe(), validateScript, "--dir", dirStr]);
+    expect(base.stdout).toContain("Identity verified");
+    expect(base.stdout).toContain("Success: All 2 entries match the signed manifest.");
+    expect(base.exitCode).toBe(0);
+
+    // Signer level: export the throwaway public key and its fingerprint.
+    const fprRes = await sh(["gpg", "--batch", "--with-colons", "--fingerprint", keyUid], { GNUPGHOME: gpgHome });
+    expect(fprRes.exitCode).toBe(0);
+    const fpr = fprRes.stdout
+      .split("\n")
+      .find(l => l.startsWith("fpr:"))!
+      .split(":")[9];
+    expect(fpr).toMatch(/^[0-9A-F]{40}$/);
+    const pubRes = await sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
+    expect(pubRes.exitCode).toBe(0);
+    const pubPath = join(dirStr, "signer-pub.asc");
+    writeFileSync(pubPath, pubRes.stdout);
+
+    const good = await sh([bunExe(), validateScript, "--dir", dirStr, "--require-signer", fpr, "--pubkey", pubPath]);
+    expect(good.stdout).toContain(`Signature verified: signed by ${fpr}.`);
+    expect(good.exitCode).toBe(0);
+
+    // Wrong fingerprint: the signature still verifies cryptographically,
+    // but the signer enforcement must reject it.
+    const wrongFpr = (fpr[0] === "0" ? "1" : "0") + fpr.slice(1);
+    const bad = await sh([bunExe(), validateScript, "--dir", dirStr, "--require-signer", wrongFpr, "--pubkey", pubPath]);
+    expect(bad.stderr).toContain("Signature made by an unexpected key");
+    expect(bad.exitCode).toBe(1);
+    // Outlier timeout: this test spawns the debug bun binary three
+    // times (validator runs) plus gpg; debug+ASAN startup dominates.
+  }, 90_000);
+
+  test("validate-digests.ts rejects tampered artifacts and manifests", async () => {
+    using dir = tempDir("bun-28931-validate-tamper-", {
+      "bun-linux-x64.zip": "tamper-target",
+    });
+    const dirStr = String(dir);
+
+    const sign = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(sign.stderr).not.toContain("error:");
+    expect(sign.exitCode).toBe(0);
+
+    // Tampered artifact bytes: digest mismatch at the default level.
+    writeFileSync(join(dirStr, "bun-linux-x64.zip"), "tampered-bytes");
+    const mismatch = await sh([bunExe(), validateScript, "--dir", dirStr]);
+    expect(mismatch.stderr).toContain("Digest mismatch for bun-linux-x64.zip");
+    expect(mismatch.exitCode).toBe(1);
+
+    // Tampered manifest: .txt no longer matches the signed body.
+    const txtPath = join(dirStr, "SHASUMS256.txt");
+    const hash = createHash("sha256").update("tampered-bytes").digest("hex");
+    writeFileSync(txtPath, `${hash} *bun-linux-x64.zip\n`);
+    const identity = await sh([bunExe(), validateScript, "--dir", dirStr]);
+    expect(identity.stderr).toContain("Identity Mismatch");
+    expect(identity.exitCode).toBe(1);
+    // Outlier timeout: two debug-bun validator spawns, see above.
+  }, 60_000);
 });

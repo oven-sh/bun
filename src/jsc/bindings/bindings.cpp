@@ -4957,7 +4957,8 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
             return;
         }
 
-        actualName = function->jsExecutable()->name().string();
+        // JSFunction::name() returns "" for the `*default*` binding of an anonymous `export default`.
+        actualName = Zig::functionNameForDisplay(vm, function->jsExecutable()->name());
 
         *arg2 = Zig::toZigString(actualName);
         return;
@@ -4981,7 +4982,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = value.getObject();
-    auto displayName = JSC::getCalculatedDisplayName(vm, object);
+    auto displayName = Zig::calculatedDisplayName(vm, object);
 
     // JSC doesn't include @@toStringTag in calculated display name
     if (displayName.isEmpty()) {

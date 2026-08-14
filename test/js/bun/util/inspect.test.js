@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -615,6 +615,40 @@ describe("console.logging class displays names and extends", async () => {
       expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
   }
+});
+
+// JSC names an anonymous `export default` after its internal `*default*` binding; `.name` is
+// "default", and so is what node prints.
+it("anonymous export default class and function are named 'default'", async () => {
+  using dir = tempDir("inspect-export-default", {
+    "class.mjs": `export default class {}`,
+    "subclass.mjs": `
+      export class Base {}
+      export default class extends Base {}
+    `,
+    "arrow.mjs": `export default () => {};`,
+    "main.mjs": `
+      import Class from "./class.mjs";
+      import Subclass from "./subclass.mjs";
+      import arrow from "./arrow.mjs";
+
+      const element = { $$typeof: Symbol.for("react.element"), type: Class, props: {}, key: null };
+      console.log(JSON.stringify([Class, Subclass, arrow, element].map(value => Bun.inspect(value))));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ inspected: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    inspected: ["[class default]", "[class default extends Base]", "[Function: default]", "<default />"],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("console.log on a Blob shows name", () => {

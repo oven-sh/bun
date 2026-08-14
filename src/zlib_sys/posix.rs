@@ -3,8 +3,8 @@
 use core::ffi::{c_char, c_int};
 
 pub use crate::shared::{
-    DataType, FlushValue, ReturnCode, alloc_func, free_func, struct_internal_state, z_alloc_fn,
-    z_free_fn, z_stream, z_streamp, zStream_struct,
+    DataType, FlushValue, ReturnCode, alloc_func, free_func, struct_internal_state, z_stream,
+    z_streamp, zStream_struct,
 };
 
 unsafe extern "C" {

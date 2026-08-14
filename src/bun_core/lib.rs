@@ -129,16 +129,6 @@ impl<T> RawSlice<T> {
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
     }
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
-    }
     #[inline]
     pub const fn as_ptr(self) -> *const [T] {
         self.0
@@ -933,13 +923,6 @@ pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
         v.extend_from_slice(p);
     }
     v.into_boxed_slice()
-}
-
-/// Back-compat alias for the original `u8`-only buffer-concat. New code should
-/// call [`concat_into`] directly.
-#[inline]
-pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
-    concat_into(buf, parts)
 }
 
 /// Tagged-union field projection — `data.file`, `chunk.content.javascript`.

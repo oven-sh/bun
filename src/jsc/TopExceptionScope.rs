@@ -171,19 +171,6 @@ impl Drop for TopExceptionScopeGuard<'_> {
 }
 
 impl TopExceptionScope {
-    /// Convenience alias of [`init`](Self::init) accepting an explicit caller `Location`.
-    /// The inner C++ scope only consumes file/line, which `init` already recovers via
-    /// `#[track_caller]`; `_src` is accepted for API symmetry with
-    /// `ExceptionValidationScope::new` so call sites can pass `Location::caller()` uniformly.
-    #[track_caller]
-    pub fn new<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-        _src: &'static core::panic::Location<'static>,
-    ) -> &'a mut Self {
-        Self::init(storage, global)
-    }
-
     /// Construct in caller-owned storage. The C++ `ExceptionScope` ctor stores
     /// `&bytes` into `vm.m_topExceptionScope`, so the storage address must be
     /// stable from before this call until [`destroy`](Self::destroy) — which
@@ -443,20 +430,6 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
 }
 
 impl ExceptionValidationScope {
-    /// See [`TopExceptionScope::init`] for the storage-passing rationale.
-    /// `src` is currently advisory (forwarded to the C++ scope when `ci_assert`
-    /// is enabled via `init_in_place` callers); kept in the signature so call
-    /// sites can pass `core::panic::Location::caller()` today and the value
-    /// flows through once the C++ side consumes it.
-    #[track_caller]
-    pub fn new<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-        _src: &'static core::panic::Location<'static>,
-    ) -> &'a mut Self {
-        Self::init(storage, global)
-    }
-
     /// See [`TopExceptionScope::init`] for the storage-passing rationale.
     #[track_caller]
     pub(crate) fn init<'a>(

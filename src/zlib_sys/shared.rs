@@ -76,10 +76,8 @@ use core::ffi::{c_char, c_uint, c_ulong, c_void};
 // typedef void   (*free_func) (voidpf opaque, voidpf address);
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
 pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-// Legacy spellings the per-platform modules exported; keep both so downstream
-// `pub use` re-exports stay source-compatible.
-pub type z_alloc_fn = alloc_func;
-pub type z_free_fn = free_func;
+// Legacy spellings win32.rs exports; kept so its `pub use` re-export stays
+// source-compatible.
 pub type z_alloc_func = alloc_func;
 pub type z_free_func = free_func;
 
@@ -91,7 +89,6 @@ pub type z_free_func = free_func;
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
 // ---------------------------------------------------------------------------
-pub type Byte = u8;
 pub type Bytef = u8;
 pub type uInt = c_uint;
 pub type uLong = c_ulong;

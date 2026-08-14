@@ -3575,12 +3575,8 @@ impl TimeLike {
 }
 #[cfg(unix)]
 pub const UTIME_NOW: i64 = libc::UTIME_NOW;
-#[cfg(unix)]
-pub const UTIME_OMIT: i64 = libc::UTIME_OMIT;
 #[cfg(windows)]
 pub const UTIME_NOW: i64 = -1;
-#[cfg(windows)]
-pub const UTIME_OMIT: i64 = -2;
 
 #[cfg(windows)]
 #[path = "sys_uv.rs"]
@@ -5115,7 +5111,7 @@ pub mod c {
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]
-    pub use super::{UTIME_NOW, UTIME_OMIT};
+    pub use super::UTIME_NOW;
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -5213,9 +5209,8 @@ pub mod c {
         vm_statistics64,
         vm_statistics64_data_t,
     };
-    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via
-    // `pub use super::{UTIME_NOW, UTIME_OMIT}` above (top-level `#[cfg(unix)]`
-    // consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
+    // `UTIME_NOW` — already re-exported via `pub use super::UTIME_NOW` above
+    // (top-level `#[cfg(unix)]` const casts `libc::UTIME_NOW` to i64).
     /// Safe rc-returning `clonefile(2)` — callers that want their own
     /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
     /// of the `Maybe<()>`-shaped [`super::clonefile`].
@@ -6211,10 +6206,6 @@ impl DynLib {
         }
         // Windows: FreeLibrary via windows mod; intentionally leaked here
         // (close is a no-op on Windows in our usage).
-    }
-    #[inline]
-    pub fn handle(&self) -> *mut c_void {
-        self.handle
     }
 }
 
@@ -7990,7 +7981,7 @@ pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 // `std.posix` — wider surface than `bun_errno::posix` (which only has
 // mode_t/E/S/errno). Dependents (`bun_resolver`, `bun_md`, `bun_crash`,
 // `bun_threading`) reach for `Sigaction`, `getrlimit`, `tcgetattr`, raw
-// `read`/`write`/`poll`, `dl_iterate_phdr` etc. We re-export the errno stub
+// `write`/`poll`, `dl_iterate_phdr` etc. We re-export the errno stub
 // and layer the libc bits on top so `bun_sys::posix::*` is the single import.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod posix {
@@ -8236,20 +8227,6 @@ pub mod posix {
     }
 
     // ── raw I/O (no `Maybe` wrapping) ──
-    #[cfg(unix)]
-    #[inline]
-    pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: caller contract — `buf` points to `count` writable bytes.
-            unsafe { super::linux_syscall::read_raw(fd, buf, count) }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            // SAFETY: caller contract — `buf` points to `count` writable bytes.
-            unsafe { libc::read(fd, buf.cast(), count) }
-        }
-    }
     #[cfg(unix)]
     #[inline]
     pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize {

@@ -1654,8 +1654,7 @@ pub fn become_watcher_manager() -> ! {
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
-        // (by-value `HANDLE`/`DWORD` only); avoid the `bun_windows_sys`
-        // `unsafe fn` Result-wrapper and check `WAIT_FAILED` inline.
+        // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
         if kernel32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) == externs::WAIT_FAILED
         {
             let err = Win32Error::get();

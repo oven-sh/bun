@@ -1,6 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //
-// `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
+// `TokenList::{parse, parse_into, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
@@ -162,7 +162,7 @@ mod ext {
 
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
-// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
+// their `hash` bodies in css_parser.rs forward to `generic::implement_*`
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
 // `Token(Token)` arm. Hand-written (not derived) because `Token` carries
@@ -478,10 +478,6 @@ impl TokenList {
         }
 
         Ok(TokenList { v: tokens })
-    }
-
-    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
-        Self::parse(input, options, 0)
     }
 
     pub(crate) fn parse_raw(

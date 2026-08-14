@@ -39,13 +39,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         self.ptr.as_ptr()
     }
 
-    /// Alias of [`Self::get`] — provided so call sites that previously used a
-    /// hand-rolled `NonNull` wrapper (e.g. `AbortSignalRef`) keep compiling.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-
     /// # Safety
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
@@ -110,10 +103,6 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
         Self {
             ptr: NonNull::new(incremented_raw),
         }
-    }
-
-    pub fn get(&self) -> Option<*mut T> {
-        self.ptr.map(|p| p.as_ptr())
     }
 }
 

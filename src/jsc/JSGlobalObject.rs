@@ -379,10 +379,6 @@ impl JSGlobalObject {
         .to_js()
     }
 
-    pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        Ok(value.into())
-    }
-
     /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throw_invalid_argument_type(
         &self,
@@ -927,15 +923,6 @@ impl JSGlobalObject {
         let str = ZigString::init_utf8(&buffer);
         let err_value = str.to_error_instance(self);
         self.throw_value(err_value)
-    }
-
-    // TODO: delete these two fns
-    pub fn ref_(&self) -> &JSGlobalObject {
-        self
-    }
-    #[inline]
-    pub fn ctx(&self) -> &JSGlobalObject {
-        self.ref_()
     }
 
     pub fn create_aggregate_error(

@@ -38,11 +38,6 @@ pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
-    pub const fn new(value: T) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
@@ -601,8 +596,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
@@ -635,13 +629,6 @@ impl<T> Mutex<T> {
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
     }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<T: Default> Default for Mutex<T> {
@@ -673,13 +660,6 @@ impl<T> RwLock<T> {
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.0
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -3356,12 +3336,6 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
 }
-impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_some(self) -> bool {
-        !self.is_none()
-    }
-}
 
 /// `GenericIndex::Optional` — `MAX` is `none`.
 #[repr(transparent)]
@@ -3386,18 +3360,7 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
-
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
-    /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
-    /// `bun_bundler::output_file::IndexOptional`.
-    #[inline]
-    pub fn get(self) -> Option<GenericIndex<I, M>> {
-        self.unwrap()
-    }
     #[inline]
     pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
         if self.0 == I::NULL_VALUE {
@@ -4918,11 +4881,6 @@ impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
-
-    #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self {
-        Self { sec, nsec }
-    }
 
     #[inline]
     pub fn eql(&self, other: &Timespec) -> bool {

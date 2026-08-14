@@ -999,23 +999,6 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[cfg_attr(windows, link(name = "kernel32"))]
-unsafe extern "system" {
-    #[link_name = "WaitForSingleObject"]
-    fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-}
-/// SAFETY: `handle` must be a valid waitable kernel object.
-pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
-    // SAFETY: caller contract guarantees `handle` is a valid waitable kernel
-    // object; `ms` is a by-value DWORD with no pointer preconditions.
-    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
-    if rc == WAIT_FAILED {
-        Err(Win32Error::get())
-    } else {
-        Ok(rc)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // NTSTATUS — a transparent newtype so unmapped codes round-trip.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1061,10 +1044,6 @@ impl NTSTATUS {
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {
         NTSTATUS(raw)
-    }
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
     }
 }
 

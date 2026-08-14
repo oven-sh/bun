@@ -248,11 +248,6 @@ impl PosixLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
-    }
-
     pub fn tick(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run_bun_tick(self, core::ptr::null(), NOW_NS_UNKNOWN) };
@@ -339,11 +334,6 @@ impl PosixLoop {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
         Handler { loop_: this }
-    }
-
-    pub fn run(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {

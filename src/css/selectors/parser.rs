@@ -112,10 +112,10 @@ pub(crate) const SELECTOR_WHITESPACE: &[u8] = &[b' ', b'\t', b'\n', b'\r', 0x0C]
 /// by `impl_::Selectors` in `bun_css::selector::impl_`.
 // `PartialEq + Clone` bounds dropped — the concrete assoc types
 // (`values::ident::{Ident,IdentOrRef}`, `*const [u8]`) implement structural
-// equality via the `CssEql` protocol (`generics::implement_eql`), not
-// `core::cmp::PartialEq`. Every `eql`/`deep_clone`/`hash` callsite in this
-// module forwards through `css::implement_*` which bound on `CssEql`/
-// `DeepClone`/`CssHash`, so the std bounds were never load-bearing.
+// equality via the `CssEql` protocol, not `core::cmp::PartialEq`. Every
+// `eql`/`deep_clone`/`hash` callsite in this module forwards through
+// `css::implement_*` which bound on `CssEql`/`DeepClone`/`CssHash`, so the
+// std bounds were never load-bearing.
 pub trait SelectorImpl: Sized {
     type AttrValue: Clone;
     type Identifier: Clone;
@@ -1613,13 +1613,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         true
     }
 
-    /// Do not call this! Use `serializer::serialize_selector_list()` or
-    /// `tocss_servo::to_css_selector_list()` instead.
-    #[deprecated = "use serializer::serialize_selector_list()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector_list()");
-    }
-
     pub fn parse(
         parser: &mut SelectorParser,
         input: &mut CssParser,
@@ -1828,13 +1821,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector()` or
-    /// `tocss_servo::to_css_selector()` instead.
-    #[deprecated = "use serializer::serialize_selector()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector()");
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2284,13 +2270,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
-    }
-
-    /// Do not call this! Use `serializer::serialize_component()` or
-    /// `tocss_servo::to_css_component()` instead.
-    #[deprecated = "use serializer::serialize_component()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_component()");
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
@@ -2821,13 +2800,6 @@ pub enum Combinator {
 
 impl Combinator {
     // hash — via `#[derive(CssHash)]`.
-
-    /// Do not call this! Use `serializer::serialize_combinator()` or
-    /// `tocss_servo::to_css_combinator()` instead.
-    #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_combinator()");
-    }
 
     pub(crate) fn is_tree_combinator(self) -> bool {
         matches!(

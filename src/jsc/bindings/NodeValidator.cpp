@@ -649,7 +649,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const WTF::String& name)
 {
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});

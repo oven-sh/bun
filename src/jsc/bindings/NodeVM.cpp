@@ -712,10 +712,8 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
             return;
         }
 
-        if (!codeGenerationValue.isObject()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey), "object"_s, codeGenerationValue);
-            return;
-        }
+        V::validateObject(scope, globalObject, codeGenerationValue, WTF::makeString("options."_s, codeGenerationKey));
+        RETURN_IF_EXCEPTION(scope, );
 
         JSObject* codeGenerationObject = asObject(codeGenerationValue);
 

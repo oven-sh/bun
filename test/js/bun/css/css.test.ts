@@ -7810,6 +7810,29 @@ describe("css tests", () => {
     });
   });
 
+  describe("color-mix()", () => {
+    // `in xyz-d50` interpolates in, and yields a color in, xyz-d50; it used to be
+    // routed through xyz-d65. Expected values are lightningcss output.
+    minify_test(
+      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 .3 .2 .1)) }",
+      ".foo{color:color(xyz-d50 .2 .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 .3 .2 .1)) }",
+      ".foo{color:color(xyz-d50 .3 .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in xyz-d50, red, blue) }",
+      ".foo{color:color(xyz-d50 .289572 .141556 .364012)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in xyz-d50, rgb(255 0 0 / .5), blue) }",
+      ".foo{color:color(xyz-d50 .240996 .114718 .480098/.75098)}",
+    );
+    minify_test(".foo { color: color-mix(in xyz-d65, red, blue) }", ".foo{color:color(xyz .296436 .142416 .484931)}");
+    minify_test(".foo { color: color-mix(in xyz, red, blue) }", ".foo{color:color(xyz .296436 .142416 .484931)}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

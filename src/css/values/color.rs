@@ -2455,9 +2455,8 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
-        // Intentionally XYZd65 for xyz-d50 too (sic) — kept for behavioral compatibility.
         ColorSpaceName::XyzD50 => {
-            first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
+            first_color.interpolate::<XYZd50>(p1, &second_color, p2, hue_method)
         }
     };
 

@@ -829,14 +829,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_redirect_type redirect_type;
     };
 
-    // keepalive: boolean | undefined;
-    //
-    // This is Bun's connection-pooling option (reuse TCP/TLS socket after
-    // response), NOT the Fetch spec's `Request.keepalive`
-    // (request-outlives-page, default false). Skip Request objects (via
-    // `.as_` so subclasses and structure-mutated instances are also caught)
-    // so the prototype `keepalive` accessor — which defaults to `false` —
-    // doesn't silently flip this and disable pooling.
+    // keepalive: boolean | undefined — Bun's connection-pooling option, not
+    // the spec's `Request.keepalive`. Requests are skipped so their
+    // same-named prototype accessor (default false) can't disable pooling.
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
             options_object.unwrap_or_default(),

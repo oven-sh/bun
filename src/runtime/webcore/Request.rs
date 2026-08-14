@@ -83,12 +83,10 @@ const _: () = {
 pub struct Request {
     pub(crate) url: JsCell<BunString>,
 
-    /// Subresource integrity metadata. Empty means the default (no integrity).
+    /// Subresource integrity metadata; empty = unset.
     pub(crate) integrity: JsCell<BunString>,
-    /// Referrer state (Fetch spec):
-    /// - empty → "client" (default); getter returns "about:client"
-    /// - equal to `NO_REFERRER_SENTINEL` → getter returns ""
-    /// - otherwise → the serialized URL; getter returns it as-is
+    /// Referrer state: empty = "client", [`NO_REFERRER_SENTINEL`] = no
+    /// referrer, otherwise a serialized URL. See [`Self::get_referrer`].
     pub(crate) referrer: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
@@ -141,10 +139,8 @@ impl Default for Flags {
     }
 }
 
-/// Sentinel value for `referrer` meaning "no-referrer" (the Fetch spec's
-/// request referrer state distinct from "client"). When `referrer` is set to
-/// this, the getter returns "" per spec. Static: no allocation, deref is a
-/// no-op.
+/// `Request.referrer` value for the spec's "no-referrer" state; the getter
+/// maps it to "".
 const NO_REFERRER_SENTINEL: &[u8] = b"no-referrer";
 
 // Heap-allocates via Box::new (global mimalloc).
@@ -778,10 +774,7 @@ impl Request {
     }
 
     pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // Fetch spec: the referrer getter returns
-        //   "about:client" when the referrer state is "client" (our default / empty),
-        //   ""             when the referrer state is "no-referrer",
-        //   the serialized URL otherwise.
+        // https://fetch.spec.whatwg.org/#dom-request-referrer
         let referrer = self.referrer.get();
         if referrer.is_empty() {
             return Ok(ZigString::init(b"about:client").to_js(global_object));
@@ -1115,26 +1108,17 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        // Fetch spec step 12: if init is not empty (i.e. the WebIDL dictionary
-        // conversion of init has any present member), request's referrer is
-        // reset to "client" before init.referrer is consulted. When
-        // values_to_try.len() == 2 the first value is the init object and the
-        // second is the base Request; probe init for any recognized
-        // RequestInit member with a non-undefined value and, if so, skip
-        // inheriting referrer from the base.
-        //
-        // Probing is up-front rather than inferred from what the parsing loop
-        // stores, because the spec's "is not empty" test keys on member
-        // *presence* — including members we don't read (credentials,
-        // referrerPolicy, duplex, window) and members filtered by our loop
-        // (signal: null is dropped by get_truthy, but it IS a present WebIDL
-        // member). Key list mirrors undici's webidl.converters.RequestInit.
+        // Spec step 12: a non-empty init (any present RequestInit member,
+        // including null-valued ones like `signal: null`) resets referrer to
+        // "client" before step 14 reads init.referrer — so the base Request's
+        // referrer must not be inherited. Presence is probed up-front over
+        // undici's RequestInit key set because the parsing loop below does not
+        // read every member.
         let init_has_key: bool = 'probe: {
             if values_to_try.len() != 2 {
                 break 'probe false;
             }
-            // len == 2 guarantees values_to_try[0] == arguments[1] and that it
-            // is an object (both are preconditions of the slice length above).
+            // len == 2 implies values_to_try[0] is the init object.
             let init_obj = values_to_try[0];
             const KEYS: [&[u8]; 14] = [
                 b"method",
@@ -1154,9 +1138,8 @@ impl Request {
             ];
             let mut found = false;
             for key in KEYS {
-                // `get` returns None for missing OR undefined; any Some means
-                // the member is present (including null/false/0/""), which
-                // WebIDL treats as present.
+                // `get` returns None for missing or undefined; Some (even
+                // null/false/"") is a present WebIDL member.
                 match init_obj.get(global_this, key) {
                     Ok(Some(_)) => {
                         found = true;
@@ -1225,20 +1208,13 @@ impl Request {
                         fields.insert(Fields::Integrity);
                     }
 
-                    // Spec step 12: if init is not empty, referrer was already
-                    // reset to "client" — do NOT inherit from the base Request.
-                    // The gate only applies to the *base* iteration: when `init`
-                    // is itself a Request (`new Request(base, other)`) this
-                    // branch fires first with `request == other`, and there we
-                    // DO want `other.referrer`. `base` is the last entry in
-                    // values_to_try (len==2). `.referrer` is inserted
-                    // unconditionally so the later generic pass skips this
-                    // iteration's Request `referrer` getter.
                     if !fields.contains(Fields::Referrer) {
-                        // Loop index, not JSValue identity: aliasing
-                        // (`new Request(req, req)`) puts the same value in
-                        // both slots, and identity would misclassify iter 0
-                        // as the base iter.
+                        // Step 12: a non-empty init resets referrer, so only
+                        // the base iteration (last slot; judged by index since
+                        // `new Request(req, req)` aliases both slots) skips
+                        // the copy. `.referrer` is always marked handled so
+                        // the generic pass below won't re-read this Request's
+                        // `referrer` getter.
                         let is_base_iter =
                             values_to_try.len() == 2 && iter_idx == values_to_try.len() - 1;
                         let skip_copy = is_base_iter && init_has_key;
@@ -1499,10 +1475,7 @@ impl Request {
                 }
             }
 
-            // Extract keepalive option (spec: `init["keepalive"] !== undefined`
-            // then request.keepalive = Boolean(init.keepalive)). `get` already
-            // collapses `undefined` into `None`, so the optional unwrap IS the
-            // `!== undefined` check.
+            // Extract keepalive option: Boolean(init.keepalive) when present.
             if !fields.contains(Fields::Keepalive) {
                 match value.get(global_this, "keepalive") {
                     Ok(Some(keepalive_value)) => {
@@ -1514,9 +1487,7 @@ impl Request {
                 }
             }
 
-            // Extract integrity option (spec: `init["integrity"] !== undefined`
-            // then request.integrity = String(init.integrity)). Compute the new
-            // String before dropping the old one.
+            // Extract integrity option: String(init.integrity) when present.
             if !fields.contains(Fields::Integrity) {
                 match value.get(global_this, "integrity") {
                     Ok(Some(integrity_value)) => {
@@ -1531,13 +1502,10 @@ impl Request {
                 }
             }
 
-            // Extract referrer option (spec: `init["referrer"] !== undefined`
-            // then: "" → "no-referrer"; else parse as URL, failure throws
-            // TypeError). Spec step 12: if init is non-empty, the base
-            // Request's referrer must be reset to "client" — not leaked via
-            // its `referrer` getter. The DOMWrapper branch above handles that
-            // for direct Requests but falls through here when the base is a
-            // Request subclass (asDirect returns null), so re-apply the gate.
+            // Extract referrer option: "" maps to the no-referrer sentinel,
+            // anything else must parse as a URL. The step-12 gate repeats here
+            // because Request subclasses bypass the `as_direct` branch above
+            // yet still expose a `referrer` getter this would read.
             if !fields.contains(Fields::Referrer) {
                 let is_base_iter = values_to_try.len() == 2 && iter_idx == values_to_try.len() - 1;
                 if !(is_base_iter && init_has_key) {
@@ -1549,8 +1517,6 @@ impl Request {
                                 Err(e) => bail!(Err(e)),
                             };
                             if referrer_str.is_empty() {
-                                // Static: no allocation. Getter maps this
-                                // sentinel to "".
                                 req.referrer.set(BunString::static_(NO_REFERRER_SENTINEL));
                             } else {
                                 let parsed = bun_url::href_from_string(&referrer_str);
@@ -1681,10 +1647,9 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty sentinel, and
-        // `integrity`/`referrer` are the empty sentinels both callers seed —
-        // so their skipped Drop is a no-op. Remaining incoming fields are
-        // None/weak/Copy by contract.
+        // The string cells (`url`/`integrity`/`referrer`) hold empty sentinels
+        // (or, for `url`, the bitwise copy above), so their skipped Drop is a
+        // no-op; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {

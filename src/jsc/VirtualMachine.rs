@@ -1594,6 +1594,13 @@ impl VirtualMachine {
         let mut dispatch = false;
         loop {
             while self.is_event_loop_alive() {
+                // A stop requested meanwhile (worker.terminate(), or process.exit()
+                // from a listener) ends the drain, as it ends the worker's main
+                // loop: what is still in flight is cancelled by teardown, and its
+                // completions would no longer be delivered to release the loop.
+                if !self.script_allowed() {
+                    return;
+                }
                 self.tick();
                 self.auto_tick_active();
                 dispatch = true;

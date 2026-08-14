@@ -683,3 +683,40 @@ test(
   },
   timeout,
 );
+
+// worker.terminate() landing while the worker was re-running its event loop for
+// process.on('beforeExit') listeners (they scheduled more work) was never acted
+// on: that inner drain only watched for the loop to go idle, and with the stop
+// requested the in-flight work's completion is no longer delivered, so the
+// worker slept in its loop forever and terminate() never settled.
+test("terminate() while the worker drains work scheduled by 'beforeExit' stops it", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+        "process.on('beforeExit', () => { fetch(process.env.HANG_URL).catch(() => {}); parentPort.postMessage('draining'); });" +
+        "process.on('exit', (c) => parentPort.postMessage('exit ' + c));",
+        { eval: true },
+      );
+      w.on("message", async (m) => {
+        if (m !== "draining") { console.log("unexpected", m); return; }
+        const code = await w.terminate();
+        console.log("terminated", code);
+      });
+      w.on("exit", (c) => console.log("exit", c));
+    `,
+    ],
+    env: { ...bunEnv, HANG_URL: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+  expect(exitCode).toBe(0);
+});

@@ -523,6 +523,72 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   );
 });
 
+it("writes trustedDependencies and patchedDependencies in the order earlier versions wrote them", async () => {
+  // Neither section is sorted: each is written in the iteration order of the
+  // map that collects it, so that order is part of the format. The expected
+  // blocks below are what bun 1.3.14 writes for this package.json. Writing a
+  // different order would reorder both sections in every existing bun.lock on
+  // the next `bun add`/`bun remove`, and the older version would flip them back.
+  const trusted = ["esbuild", "sharp", "@prisma/client", "prisma", "bcrypt", "core-js", "@prisma/engines"];
+  const patched = ["esbuild", "sharp", "prisma", "bcrypt", "core-js"];
+  const patch = `diff --git a/index.js b/index.js
+new file mode 100644
+index 0000000..e69de29
+`;
+
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "trusted-and-patched-order",
+      version: "1.0.0",
+      workspaces: ["packages/*", "packages/@prisma/*"],
+      trustedDependencies: trusted,
+      patchedDependencies: Object.fromEntries(patched.map(name => [`${name}@1.0.0`, `patches/${name}.patch`])),
+    }),
+  };
+  for (const name of trusted) {
+    files[`packages/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0" });
+  }
+  for (const name of patched) {
+    files[`patches/${name}.patch`] = patch;
+  }
+
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+
+  const trustedAndPatchedSections = (lockfile: string) =>
+    lockfile.slice(lockfile.indexOf('  "trustedDependencies"'), lockfile.indexOf('  "packages"'));
+  const expected = `  "trustedDependencies": [
+    "bcrypt",
+    "esbuild",
+    "sharp",
+    "@prisma/engines",
+    "@prisma/client",
+    "core-js",
+    "prisma",
+  ],
+  "patchedDependencies": {
+    "prisma@1.0.0": "patches/prisma.patch",
+    "bcrypt@1.0.0": "patches/bcrypt.patch",
+    "core-js@1.0.0": "patches/core-js.patch",
+    "esbuild@1.0.0": "patches/esbuild.patch",
+    "sharp@1.0.0": "patches/sharp.patch",
+  },
+`;
+
+  await runBunInstall(env, packageDir);
+  expect(trustedAndPatchedSections(await file(join(packageDir, "bun.lock")).text())).toBe(expected);
+
+  // Re-saving the lockfile because something else changed must leave both
+  // sections untouched.
+  await write(
+    join(packageDir, "packages", "left-pad", "package.json"),
+    JSON.stringify({ name: "left-pad", version: "1.0.0" }),
+  );
+  await runBunInstall(env, packageDir);
+  const resaved = await file(join(packageDir, "bun.lock")).text();
+  expect(resaved).toContain('"left-pad": ["left-pad@workspace:packages/left-pad"]');
+  expect(trustedAndPatchedSections(resaved)).toBe(expected);
+});
+
 it("should sort overrides before comparing", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

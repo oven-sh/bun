@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashContext, HashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -165,6 +165,31 @@ impl<'a> TreeDepsSortCtx<'a> {
     }
 }
 
+/// Hash context for the maps `trustedDependencies` and `patchedDependencies`
+/// are collected in. Both sections are written in map iteration order, so the
+/// slot layout is part of the on-disk format: every bun.lock written so far
+/// has them in `std.AutoHashMap(u64, ...)` order, i.e. wyhash over the key's
+/// bytes in the linear-probe layout `HashMap` still has. `AutoHashContext`
+/// hashes integers differently; writing in its order reorders both sections
+/// of a lockfile an earlier version wrote on the next save, even though
+/// nothing in them changed.
+struct WrittenOrderContext;
+
+impl HashContext<u64> for WrittenOrderContext {
+    #[inline]
+    fn ctx_hash(key: &u64) -> u64 {
+        bun_wyhash::hash(&key.to_le_bytes())
+    }
+    #[inline]
+    fn ctx_eql(a: &u64, b: &u64) -> bool {
+        a == b
+    }
+}
+
+/// Keyed by the hash the lockfile already has for the entry
+/// (`Dependency.name_hash`, `PackageNameAndVersionHash`).
+type WrittenOrderMap<V> = HashMap<u64, V, WrittenOrderContext>;
+
 pub(crate) struct Stringifier;
 
 impl Stringifier {
@@ -306,12 +331,15 @@ impl Stringifier {
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
-        let mut found_trusted_dependencies: HashMap<u64, String> = HashMap::default();
+        // The `reserve` calls also fix the written order: the capacity they
+        // pick decides which slot each entry lands in (see `WrittenOrderContext`).
+        let mut found_trusted_dependencies: WrittenOrderMap<String> = WrittenOrderMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
             found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
-        let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String)> = HashMap::default();
+        let mut found_patched_dependencies: WrittenOrderMap<(Box<[u8]>, String)> =
+            WrittenOrderMap::default();
         found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();

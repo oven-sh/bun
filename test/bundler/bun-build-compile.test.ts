@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  openSync,
+  readSync,
+  realpathSync,
+  truncateSync,
+} from "node:fs";
+import { release } from "node:os";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -175,6 +186,52 @@ describe("compiled binary validity", () => {
   });
 });
 
+/**
+ * File offset and size of the `.bun` section (`[u64 payload_len][payload]`) of a
+ * compiled ELF executable, read from the headers only: a debug+ASAN build is
+ * ~1 GB, so the whole file is never loaded into memory.
+ */
+function readBunSection(path: string): { offset: number; size: number } {
+  const fd = openSync(path, "r");
+  try {
+    const pread = (offset: number, length: number) => {
+      const buf = Buffer.alloc(length);
+      expect(readSync(fd, buf, 0, length, offset)).toBe(length);
+      return buf;
+    };
+
+    // Elf64_Ehdr: e_shoff @ 40 (u64), e_shentsize @ 58, e_shnum @ 60, e_shstrndx @ 62 (u16)
+    const ehdr = pread(0, 64);
+    const shoff = Number(ehdr.readBigUInt64LE(40));
+    const shentsize = ehdr.readUInt16LE(58);
+    const shnum = ehdr.readUInt16LE(60);
+    const shstrndx = ehdr.readUInt16LE(62);
+    const shdrs = pread(shoff, shnum * shentsize);
+
+    // Elf64_Shdr: sh_name @ 0 (u32), sh_offset @ 24 (u64), sh_size @ 32 (u64)
+    const shdr = (i: number) => {
+      const at = i * shentsize;
+      return {
+        name: shdrs.readUInt32LE(at),
+        offset: Number(shdrs.readBigUInt64LE(at + 24)),
+        size: Number(shdrs.readBigUInt64LE(at + 32)),
+      };
+    };
+    const shstrtab = shdr(shstrndx);
+    const names = pread(shstrtab.offset, shstrtab.size);
+
+    for (let i = 0; i < shnum; i++) {
+      const { name, offset, size } = shdr(i);
+      if (names.toString("latin1", name, names.indexOf(0, name)) === ".bun") {
+        return { offset, size };
+      }
+    }
+    throw new Error(`${path} has no .bun section`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 if (isLinux) {
   describe("ELF section", () => {
     test("compiled binary runs with execute-only permissions", async () => {
@@ -325,6 +382,90 @@ if (isLinux) {
       }
       expect(foundBunSection).toBe(true);
     });
+
+    // The kernel maps the whole PT_LOAD holding the payload without checking
+    // that the file is actually that long, so a truncated executable
+    // (interrupted download or copy) still execs and used to die with SIGBUS
+    // on the first read of the payload, in StandaloneModuleGraph::from_executable.
+    // The loader now probes the pages it is about to read with
+    // MADV_POPULATE_READ (Linux 5.14+) and exits with an error instead.
+    //
+    // The cut points come from the `.bun` section header, which
+    // `write_bun_section` points at the relocated payload: under debug+ASAN
+    // hundreds of MB of debug info follow the payload in the file, so cutting
+    // a fixed distance from the end would not reach it.
+    //
+    // Higher per-test timeout for the same reason as the #29963 test below:
+    // compiling copies the entire bun binary (and this test copies it twice more).
+    const [kernelMajor, kernelMinor] = release().split(".").map(Number);
+    const hasMadvPopulateRead = kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 14);
+    test.skipIf(!hasMadvPopulateRead)(
+      "truncated compiled binary exits with an error instead of SIGBUS",
+      async () => {
+        // Cutting `keep` bytes into a payload of more than `2 * keep` bytes leaves
+        // the page holding the length header (first probe) on disk and puts the
+        // page holding the trailer (second probe) entirely past EOF, for any
+        // page size up to 64 KiB.
+        const keep = 64 * 1024;
+        using dir = tempDir("build-compile-truncated", {
+          "big.txt": Buffer.alloc(1024 * 1024, "x").toString(),
+          "app.js": `import big from "./big.txt" with { type: "text" }; console.log("intact-" + big.length);`,
+        });
+
+        const exe = join(String(dir), "app");
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "app.js")],
+          compile: { outfile: exe },
+        });
+        expect(result.success).toBe(true);
+
+        const run = async (path: string) => {
+          await using proc = Bun.spawn({
+            cmd: [path],
+            env: {
+              ...bunEnv,
+              // detect_leaks=0: LSAN's exit-time scan of a cut binary reads the
+              // same unbacked payload pages and dies of the SIGBUS itself.
+              ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+            },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout, stderr, exitCode };
+        };
+        // A download of `exe` that stopped after `length` bytes. Always a fresh
+        // copy: a file that was just executed stays ETXTBSY for a moment.
+        const cutAt = (name: string, length: number) => {
+          const copy = join(String(dir), name);
+          copyFileSync(exe, copy);
+          truncateSync(copy, length);
+          return copy;
+        };
+        const incomplete = (path: string) => ({
+          stdout: "",
+          stderr:
+            // The loader names the file via /proc/self/exe, hence realpath.
+            `error: "${realpathSync(path)}" is incomplete: the file ends before the program embedded in it does.\n` +
+            "note: It was probably truncated while being downloaded or copied. Re-download or reinstall it and try again.\n",
+          exitCode: 1,
+        });
+
+        const { offset: payloadOffset, size: payloadSize } = readBunSection(exe);
+        expect(payloadSize).toBeGreaterThan(2 * keep);
+        expect(await run(exe)).toEqual({ stdout: "intact-1048576\n", stderr: "", exitCode: 0 });
+
+        // Most of the payload made it, but not the trailer at its end.
+        const missingTrailer = cutAt("app-missing-trailer", payloadOffset + keep);
+        expect(await run(missingTrailer)).toEqual(incomplete(missingTrailer));
+
+        // None of the payload made it, not even its length header.
+        const missingPayload = cutAt("app-missing-payload", payloadOffset);
+        expect(await run(missingPayload)).toEqual(incomplete(missingPayload));
+      },
+      60_000,
+    );
 
     // Regression guard for #29963. WSL1's kernel ELF loader rejects `execve`
     // with ENOEXEC when it sees a late PT_LOAD produced by repurposing

@@ -1,0 +1,66 @@
+---
+title: "bun dedupe"
+description: "Remove duplicate versions of packages from bun.lock"
+---
+
+After bumping or adding a dependency, `bun.lock` can end up with several versions of the same package even though one of them satisfies every range that requests it — for example `esbuild@0.15.10` and `esbuild@0.15.11` when the ranges are `^0.15.7` and `^0.15.8`. `bun dedupe` keeps the smallest set of already-locked versions that still satisfies every range (preferring newer versions), moves only the ranges whose version is being dropped, removes those versions, saves `bun.lock`, and installs.
+
+It only uses versions that are already in the lockfile. It never moves a dependency outside its range and never contacts the registry to resolve anything; use `bun update` for that.
+
+```bash terminal icon="terminal"
+bun dedupe
+```
+
+```
+bun dedupe v1.4.0 (abc12345)
+
+↳ esbuild 0.15.10 → 0.15.11
+↳ react 18.2.0 → 18.3.1
+
+2 duplicate versions removed, 3 packages installed (checked 5 packages) [12.00ms]
+```
+
+Each `↳` row is a version that was removed and the version its dependents now resolve to (when the output is not a terminal the row is written as `~ esbuild 0.15.10 -> 0.15.11`). Any `kept` lines (see the notes below) follow the rows. The rows and the summary are printed together once the install has finished, after any lifecycle script output. In the summary, `checked` counts every package in `bun.lock`; installed packages are only mentioned when the install changed `node_modules`.
+
+If there is nothing to remove, the command prints only a summary and exits without installing or re-saving `bun.lock` (also with `--lockfile-only`):
+
+```
+bun dedupe v1.4.0 (abc12345)
+
+🎉 No duplicates — checked 5 packages, every one already resolves to a single version [9.00ms]
+```
+
+### `--check` and `--dry-run`
+
+`bun dedupe --check` prints the versions that can be removed without installing packages or modifying `bun.lock`, and exits with code `1` when there is something to remove. It exits with code `0` when the lockfile is already deduplicated, which makes it usable in CI. Like `bun dedupe`, it exits with code `1` and `error: bun.lock does not match package.json, nothing to dedupe` when `package.json` changed since the last install.
+
+```bash terminal icon="terminal"
+bun dedupe --check
+```
+
+```
+bun dedupe v1.4.0 (abc12345)
+
+↳ esbuild 0.15.10 → 0.15.11
+↳ react 18.2.0 → 18.3.1
+
+2 duplicate versions can be removed (checked 5 packages) [9.00ms]
+  bun dedupe
+```
+
+`bun dedupe --dry-run` prints the same output but always exits with code `0`, like `bun prune --dry-run`; use it to look before running `bun dedupe`, and `--check` to fail CI. When there is nothing to remove, both print the 🎉 line above and exit with code `0`.
+
+### Notes
+
+- Overrides and catalogs are honoured: a dependency is re-pointed using its effective range.
+- A dependency listed directly in the root or a workspace `package.json` is only moved to an older version when that is the only way to remove a version: if a transitive dependency pins an older version exactly, the direct range is collapsed onto it (pnpm keeps both versions in that case). Use `bun update` or an [override](/pm/overrides) if you want the newer version to win.
+- A range whose version survives is never moved.
+- A version listed in `patchedDependencies` is never moved away from and never removed. If removing some other version would leave a patched package unreachable, that version is kept as well, and every mode (`bun dedupe`, `--check`, and when there is nothing else to remove) says so with a line directly under the `↳` rows, before the summary, e.g. `  kept one-fixed-dep@1.0.0 (needed to reach patched no-deps@1.0.0)`. Delete the patch entry (or `bun update` the dependent) if you want the version removed.
+- Bundled dependencies stay on the copy inside their tarball, and dependencies specified as a dist-tag (such as `latest`), a git URL, or a tarball keep the version they resolved to. A dist-tag keeps its version because only the registry knows what the tag points at now; other ranges are still collapsed onto that version.
+- Only the ranges of packages that remain installed are counted; a version that the same run removes does not influence where its own dependencies end up, so running the command twice never changes anything the second time.
+- It works from the ranges recorded in `bun.lock`. If the dependencies, overrides, or catalogs in any `package.json` changed since the last install, it stops with `error: bun.lock does not match package.json, nothing to dedupe` followed by `note: run 'bun install' first`, and exits with code `1` (also with `--check` and `--dry-run`). Edits that do not affect resolution (`scripts`, `trustedDependencies`) do not block it.
+- The command needs an existing `bun.lock` to work from: when there is none, `bun dedupe` (and `bun dedupe --check`) reports `missing lockfile, nothing to dedupe` and exits with code `1`, so run `bun install` first. A `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` counts: it is migrated to `bun.lock` before deduplicating, and the error is only reported when there is no lockfile of any format.
+- `bun.lock` and `node_modules` change (with the hoisted linker the nested copy of a removed version — `node_modules/a/node_modules/b` — is deleted so `a` loads the version that survived; with the isolated linker the store links are re-pointed by the install; `--check`, `--dry-run` and `--lockfile-only` leave `node_modules` alone); `package.json` never does. The result only lives in `bun.lock`: deleting the lockfile and reinstalling can bring the duplicates back. Add an [override](/pm/overrides) to pin a version permanently.
+- `--lockfile-only` rewrites `bun.lock` without installing.
+- `--frozen-lockfile`, `--production`, and `--no-save` cannot be combined with removing duplicates. The command prints the same rows and `… can be removed` summary as `--check`, then exits with code `1` with the reason and the fix together on stderr: `error: 1 duplicate version can be removed, but --frozen-lockfile was passed` (or `but --production implies --frozen-lockfile`, `but --no-save was passed`) followed by `note: run 'bun dedupe' to remove it, or 'bun dedupe --check' in CI`. Use `--check` in CI.
+- Works with both the hoisted and isolated linker. It only removes distinct versions of a package; the isolated linker may still keep several copies of one version that differ in their peer dependencies, and those are not reported by `--check`. Leftover store entries of removed versions are cleaned by [`bun prune`](/pm/cli/prune).

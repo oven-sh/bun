@@ -3664,7 +3664,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
-                        if !e.is_single_line {
+                        if !e.is_single_line || IS_JSON {
                             self.indent();
                         }
 

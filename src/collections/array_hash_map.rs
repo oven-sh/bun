@@ -859,11 +859,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if len < 2 {
             return;
         }
-        let mut perm: Vec<usize> = (0..len).collect();
+        let mut perm: Vec<u32> = crate::index_sort::identity(len);
         {
             let keys = &self.keys[..];
             let values = &self.values[..];
-            perm.sort_by(|&a, &b| {
+            crate::index_sort::sort_indices(&mut perm, &mut |a, b| {
+                let (a, b) = (a as usize, b as usize);
                 if less_than(keys, values, a, b) {
                     core::cmp::Ordering::Less
                 } else if less_than(keys, values, b, a) {
@@ -878,13 +879,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
-            if visited[start] || perm[start] == start {
+            if visited[start] || perm[start] as usize == start {
                 continue;
             }
             let mut i = start;
             while !visited[i] {
                 visited[i] = true;
-                let j = perm[i];
+                let j = perm[i] as usize;
                 if j == start {
                     break;
                 }

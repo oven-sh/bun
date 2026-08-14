@@ -430,7 +430,7 @@ peer = true
 
 Whether `bun install` runs in "production mode". Default `false`.
 
-In production mode, `"devDependencies"` are not installed. The `--production` CLI flag overrides this setting.
+In production mode, `"devDependencies"` are not installed, and `bun.lock` is treated as frozen, the same as setting [`install.frozenLockfile`](#install-frozenlockfile) to `true`. The `--production` CLI flag turns production mode on for a single install; there is no flag to turn it off when it is enabled here. It applies to every command that runs an install, not only `bun install`: with it enabled, `bun add`, `bun remove` and `bun update` fail with `lockfile had changes, but lockfile is frozen` whenever they would change `bun.lock`, and `bun update --prod` (which only selects what to update) does not turn it on or off.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

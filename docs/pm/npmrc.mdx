@@ -5,6 +5,10 @@ description:
 
 Bun loads configuration options from [`.npmrc`](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) files, so you can reuse your existing registry and scope configuration.
 
+Bun reads `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc` if it exists), then the project's `./.npmrc`, then `bunfig.toml`; `NPM_CONFIG_USERCONFIG` is not consulted. When the same option is set in more than one place, `./.npmrc` overrides `~/.npmrc`, `bunfig.toml` overrides both `.npmrc` files (the project's `bunfig.toml` overriding the global `~/.bunfig.toml`), the `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables override the default registry and its token from any of those files, and command-line flags such as `--registry` override everything. Registry credentials that only exist in `.npmrc` (`//<registry>/:_authToken`, `username`, `_password`, `_auth`) are matched to the default and scoped registries that end up in effect by host and path, whether the registry URL was set in `.npmrc` or `bunfig.toml` and regardless of a trailing slash; a token, username or password set on a registry directly in `bunfig.toml` takes precedence over these lines.
+
+Values in both `~/.npmrc` and `./.npmrc` may reference environment variables: `${NAME}` is replaced with the variable's value and left as the literal text `${NAME}` when the variable is unset, while `${NAME?}` becomes an empty string when unset.
+
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.

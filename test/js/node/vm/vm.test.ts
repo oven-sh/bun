@@ -160,6 +160,16 @@ describe("vm", () => {
         expect(fn(1)).toBe("context:1");
       });
 
+      test("the body cannot reach the caller's realm through its own function object", () => {
+        // With a caller-realm prototype, arguments.callee.constructor was the
+        // caller's Function, whose functions see the caller's globals.
+        const parsingContext = createContext({});
+        const fn = compileFunction("return new (arguments.callee.constructor)('return globalThis')()", [], {
+          parsingContext,
+        });
+        expect(fn()).toBe(runInContext("globalThis", parsingContext));
+      });
+
       test("without parsingContext the caller's realm is used", () => {
         expect(Object.getPrototypeOf(compileFunction("return 1"))).toBe(Function.prototype);
         expect(thrownBy(() => compileFunction("%%"))).toBeInstanceOf(SyntaxError);

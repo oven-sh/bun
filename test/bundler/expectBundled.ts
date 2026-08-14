@@ -195,7 +195,10 @@ export interface BundlerTestInput {
   bundling?: boolean;
   /** Used for `default/ErrorMessageCrashStdinESBuildIssue2913`. */
   stdin?: { contents: string; cwd: string };
-  /** Use when doing something weird with entryPoints and you need to check other output paths. */
+  /**
+   * Use when doing something weird with entryPoints and you need to check other output paths.
+   * Resolved from the test root like `files`, so entries look like `/out/pages/a/entry.js`.
+   */
   outputPaths?: string[];
   /** Use --compile */
 
@@ -387,6 +390,11 @@ export interface BundlerTestBundleAPI {
   outdir: string;
 
   join(subPath: string): string;
+  /**
+   * File paths given to the methods below resolve from the test root, where `files` are written, so
+   * outputs are addressed as `/out.js`, `/out/entry.js`, etc. Naming one of the test's own input
+   * files throws instead of reading the fixture back.
+   */
   readFile(file: string): string;
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
@@ -463,7 +471,7 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
-function expectBundled(
+export function expectBundled(
   id: string,
   opts: BundlerTestInput,
   dryRun = false,
@@ -676,6 +684,23 @@ function expectBundled(
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
+
+    // `files` are the bundler's inputs, and `api` paths resolve from the same root the inputs are
+    // written to, so a test that names one of them where it means an output silently checks its
+    // own fixture.
+    const inputFiles = new Set(Object.keys(files).map(file => path.join(root, file)));
+    const rejectInputFile = (file: string, what: string) => {
+      if (!inputFiles.has(path.join(root, file))) return;
+      const outputLocation = outfile ?? outdir;
+      throw new Error(
+        `${what} refers to one of the test's input files, not to bundle output. Paths resolve from the test root` +
+          (outputLocation
+            ? `; the bundle is written to ${JSON.stringify("/" + path.relative(root, outputLocation).replaceAll("\\", "/"))}.`
+            : "."),
+      );
+    };
+    for (const file of outputPaths ?? []) rejectInputFile(file, `outputPaths entry ${JSON.stringify(file)}`);
+
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
@@ -1380,8 +1405,10 @@ for (const [key, blob] of build.outputs) {
     }
 
     const readCache: Record<string, string> = {};
-    const readFile = (file: string) =>
-      readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
+    const readFile = (file: string, method = "readFile") => {
+      rejectInputFile(file, `api.${method}(${JSON.stringify(file)})`);
+      return readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
+    };
     const writeFile = (file: string, contents: string) => {
       readCache[file] = contents;
       writeFileSync(path.join(root, file), contents);
@@ -1391,12 +1418,13 @@ for (const [key, blob] of build.outputs) {
       outfile: outfile!,
       outdir: outdir!,
       join: (...paths: string[]) => path.join(root, ...paths),
-      readFile,
+      readFile: file => readFile(file),
       writeFile,
-      expectFile: file => expect(readFile(file)),
-      prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file)),
-      appendFile: (file, contents) => writeFile(file, readFile(file) + "\n" + dedent(contents)),
+      expectFile: file => expect(readFile(file, "expectFile")),
+      prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file, "prependFile")),
+      appendFile: (file, contents) => writeFile(file, readFile(file, "appendFile") + "\n" + dedent(contents)),
       assertFileExists: file => {
+        rejectInputFile(file, `api.assertFileExists(${JSON.stringify(file)})`);
         if (!existsSync(path.join(root, file))) {
           throw new Error("Expected file to be written: " + file);
         }
@@ -1404,7 +1432,7 @@ for (const [key, blob] of build.outputs) {
       warnings: warningReference,
       options: opts,
       captureFile: (file, fnName = "capture") => {
-        const fileContents = readFile(file);
+        const fileContents = readFile(file, "captureFile");
         let i = 0;
         const length = fileContents.length;
         const matches = [];

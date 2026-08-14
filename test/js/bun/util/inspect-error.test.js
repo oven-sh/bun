@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,21 +10,23 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
-5 |   const err2 = new Error("error 2", { cause: err });
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
+6 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:19)
 "
 `);
 });
@@ -35,15 +38,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"27 | "
-28 | \`);
-29 | });
-30 | 
-31 | test("Error", () => {
-32 |   const err = new Error("my message");
+"30 | "
+31 | \`);
+32 | });
+33 | 
+34 | test("Error", () => {
+35 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:19)
 "
 `);
 });
@@ -71,22 +74,13 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
-const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
-};
+const normalizeError = str =>
+  // remove debug-only stack trace frames of bun's own builtins, which have a
+  // position but no file, like "at require (51:24)"
+  str
+    .split("\n")
+    .filter(line => !/^\s*at \S+ \(:?\d+:\d+\)$/.test(line))
+    .join("\n");
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -111,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
     `);
   }
 });
@@ -140,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
     `);
   }
 });
@@ -154,7 +148,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:143:19)"
 `);
 });
 
@@ -187,4 +181,96 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+// Once error.stack has been read (or assigned), JSC no longer has the frames of
+// the error and the printer parses the "    at ..." lines of that string instead.
+// A frame printed without a line and column (native code, "unknown") has no
+// position to parse, and must not come back out as line 1, column 1.
+describe("printing the frames parsed back out of error.stack without a position", () => {
+  const printedFrames = text =>
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "));
+
+  const stackWithFrames = frames => ["Error: boom", ...frames.map(frame => `    at ${frame}`)].join("\n");
+
+  const inspectStack = frames => {
+    const err = new Error("boom");
+    err.stack = stackWithFrames(frames);
+    return Bun.inspect(err);
+  };
+
+  test("frames without a position, or with only a line, print as error.stack has them", () => {
+    const frames = [
+      "first (native)",
+      "second (node:child_process)",
+      "unknown",
+      "third (/fake/lib.js:3:4)",
+      "fourth (/fake/lib.js:7)",
+    ];
+    expect(printedFrames(inspectStack(frames))).toEqual(frames.map(frame => `at ${frame}`));
+  });
+
+  test("a native frame is the only frame, so the source preview is looked up for it", () => {
+    expect(printedFrames(inspectStack(["first (native)"]))).toEqual(["at first (native)"]);
+  });
+
+  const inspectedLines = frames => inspectStack(frames).trimEnd().split("\n");
+
+  test("no source preview for a frame that names a file but no line in it", () => {
+    using dir = tempDir("inspect-error-no-position", { "lib.js": "// line 1\n// line 2\n" });
+    const file = `${dir}/lib.js`;
+    expect(inspectedLines([`first (${file})`])).toEqual(["error: boom", `      at first (${file})`]);
+  });
+
+  test("the source preview and its caret belong to the first frame that has a position", () => {
+    using dir = tempDir("inspect-error-no-position", { "lib.js": "// line 1\n// line 2\n" });
+    const file = `${dir}/lib.js`;
+    expect(inspectedLines(["first (native)", `second (${file}:2:5)`])).toEqual([
+      "1 | // line 1",
+      "2 | // line 2",
+      "        ^",
+      "error: boom",
+      "      at first (native)",
+      `      at second (${file}:2:5)`,
+    ]);
+  });
+
+  describe.concurrent("uncaught exception printout and GitHub Actions annotation", () => {
+    const throwUncaught = async frames => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const err = new Error("boom"); err.stack = ${JSON.stringify(stackWithFrames(frames))}; throw err;`,
+        ],
+        env: { ...bunEnv, GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: "/fake" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+      return {
+        frames: printedFrames(stderr),
+        annotation: stderr.split("\n").find(line => line.startsWith("::error ")),
+      };
+    };
+
+    test("top frame without a position: the annotation has no file, line or column", async () => {
+      expect(await throwUncaught(["first (native)", "unknown", "second (/fake/lib.js:3:4)"])).toEqual({
+        frames: ["at first (native)", "at unknown", "at second (/fake/lib.js:3:4)"],
+        annotation: expect.stringMatching(/^::error title=error: boom::/),
+      });
+    });
+
+    test("top frame with only a line: the annotation has no column", async () => {
+      expect(await throwUncaught(["first (/fake/lib.js:7)", "second (native)"])).toEqual({
+        frames: ["at first (/fake/lib.js:7)", "at second (native)"],
+        annotation: expect.stringMatching(/^::error file=(.*[\\/])?lib\.js,line=7,title=error: boom::/),
+      });
+    });
+  });
 });

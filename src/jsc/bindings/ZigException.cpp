@@ -245,8 +245,11 @@ public:
     public:
         StringView functionName {};
         StringView sourceURL {};
-        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
-        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        // beforeFirst() (-1) is ZigStackFramePosition's "unknown", so a frame
+        // printed without a line or column ("at foo (native)") stays unknown
+        // instead of becoming line 1, column 1.
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::beforeFirst();
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::beforeFirst();
 
         bool isConstructor = false;
         bool isGlobalCode = false;
@@ -611,6 +614,9 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                         current.source_url = Bun::toStringRef(sourceURL);
                         current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
                         current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        // `current = {}` zeroes byte_position; -1 keeps a frame without a
+                        // line and column equal to ZigStackFramePosition::INVALID.
+                        current.position.byte_position = -1;
 
                         current.remapped = true;
                         current.is_async = frame.isAsync;

@@ -365,10 +365,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(())
     }
 
-    /// When lowered top-level `using` declarations wrap the module body in a try/catch
-    /// (`LowerUsingDeclarationsContext::finalize`), `export default` can't stay inside it,
-    /// so it becomes a binding (the function declaration itself, `var C = class C {}`, or
-    /// `var file_default = expr`) plus `export { name as default }` for `finalize` to hoist.
+    /// Once lowered `using` wraps the module body in a try/catch, `export default` has to become
+    /// a binding plus `export { name as default }`, which `finalize` keeps outside the block.
     fn append_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,

@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isMacOS } from "harness";
+import { bunEnv, bunExe, isMacOS } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -111,6 +111,27 @@ describe("Intl.DateTimeFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
+  // The default locale must not be ICU's en_US_POSIX fallback (what an invalid
+  // platform language tag degrades to; bionic's default "C.UTF-8" used to
+  // produce exactly that): it sorts case-first and drops digit grouping.
+  test("default locale is a real locale, not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (1234.5).toLocaleString()]))`,
+      ],
+      // whatever the environment says, including nothing at all
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
+      stdout: "pipe",
+    });
+    const [locale, order, grouped] = JSON.parse(await proc.stdout.text());
+    expect(locale).not.toContain("posix");
+    expect(order).toBe(-1);
+    expect(grouped).toContain(",");
+    expect(await proc.exited).toBe(0);
+  });
+
   snapshotIf("sort order across locales", () => {
     const out: Record<string, string[]> = {};
     for (const loc of LOCALES) out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);

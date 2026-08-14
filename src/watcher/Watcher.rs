@@ -197,18 +197,21 @@ pub fn stop_all_for_exit() {
     STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
     let list = ACTIVE_WATCHERS.lock();
     for &addr in list.iter() {
+        let ptr = addr as *const Watcher;
         // SAFETY: entries are live `Box<Watcher>` allocations; they are removed
         // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed.
-        // Shared access suffices, matching `shutdown()`: only the mutex and the
-        // `running` atomic are touched. `platform` is left alone; a thread
-        // still blocked in its platform wait never dispatches, and one that
-        // wakes sees `running == false` (checked under `mutex` in
-        // `dispatch_file_updates` and in `watch_loop`'s condition) and exits
-        // without touching the freed resolver state.
-        let me = unsafe { &*(addr as *const Watcher) };
-        me.mutex.lock();
-        me.running.store(false);
-        me.mutex.unlock();
+        // Raw-place projections so no `&Watcher` is retagged while the watcher
+        // thread holds a protected `&mut self` in `thread_body`; only the
+        // interior-mutable `mutex` and `running` are touched. `platform` is
+        // left alone: a thread still blocked in its platform wait never
+        // dispatches, and one that wakes sees `running == false` (checked
+        // under `mutex` in `dispatch_file_updates` and in `watch_loop`'s
+        // condition) and exits without touching the freed resolver state.
+        unsafe {
+            (*ptr).mutex.lock();
+            (*ptr).running.store(false);
+            (*ptr).mutex.unlock();
+        }
     }
 }
 
@@ -438,14 +441,16 @@ impl Watcher {
             Err(err) => {
                 self.watchloop_handle.store(false);
                 // `stop_all_for_exit` and `shutdown` write `running` under
-                // `mutex`; hold it so the stop and the read are one step.
+                // `mutex`; hold it across the callback, like
+                // `dispatch_file_updates`, so `ctx` can't be torn down between
+                // the `running` read and the `on_error` call.
                 self.mutex.lock();
                 self.platform.stop();
                 let running = self.running.load();
-                self.mutex.unlock();
                 if running {
                     (self.on_error)(self.ctx, err);
                 }
+                self.mutex.unlock();
                 running
             }
             Ok(()) => false,

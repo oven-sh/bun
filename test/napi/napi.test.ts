@@ -163,6 +163,65 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           // which on debian/ubuntu is disk-backed gp3.
           30 * 1000,
         );
+
+        // https://github.com/oven-sh/bun/issues/10964
+        // https://github.com/oven-sh/bun/issues/14301
+        // The argument shapes the rewrite accepts are covered in
+        // test/bundler/bundler_loader.test.ts; this checks that the embedded
+        // addon actually loads from a compiled executable.
+        it(
+          "should work with --compile when the addon is loaded via require('bindings')",
+          async () => {
+            const addon = join(__dirname, "napi-app/build/Debug/napitests.node");
+            await using dir = tempDir("napi-bindings-compile-" + format, {
+              "package.json": JSON.stringify({ name: "napi-bindings-compile" }),
+              "node_modules/bindings/package.json": JSON.stringify({
+                name: "bindings",
+                main: "./bindings.js",
+              }),
+              "node_modules/bindings/bindings.js": `
+                module.exports = function () {
+                  throw new Error("runtime bindings() should have been rewritten at build time");
+                };
+              `,
+              "node_modules/mypkg/package.json": JSON.stringify({
+                name: "mypkg",
+                main: "./lib/index.js",
+              }),
+              "node_modules/mypkg/lib/index.js": `module.exports = require('bindings')('myaddon');`,
+              "node_modules/mypkg/build/Release/myaddon.node": await Bun.file(addon).bytes(),
+              "entry.ts": `
+                const addon = require('mypkg');
+                console.log(addon(function (str) { return str + "!"; }));
+              `,
+            });
+            const exe = join(dir, "out" + (process.platform === "win32" ? ".exe" : ""));
+            const build = spawnSync({
+              cmd: [bunExe(), "build", "--compile", "--format=" + format, "./entry.ts", "--outfile", exe],
+              cwd: dir,
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            expect(build.stderr.toString()).not.toContain("error:");
+            expect(build.success).toBeTrue();
+
+            // Run from an unrelated directory: nothing next to the executable
+            // may be consulted to find the addon.
+            await using runDir = tempDir("napi-bindings-run-" + format, {});
+            const result = spawnSync({
+              cmd: [exe],
+              env: bunEnv,
+              cwd: runDir,
+              stderr: "pipe",
+              stdout: "pipe",
+            });
+            expect(result.stderr.toString()).toBe("");
+            expect(result.stdout.toString().trim()).toBe("hello world!");
+            expect(result.success).toBeTrue();
+          },
+          30 * 1000,
+        );
       }
 
       it("`bun build`", async () => {

@@ -1249,6 +1249,80 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `require("bindings")("addon")` and `require("bindings")({ bindings: "addon" })`
+    /// become a `require` of `addon.node` tagged `NativeBindings`; the bundler
+    /// locates the file (see `Features::rewrite_bindings_require`). The record
+    /// `require("bindings")` produced is retargeted at the addon rather than
+    /// left behind: a leftover record would still be resolved (and the package
+    /// bundled) when this module is loaded through `require()` or `import()`,
+    /// which un-defers every unused record of the module for the barrel
+    /// optimization. Any other argument shape selects a different lookup and
+    /// is left alone.
+    pub(crate) fn maybe_rewrite_bindings_require(
+        &mut self,
+        call: &E::Call,
+        loc: js_ast::Loc,
+    ) -> Option<Expr> {
+        let js_ast::ExprData::ERequireString(bindings) = call.target.data else {
+            return None;
+        };
+        if call.args.len_u32() != 1 {
+            return None;
+        }
+        {
+            let record = &self.import_records.items()[bindings.import_record_index as usize];
+            if record.path.text != b"bindings" || record.tag != bun_ast::ImportRecordTag::None {
+                return None;
+            }
+        }
+
+        let arg = call.args.slice()[0];
+        let name_expr = match arg.data {
+            js_ast::ExprData::EString(..) => arg,
+            js_ast::ExprData::EObject(object) => {
+                let object: &E::Object = object.get();
+                if object.properties.len() != 1 {
+                    return None;
+                }
+                object.get(b"bindings")?
+            }
+            _ => return None,
+        };
+        let js_ast::ExprData::EString(mut name) = name_expr.data else {
+            return None;
+        };
+        let name = name.slice(self.arena);
+        if name.is_empty() {
+            return None;
+        }
+        let file_name: &'a [u8] = if name.ends_with(b".node") {
+            name
+        } else {
+            let mut with_extension =
+                BumpVec::<u8>::with_capacity_in(name.len() + b".node".len(), self.arena);
+            with_extension.extend_from_slice(name);
+            with_extension.extend_from_slice(b".node");
+            with_extension.into_bump_slice()
+        };
+
+        // `transpose_require` already gave the record `ImportKind::Require`, its
+        // try/catch flag, and a slot in the current part.
+        let record = &mut self.import_records.items_mut()[bindings.import_record_index as usize];
+        // SAFETY: `file_name` is arena-owned and outlives the record, exactly as
+        // in `add_import_record_by_range_and_path`.
+        record.path = unsafe { fs::Path::init(file_name).into_static() };
+        record.range = self.source.range_of_string(name_expr.loc);
+        record.tag = bun_ast::ImportRecordTag::NativeBindings;
+
+        Some(self.new_expr(
+            E::RequireString {
+                import_record_index: bindings.import_record_index,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
     #[inline]
     pub(crate) fn should_unwrap_common_js_to_esm(&self) -> bool {
         self.options.features.unwrap_commonjs_to_esm

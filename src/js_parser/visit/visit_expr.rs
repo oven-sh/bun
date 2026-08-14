@@ -2010,6 +2010,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // The inner `require("bindings")` was transposed into an `ERequireString`
+        // when the target was visited above.
+        if p.options.features.rewrite_bindings_require
+            && matches!(e_.target.data, Data::ERequireString(..))
+            && let Some(addon_require) = p.maybe_rewrite_bindings_require(&*e_, expr.loc)
+        {
+            *e = addon_require;
+            return;
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

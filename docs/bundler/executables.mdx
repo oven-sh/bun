@@ -835,6 +835,8 @@ const addon = require("./addon.node");
 console.log(addon.hello());
 ```
 
+Packages that load their addon with `require("bindings")("name")` (or `require("bindings")({ bindings: "name" })`) are handled as well: at build time Bun looks for the `.node` file in the directories the `bindings` package would search (`build/Release`, `build/Debug`, ...) under the package's root and embeds it. The build fails if the addon has not been built, unless the call is inside a `try` block. Passing other options to `bindings`, computing the name at runtime, or marking `bindings` itself as external leaves the call untouched.
+
 If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must be required directly or it won't bundle correctly.
 
 ### Embed directories

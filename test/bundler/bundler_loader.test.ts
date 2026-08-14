@@ -2,7 +2,7 @@ import { fileURLToPath, Loader } from "bun";
 import { describe, expect } from "bun:test";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
-import { itBundled } from "./expectBundled";
+import { BundlerTestBundleAPI, BundlerTestInput, itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {
@@ -338,6 +338,176 @@ describe("bundler", async () => {
     run: {
       stdout: "3",
     },
+  });
+
+  // https://github.com/oven-sh/bun/issues/10964
+  // The `bindings` package finds a package's addon at runtime by walking up
+  // from __filename, which a bundle (and especially a compiled executable) no
+  // longer has. `require("bindings")(name)` is therefore resolved while
+  // bundling and the addon goes through the napi loader like a direct
+  // `require("./x.node")`. The end-to-end `--compile` runs with a real addon
+  // live in test/napi/napi.test.ts.
+  describe("require('bindings')", () => {
+    const addonBytes = "<not a real addon>";
+    // Stub of the package; a bundle must never contain or call it.
+    const bindingsPackage = {
+      "/node_modules/bindings/package.json": /* json */ `{ "name": "bindings", "main": "bindings.js" }`,
+      "/node_modules/bindings/bindings.js": /* js */ `
+        module.exports = function bindings(opts) {
+          throw new Error("runtime bindings() reached with " + JSON.stringify(opts));
+        };
+      `,
+    };
+    // An app that require()s `mypkg`, which loads its addon with `call`. The
+    // module body is deliberately more than `module.exports = require(...)`,
+    // which the bundler would collapse into the entry without ever linking
+    // mypkg's own import records; require()-ing it is what un-defers them.
+    const appUsing = (call: string) => ({
+      "/entry.js": /* js */ `console.log(typeof require("mypkg").addon);`,
+      "/node_modules/mypkg/package.json": /* json */ `{ "name": "mypkg", "main": "lib/index.js" }`,
+      "/node_modules/mypkg/lib/index.js": /* js */ `
+        const addon = ${call};
+        exports.addon = addon;
+        exports.version = 1;
+      `,
+    });
+    const builtAddon = { "/node_modules/mypkg/build/Release/myaddon.node": addonBytes };
+    const expectAddonBundled = (api: BundlerTestBundleAPI, stem = "myaddon") => {
+      const assets = readdirSync(api.outdir).filter(f => f.endsWith(".node"));
+      expect(assets).toEqual([expect.stringMatching(new RegExp(`^${stem}-[a-z0-9]+\\.node$`))]);
+      expect(api.readFile(join("out", assets[0]))).toBe(addonBytes);
+      const bundle = api.readFile("out/entry.js");
+      expect(bundle).toContain(`"./${assets[0]}"`);
+      expect(bundle).not.toContain("runtime bindings()");
+    };
+    const expectCallLeftAlone = (api: BundlerTestBundleAPI) => {
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".node"))).toEqual([]);
+      expect(api.readFile("out/entry.js")).toContain("runtime bindings()");
+    };
+    const itBindings = (id: string, opts: BundlerTestInput) =>
+      itBundled(id, { target: "bun", outdir: "/out", entryPoints: ["/entry.js"], ...opts });
+
+    for (const target of ["bun", "node"] as const) {
+      itBindings(`${target}/bindings-name`, {
+        target,
+        files: { ...appUsing(`require("bindings")("myaddon")`), ...bindingsPackage, ...builtAddon },
+        onAfterBundle: api => expectAddonBundled(api),
+      });
+    }
+    itBindings("bun/bindings-name-with-extension", {
+      files: { ...appUsing(`require("bindings")("myaddon.node")`), ...bindingsPackage, ...builtAddon },
+      onAfterBundle: api => expectAddonBundled(api),
+    });
+    itBindings("bun/bindings-options-object", {
+      files: { ...appUsing(`require("bindings")({ bindings: "myaddon" })`), ...bindingsPackage, ...builtAddon },
+      onAfterBundle: api => expectAddonBundled(api),
+    });
+    // Further options change where or what bindings() looks for.
+    itBindings("bun/bindings-other-options-left-alone", {
+      files: {
+        ...bindingsPackage,
+        ...appUsing(`require("bindings")({ bindings: "myaddon", module_root: __dirname })`),
+        ...builtAddon,
+      },
+      onAfterBundle: expectCallLeftAlone,
+    });
+    itBindings("bun/bindings-computed-name-left-alone", {
+      files: { ...appUsing(`require("bindings")(["myaddon", "node"].join("."))`), ...bindingsPackage, ...builtAddon },
+      onAfterBundle: expectCallLeftAlone,
+    });
+    itBindings("bun/bindings-debug-build-dir-without-bindings-installed", {
+      files: {
+        ...appUsing(`require("bindings")("myaddon")`),
+        "/node_modules/mypkg/build/Debug/myaddon.node": addonBytes,
+      },
+      onAfterBundle: api => expectAddonBundled(api),
+    });
+    // Like bindings' own getRoot(): the module root is the nearest directory
+    // with a package.json (named or not) or a node_modules folder.
+    const inRepoAddon = {
+      "/entry.js": /* js */ `import { addon } from "./lib/addon.js"; console.log(typeof addon);`,
+      "/lib/addon.js": /* js */ `export const addon = require("bindings")("local");`,
+      "/build/Release/local.node": addonBytes,
+    };
+    itBindings("bun/bindings-root-is-unnamed-package-json", {
+      files: { ...inRepoAddon, "/package.json": `{}` },
+      onAfterBundle: api => expectAddonBundled(api, "local"),
+    });
+    itBindings("bun/bindings-root-is-node-modules-dir", {
+      files: { ...inRepoAddon, ...bindingsPackage },
+      onAfterBundle: api => expectAddonBundled(api, "local"),
+    });
+    // The addon name must not be confused with a builtin module of the same name.
+    itBindings("bun/bindings-name-of-a-builtin", {
+      files: {
+        ...bindingsPackage,
+        ...appUsing(`require("bindings")("zlib")`),
+        "/node_modules/mypkg/build/Release/zlib.node": addonBytes,
+      },
+      onAfterBundle(api) {
+        expectAddonBundled(api, "zlib");
+        expect(api.readFile("out/entry.js")).not.toMatch(/"(node:)?zlib"/);
+      },
+    });
+    itBindings("bun/bindings-addon-missing", {
+      files: { ...bindingsPackage, ...appUsing(`require("bindings")("myaddon")`) },
+      bundleErrors: {
+        "/node_modules/mypkg/lib/index.js": [
+          `Could not find the native addon "myaddon.node" that require("bindings") would load. Build the package that loads it, or mark that package as external`,
+        ],
+      },
+    });
+    // Packages with a JS fallback wrap the call in try/catch; the missing
+    // addon then throws at runtime exactly like bindings() would have.
+    itBindings("bun/bindings-addon-missing-in-try-catch", {
+      files: {
+        ...bindingsPackage,
+        "/entry.js": /* js */ `console.log(require("mypkg"));`,
+        "/node_modules/mypkg/package.json": /* json */ `{ "name": "mypkg", "main": "index.js" }`,
+        "/node_modules/mypkg/index.js": /* js */ `
+          try {
+            module.exports = require("bindings")("myaddon");
+          } catch {
+            module.exports = "js fallback";
+          }
+        `,
+      },
+      run: { stdout: "js fallback" },
+      onAfterBundle(api) {
+        expect(api.readFile("out/entry.js")).not.toContain("runtime bindings()");
+      },
+    });
+    // When the user keeps `bindings` external they get the runtime lookup
+    // they asked for, even though the addon could have been found.
+    for (const [name, options] of [
+      ["external", { external: ["bindings"] }],
+      ["packages-external", { packages: "external" }],
+    ] as const) {
+      itBindings(`bun/bindings-${name}-left-alone`, {
+        ...options,
+        files: {
+          ...bindingsPackage,
+          "/entry.js": /* js */ `console.log(typeof require("bindings")("local"));`,
+          "/build/Release/local.node": addonBytes,
+        },
+        onAfterBundle(api) {
+          expect(readdirSync(api.outdir).filter(f => f.endsWith(".node"))).toEqual([]);
+          expect(api.readFile("out/entry.js")).toMatch(/require\("bindings"\)\("local"\)/);
+        },
+      });
+    }
+    // No target the addon could be used from: the build is unchanged.
+    itBindings("browser/bindings-left-alone", {
+      target: "browser",
+      files: { ...appUsing(`require("bindings")("myaddon")`), ...bindingsPackage, ...builtAddon },
+      onAfterBundle: expectCallLeftAlone,
+    });
+    // The dev server runs modules from their real paths, where bindings() works.
+    itBindings("bake-dev/bindings-left-alone", {
+      format: "internal_bake_dev",
+      files: { ...appUsing(`require("bindings")("myaddon")`), ...bindingsPackage, ...builtAddon },
+      onAfterBundle: expectCallLeftAlone,
+    });
   });
 
   const moon = await Bun.file(

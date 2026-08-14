@@ -2500,6 +2500,14 @@ pub mod parse_worker {
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        // The dev server evaluates modules from their real paths, where the
+        // `bindings` package works as-is; an external `bindings` means the user
+        // wants the runtime lookup kept.
+        // SAFETY: `resolver` points into a live worker-owned transpiler (see
+        // above); this shared read overlaps no `&mut` derived from it.
+        opts.features.rewrite_bindings_require = target.is_server_side()
+            && output_format != options::Format::InternalBakeDev
+            && !unsafe { &*resolver }.is_package_external(b"bindings");
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()

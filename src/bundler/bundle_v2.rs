@@ -6008,6 +6008,48 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                // `require("bindings")("x")`: the record names the addon file; once it
+                // is located, the record resolves like a `require` of that absolute
+                // path and the Napi loader embeds or copies the file.
+                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
+                    import_record.tag = bun_ast::ImportRecordTag::None;
+                    match self
+                        .transpiler_for_target(ctx.target)
+                        .resolver
+                        .resolve_bindings_addon(source_dir, import_record.path.text)
+                    {
+                        Some(addon_path) => import_record.path = Fs::Path::init(addon_path),
+                        None => {
+                            import_record.path.is_disabled = true;
+                            import_record
+                                .flags
+                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                            if !import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                && !self.transpiler.options.ignore_module_resolution_errors
+                            {
+                                last_error = Some(_resolver::Error::ModuleNotFound.into());
+                                self.log_for_resolution_failures(
+                                    source.path.text,
+                                    ctx.target.bake_graph(),
+                                )
+                                .add_resolve_error_with_text_dupe(
+                                    Some(source),
+                                    import_record.range,
+                                    format_args!(
+                                        "Could not find the native addon \"{}\" that require(\"bindings\") would load. Build the package that loads it, or mark that package as external",
+                                        bstr::BStr::new(&import_record.path.text),
+                                    ),
+                                    import_record.path.text,
+                                    import_record.kind,
+                                );
+                            }
+                            continue 'outer;
+                        }
+                    }
+                }
+
                 if let Some(fw) = &self.framework {
                     if fw.server_components.is_some() {
                         let is_server = ctx.target.is_server_side();

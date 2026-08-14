@@ -1060,12 +1060,13 @@ pub fn compute_initial_reserved_names(
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
 
-    // "arguments", "eval", and "await" are not reserved words, but module code
-    // (always strict) forbids them as binding targets. ESM output is loaded as
-    // a module, and so are dev server chunks (<script type="module">).
-    const MODULE_CODE_RESTRICTED_NAMES: [&[u8]; 3] = [b"arguments", b"eval", b"await"];
-
-    let is_module_code = output_format == Format::Esm || output_format == Format::InternalBakeDev;
+    // Not keywords, so `Keywords`/`StrictModeReservedWords` miss them, but none
+    // of them can be a binding name in strict code: `await` is reserved in
+    // modules and `eval`/`arguments` are rejected as binding identifiers. ESM
+    // output is always strict, and cjs/iife output is too whenever the entry
+    // point's "use strict" directive is hoisted into the bundle, so reserve
+    // them for every format like the keywords above.
+    const STRICT_MODE_BINDING_RESTRICTED_NAMES: [&[u8]; 3] = [b"arguments", b"eval", b"await"];
 
     let cjs_names_len: u32 = if output_format == Format::Cjs {
         CJS_NAMES.len() as u32
@@ -1073,16 +1074,13 @@ pub fn compute_initial_reserved_names(
         0
     };
 
-    let module_names_len: usize = if is_module_code {
-        MODULE_CODE_RESTRICTED_NAMES.len()
-    } else {
-        0
-    };
-
     names.ensure_total_capacity(
         cjs_names_len as usize
-            + module_names_len
-            + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
+            + (Keywords.len()
+                + StrictModeReservedWords.len()
+                + STRICT_MODE_BINDING_RESTRICTED_NAMES.len()
+                + 1
+                + EXTRAS.len()),
     )?;
 
     for keyword in Keywords.keys() {
@@ -1091,6 +1089,10 @@ pub fn compute_initial_reserved_names(
 
     for keyword in StrictModeReservedWords.iter() {
         names.put_assume_capacity(keyword, 1);
+    }
+
+    for name in STRICT_MODE_BINDING_RESTRICTED_NAMES {
+        names.put_assume_capacity(name, 1);
     }
 
     // Node contains code that scans CommonJS modules in an attempt to statically
@@ -1102,12 +1104,6 @@ pub fn compute_initial_reserved_names(
     // something in a nested scope as an top-level export.
     if output_format == Format::Cjs {
         for name in CJS_NAMES {
-            names.put_assume_capacity(name, 1);
-        }
-    }
-
-    if is_module_code {
-        for name in MODULE_CODE_RESTRICTED_NAMES {
             names.put_assume_capacity(name, 1);
         }
     }

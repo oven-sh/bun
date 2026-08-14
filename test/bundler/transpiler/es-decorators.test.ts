@@ -1228,5 +1228,23 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
     });
+
+    // tsc rejects standard decorators on abstract members (TS1270), so like a
+    // decorated abstract field the member is dropped from the output. Only the
+    // legacy-decorator path keeps its decorators.
+    test("decorated abstract accessor stays dropped in standard mode", () => {
+      const t = new Bun.Transpiler({ loader: "ts" });
+      const out = t.transformSync(`
+        declare const dec: any;
+        abstract class A {
+          @dec abstract accessor g: number;
+          x = 1;
+        }
+      `);
+      expect(out).toContain("x = 1");
+      expect(out).not.toContain('"g"');
+      expect(out).not.toContain("accessor g");
+      expect(out).not.toContain("__decorateElement");
+    });
   });
 });

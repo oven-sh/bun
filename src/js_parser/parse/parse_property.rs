@@ -449,13 +449,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                // tsc decorates an abstract accessor like an
-                                                // abstract field.
-                                                if matches!(
-                                                    prop.kind,
-                                                    PropertyKind::Normal
-                                                        | PropertyKind::AutoAccessor
-                                                ) && prop.value.is_none()
+                                                // Legacy mode decorates an abstract accessor
+                                                // like an abstract field (tsc parity).
+                                                if (prop.kind == PropertyKind::Normal
+                                                    || (prop.kind == PropertyKind::AutoAccessor
+                                                        && !p.options.features.standard_decorators))
+                                                    && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
                                                     let mut prop_ = prop;

@@ -437,14 +437,12 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// Length of `path` without its trailing separator run (a lone `/` stays), the
-/// name the recursive mkdir gives mkdir(2): on macOS and FreeBSD `mkdir("link/")`
-/// follows the symlink and creates its target, whereas `mkdir("link")` fails
-/// with EEXIST everywhere. Only the names given to mkdir(2) are trimmed; what
-/// the walk reports keeps the caller's spelling, as node does. Windows has no
-/// such mkdir behaviour and its roots (`C:\`) end in a separator.
+/// Length of `path` without its trailing separator run (a lone `/` stays). On
+/// macOS and FreeBSD, mkdir(2) of `link/` creates the symlink's target, so the
+/// recursive mkdir gives mkdir(2) this name and reports `path` as spelled, like node.
 fn mkdir_name_len(path: &OSPathSliceZ) -> usize {
     let mut len = path.len();
+    // Windows roots (`C:\`) end in a separator, and its mkdir does not follow `link\`.
     if cfg!(not(windows)) {
         while len > 1 && bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[len - 1]) {
             len -= 1;

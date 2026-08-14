@@ -147,7 +147,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]
-    pub(crate) fn repository(&self) -> &Repository {
+    pub fn repository(&self) -> &Repository {
         debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
         // SAFETY: `git` and `github` occupy the same union slot type
         // (`Repository`); tag asserted to be one of the two.
@@ -972,22 +972,22 @@ impl Default for Tag {
 
 #[allow(non_upper_case_globals)]
 impl Tag {
-    pub(crate) const Uninitialized: Tag = Tag(0);
+    pub const Uninitialized: Tag = Tag(0);
     pub const Root: Tag = Tag(1);
     pub const Npm: Tag = Tag(2);
     pub const Folder: Tag = Tag(4);
 
-    pub(crate) const LocalTarball: Tag = Tag(8);
+    pub const LocalTarball: Tag = Tag(8);
 
-    pub(crate) const Github: Tag = Tag(16);
+    pub const Github: Tag = Tag(16);
 
-    pub(crate) const Git: Tag = Tag(32);
+    pub const Git: Tag = Tag(32);
 
     pub const Symlink: Tag = Tag(64);
 
     pub const Workspace: Tag = Tag(72);
 
-    pub(crate) const RemoteTarball: Tag = Tag(80);
+    pub const RemoteTarball: Tag = Tag(80);
 
     // This is a placeholder for now.
     // But the intent is to eventually support URL imports at the package manager level.
@@ -1006,7 +1006,7 @@ impl Tag {
     // This is similar to how Go does it, except it wouldn't clone the whole repo.
     // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
     // There are questions of determinism, but perhaps that's what Integrity would do.
-    pub(crate) const SingleFileModule: Tag = Tag(100);
+    pub const SingleFileModule: Tag = Tag(100);
 }
 
 impl Tag {

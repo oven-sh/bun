@@ -595,6 +595,21 @@ impl Loader {
         }
     }
 
+    /// Copies the variables and the loaded-files bookkeeping (so `load_process`
+    /// / `load` on the copy are the same no-ops as on `self`); the lazily
+    /// derived caches are rebuilt from the copied map on demand.
+    pub fn clone(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());

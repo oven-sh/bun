@@ -309,8 +309,9 @@ impl<'a> Transpiler<'a> {
     /// lifetime-carrying borrows in `BundleOptions<'_>` / `Resolver<'_>`
     /// (`framework`, `optimize_imports`, `standalone_module_graph`,
     /// `env_loader`) are widened from `from`'s lifetime to `'a` via a
-    /// layout-preserving transmute — sound because those reference
-    /// process-lifetime data in every caller, but unprovable to borrowck.
+    /// layout-preserving transmute — sound because what they point at
+    /// outlives `from` in every caller (process-lifetime singletons, or for
+    /// `env_loader` the build that owns `from`), but unprovable to borrowck.
     pub(crate) unsafe fn for_worker(
         from: &Transpiler<'_>,
         arena: &'a Arena,

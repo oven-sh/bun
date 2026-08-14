@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import {
   chmodSync,
   closeSync,

@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use bun_core::feature_flag;
+use bun_core::{feature_flag, handle_oom};
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
@@ -77,13 +77,9 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
-/// zlib's `deflateInit2` rejects a raw-deflate window of 8 bits (it silently
-/// uses 9 even for the zlib-wrapped format), so a negotiated
-/// `client_max_window_bits=8` has to be compressed with a 9-bit window. That
-/// still honors the negotiation: deflate caps match distances at
-/// `w_size - MIN_LOOKAHEAD` = 512 - 262 = 250 bytes, within the peer's
-/// 256-byte window. Same substitution as node's `zlib.DeflateRaw`, and
-/// therefore the `ws` client.
+/// zlib refuses a raw deflate window of 8 bits. 9 still satisfies a peer that
+/// negotiated 8: match distances never exceed `w_size - MIN_LOOKAHEAD`, which
+/// is 250 bytes for a 9-bit window.
 const MIN_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
@@ -114,30 +110,28 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
-        // Initialize compressor (deflate)
-        // We use negative window bits for raw DEFLATE, as required by RFC 7692.
+    /// `params` arrive range-checked from the upgrade client, so zlib can only
+    /// fail here on allocation.
+    pub(crate) fn init(params: Params) -> Box<Self> {
+        // Negative window bits select raw DEFLATE, as required by RFC 7692.
         let compress_window_bits = params.client_max_window_bits.max(MIN_DEFLATE_WINDOW_BITS);
-        let compress_stream = zlib::DeflateEncoder::new(
+        let compress_stream = handle_oom(zlib::DeflateEncoder::new(
             Z_DEFAULT_COMPRESSION,
             -(compress_window_bits as c_int),
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
-        )
-        .map_err(|_| crate::Error::DeflateInitFailed)?;
+        ));
+        let decompress_stream = handle_oom(zlib::InflateDecoder::new(
+            -(params.server_max_window_bits as c_int),
+        ));
 
-        // Initialize decompressor (inflate)
-        let decompress_stream =
-            zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| crate::Error::InflateInitFailed)?;
-
-        Ok(Box::new(Self {
+        Box::new(Self {
             params,
             compress_stream,
             decompress_stream,
             // Fresh per-connection instance; see the `rare_data` field note.
             rare_data: RareData::default(),
-        }))
+        })
     }
 
     fn can_use_libdeflate(len: usize) -> bool {

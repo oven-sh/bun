@@ -4,10 +4,6 @@ pub enum Error {
     InvalidOptions,
     #[error("ConnectionClosed")]
     ConnectionClosed,
-    #[error("DeflateInitFailed")]
-    DeflateInitFailed,
-    #[error("InflateInitFailed")]
-    InflateInitFailed,
 }
 
 impl Error {
@@ -16,8 +12,6 @@ impl Error {
         match self {
             Self::InvalidOptions => "InvalidOptions",
             Self::ConnectionClosed => "ConnectionClosed",
-            Self::DeflateInitFailed => "DeflateInitFailed",
-            Self::InflateInitFailed => "InflateInitFailed",
         }
     }
 }

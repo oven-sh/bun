@@ -7584,6 +7584,18 @@ describe("css tests", () => {
     // effect on anything and can go.
     minify_test("@layer {} .x { color: red }", ".x{color:red}");
     minify_test("@layer a, b; @layer a { .x { color: red } }", "@layer a,b;@layer a{.x{color:red}}");
+    // Nested in a style rule, only the block form is a valid nested group rule
+    // (browsers ignore a nested `@layer a;`, see WPT css/css-nesting/nesting-layer.html
+    // and Bun's own parser rejects it), so there the empty block stays a block.
+    minify_test(".foo { color: red; @layer a {} }", ".foo{color:red;@layer a{}}");
+    minify_test(".foo { color: red; @media screen { @layer a {} } }", ".foo{color:red;@media screen{@layer a{}}}");
+    minify_test(".foo { color: red; @layer {} }", ".foo{color:red}");
+    // The style rule's own nesting does not leak into the rules after it.
+    minify_test(".foo { color: red; .bar { color: blue } } @layer a {}", ".foo{color:red;& .bar{color:#00f}}@layer a;");
+    minify_test(
+      "@layer a { .foo { color: red; @layer b {} } @layer c {} }",
+      "@layer a{.foo{color:red;@layer b{}}@layer c;}",
+    );
   });
 
   describe("container", () => {

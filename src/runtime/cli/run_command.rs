@@ -3585,7 +3585,7 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs) }
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3655,7 +3655,7 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.

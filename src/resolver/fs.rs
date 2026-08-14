@@ -96,15 +96,20 @@ impl strings::Appender for FilenameStoreAppender {
 
 /// Decouples `Entry::kind`/`symlink` (the lazy-stat path) from the concrete
 /// `RealFS` type; the inline-`fs::RealFS` in `lib.rs` impls this by forwarding
-/// to `RealFS::kind`.
+/// to `RealFS::kind` / `RealFS::resolve_symlink`.
 pub trait EntryKindResolver {
-    fn resolve_kind(
-        &mut self,
-        dir: &[u8],
-        base: &[u8],
-        existing_fd: Fd,
-        store_fd: bool,
-    ) -> crate::CrateResult<EntryCache>;
+    /// `stat` `dir/base` (following symlinks) for its kind, and report whether
+    /// the entry itself is a symlink.
+    fn resolve_kind(&mut self, dir: &[u8], base: &[u8]) -> crate::CrateResult<ResolvedKind>;
+    /// The symlink-free absolute path of `real_dir/base`, given that
+    /// `real_dir` is already symlink-free and `base` is a symlink in it.
+    fn resolve_symlink(&mut self, real_dir: &[u8], base: &[u8]) -> crate::CrateResult<Interned>;
+}
+
+#[derive(Clone, Copy)]
+pub struct ResolvedKind {
+    pub kind: EntryKind,
+    pub is_symlink: bool,
 }
 
 #[repr(u8)]
@@ -121,6 +126,7 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub(crate) kind: EntryKind,
+    pub(crate) is_symlink: bool,
 }
 
 impl Default for EntryCache {
@@ -129,19 +135,20 @@ impl Default for EntryCache {
             symlink: Interned::EMPTY,
             fd: Fd::INVALID,
             kind: EntryKind::File,
+            is_symlink: false,
         }
     }
 }
 
-// `cache` / `need_stat` are lazily populated by `Entry::kind` /
-// `Entry::symlink` while callers hold a shared
-// `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
-// `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
-// rewrite of these fields across threads (the `unsafe impl Sync for Entry`
-// below opts back in under that external-locking discipline). `need_stat`
-// is atomic because the `kind()`/`symlink()` fast path reads it without the
-// mutex: the Release store after the `cache` write paired with the Acquire
-// load is what publishes `cache` to those lock-free readers.
+// `cache` / `need_stat` / `need_realpath` are lazily populated by
+// `Entry::kind` / `Entry::symlink` while callers hold a shared `&Entry`.
+// `EntryCache` is `Copy`, so `Cell` gives us safe `.get()/.set()` through
+// `&self` — the per-entry `mutex` serializes every rewrite of these fields
+// across threads (the `unsafe impl Sync for Entry` below opts back in under
+// that external-locking discipline). The two flags are atomic because the
+// `kind()`/`symlink()` fast paths read them without the mutex: the Release
+// store after the `cache` write paired with the Acquire load is what
+// publishes `cache` to those lock-free readers.
 pub struct Entry {
     pub(crate) cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
@@ -152,7 +159,11 @@ pub struct Entry {
     pub(crate) base_lowercase_: strings::StringOrTinyString,
 
     pub mutex: Mutex,
+    /// `cache.kind` / `cache.is_symlink` not yet computed.
     pub need_stat: AtomicBool,
+    /// `cache.symlink` not yet computed (only ever set for entries that may
+    /// be symlinks).
+    pub need_realpath: AtomicBool,
 
     pub abs_path: Interned,
 }
@@ -222,35 +233,48 @@ impl Entry {
     // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
-    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
+    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
-            // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
-                // This is technically incorrect, but we are choosing not to handle errors here
-                // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
-                // only does syscalls + string interning, so the short `&mut` cannot alias.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return self.cache().kind;
-                    }
-                }
-                // Clear the flag only after the `cache` write: lock-free readers
-                // that observe `false` skip the mutex, so this Release store is
-                // what publishes `cache` to them.
-                self.need_stat.store(false, Ordering::Release);
-            }
+            // SAFETY: forwarded caller contract; `mutex` held.
+            unsafe { self.resolve_kind_locked(fs) };
         }
         self.cache().kind
     }
 
+    /// Slow path of [`Entry::kind`]. Caller holds `self.mutex`.
+    ///
+    /// # Safety
+    /// See [`Entry::kind`].
+    unsafe fn resolve_kind_locked<R: EntryKindResolver>(&self, fs: *mut R) {
+        // Relaxed: every write happens under `mutex`, which the caller holds.
+        if !self.need_stat.load(Ordering::Relaxed) {
+            return;
+        }
+        // Errors (e.g. the file was deleted between the directory scan and
+        // now) are deliberately swallowed: the placeholder kind stays.
+        // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
+        // only does syscalls, so the short `&mut` cannot alias.
+        if let Ok(r) = unsafe { &mut *fs }.resolve_kind(self.dir, self.base()) {
+            let mut c = self.cache.get();
+            c.kind = r.kind;
+            c.is_symlink = r.is_symlink;
+            self.cache.set(c);
+            if !r.is_symlink {
+                self.need_realpath.store(false, Ordering::Release);
+            }
+        } else {
+            self.need_realpath.store(false, Ordering::Release);
+        }
+        // Clear the flag only after the `cache` write: lock-free readers
+        // that observe `false` skip the mutex, so this Release store is
+        // what publishes `cache` to them.
+        self.need_stat.store(false, Ordering::Release);
+    }
+
+    /// The symlink-free absolute path this entry resolves to, or `""` if it
+    /// is not a symlink (or could not be resolved). `real_dir` is the
+    /// symlink-free path of the directory containing this entry.
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
@@ -258,29 +282,20 @@ impl Entry {
     pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
-        store_fd: bool,
+        real_dir: &[u8],
     ) -> &'static [u8] {
-        if self.need_stat.load(Ordering::Acquire) {
+        if self.need_stat.load(Ordering::Acquire) || self.need_realpath.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
+            // SAFETY: forwarded caller contract; `mutex` held.
+            unsafe { self.resolve_kind_locked(fs) };
             // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
-                // This error can happen if the file was deleted between the time the directory
-                // was scanned and the time it was read
-                // SAFETY: see the note on `Entry::kind`.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return b"";
-                    }
+            if self.need_realpath.load(Ordering::Relaxed) {
+                // SAFETY: see `resolve_kind_locked`.
+                if let Ok(symlink) = unsafe { &mut *fs }.resolve_symlink(real_dir, self.base()) {
+                    self.set_cache_symlink(symlink);
                 }
-                // See `Entry::kind`: Release-publish `cache` before the flag clear.
-                self.need_stat.store(false, Ordering::Release);
+                // See `resolve_kind_locked`: Release-publish `cache` before the flag clear.
+                self.need_realpath.store(false, Ordering::Release);
             }
         }
         self.cache().symlink.as_bytes()
@@ -499,10 +514,13 @@ impl DirEntry {
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
+                    let stale = found_kind.is_none() || Some(existing.cache().kind) != found_kind;
+                    existing.need_realpath.store(
+                        existing.need_realpath.load(Ordering::Relaxed) || stale,
+                        Ordering::Release,
+                    );
                     existing.need_stat.store(
-                        existing.need_stat.load(Ordering::Relaxed)
-                            || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                        existing.need_stat.load(Ordering::Relaxed) || stale,
                         Ordering::Release,
                     );
                     break 'brk existing_ptr;
@@ -551,12 +569,14 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).need_realpath).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
+                    is_symlink: false,
                 }));
                 addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
                 p

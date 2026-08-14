@@ -3537,9 +3537,6 @@ impl VirtualMachine {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
             // depend on.
-            // The waiter thread is the fallback for Linux without pidfd; kqueue
-            // platforms always have EVFILT_PROC and its loop has no wakeup there.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
                 bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
             }

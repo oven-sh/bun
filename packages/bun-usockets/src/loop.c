@@ -24,6 +24,7 @@
 #include <time.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -693,19 +694,31 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
-                        /* CMSG_SPACE, not CMSG_LEN: FreeBSD sets MSG_CTRUNC and
-                         * discards the descriptor when the buffer can't hold the
-                         * aligned trailing padding (20 vs 24 bytes there). */
+                        /* CMSG_SPACE (the full aligned buffer), or FreeBSD truncates and drops the fd. */
                         msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
 
-                        // Extract file descriptor if present
+                        // Extract the file descriptor if present. One per message is the
+                        // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
-                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
-                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
-                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                            int fd = -1;
+                            for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
+                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS) {
+                                    continue;
+                                }
+                                int *fds = (int *)CMSG_DATA(cmsg_ptr);
+                                size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                                for (size_t i = 0; i < nfds; i++) {
+                                    if (fd == -1) {
+                                        fd = fds[i];
+                                    } else {
+                                        close(fds[i]);
+                                    }
+                                }
+                            }
+                            if (fd != -1) {
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
                                     break;

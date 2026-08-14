@@ -554,9 +554,21 @@ impl InstallCompletionsCommand {
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
                 let mut completions_absolute_path_buf = PathBuffer::uninit();
-                let completions_path =
-                    bun_sys::get_fd_path(output_file.handle, &mut completions_absolute_path_buf)
-                        .expect("unreachable");
+                let mut completions_joined_path_buf = PathBuffer::uninit();
+                let completions_path: &[u8] = match bun_sys::get_fd_path(
+                    output_file.handle,
+                    &mut completions_absolute_path_buf,
+                ) {
+                    Ok(path) => path,
+                    // Not every platform can name an fd (FreeBSD/UFS has no path
+                    // for a just-created file); the directory we opened is known.
+                    Err(_) => {
+                        bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+                            &mut completions_joined_path_buf,
+                            &[completions_dir, filename],
+                        )
+                    }
+                };
                 let mut zshrc_filepath = PathBuffer::uninit();
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
@@ -693,8 +705,8 @@ impl InstallCompletionsCommand {
                 if needs_to_tell_them_to_add_completions_file {
                     pretty_errorln!(
                         "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{}\" ] && source \"{}\"",
-                        bstr::BStr::new(&*completions_path),
-                        bstr::BStr::new(&*completions_path),
+                        bstr::BStr::new(completions_path),
+                        bstr::BStr::new(completions_path),
                     );
                 }
             }

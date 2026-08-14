@@ -20,7 +20,10 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 #if OS(FREEBSD)
 #include <link.h>
 #include <pthread_np.h>
+#include <sys/auxv.h>
+#include <sys/procctl.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 #endif
 
@@ -303,46 +306,51 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
 static thread_local void* stackEndForCurrentThread = nullptr;
 
 #if OS(FREEBSD)
-// FreeBSD's exec reserves the main-thread stack from the executable's
-// PT_GNU_STACK p_memsz when that is non-zero (we link with -z stack-size),
-// but libthr — and therefore WTF::StackBounds — reports RLIMIT_STACK for the
-// main thread, which is normally far larger. Return the size the kernel
-// actually used so the recursion guard fires before the real end of stack.
-static size_t freebsdMainThreadStackReservation()
+// FreeBSD's exec maps the main thread's stack from the executable's PT_GNU_STACK
+// p_memsz when that is set (we link with -z stack-size), but libthr — and so a
+// WTF::StackBounds without the matching fix — reports RLIMIT_STACK for the main
+// thread, which is normally far larger. This is the usable size below the origin
+// (the mapping less the kernel's guard pages); the same computation as
+// StackBounds' FreeBSD main-thread branch, so it becomes a no-op once WTF has it.
+static size_t freebsdMainThreadUsableStack()
 {
-    struct Query {
-        uintptr_t self;
-        size_t gnuStackSize;
-    } query = { reinterpret_cast<uintptr_t>(&freebsdMainThreadStackReservation), 0 };
-    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
-        auto* query = static_cast<Query*>(data);
-        const ElfW(Phdr)* gnuStack = nullptr;
-        bool containsSelf = false;
-        for (unsigned i = 0; i < info->dlpi_phnum; i++) {
-            const ElfW(Phdr)& phdr = info->dlpi_phdr[i];
-            if (phdr.p_type == PT_GNU_STACK)
-                gnuStack = &phdr;
-            else if (phdr.p_type == PT_LOAD) {
-                uintptr_t start = info->dlpi_addr + phdr.p_vaddr;
-                if (query->self >= start && query->self < start + phdr.p_memsz)
-                    containsSelf = true;
+    static size_t cached = [] {
+        size_t pageSize = static_cast<size_t>(getpagesize());
+        size_t reservation = 0;
+        auto narrow = [&](size_t size) {
+            if (size && (!reservation || size < reservation))
+                reservation = size;
+        };
+        // rtld keeps the main program at the head of its object list, so it is the first callback.
+        size_t gnuStackSize = 0;
+        dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
+            for (unsigned i = 0; i < info->dlpi_phnum; i++) {
+                if (info->dlpi_phdr[i].p_type == PT_GNU_STACK) {
+                    *static_cast<size_t*>(data) = info->dlpi_phdr[i].p_memsz;
+                    break;
+                }
             }
-        }
-        if (!containsSelf)
-            return 0;
-        if (gnuStack)
-            query->gnuStackSize = gnuStack->p_memsz;
-        return 1; },
-        &query);
+            return 1; },
+            &gnuStackSize);
+        narrow(gnuStackSize & ~(pageSize - 1));
+        unsigned long execStackLimit = 0;
+        if (!elf_aux_info(AT_USRSTACKLIM, &execStackLimit, sizeof(execStackLimit)))
+            narrow(execStackLimit);
+        struct rlimit limit;
+        if (!getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY)
+            narrow(limit.rlim_cur);
 
-    // The kernel truncates both to a page boundary.
-    size_t pageMask = ~(static_cast<size_t>(getpagesize()) - 1);
-    struct rlimit limit;
-    size_t size = getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY ? (limit.rlim_cur & pageMask) : 0;
-    size_t gnuStackSize = query.gnuStackSize & pageMask;
-    if (gnuStackSize && (!size || gnuStackSize < size))
-        size = gnuStackSize;
-    return size;
+        size_t guard = pageSize;
+        int guardPages = 0;
+        size_t guardPagesSize = sizeof(guardPages);
+        if (!sysctlbyname("security.bsd.stack_guard_page", &guardPages, &guardPagesSize, nullptr, 0))
+            guard = guardPages > 0 ? static_cast<size_t>(guardPages) * pageSize : 0;
+        int stackGap = 0;
+        if (!procctl(P_PID, getpid(), PROC_STACKGAP_STATUS, &stackGap) && (stackGap & PROC_STACKGAP_DISABLE))
+            guard = 0;
+        return reservation > guard ? reservation - guard : 0;
+    }();
+    return cached;
 }
 #endif
 
@@ -352,9 +360,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
     void* end = bounds.end();
 #if OS(FREEBSD)
     if (pthread_main_np() == 1) {
-        size_t reservation = freebsdMainThreadStackReservation();
-        if (reservation && reservation < reinterpret_cast<uintptr_t>(bounds.origin())) {
-            char* reservedEnd = static_cast<char*>(bounds.origin()) - reservation;
+        size_t usable = freebsdMainThreadUsableStack();
+        if (usable && usable < reinterpret_cast<uintptr_t>(bounds.origin())) {
+            char* reservedEnd = static_cast<char*>(bounds.origin()) - usable;
             if (reservedEnd > static_cast<char*>(end))
                 end = reservedEnd;
         }

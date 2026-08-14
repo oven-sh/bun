@@ -1542,30 +1542,23 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
-        let (filter, flags_): (i16, u16) = match action {
-            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
-            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
+        let owner = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
+        // A cancel carries no udata: its owner is finished (`on_done` runs right
+        // after), EV_DELETE matches by (ident, filter) alone, and any receipt for it
+        // (knote already fired → ENOENT, fd closed → EBADF) must land on the
+        // `PollableTag::Empty` early return, not on the stale owner.
+        let (filter, flags_, udata): (i16, u16, usize) = match action {
+            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag, owner),
+            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE)
+                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
                 } else if poll.flags.contains(Flags::PollWritable) {
-                    (libc::EVFILT_WRITE, libc::EV_DELETE)
+                    (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
                 } else {
                     unreachable!()
                 }
             }
-        };
-        // The owner is done with this poll once `Close` is applied (`on_done` runs
-        // right after), and EV_DELETE matches the knote by (ident, filter) alone,
-        // so a cancel carries no udata: if the kernel reports it back (the oneshot
-        // knote already fired → ENOENT, fd already closed → EBADF), the receipt
-        // lands on the `PollableTag::Empty` early return in `on_update_kqueue`
-        // instead of being dispatched to a stale owner.
-        let udata = if action == ApplyAction::Cancel {
-            0
-        } else {
-            udata
         };
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = bun_core::ffi::zeroed();
@@ -1642,8 +1635,8 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
-        // only to unblock kevent() so the pending queue drains.
+        // The waker (whose event only exists to unblock kevent() so the pending
+        // queue drains) and cancels are submitted with udata=0 → tag=.empty.
         if tag == PollableTag::Empty {
             return;
         }

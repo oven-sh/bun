@@ -477,8 +477,7 @@ impl WriteFile {
         // (intrusive) registered in `on_writable`/`init`; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
         // On kqueue platforms we use one-shot mode, so we don't need to unregister.
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // SAFETY: `this` is the live parent (see above); scoped access.
             unsafe { (*this).close_after_io = false };
         }

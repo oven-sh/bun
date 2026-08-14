@@ -1175,9 +1175,9 @@ impl CompileResult {
 }
 
 /// The temp copy of the executable that `inject` wrote the module graph into:
-/// its open fd plus the absolute path it was created at, so the caller can
-/// rename it into place without reverse-mapping fd -> path (not possible on
-/// every filesystem; see `get_fd_path` on FreeBSD).
+/// its open fd plus the absolute path it was created at, which the caller
+/// renames into place (an fd cannot be mapped back to a path on every
+/// filesystem).
 pub(crate) struct Injected {
     pub fd: Fd,
     /// Windows resolves the path from the handle instead (`get_fd_path`).
@@ -1185,22 +1185,28 @@ pub(crate) struct Injected {
     pub temp_path: Box<[u8]>,
 }
 
-/// `zname` as `inject` opened it is relative to the cwd of that moment unless the
-/// tmpdir fallback made it absolute; pin it so a later `chdir` cannot retarget
-/// the rename/unlink.
-#[cfg(not(windows))]
-fn temp_path_absolute(zname: &ZStr) -> Box<[u8]> {
-    let name = zname.as_bytes();
-    if bun_paths::is_absolute(name) {
-        return name.into();
-    }
-    let mut cwd_buf = PathBuffer::uninit();
-    match bun_sys::getcwd(&mut cwd_buf) {
-        Ok(len) => {
-            path::resolve_path::join_abs_string::<path::platform::Auto>(&cwd_buf[..len], &[name])
-                .into()
+impl Injected {
+    fn new(fd: Fd, zname: &ZStr) -> Injected {
+        #[cfg(windows)]
+        let _ = zname;
+        Injected {
+            fd,
+            // `zname` was opened relative to the cwd of that moment (or is already
+            // absolute); pin it so a later `chdir` cannot retarget the rename/unlink.
+            #[cfg(not(windows))]
+            temp_path: {
+                let name = zname.as_bytes();
+                let mut cwd_buf = PathBuffer::uninit();
+                match bun_sys::getcwd(&mut cwd_buf) {
+                    Ok(len) => path::resolve_path::join_abs_string::<path::platform::Auto>(
+                        &cwd_buf[..len],
+                        &[name],
+                    )
+                    .into(),
+                    Err(_) => name.into(),
+                }
+            },
         }
-        Err(_) => name.into(),
     }
 }
 
@@ -1478,11 +1484,7 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected {
-                fd: cloned_executable_fd,
-                #[cfg(not(windows))]
-                temp_path: temp_path_absolute(zname),
-            });
+            return Some(Injected::new(cloned_executable_fd, zname));
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -1543,11 +1545,7 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected {
-                fd: cloned_executable_fd,
-                #[cfg(not(windows))]
-                temp_path: temp_path_absolute(zname),
-            });
+            return Some(Injected::new(cloned_executable_fd, zname));
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -1605,11 +1603,7 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected {
-                fd: cloned_executable_fd,
-                #[cfg(not(windows))]
-                temp_path: temp_path_absolute(zname),
-            });
+            return Some(Injected::new(cloned_executable_fd, zname));
         }
         _ => {
             let total_byte_count: usize;
@@ -1688,11 +1682,7 @@ pub(crate) fn inject(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return Some(Injected {
-                fd: cloned_executable_fd,
-                #[cfg(not(windows))]
-                temp_path: temp_path_absolute(zname),
-            });
+            return Some(Injected::new(cloned_executable_fd, zname));
         }
     }
 }
@@ -1962,10 +1952,8 @@ pub fn to_executable(
         )));
     };
     let fd = injected.fd;
-    // Note: a scopeguard closure capturing `fd` by value would not observe
-    // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
-    // `fd.close()` calls are inserted at every return below (both error and
-    // success paths).
+    // Closed explicitly at every return below rather than by a guard: on Windows
+    // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]

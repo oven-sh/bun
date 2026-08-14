@@ -399,8 +399,7 @@ impl ReadFile {
         // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
@@ -419,8 +418,7 @@ impl ReadFile {
         // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }

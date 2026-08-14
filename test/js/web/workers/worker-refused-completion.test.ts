@@ -10,7 +10,7 @@
 // leaks. Builds with debug assertions only (debug, ASAN): the gate does not
 // exist in release builds.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux } from "harness";
 
 type Row = {
   name: string;
@@ -90,7 +90,8 @@ const ROWS: Row[] = [
     refused: "ProcessWaiterThreadTask",
     // The waiter thread is a POSIX fallback path, opted into here the way the runtime's own tests do.
     env: { BUN_GARBAGE_COLLECTOR_LEVEL: "0", BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-    skip: isWindows,
+    // The flag is honoured on Linux/Android only (kqueue platforms always have EVFILT_PROC).
+    skip: !isLinux && !isAndroid,
   },
   {
     name: "BroadcastChannel message from another thread",

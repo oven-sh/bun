@@ -75,7 +75,7 @@ impl Symlinker {
                                     },
                                 },
                                 // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. If it's a real
+                                // dest exists but isn't a symlink. If it's a non-empty
                                 // directory, leave it: this is the `bun patch <pkg>`
                                 // workspace (a detached copy the user is editing
                                 // before `--commit`), and `deleteTree` here would
@@ -99,9 +99,13 @@ impl Symlinker {
                                         false
                                     };
                                     if is_dir {
-                                        return Ok(());
+                                        // rmdir succeeds only on an empty directory.
+                                        if bun_sys::rmdir(self.dest.slice_z()).is_err() {
+                                            return Ok(());
+                                        }
+                                    } else {
+                                        let _ = bun_sys::unlink(self.dest.slice_z());
                                     }
-                                    let _ = bun_sys::unlink(self.dest.slice_z());
                                     return self.symlink();
                                 }
                             };

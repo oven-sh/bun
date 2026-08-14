@@ -2272,11 +2272,16 @@ impl Default for PropertyUsage {
 }
 
 impl PropertyUsage {
+    /// Called once per style rule selecting the class, so both the bitset and
+    /// the custom property list accumulate across all of the class's rules.
     #[inline]
     pub(crate) fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
         self.bitset.set_union(used);
-        // TODO: lifetime — box for now.
-        self.custom_properties = custom_properties.to_vec().into_boxed_slice();
+        if !custom_properties.is_empty() {
+            self.custom_properties = [&*self.custom_properties, custom_properties]
+                .concat()
+                .into_boxed_slice();
+        }
     }
 }
 

@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -211,5 +214,55 @@ describe("css", () => {
       const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
       expect(css).toContain(`.${betaOwn}`);
     },
+  });
+});
+
+describe("css-module composes conflicts are checked against every rule of a class", () => {
+  // Composing two classes from different files that declare the same property is
+  // undefined, and the bundler reports it. The properties a class declares are
+  // collected per style rule, so a class written as several `.x { }` rules has to
+  // keep the custom properties of all of them, not only of the rule parsed last.
+  const cases: [name: string, styles: string, other: string, expected: string[]][] = [
+    [
+      "custom properties of every rule of the composing class",
+      `.button { --x: 2; composes: other from "./other.module.css" }
+       .button { --y: 3 }`,
+      `.other { --x: 1; --y: 1 }`,
+      ["The value of --x in the class button is undefined.", "The value of --y in the class button is undefined."],
+    ],
+    [
+      "a later rule without custom properties keeps the earlier ones",
+      `.button { --x: 2; composes: other from "./other.module.css" }
+       .button { margin: 0 }`,
+      `.other { --x: 1; margin: 1px }`,
+      ["The value of --x in the class button is undefined.", "The value of margin in the class button is undefined."],
+    ],
+    [
+      "custom properties of every rule of the composed class",
+      `.button { --x: 2; composes: other from "./other.module.css" }`,
+      `.other { --x: 1 }
+       .other { color: red }`,
+      ["The value of --x in the class button is undefined."],
+    ],
+    [
+      "disjoint custom properties spread over several rules do not conflict",
+      `.button { --x: 2; composes: other from "./other.module.css" }
+       .button { --y: 3 }`,
+      `.other { --z: 1 }
+       .other { --w: 1 }`,
+      [],
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, styles, other, expected) => {
+    using dir = tempDir("css-modules-composes-conflicts", {
+      "entry.js": `import styles from "./styles.module.css"; console.log(styles);`,
+      "styles.module.css": styles,
+      "other.module.css": other,
+    });
+
+    const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], throw: false });
+
+    expect(result.logs.map(log => log.message).sort()).toEqual(expected);
   });
 });

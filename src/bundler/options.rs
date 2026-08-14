@@ -1252,8 +1252,7 @@ pub struct BundleOptions<'a> {
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
-    /// `Bun.Transpiler({ treeShaking })`. Separate from `tree_shaking`, which the
-    /// runtime enables too and which only splits a transformed file into parts.
+    /// Bun.Transpiler's treeShaking; distinct from `tree_shaking`, which the runtime sets too.
     pub remove_unused_declarations: bool,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,

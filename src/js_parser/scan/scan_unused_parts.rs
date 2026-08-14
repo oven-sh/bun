@@ -5,14 +5,11 @@ use bun_collections::HashMap;
 use bun_crash_handler::handle_oom::handle_oom;
 use smallvec::SmallVec;
 
-/// The parts declaring each top-level symbol, keyed by the end of the symbol's
-/// `link` chain (a redeclared `var` or function is two linked symbols).
+/// The parts declaring each top-level symbol, keyed by the end of the symbol's `link` chain.
 type DeclaringParts = HashMap<Ref, SmallVec<[u32; 1]>>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Single-file tree shaking (`features.remove_unused_declarations`): mark from
-    /// the parts that import, export or have side effects, sweep the declarations
-    /// nothing live reaches. Runs before the import scanner so their imports go too.
+    /// Single-file tree shaking. Runs before the import scanner so the swept parts' imports go too.
     pub(crate) fn remove_unused_parts(&mut self, parts: &mut ArenaVec<'a, js_ast::Part>) {
         // The bundler tree shakes in the linker, where cross-file uses are known.
         debug_assert!(!self.options.bundle);
@@ -113,6 +110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
     }
 
+    /// Redeclaring a `var` or function links the earlier symbol to the new one.
     fn follow_symbol_links(&self, mut ref_: Ref) -> Ref {
         loop {
             let symbol = &self.symbols[ref_.inner_index() as usize];

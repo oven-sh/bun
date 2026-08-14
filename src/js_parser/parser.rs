@@ -209,9 +209,7 @@ pub mod Runtime {
 
         pub trim_unused_imports: bool,
 
-        /// `Bun.Transpiler({ treeShaking })`: run `P::remove_unused_parts`. Not
-        /// implied by `Options.tree_shaking`, which the runtime enables only to
-        /// get one part per statement.
+        /// Run `P::remove_unused_parts`; `Options.tree_shaking` alone only splits up parts.
         pub remove_unused_declarations: bool,
 
         /// Allow runtime usage of require(), converting `require` into `__require`

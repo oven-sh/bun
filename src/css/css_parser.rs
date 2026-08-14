@@ -2257,7 +2257,8 @@ pub struct ComposesEntry {
 
 pub struct PropertyUsage {
     pub bitset: PropertyBitset,
-    pub custom_properties: Vec<&'static [u8]>, // TODO: lifetime — arena slices
+    /// Arena slices with the lifetime erased; see `fill_property_bit_set`.
+    pub custom_properties: Vec<&'static [u8]>,
     pub range: bun_ast::Range,
 }
 
@@ -2297,7 +2298,7 @@ pub(crate) fn fill_property_bit_set(
                 // SAFETY: `'bump`-erasure — `CustomPropertyName` stores an
                 // arena-owned `*const [u8]`; detach from `block`'s borrow so
                 // callers can move `block` afterwards. Re-thread once
-                // `PropertyUsage` carries the arena lifetime (TODO at field def).
+                // `PropertyUsage` carries the arena lifetime.
                 let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;

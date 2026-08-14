@@ -362,18 +362,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Appends a visited `export default` statement.
-    ///
-    /// When lowered top-level `using` declarations are about to move the module
-    /// body into a try/catch (see `LowerUsingDeclarationsContext::finalize`),
-    /// the statement can't be kept as-is: `export` is only valid at the top
-    /// level. It becomes a plain top-level binding plus `export { name as
-    /// default }`, which `finalize` merges into the export clause it emits
-    /// after the try/catch:
-    ///
-    ///   export default function f() {}   =>  function f() {}         (hoisted out of the try)
-    ///   export default class C {}        =>  var C = class C {}      (stays in the try)
-    ///   export default expr              =>  var file_default = expr (stays in the try)
+    /// When lowered top-level `using` declarations wrap the module body in a try/catch
+    /// (`LowerUsingDeclarationsContext::finalize`), `export default` can't stay inside it,
+    /// so it becomes a binding (the function declaration itself, `var C = class C {}`, or
+    /// `var file_default = expr`) plus `export { name as default }` for `finalize` to hoist.
     fn append_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -397,8 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.push(func_stmt);
                 name
             }
-            // React fast refresh already declared the default binding and rewrote the
-            // value into a reference to it, so there is nothing left to declare.
+            // The default binding was already declared (react fast refresh does this).
             js_ast::StmtOrExpr::Expr(Expr {
                 data: js_ast::ExprData::EIdentifier(ident),
                 ..

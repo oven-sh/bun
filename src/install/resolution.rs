@@ -461,10 +461,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub(crate) fn fmt_store_path<'a>(
-        &'a self,
-        string_buf: &'a [u8],
-    ) -> StorePathFormatter<'a, SemverInt> {
+    pub fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a, SemverInt> {
         StorePathFormatter {
             res: self,
             string_buf,
@@ -929,7 +926,7 @@ impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);
     pub const Root: Tag = Tag(1);
     pub const Npm: Tag = Tag(2);
-    pub(crate) const Folder: Tag = Tag(4);
+    pub const Folder: Tag = Tag(4);
 
     pub(crate) const LocalTarball: Tag = Tag(8);
 
@@ -937,7 +934,7 @@ impl Tag {
 
     pub(crate) const Git: Tag = Tag(32);
 
-    pub(crate) const Symlink: Tag = Tag(64);
+    pub const Symlink: Tag = Tag(64);
 
     pub const Workspace: Tag = Tag(72);
 

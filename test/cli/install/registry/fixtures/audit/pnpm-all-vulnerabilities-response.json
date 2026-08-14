@@ -1,0 +1,1690 @@
+{
+  "axios": [
+    {
+      "id": 1102326,
+      "url": "https://github.com/advisories/GHSA-cph5-m8f7-6c5x",
+      "title": "axios Inefficient Regular Expression Complexity vulnerability",
+      "severity": "high",
+      "vulnerable_versions": "<0.21.2",
+      "cwe": [
+        "CWE-400",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1111034,
+      "url": "https://github.com/advisories/GHSA-jr5f-v2jv-69x6",
+      "title": "axios Requests Vulnerable To Possible SSRF and Credential Leakage via Absolute URL",
+      "severity": "high",
+      "vulnerable_versions": "<0.30.0",
+      "cwe": [
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1113274,
+      "url": "https://github.com/advisories/GHSA-43fc-jf86-j433",
+      "title": "Axios is Vulnerable to Denial of Service via __proto__ Key in mergeConfig",
+      "severity": "high",
+      "vulnerable_versions": "<=0.30.2",
+      "cwe": [
+        "CWE-754"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1116365,
+      "url": "https://github.com/advisories/GHSA-3p68-rc4w-qgx5",
+      "title": "Axios has a NO_PROXY Hostname Normalization Bypass Leads to SSRF",
+      "severity": "critical",
+      "vulnerable_versions": "<1.15.0",
+      "cwe": [
+        "CWE-441",
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1116605,
+      "url": "https://github.com/advisories/GHSA-fvcv-3m26-pcqx",
+      "title": "Axios has Unrestricted Cloud Metadata Exfiltration via Header Injection Chain",
+      "severity": "critical",
+      "vulnerable_versions": "<0.31.0",
+      "cwe": [
+        "CWE-113",
+        "CWE-444",
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 10,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1090049,
+      "url": "https://github.com/advisories/GHSA-4w2v-q235-vp99",
+      "title": "Axios vulnerable to Server-Side Request Forgery",
+      "severity": "moderate",
+      "vulnerable_versions": "<0.21.1",
+      "cwe": [
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 5.9,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+      }
+    },
+    {
+      "id": 1097679,
+      "url": "https://github.com/advisories/GHSA-wf5p-g6vw-rhxx",
+      "title": "Axios Cross-Site Request Forgery Vulnerability",
+      "severity": "moderate",
+      "vulnerable_versions": ">=0.8.1 <0.28.0",
+      "cwe": [
+        "CWE-352"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N"
+      }
+    },
+    {
+      "id": 1091722,
+      "url": "https://github.com/advisories/GHSA-42xw-2xvc-qx8m",
+      "title": "Denial of Service in axios",
+      "severity": "high",
+      "vulnerable_versions": "<=0.18.0",
+      "cwe": [
+        "CWE-20",
+        "CWE-755"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "follow-redirects": [
+    {
+      "id": 1102323,
+      "url": "https://github.com/advisories/GHSA-74fj-2j2h-c42q",
+      "title": "Exposure of sensitive information in follow-redirects",
+      "severity": "high",
+      "vulnerable_versions": "<1.14.7",
+      "cwe": [
+        "CWE-359"
+      ],
+      "cvss": {
+        "score": 8,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1109569,
+      "url": "https://github.com/advisories/GHSA-jchw-25xp-jwwc",
+      "title": "Follow Redirects improperly handles URLs in the url.parse() function",
+      "severity": "moderate",
+      "vulnerable_versions": "<1.15.4",
+      "cwe": [
+        "CWE-20",
+        "CWE-601"
+      ],
+      "cvss": {
+        "score": 6.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+      }
+    },
+    {
+      "id": 1096856,
+      "url": "https://github.com/advisories/GHSA-cxjh-pqwp-8mfp",
+      "title": "follow-redirects' Proxy-Authorization header kept across hosts",
+      "severity": "moderate",
+      "vulnerable_versions": "<=1.15.5",
+      "cwe": [
+        "CWE-200"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+      }
+    },
+    {
+      "id": 1116560,
+      "url": "https://github.com/advisories/GHSA-r4q5-vmmm-2653",
+      "title": "follow-redirects leaks Custom Authentication Headers to Cross-Domain Redirect Targets",
+      "severity": "moderate",
+      "vulnerable_versions": "<=1.15.11",
+      "cwe": [
+        "CWE-200"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1092623,
+      "url": "https://github.com/advisories/GHSA-pw2r-vq6v-hr8c",
+      "title": "Exposure of Sensitive Information to an Unauthorized Actor in follow-redirects",
+      "severity": "moderate",
+      "vulnerable_versions": "<1.14.8",
+      "cwe": [
+        "CWE-200",
+        "CWE-212"
+      ],
+      "cvss": {
+        "score": 5.9,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+      }
+    }
+  ],
+  "debug": [
+    {
+      "id": 1096792,
+      "url": "https://github.com/advisories/GHSA-gxpj-cx7g-858c",
+      "title": "Regular Expression Denial of Service in debug",
+      "severity": "low",
+      "vulnerable_versions": ">=4.0.0 <4.3.1",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 3.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    },
+    {
+      "id": 1096793,
+      "url": "https://github.com/advisories/GHSA-gxpj-cx7g-858c",
+      "title": "Regular Expression Denial of Service in debug",
+      "severity": "low",
+      "vulnerable_versions": ">=3.2.0 <3.2.7",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 3.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    }
+  ],
+  "karma": [
+    {
+      "id": 1090418,
+      "url": "https://github.com/advisories/GHSA-rc3x-jf5g-xvc5",
+      "title": "Open redirect in karma",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.3.16",
+      "cwe": [
+        "CWE-601"
+      ],
+      "cvss": {
+        "score": 5.4,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+      }
+    },
+    {
+      "id": 1090439,
+      "url": "https://github.com/advisories/GHSA-7x7c-qm48-pq9c",
+      "title": "Cross-site Scripting in karma",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.3.14",
+      "cwe": [
+        "CWE-79"
+      ],
+      "cvss": {
+        "score": 6.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+      }
+    }
+  ],
+  "body-parser": [
+    {
+      "id": 1099520,
+      "url": "https://github.com/advisories/GHSA-qwcr-r2fm-qrc7",
+      "title": "body-parser vulnerable to denial of service when url encoding is enabled",
+      "severity": "high",
+      "vulnerable_versions": "<1.20.3",
+      "cwe": [
+        "CWE-405"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "qs": [
+    {
+      "id": 1104115,
+      "url": "https://github.com/advisories/GHSA-hrpp-h998-j3pp",
+      "title": "qs vulnerable to Prototype Pollution",
+      "severity": "high",
+      "vulnerable_versions": "<6.2.4",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1104118,
+      "url": "https://github.com/advisories/GHSA-hrpp-h998-j3pp",
+      "title": "qs vulnerable to Prototype Pollution",
+      "severity": "high",
+      "vulnerable_versions": ">=6.5.0 <6.5.3",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1104120,
+      "url": "https://github.com/advisories/GHSA-hrpp-h998-j3pp",
+      "title": "qs vulnerable to Prototype Pollution",
+      "severity": "high",
+      "vulnerable_versions": ">=6.7.0 <6.7.3",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1113161,
+      "url": "https://github.com/advisories/GHSA-w7fw-mjwx-w883",
+      "title": "qs's arrayLimit bypass in comma parsing allows denial of service",
+      "severity": "low",
+      "vulnerable_versions": ">=6.7.0 <=6.14.1",
+      "cwe": [
+        "CWE-20"
+      ],
+      "cvss": {
+        "score": 3.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    },
+    {
+      "id": 1113719,
+      "url": "https://github.com/advisories/GHSA-6rw7-vpxm-498p",
+      "title": "qs's arrayLimit bypass in its bracket notation allows DoS via memory exhaustion",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.14.1",
+      "cwe": [
+        "CWE-20"
+      ],
+      "cvss": {
+        "score": 3.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    }
+  ],
+  "micromatch": [
+    {
+      "id": 1098681,
+      "url": "https://github.com/advisories/GHSA-952p-6rrq-rcjv",
+      "title": "Regular Expression Denial of Service (ReDoS) in micromatch",
+      "severity": "moderate",
+      "vulnerable_versions": "<4.0.8",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    }
+  ],
+  "kind-of": [
+    {
+      "id": 1095056,
+      "url": "https://github.com/advisories/GHSA-6c8f-qphg-qjgp",
+      "title": "Validation Bypass in kind-of",
+      "severity": "high",
+      "vulnerable_versions": ">=6.0.0 <6.0.3",
+      "cwe": [
+        "CWE-668"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+      }
+    }
+  ],
+  "decode-uri-component": [
+    {
+      "id": 1094087,
+      "url": "https://github.com/advisories/GHSA-w573-4hg7-7wgq",
+      "title": "decode-uri-component vulnerable to Denial of Service (DoS)",
+      "severity": "high",
+      "vulnerable_versions": "<0.2.1",
+      "cwe": [
+        "CWE-20"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "braces": [
+    {
+      "id": 1098094,
+      "url": "https://github.com/advisories/GHSA-grv7-fg5c-xmjg",
+      "title": "Uncontrolled resource consumption in braces",
+      "severity": "high",
+      "vulnerable_versions": "<3.0.3",
+      "cwe": [
+        "CWE-400",
+        "CWE-1050"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "fsevents": [
+    {
+      "id": 1094997,
+      "url": "https://github.com/advisories/GHSA-8r6j-v8pm-fqw3",
+      "title": "Code injection in fsevents",
+      "severity": "critical",
+      "vulnerable_versions": "<=1.2.10",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1091853,
+      "url": "https://github.com/advisories/GHSA-xv2f-5jw4-v95m",
+      "title": "Malware in fsevents",
+      "severity": "critical",
+      "vulnerable_versions": ">=1.0.0 <1.2.11",
+      "cwe": [
+        "CWE-506"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "minimist": [
+    {
+      "id": 1097677,
+      "url": "https://github.com/advisories/GHSA-xvch-5gv4-984h",
+      "title": "Prototype Pollution in minimist",
+      "severity": "critical",
+      "vulnerable_versions": "<0.2.4",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1097678,
+      "url": "https://github.com/advisories/GHSA-xvch-5gv4-984h",
+      "title": "Prototype Pollution in minimist",
+      "severity": "critical",
+      "vulnerable_versions": ">=1.0.0 <1.2.6",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1096466,
+      "url": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+      "title": "Prototype Pollution in minimist",
+      "severity": "moderate",
+      "vulnerable_versions": "<0.2.1",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 5.6,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L"
+      }
+    }
+  ],
+  "semver": [
+    {
+      "id": 1112918,
+      "url": "https://github.com/advisories/GHSA-c2qf-rxjj-qqgw",
+      "title": "semver vulnerable to Regular Expression Denial of Service",
+      "severity": "high",
+      "vulnerable_versions": ">=2.0.0-alpha <5.7.2",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "tar": [
+    {
+      "id": 1112659,
+      "url": "https://github.com/advisories/GHSA-34x7-hfp2-rc4v",
+      "title": "node-tar Vulnerable to Arbitrary File Creation/Overwrite via Hardlink Path Traversal",
+      "severity": "high",
+      "vulnerable_versions": "<7.5.7",
+      "cwe": [
+        "CWE-22",
+        "CWE-59"
+      ],
+      "cvss": {
+        "score": 8.2,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:L/A:N"
+      }
+    },
+    {
+      "id": 1113300,
+      "url": "https://github.com/advisories/GHSA-8qq5-rm4j-mr97",
+      "title": "node-tar is Vulnerable to Arbitrary File Overwrite and Symlink Poisoning via Insufficient Path Sanitization",
+      "severity": "high",
+      "vulnerable_versions": "<=7.5.2",
+      "cwe": [
+        "CWE-22"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1113375,
+      "url": "https://github.com/advisories/GHSA-83g3-92jg-28cx",
+      "title": "Arbitrary File Read/Write via Hardlink Target Escape Through Symlink Chain in node-tar Extraction",
+      "severity": "high",
+      "vulnerable_versions": "<7.5.8",
+      "cwe": [
+        "CWE-22"
+      ],
+      "cvss": {
+        "score": 7.1,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"
+      }
+    },
+    {
+      "id": 1114200,
+      "url": "https://github.com/advisories/GHSA-qffp-2rhf-9h96",
+      "title": "tar has Hardlink Path Traversal via Drive-Relative Linkpath",
+      "severity": "high",
+      "vulnerable_versions": "<=7.5.9",
+      "cwe": [
+        "CWE-22",
+        "CWE-59"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1114302,
+      "url": "https://github.com/advisories/GHSA-9ppj-qmqm-q256",
+      "title": "node-tar Symlink Path Traversal via Drive-Relative Linkpath",
+      "severity": "high",
+      "vulnerable_versions": "<=7.5.10",
+      "cwe": [
+        "CWE-22"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1114680,
+      "url": "https://github.com/advisories/GHSA-r6q2-hw4h-h46w",
+      "title": "Race Condition in node-tar Path Reservations via Unicode Ligature Collisions on macOS APFS",
+      "severity": "high",
+      "vulnerable_versions": "<=7.5.3",
+      "cwe": [
+        "CWE-176",
+        "CWE-367"
+      ],
+      "cvss": {
+        "score": 8.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:H/A:L"
+      }
+    },
+    {
+      "id": 1095117,
+      "url": "https://github.com/advisories/GHSA-5955-9wpr-37jh",
+      "title": "Arbitrary File Creation/Overwrite on Windows via insufficient relative path sanitization",
+      "severity": "high",
+      "vulnerable_versions": "<4.4.18",
+      "cwe": [
+        "CWE-22"
+      ],
+      "cvss": {
+        "score": 8.2,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+      }
+    },
+    {
+      "id": 1097493,
+      "url": "https://github.com/advisories/GHSA-f5x3-32g6-xq36",
+      "title": "Denial of service while parsing a tar file due to lack of folders count validation",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.2.1",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1096376,
+      "url": "https://github.com/advisories/GHSA-9r2w-394v-53qc",
+      "title": "Arbitrary File Creation/Overwrite via insufficient symlink protection due to directory cache poisoning using symbolic links",
+      "severity": "high",
+      "vulnerable_versions": ">=3.0.0 <4.4.16",
+      "cwe": [
+        "CWE-22",
+        "CWE-59"
+      ],
+      "cvss": {
+        "score": 8.2,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+      }
+    },
+    {
+      "id": 1096411,
+      "url": "https://github.com/advisories/GHSA-qq89-hq3f-393p",
+      "title": "Arbitrary File Creation/Overwrite via insufficient symlink protection due to directory cache poisoning using symbolic links",
+      "severity": "high",
+      "vulnerable_versions": ">=3.0.0 <4.4.18",
+      "cwe": [
+        "CWE-22",
+        "CWE-59"
+      ],
+      "cvss": {
+        "score": 8.2,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+      }
+    }
+  ],
+  "http-proxy": [
+    {
+      "id": 1096334,
+      "url": "https://github.com/advisories/GHSA-6x33-pw7p-hmpq",
+      "title": "Denial of Service in http-proxy",
+      "severity": "high",
+      "vulnerable_versions": "<1.18.1",
+      "cwe": [
+        "CWE-184",
+        "CWE-693"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "lodash": [
+    {
+      "id": 1106913,
+      "url": "https://github.com/advisories/GHSA-35jh-r3h4-6jhm",
+      "title": "Command Injection in lodash",
+      "severity": "high",
+      "vulnerable_versions": "<4.17.21",
+      "cwe": [
+        "CWE-77",
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 7.2,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1106920,
+      "url": "https://github.com/advisories/GHSA-p6mc-m468-83gw",
+      "title": "Prototype Pollution in lodash",
+      "severity": "high",
+      "vulnerable_versions": ">=3.7.0 <4.17.19",
+      "cwe": [
+        "CWE-770",
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 7.4,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:H"
+      }
+    },
+    {
+      "id": 1108258,
+      "url": "https://github.com/advisories/GHSA-29mw-wpgm-hmr9",
+      "title": "Regular Expression Denial of Service (ReDoS) in lodash",
+      "severity": "moderate",
+      "vulnerable_versions": ">=4.0.0 <4.17.21",
+      "cwe": [
+        "CWE-400",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    },
+    {
+      "id": 1112455,
+      "url": "https://github.com/advisories/GHSA-xxjr-mmjv-4gpg",
+      "title": "Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions",
+      "severity": "moderate",
+      "vulnerable_versions": ">=4.0.0 <=4.17.22",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:L"
+      }
+    },
+    {
+      "id": 1115806,
+      "url": "https://github.com/advisories/GHSA-r5fr-rjxr-66jc",
+      "title": "lodash vulnerable to Code Injection via `_.template` imports key names",
+      "severity": "high",
+      "vulnerable_versions": ">=4.0.0 <=4.17.23",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 8.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1115810,
+      "url": "https://github.com/advisories/GHSA-f23m-r3pf-42rh",
+      "title": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+      "severity": "moderate",
+      "vulnerable_versions": "<=4.17.23",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:L"
+      }
+    }
+  ],
+  "log4js": [
+    {
+      "id": 1095531,
+      "url": "https://github.com/advisories/GHSA-82v2-mx6x-wq7q",
+      "title": "Incorrect Default Permissions in log4js",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.4.0",
+      "cwe": [
+        "CWE-276"
+      ],
+      "cvss": {
+        "score": 5.5,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+      }
+    }
+  ],
+  "url-parse": [
+    {
+      "id": 1112827,
+      "url": "https://github.com/advisories/GHSA-hh27-ffr2-f2jc",
+      "title": "Open redirect in url-parse",
+      "severity": "moderate",
+      "vulnerable_versions": ">=0.1.0 <1.5.2",
+      "cwe": [
+        "CWE-601"
+      ],
+      "cvss": {
+        "score": 6.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+      }
+    },
+    {
+      "id": 1112828,
+      "url": "https://github.com/advisories/GHSA-9m6j-fcg5-2442",
+      "title": "Path traversal in url-parse",
+      "severity": "moderate",
+      "vulnerable_versions": ">=0.1.0 <1.5.0",
+      "cwe": [
+        "CWE-23"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+      }
+    },
+    {
+      "id": 1112829,
+      "url": "https://github.com/advisories/GHSA-jf5r-8hm2-f872",
+      "title": "url-parse incorrectly parses hostname / protocol due to unstripped leading control characters.",
+      "severity": "moderate",
+      "vulnerable_versions": ">=0.1.0 <1.5.9",
+      "cwe": [
+        "CWE-639"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+      }
+    },
+    {
+      "id": 1113394,
+      "url": "https://github.com/advisories/GHSA-8v38-pw62-9cw2",
+      "title": "url-parse Incorrectly parses URLs that include an '@'",
+      "severity": "moderate",
+      "vulnerable_versions": ">=1.0.0 <1.5.7",
+      "cwe": [
+        "CWE-639"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+      }
+    },
+    {
+      "id": 1113395,
+      "url": "https://github.com/advisories/GHSA-rqff-837h-mm52",
+      "title": "Authorization bypass in url-parse",
+      "severity": "moderate",
+      "vulnerable_versions": ">=0.1.0 <1.5.6",
+      "cwe": [
+        "CWE-639"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+      }
+    },
+    {
+      "id": 1095095,
+      "url": "https://github.com/advisories/GHSA-hgjh-723h-mx2j",
+      "title": "Authorization Bypass Through User-Controlled Key in url-parse",
+      "severity": "critical",
+      "vulnerable_versions": "<1.5.8",
+      "cwe": [
+        "CWE-639"
+      ],
+      "cvss": {
+        "score": 9.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+      }
+    }
+  ],
+  "request": [
+    {
+      "id": 1096727,
+      "url": "https://github.com/advisories/GHSA-p8p7-x288-28g6",
+      "title": "Server-Side Request Forgery in Request",
+      "severity": "moderate",
+      "vulnerable_versions": "<=2.88.2",
+      "cwe": [
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 6.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+      }
+    }
+  ],
+  "form-data": [
+    {
+      "id": 1109540,
+      "url": "https://github.com/advisories/GHSA-fjxv-7rqg-78g4",
+      "title": "form-data uses unsafe random function in form-data for choosing boundary",
+      "severity": "critical",
+      "vulnerable_versions": "<2.5.4",
+      "cwe": [
+        "CWE-330"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "ajv": [
+    {
+      "id": 1113714,
+      "url": "https://github.com/advisories/GHSA-2g4f-4pwh-qvx6",
+      "title": "ajv has ReDoS when using `$data` option",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.14.0",
+      "cwe": [
+        "CWE-400",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1097685,
+      "url": "https://github.com/advisories/GHSA-v88g-cgmw-v5xw",
+      "title": "Prototype Pollution in Ajv",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.12.3",
+      "cwe": [
+        "CWE-915",
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 5.6,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L"
+      }
+    }
+  ],
+  "json-schema": [
+    {
+      "id": 1101855,
+      "url": "https://github.com/advisories/GHSA-896r-f27r-55mw",
+      "title": "json-schema is vulnerable to Prototype Pollution",
+      "severity": "critical",
+      "vulnerable_versions": "<0.4.0",
+      "cwe": [
+        "CWE-915",
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "tough-cookie": [
+    {
+      "id": 1097682,
+      "url": "https://github.com/advisories/GHSA-72xf-g2v4-qvf3",
+      "title": "tough-cookie Prototype Pollution vulnerability",
+      "severity": "moderate",
+      "vulnerable_versions": "<4.1.3",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+      }
+    }
+  ],
+  "tunnel-agent": [
+    {
+      "id": 1085744,
+      "url": "https://github.com/advisories/GHSA-xc7v-wxcw-j472",
+      "title": "Memory Exposure in tunnel-agent",
+      "severity": "moderate",
+      "vulnerable_versions": "<0.6.0",
+      "cwe": [
+        "CWE-200"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "bl": [
+    {
+      "id": 1090072,
+      "url": "https://github.com/advisories/GHSA-pp7h-53gx-mx7r",
+      "title": "Remote Memory Exposure in bl",
+      "severity": "moderate",
+      "vulnerable_versions": "<1.2.3",
+      "cwe": [
+        "CWE-125",
+        "CWE-126"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:L"
+      }
+    }
+  ],
+  "jsonpointer": [
+    {
+      "id": 1102906,
+      "url": "https://github.com/advisories/GHSA-282f-qqgm-c34q",
+      "title": "Prototype Pollution in node-jsonpointer",
+      "severity": "moderate",
+      "vulnerable_versions": "<5.0.0",
+      "cwe": [
+        "CWE-843",
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 5.6,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L"
+      }
+    }
+  ],
+  "hawk": [
+    {
+      "id": 1095062,
+      "url": "https://github.com/advisories/GHSA-44pw-h2cw-w3vq",
+      "title": "Uncontrolled Resource Consumption in Hawk",
+      "severity": "high",
+      "vulnerable_versions": "<9.0.1",
+      "cwe": [
+        "CWE-400",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.4,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "hoek": [
+    {
+      "id": 1105092,
+      "url": "https://github.com/advisories/GHSA-c429-5p7v-vgjp",
+      "title": "hoek subject to prototype pollution via the clone function.",
+      "severity": "high",
+      "vulnerable_versions": "<=6.1.3",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 8.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1105121,
+      "url": "https://github.com/advisories/GHSA-jp4x-w63m-7wgm",
+      "title": "Prototype Pollution in hoek",
+      "severity": "high",
+      "vulnerable_versions": "<4.2.1",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 8.8,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "timespan": [
+    {
+      "id": 1093858,
+      "url": "https://github.com/advisories/GHSA-f523-2f5j-gfcg",
+      "title": "Regular Expression Denial of Service in timespan",
+      "severity": "high",
+      "vulnerable_versions": "<=2.3.0",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "async": [
+    {
+      "id": 1097691,
+      "url": "https://github.com/advisories/GHSA-fwr7-v2mv-hh25",
+      "title": "Prototype Pollution in async",
+      "severity": "high",
+      "vulnerable_versions": ">=2.0.0 <2.6.4",
+      "cwe": [
+        "CWE-1321"
+      ],
+      "cvss": {
+        "score": 7.8,
+        "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "pac-resolver": [
+    {
+      "id": 1090384,
+      "url": "https://github.com/advisories/GHSA-9j49-mfvp-vmhm",
+      "title": "Code Injection in pac-resolver",
+      "severity": "high",
+      "vulnerable_versions": "<5.0.0",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 8.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "degenerator": [
+    {
+      "id": 1090403,
+      "url": "https://github.com/advisories/GHSA-9j49-mfvp-vmhm",
+      "title": "Code Injection in pac-resolver",
+      "severity": "high",
+      "vulnerable_versions": "<3.0.1",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 8.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "word-wrap": [
+    {
+      "id": 1102444,
+      "url": "https://github.com/advisories/GHSA-j8xg-fqg3-53r7",
+      "title": "word-wrap vulnerable to Regular Expression Denial of Service",
+      "severity": "moderate",
+      "vulnerable_versions": "<1.2.4",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    }
+  ],
+  "ip": [
+    {
+      "id": 1101851,
+      "url": "https://github.com/advisories/GHSA-2p57-rm9w-gvfp",
+      "title": "ip SSRF improper categorization in isPublic",
+      "severity": "high",
+      "vulnerable_versions": "<=2.0.1",
+      "cwe": [
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 8.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1114831,
+      "url": "https://github.com/advisories/GHSA-78xj-cgh5-2h22",
+      "title": "NPM IP package incorrectly identifies some private IP addresses as public",
+      "severity": "low",
+      "vulnerable_versions": "<1.1.9",
+      "cwe": [
+        "CWE-918"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "netmask": [
+    {
+      "id": 1093560,
+      "url": "https://github.com/advisories/GHSA-pch5-whg9-qr2r",
+      "title": "netmask npm package mishandles octal input data",
+      "severity": "moderate",
+      "vulnerable_versions": "<2.0.1",
+      "cwe": [
+        "CWE-20"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+      }
+    },
+    {
+      "id": 1089900,
+      "url": "https://github.com/advisories/GHSA-4c7m-wxvm-r7gc",
+      "title": "Improper parsing of octal bytes in netmask",
+      "severity": "critical",
+      "vulnerable_versions": "<1.1.0",
+      "cwe": [
+        "CWE-20"
+      ],
+      "cvss": {
+        "score": 9.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+      }
+    }
+  ],
+  "nodemailer": [
+    {
+      "id": 1107232,
+      "url": "https://github.com/advisories/GHSA-9h6g-pr28-7cqp",
+      "title": "nodemailer ReDoS when trying to send a specially crafted email",
+      "severity": "moderate",
+      "vulnerable_versions": "<=6.9.8",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      }
+    },
+    {
+      "id": 1109804,
+      "url": "https://github.com/advisories/GHSA-mm7p-fcc7-pg87",
+      "title": "Nodemailer: Email to an unintended domain can occur due to Interpretation Conflict",
+      "severity": "moderate",
+      "vulnerable_versions": "<7.0.7",
+      "cwe": [
+        "CWE-20",
+        "CWE-436"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1113165,
+      "url": "https://github.com/advisories/GHSA-rcmh-qjqh-p98v",
+      "title": "Nodemailer’s addressparser is vulnerable to DoS caused by recursive calls",
+      "severity": "high",
+      "vulnerable_versions": "<=7.0.10",
+      "cwe": [
+        "CWE-703"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1089709,
+      "url": "https://github.com/advisories/GHSA-hwqf-gcqm-7353",
+      "title": "Header injection in nodemailer",
+      "severity": "moderate",
+      "vulnerable_versions": "<6.6.1",
+      "cwe": [
+        "CWE-74"
+      ],
+      "cvss": {
+        "score": 6.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:L"
+      }
+    },
+    {
+      "id": 1115470,
+      "url": "https://github.com/advisories/GHSA-c7w3-x93f-qmm8",
+      "title": "Nodemailer has SMTP command injection due to unsanitized `envelope.size` parameter",
+      "severity": "low",
+      "vulnerable_versions": "<8.0.4",
+      "cwe": [
+        "CWE-93"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1089880,
+      "url": "https://github.com/advisories/GHSA-48ww-j4fc-435p",
+      "title": "Command injection in nodemailer",
+      "severity": "critical",
+      "vulnerable_versions": "<6.4.16",
+      "cwe": [
+        "CWE-88"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1116270,
+      "url": "https://github.com/advisories/GHSA-vvjj-xcjg-gr5g",
+      "title": "Nodemailer Vulnerable to SMTP Command Injection via CRLF in Transport name Option (EHLO/HELO) ",
+      "severity": "moderate",
+      "vulnerable_versions": "<=8.0.4",
+      "cwe": [
+        "CWE-93"
+      ],
+      "cvss": {
+        "score": 4.9,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:N/I:H/A:N"
+      }
+    }
+  ],
+  "underscore": [
+    {
+      "id": 1109570,
+      "url": "https://github.com/advisories/GHSA-cf4h-3jhx-xvhq",
+      "title": "Arbitrary Code Execution in underscore",
+      "severity": "critical",
+      "vulnerable_versions": ">=1.3.2 <1.12.1",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    },
+    {
+      "id": 1113950,
+      "url": "https://github.com/advisories/GHSA-qpx9-hpmf-5gmw",
+      "title": "Underscore has unlimited recursion in _.flatten and _.isEqual, potential for DoS attack",
+      "severity": "high",
+      "vulnerable_versions": "<=1.13.7",
+      "cwe": [
+        "CWE-674",
+        "CWE-770"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "redis": [
+    {
+      "id": 1089196,
+      "url": "https://github.com/advisories/GHSA-35q2-47q7-3pc3",
+      "title": "Node-Redis potential exponential regex in monitor mode",
+      "severity": "high",
+      "vulnerable_versions": ">=2.6.0 <3.1.1",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "requestretry": [
+    {
+      "id": 1090420,
+      "url": "https://github.com/advisories/GHSA-hjp8-2cm3-cc45",
+      "title": "Cookie exposure in requestretry",
+      "severity": "high",
+      "vulnerable_versions": "<7.0.0",
+      "cwe": [
+        "CWE-200"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+      }
+    }
+  ],
+  "minimatch": [
+    {
+      "id": 1113459,
+      "url": "https://github.com/advisories/GHSA-3ppc-4f35-3m26",
+      "title": "minimatch has a ReDoS via repeated wildcards with non-matching literal in pattern",
+      "severity": "high",
+      "vulnerable_versions": "<3.1.3",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1113538,
+      "url": "https://github.com/advisories/GHSA-7r86-cg39-jmmj",
+      "title": "minimatch has ReDoS: matchOne() combinatorial backtracking via multiple non-adjacent GLOBSTAR segments",
+      "severity": "high",
+      "vulnerable_versions": "<3.1.3",
+      "cwe": [
+        "CWE-407"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1113546,
+      "url": "https://github.com/advisories/GHSA-23c5-xmqv-rm74",
+      "title": "minimatch ReDoS: nested *() extglobs generate catastrophically backtracking regular expressions",
+      "severity": "high",
+      "vulnerable_versions": "<3.1.4",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1096485,
+      "url": "https://github.com/advisories/GHSA-f8q6-p94x-37v3",
+      "title": "minimatch ReDoS vulnerability",
+      "severity": "high",
+      "vulnerable_versions": "<3.0.5",
+      "cwe": [
+        "CWE-400",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "brace-expansion": [
+    {
+      "id": 1105443,
+      "url": "https://github.com/advisories/GHSA-v6h2-p8h4-qcjw",
+      "title": "brace-expansion Regular Expression Denial of Service vulnerability",
+      "severity": "low",
+      "vulnerable_versions": ">=1.0.0 <=1.1.11",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 3.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:L"
+      }
+    },
+    {
+      "id": 1115540,
+      "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v",
+      "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+      "severity": "moderate",
+      "vulnerable_versions": "<1.1.13",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "socket.io": [
+    {
+      "id": 1100551,
+      "url": "https://github.com/advisories/GHSA-25hc-qcg6-38wj",
+      "title": "socket.io has an unhandled 'error' event",
+      "severity": "moderate",
+      "vulnerable_versions": "<2.5.0",
+      "cwe": [
+        "CWE-20",
+        "CWE-754"
+      ],
+      "cvss": {
+        "score": 7.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L"
+      }
+    },
+    {
+      "id": 1093718,
+      "url": "https://github.com/advisories/GHSA-fxwf-4rqh-v8g3",
+      "title": "CORS misconfiguration in socket.io",
+      "severity": "moderate",
+      "vulnerable_versions": "<2.4.0",
+      "cwe": [
+        "CWE-346",
+        "CWE-453"
+      ],
+      "cvss": {
+        "score": 4.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N"
+      }
+    }
+  ],
+  "engine.io": [
+    {
+      "id": 1105123,
+      "url": "https://github.com/advisories/GHSA-j4f2-536g-r55m",
+      "title": "Resource exhaustion in engine.io",
+      "severity": "high",
+      "vulnerable_versions": "<3.6.0",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1089526,
+      "url": "https://github.com/advisories/GHSA-r7qp-cfhv-p84w",
+      "title": "Uncaught exception in engine.io",
+      "severity": "moderate",
+      "vulnerable_versions": "<3.6.1",
+      "cwe": [
+        "CWE-248"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "cookie": [
+    {
+      "id": 1103907,
+      "url": "https://github.com/advisories/GHSA-pxg6-pf52-xh8x",
+      "title": "cookie accepts cookie name, path, and domain with out of bounds characters",
+      "severity": "low",
+      "vulnerable_versions": "<0.7.0",
+      "cwe": [
+        "CWE-74"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "ws": [
+    {
+      "id": 1098395,
+      "url": "https://github.com/advisories/GHSA-3h5v-q93c-6h6q",
+      "title": "ws affected by a DoS when handling a request with many HTTP headers",
+      "severity": "high",
+      "vulnerable_versions": ">=2.1.0 <5.2.4",
+      "cwe": [
+        "CWE-476"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "xmlhttprequest-ssl": [
+    {
+      "id": 1095090,
+      "url": "https://github.com/advisories/GHSA-72mh-269x-7mh5",
+      "title": "Improper Certificate Validation in xmlhttprequest-ssl",
+      "severity": "critical",
+      "vulnerable_versions": "<1.6.1",
+      "cwe": [
+        "CWE-295"
+      ],
+      "cvss": {
+        "score": 9.4,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:L"
+      }
+    },
+    {
+      "id": 1095088,
+      "url": "https://github.com/advisories/GHSA-h4j5-c7cj-74xg",
+      "title": "xmlhttprequest and xmlhttprequest-ssl vulnerable to Arbitrary Code Injection",
+      "severity": "critical",
+      "vulnerable_versions": "<1.6.2",
+      "cwe": [
+        "CWE-94"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "parseuri": [
+    {
+      "id": 1107224,
+      "url": "https://github.com/advisories/GHSA-6fx8-h7jm-663j",
+      "title": "parse-uri Regular expression Denial of Service (ReDoS)",
+      "severity": "moderate",
+      "vulnerable_versions": "<2.0.0",
+      "cwe": [
+        "CWE-185",
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    }
+  ],
+  "socket.io-parser": [
+    {
+      "id": 1100540,
+      "url": "https://github.com/advisories/GHSA-cqmj-92xf-r6r9",
+      "title": "Insufficient validation when decoding a Socket.IO packet",
+      "severity": "moderate",
+      "vulnerable_versions": "<3.3.4",
+      "cwe": [
+        "CWE-20",
+        "CWE-754"
+      ],
+      "cvss": {
+        "score": 7.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L"
+      }
+    },
+    {
+      "id": 1115156,
+      "url": "https://github.com/advisories/GHSA-677m-j7p3-52f9",
+      "title": "socket.io allows an unbounded number of binary attachments",
+      "severity": "high",
+      "vulnerable_versions": "<3.3.5",
+      "cwe": [
+        "CWE-754"
+      ],
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      }
+    },
+    {
+      "id": 1089711,
+      "url": "https://github.com/advisories/GHSA-xfhh-g9f5-x4m4",
+      "title": "Resource exhaustion in socket.io-parser",
+      "severity": "high",
+      "vulnerable_versions": "<3.3.2",
+      "cwe": [
+        "CWE-400"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    },
+    {
+      "id": 1097134,
+      "url": "https://github.com/advisories/GHSA-qm95-pgcg-qqfq",
+      "title": "Insufficient validation when decoding a Socket.IO packet",
+      "severity": "critical",
+      "vulnerable_versions": "<3.3.3",
+      "cwe": [
+        "CWE-20",
+        "CWE-89",
+        "CWE-1287"
+      ],
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      }
+    }
+  ],
+  "tmp": [
+    {
+      "id": 1109537,
+      "url": "https://github.com/advisories/GHSA-52f5-9888-hmc6",
+      "title": "tmp allows arbitrary temporary file / directory write via symbolic link `dir` parameter",
+      "severity": "low",
+      "vulnerable_versions": "<=0.2.3",
+      "cwe": [
+        "CWE-59"
+      ],
+      "cvss": {
+        "score": 2.5,
+        "vectorString": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:L/A:N"
+      }
+    }
+  ],
+  "useragent": [
+    {
+      "id": 1107230,
+      "url": "https://github.com/advisories/GHSA-mgfv-m47x-4wqp",
+      "title": "useragent Regular Expression Denial of Service vulnerability",
+      "severity": "moderate",
+      "vulnerable_versions": "<=2.3.0",
+      "cwe": [
+        "CWE-1333"
+      ],
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      }
+    }
+  ],
+  "sync-exec": [
+    {
+      "id": 1093475,
+      "url": "https://github.com/advisories/GHSA-38h8-x697-gh8q",
+      "title": "Tmp files readable by other users in sync-exec",
+      "severity": "moderate",
+      "vulnerable_versions": "<=0.6.2",
+      "cwe": [
+        "CWE-377"
+      ],
+      "cvss": {
+        "score": 6.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+      }
+    }
+  ]
+}

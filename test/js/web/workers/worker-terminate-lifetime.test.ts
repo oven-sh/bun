@@ -683,3 +683,273 @@ test(
   },
   timeout,
 );
+
+// worker.terminate() landing while the worker was re-running its event loop for
+// process.on('beforeExit') listeners (they scheduled more work) was never acted
+// on: that inner drain only watched for the loop to go idle, and with the stop
+// requested the in-flight work's completion is no longer delivered, so the
+// worker slept in its loop forever and terminate() never settled.
+test(
+  "terminate() while the worker drains work scheduled by 'beforeExit' stops it",
+  async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+        "process.on('beforeExit', () => { fetch(process.env.HANG_URL).catch(() => {}); parentPort.postMessage('draining'); });" +
+        "process.on('exit', (c) => parentPort.postMessage('exit ' + c));",
+        { eval: true },
+      );
+      w.on("message", async (m) => {
+        if (m !== "draining") { console.log("unexpected", m); return; }
+        const code = await w.terminate();
+        console.log("terminated", code);
+      });
+      w.on("exit", (c) => console.log("exit", c));
+    `,
+      ],
+      env: { ...bunEnv, HANG_URL: server.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// For a debug build: host code that runs after the worker's own process.exit()
+// unwound script — here a redis connect started in the same immediate tick as
+// the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error
+// objects, initialising lazy structures under the TerminationException Bun keeps
+// pending. JSC had already reset its termination-request flag when the entry the
+// exception unwound exited, so DeferTermination asserted `vm.hasTerminationRequest()`
+// (and dropped the pending termination in release); Bun now keeps the flag set
+// for as long as it keeps the exception.
+test.skipIf(!isDebug)(
+  "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
+  async () => {
+    const workers = slow ? 8 : 24;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('node:worker_threads');" +
+          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
+          "parentPort.postMessage('up');" +
+          "setImmediate(() => process.exit(0));";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(src, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", () => { exited++; again(); });
+        }
+        again(); again();
+      `,
+      ],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// worker.terminate() never stopped a worker parked in
+// Atomics.wait() (sync-over-async worker pools park exactly there). JSC wakes
+// the parked thread when termination is requested, but the wake-up predicate
+// only looked at a flag the parked thread itself would have had to set, so it
+// went back to sleep and terminate()'s promise never settled.
+test(
+  "terminate() stops a worker blocked in Atomics.wait()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+        "const i32 = new Int32Array(new SharedArrayBuffer(4));" +
+        "parentPort.postMessage('parking');" +
+        "Atomics.wait(i32, 0, 0);" +
+        "parentPort.postMessage('woke ' + Atomics.load(i32, 0));",
+        { eval: true },
+      );
+      w.on("message", async (m) => {
+        if (m !== "parking") { console.log("unexpected", m); process.exit(1); }
+        // The case of interest is terminate() landing once the worker is parked, for which there
+        // is no observable signal, so give it a moment; landing before it parks must pass too.
+        await Bun.sleep(100);
+        const code = await w.terminate();
+        console.log("terminated", code);
+      });
+      w.on("exit", (c) => console.log("exit", c));
+    `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// crypto.generatePrime()/generatePrimeSync()/checkPrime() with `safe: true` (or awkward add/rem
+// constraints) can grind for minutes. The worker's teardown waits for its pool job, and the sync
+// form cannot observe the termination at all, so terminate() used to hang for as long as BoringSSL
+// took. The generation's progress callback now gives up once the worker has been asked to stop.
+test(
+  "terminate() does not wait for a prime generation the worker no longer needs",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        async function run(body) {
+          const w = new Worker('require("node:worker_threads").parentPort.postMessage("go");' + body, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          await new Promise((r) => w.once("message", r));
+          await Bun.sleep(100);
+          return await w.terminate();
+        }
+        (async () => {
+          const t = performance.now();
+          const codes = await Promise.all([
+            run('for (;;) require("node:crypto").generatePrimeSync(2048, { safe: true });'),
+            run('require("node:crypto").generatePrime(2048, { safe: true }, () => {}); setInterval(() => {}, 1000);'),
+            run('require("node:crypto").checkPrime((1n << 4423n) - 1n, { checks: 200 }, () => {}); setInterval(() => {}, 1000);'),
+          ]);
+          console.log(codes.join(","), performance.now() - t < 20000 ? "promptly" : "after " + Math.round(performance.now() - t) + "ms");
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1,1,1 promptly\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker exiting while a Bun.spawn() child still has a pending pipe-backed stdin (a Blob the child
+// never reads; the default stdin path on Windows, BUN_FEATURE_FLAG_DISABLE_MEMFD elsewhere): the
+// Subprocess finalizer closed that writer, whose close path re-evaluated pending activity and tried to
+// re-root the wrapper it had just marked finalized (debug assert).
+test(
+  "worker exit with a spawned child's Blob stdin still pending",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`
+          const p = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 3000)"], { stdin: new Blob([new Uint8Array(4 << 20)]), stdout: "ignore" });
+          globalThis.keep = p;
+          setTimeout(() => process.exit(0), 50);
+        \`, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", (c) => { console.log("worker exit", c); process.exit(0); });
+      `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("worker exit 0\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker exiting with fetches that have both a streaming request body (whose sink cell holds the
+// FetchTasklet) and a JS-touched response.body (a ByteStream source owned by another cell): the VM's
+// last sweep destroys cells in no particular order, and the tasklet's teardown unhooked itself as the
+// response stream's producer by writing through the stream's wrapper into a source that sweep had
+// already freed (heap-use-after-free WRITE under ASAN). The tasklet now holds a counted ref on the
+// source for as long as it is its producer.
+test(
+  "worker exit with streaming-request-body fetches whose response.body was touched",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const server = Bun.serve({ port: 0, fetch(req) { return new Response(req.body); } });
+        const N = 6;
+        let done = 0;
+        for (let i = 0; i < N; i++) {
+          const w = new Worker(\`
+            const keep = [];
+            let touched = 0;
+            for (let j = 0; j < 8; j++) {
+              let ctrl;
+              const body = new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array(1024)); } });
+              const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
+                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); touched++; })
+                .catch(() => {});
+              keep.push(p, ctrl);
+              setInterval(() => { try { ctrl.enqueue(new Uint8Array(512)); } catch {} }, 5);
+            }
+            // Exit with that state alive; exit code 3 if no fetch ever reached it (the test would
+            // then not be exercising what it claims to).
+            setTimeout(() => process.exit(touched > 0 ? 0 : 3), 150 + \${(i * 13) % 60});
+          \`, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", (code) => {
+            if (code !== 0) { console.error("worker exited " + code); process.exit(1); }
+            if (++done === N) { console.log("all exited"); server.stop(true); process.exit(0); }
+          });
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("all exited\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

@@ -13,7 +13,7 @@ await Bun.sleep(1000);
 
 ---
 
-Internally, it is equivalent to the following [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/setTimeout) snippet.
+Internally, it is equivalent to the following [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout) snippet.
 
 ```ts
 await new Promise(resolve => setTimeout(resolve, ms));

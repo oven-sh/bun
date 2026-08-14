@@ -115,11 +115,14 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
-    // Must use the *unfiltered* `original_trees`: the filtered tree omits
-    // `--filter`-excluded workspaces, whose `node_modules` must not be wiped.
-    // Skipped on the security scanner's narrowed pre-install pass; the full
-    // install that follows performs the prune.
-    if packages_to_install.is_none() && this.lockfile.workspace_paths.count() > 0 {
+    // Unfiltered installs only: `--filter` installs leave unselected
+    // workspaces' `node_modules` alone (`bun prune` is the cleanup for
+    // those), and the scanner's narrowed pre-install pass is followed by a
+    // full install that performs the prune.
+    if packages_to_install.is_none()
+        && workspace_filters.is_empty()
+        && this.lockfile.workspace_paths.count() > 0
+    {
         prune_stale_workspace_node_modules(&this.lockfile, &original_trees, &original_tree_dep_ids);
     }
 
@@ -630,9 +633,8 @@ pub(crate) fn install_hoisted_packages(
 /// into `@scope/`) that the hoisted tree does not place there. Stale leftovers
 /// from a previous package-local install shadow the hoisted copy during
 /// resolution, and the installer never visits a workspace tree whose deps all
-/// hoisted away (issue #29793). `trees`/`tree_dep_ids` must be the unfiltered
-/// buffers captured before `Lockfile::filter()` so `--filter`-excluded
-/// workspaces keep the entries they own.
+/// hoisted away (issue #29793). Only called for unfiltered installs, with the
+/// full tree buffers.
 fn prune_stale_workspace_node_modules(
     lockfile: &crate::lockfile::Lockfile,
     trees: &[tree::Tree],

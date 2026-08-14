@@ -636,12 +636,9 @@ impl DirEntry {
         })
     }
 
-    /// Looks up one of the fixed, already-lowercase names the resolver probes
-    /// directories for (`package.json`, `tsconfig.json`, `node_modules`, ...).
-    /// Callers go on to open `dir/<query_lower>` spelled exactly like that, so
-    /// an entry that only matched through the lowercased key (`Package.json`
-    /// on disk) counts only if the filesystem opens that spelling as well,
-    /// which it does iff it folds case itself.
+    /// Looks up an already-lowercase fixed name (`package.json`, ...). Callers
+    /// open that exact spelling next, so a hit stored under another case
+    /// (`Package.json`) only counts if the filesystem opens it too.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
@@ -658,8 +655,7 @@ impl DirEntry {
         Some(lookup)
     }
 
-    /// True if `dir/<query_lower>` exists under exactly that already-lowercase
-    /// name; see [`get_comptime_query`](Self::get_comptime_query).
+    /// See [`get_comptime_query`](Self::get_comptime_query).
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         self.get_comptime_query(query_lower).is_some()
     }

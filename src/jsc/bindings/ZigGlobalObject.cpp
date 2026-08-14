@@ -3320,17 +3320,21 @@ uint8_t GlobalObject::drainMicrotasks()
     return 0;
 }
 
-// The Rust event loop's checkpoint (`EventLoop::exit()` and the drains between
-// queued items). Unlike the C++ dispatch loops that call drainMicrotasks()
-// directly, a Rust frame can be leaving through here with an exception pending
-// that a fold above it will take: that is not a checkpoint (2), and the fold
-// drains once it has taken the exception. 0: drained; 1: the VM is terminating.
+// The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
+// drains between queued items): 0 drained, 1 the VM is terminating.
+//
+// One case is answered here instead: a Rust frame can be leaving through
+// `exit()` with a (non-termination) exception pending that the dispatcher above
+// it will take and report. For drainMicrotasks() an exception pending on entry
+// is a caller bug (its C++ callers are top-level loops); for this caller it only
+// means "not a checkpoint yet" - so say so (2) without draining or reporting,
+// and the fold checkpoints once it has taken the exception.
 extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    if (auto* exception = vm.exceptionForInspection()) [[unlikely]] {
-        return vm.isTerminationException(exception) ? 1 : 2;
-    }
+    auto* pending = vm.exceptionForInspection();
+    if (pending && !vm.isTerminationException(pending)) [[unlikely]]
+        return 2;
     return globalObject->drainMicrotasks();
 }
 extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)

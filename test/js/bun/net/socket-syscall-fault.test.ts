@@ -339,23 +339,32 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
   });
 });
 
-// us_internal_ssl_write seals a large write into records and hands them to the
-// kernel a batch at a time, one send() per batch (openssl.c
+// us_internal_ssl_write seals a write into 16 KiB records and hands them to the
+// kernel a batch at a time, one send() per batch: four records, plus the
+// write's partial last record when that is all that is left (openssl.c
 // US_SSL_WRITE_BATCH_FLUSH_BYTES). A batch must stay below 128 KiB: on Windows
 // (64 KiB default SO_SNDBUF) a refused send() of 128 KiB or more is not
 // reported writable again until the next ~15.6 ms timer tick, and the former
 // 8-record batches (131248 bytes) paid that tick on every backpressure round
 // of every large TLS write (an https fetch of a 1 MiB body took ~16 ms on
 // Windows 11 vs ~1 ms over plain http). Refusing the first send() of the
-// write with injected backpressure makes the batch size observable on every
-// platform: write() reports exactly the plaintext whose ciphertext sits in
-// the refused (spilled) batch, and the spill is re-sent on the next writable
-// event, so the peer still receives the whole payload.
+// write with injected backpressure makes the batch boundaries observable on
+// every platform: write() reports exactly the plaintext whose ciphertext sits
+// in the refused (spilled) batch, and the spill is re-sent on the next
+// writable event, so the peer still receives the whole payload.
 describe.skipIf(!fault.available())("TLS write batching", () => {
   afterEach(() => fault.clear());
 
-  test("a large write hands the kernel at most 4 records per send()", async () => {
-    const payload = Buffer.alloc(1024 * 1024, "t");
+  const record = 16384;
+
+  test.each([
+    { shape: "1 MiB", length: 1024 * 1024, firstBatch: 4 * record },
+    // A 64 KiB stream chunk plus its framing (five h2 DATA frame headers here):
+    // the 45-byte fifth record rides in the same batch instead of becoming a
+    // second send() of its own.
+    { shape: "64 KiB + 45 byte", length: 4 * record + 45, firstBatch: 4 * record + 45 },
+  ])("a $shape write puts $firstBatch bytes of plaintext in its first send()", async ({ length, firstBatch }) => {
+    const payload = Buffer.alloc(length, "t");
     const firstWrite = Promise.withResolvers<number>();
     const delivered = Promise.withResolvers<Buffer>();
     const chunks: Buffer[] = [];
@@ -417,7 +426,7 @@ describe.skipIf(!fault.available())("TLS write batching", () => {
       },
     });
 
-    expect(await firstWrite.promise).toBe(4 * 16384);
+    expect(await firstWrite.promise).toBe(firstBatch);
     const received = await delivered.promise;
     expect(received.length).toBe(payload.length);
     expect(received.equals(payload)).toBe(true);

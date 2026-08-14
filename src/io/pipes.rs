@@ -129,8 +129,7 @@ impl PollOrFd {
         self.close_impl(ctx, on_close_fn, true);
     }
 
-    /// Releases the poll (unregistering it) and leaves the fd open: for owners
-    /// that close the fd themselves.
+    /// Unregisters and releases the poll; the fd stays open for its owner to close.
     pub fn close_without_closing_fd(&mut self) {
         self.close_impl(None, None::<fn(*mut c_void)>, false);
     }

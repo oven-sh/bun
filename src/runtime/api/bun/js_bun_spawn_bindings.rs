@@ -1769,11 +1769,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         _ => None,
     };
     if let Some(err) = stdin_start_err {
-        // On POSIX the writer holds nothing after a failed start(), so closing
-        // it at exit will not report on_close_io; retire the slot here or the
-        // Buffer counts as pending activity and pins the wrapper for good.
-        // (Windows adopts the pipe before start(), which cannot fail there.)
-        #[cfg(not(windows))]
+        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
         let _ = subprocess.try_kill(subprocess.kill_signal);
         let _ = global_this.throw_value(err.to_js(global_this));

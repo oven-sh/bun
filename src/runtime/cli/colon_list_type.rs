@@ -1,5 +1,4 @@
 use crate::Error;
-use bstr::BStr;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Global, pretty_errorln};
@@ -20,19 +19,6 @@ pub(crate) struct ColonListType<T: ColonListValue> {
     // in practice — that is what makes the `&'static` typing sound.
     pub keys: Vec<&'static [u8]>,
     pub values: Vec<T>,
-}
-
-/// The names `Loader::from_string` accepts, one per line, read from its lookup
-/// table so the error cannot list a name the flag then rejects.
-struct AcceptedLoaderNames;
-
-impl core::fmt::Display for AcceptedLoaderNames {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for name in bun_ast::loader::LOADER_NAMES.keys() {
-            write!(f, "\n-  {}", BStr::new(name))?;
-        }
-        Ok(())
-    }
 }
 
 impl<T: ColonListValue> ColonListType<T> {
@@ -86,7 +72,7 @@ impl<T: ColonListValue> ColonListType<T> {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),
-                            AcceptedLoaderNames,
+                            bun_ast::Loader::accepted_names_list(),
                         );
                         Global::exit(1);
                     }

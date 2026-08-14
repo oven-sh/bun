@@ -173,6 +173,12 @@ impl Loader {
         })
     }
 
+    /// Every name `from_string` accepts, one `-  name` line each, for
+    /// "expected one of:" errors.
+    pub fn accepted_names_list() -> impl core::fmt::Display {
+        AcceptedNamesList
+    }
+
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx
@@ -234,6 +240,17 @@ impl Loader {
             | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }
+    }
+}
+
+struct AcceptedNamesList;
+
+impl core::fmt::Display for AcceptedNamesList {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for name in Loader::NAMES.keys() {
+            write!(f, "\n-  {}", bstr::BStr::new(name))?;
+        }
+        Ok(())
     }
 }
 

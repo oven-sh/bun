@@ -347,7 +347,7 @@ import notes from "./notes.txt" with { type: "md" };
 
 <Note>
 
-`bun-types` does not declare a `*.md` module, because frameworks such as Astro declare their own `*.md` module and a second declaration would override their default export. To type the import in a plain Bun project, add a `.d.ts` file with:
+`bun-types` does not declare a `*.md` module, because frameworks such as Astro declare their own `*.md` module and a second declaration would override their default export. To type the import in a plain Bun project, add a `.d.ts` file with the following, plus the same block for `"*.markdown"` if you use that extension:
 
 ```ts
 declare module "*.md" {

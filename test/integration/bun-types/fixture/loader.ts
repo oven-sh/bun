@@ -8,12 +8,14 @@ expectAssignable<Bun.Loader>("md");
 // @ts-expect-error
 expectAssignable<Loader>("bogus");
 
-// Deliberately no `declare module "*.md"` in extensions.d.ts: frameworks declare "*.md" themselves
-// (astro/client.d.ts gives it a component default export), and a bun-types `export =` declaration
-// merged into theirs silently turns their default export into a string. Projects that want the md
-// loader's import typed declare the module themselves.
+// Deliberately no `declare module` for "*.md" or "*.markdown" in extensions.d.ts: frameworks declare
+// both themselves (astro/client.d.ts gives them a component default export), and a bun-types
+// `export =` declaration merged into theirs silently turns their default export into a string.
+// Projects that want the md loader's imports typed declare the modules themselves.
 // @ts-expect-error
 import("./README.md");
+// @ts-expect-error
+import("./README.markdown");
 
 Bun.build({
   entrypoints: ["hey"],

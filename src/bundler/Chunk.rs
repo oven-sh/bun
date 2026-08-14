@@ -459,18 +459,13 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
-/// How the text that replaces a placeholder has to be written into the chunk.
+/// How the text replacing a placeholder is written into the chunk.
 #[derive(Clone, Copy)]
 enum SpliceEscape {
-    /// CSS and HTML chunks: written as-is; their placeholders sit in `url()`s
-    /// and attributes, not in JS string literals.
+    /// CSS and HTML chunks (`url()`s and attributes).
     Raw,
-    /// JS chunks: every placeholder (import path, asset path, HTML import
-    /// manifest) is the body of a double-quoted string literal, so the
-    /// replacement is escaped the way the printer would have escaped it.
-    /// `ascii_only` is set for chunks that start with `// @bun` (see
-    /// postProcessJSChunk): the runtime loads those as Latin-1 without
-    /// re-parsing them, so the printer keeps them ASCII and the splices must too.
+    /// JS chunks: the placeholder is the body of a `"..."` literal. Chunks with
+    /// the `// @bun` pragma are loaded as Latin-1, so they must also stay ASCII.
     JsString { ascii_only: bool },
 }
 
@@ -551,10 +546,8 @@ impl IntermediateOutput {
         dst
     }
 
-    /// The two slices (prefix, path) that replace a chunk/asset placeholder.
-    /// `code_with_source_map_shifts` calls this once to size its buffer and once
-    /// to fill it, and `write_spliced_path` escapes what this returns, so both
-    /// passes have to go through here to count the same bytes.
+    /// The (prefix, path) pair that replaces a chunk/asset placeholder. Shared by
+    /// the sizing and the writing pass so that both see the same bytes.
     fn spliced_path_parts<'a>(
         file_path: &[u8],
         import_prefix: &'a [u8],
@@ -563,11 +556,7 @@ impl IntermediateOutput {
         file_path_buf: &'a mut [u8],
         relative_platform_buf: &'a mut [u8],
     ) -> [&'a [u8]; 2] {
-        // normalize windows paths to '/'
-        // The source slices are reachable only
-        // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-        // shared-provenance pointer is UB regardless of whether the write
-        // happens. Copy into a pooled scratch buffer and normalise that.
+        // Normalize Windows separators on a copy; the path belongs to the graph.
         let file_path: &'a [u8] = {
             let dst = &mut file_path_buf[..file_path.len()];
             dst.copy_from_slice(file_path);

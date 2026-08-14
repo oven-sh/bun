@@ -6913,9 +6913,7 @@ pub mod bv2_impl {
                 )?
                 .unwrap(),
             );
-            // The parser defaults this to `Browser`, but the manifest is server
-            // code: the printer escapes it and `computeChunks` classifies it by
-            // this target, same as the file that imported the HTML.
+            // The parser defaults `target` to browser; this module belongs to the importing side.
             ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {

@@ -101,15 +101,9 @@ fn write_entry_item<W: Write + ?Sized>(
     Ok(())
 }
 
-/// Writes the manifest as the body of the double-quoted string literal the
-/// printer emitted around the placeholder (see `generate_server_html_module`).
-/// Extremely unfortunate, but necessary: E.String does not accept pre-escaped
-/// input, and this happens at the very end.
-///
-/// `ascii_only` must match how the surrounding chunk was printed: a chunk that
-/// starts with `// @bun` is loaded as Latin-1 without being re-parsed, so
-/// non-ASCII in it has to be escaped like the printer escapes everything else
-/// there.
+/// Writes the manifest as the body of the `"..."` literal printed around the
+/// placeholder (`generate_server_html_module`). `ascii_only` is required for
+/// chunks with the `// @bun` pragma, which are loaded as Latin-1.
 pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,

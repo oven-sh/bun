@@ -628,11 +628,13 @@ async function coverageReport(dir: string, file: string) {
   };
 }
 
-// JSC runs a class's instance (and, separately, static) field initializers in a function it synthesizes
-// without source positions of its own. It used to be recorded as a function spanning the file from offset 0
-// for the length of the scope that defines the class (in a CommonJS module: the module wrapper, i.e. the
-// whole file), and its own basic blocks spanned that whole scope. The tests below cover what that did to
-// the report; the engine's data is covered by test/js/bun/jsc-stress/fixtures/class-field-initializer.js.
+// JSC synthesizes two functions for a class that are not in the file: one running its instance (or,
+// separately, its static) field initializers, and the constructor of a class that declares none. The
+// initializer used to be recorded as a function spanning the file from offset 0 for the length of the scope
+// that defines the class (in a CommonJS module: the module wrapper, i.e. the whole file), and its own basic
+// blocks spanned that whole scope; the default constructor used to be recorded as a function on the first
+// characters of the file that never executes. The tests below cover what that did to the report; the
+// engine's data is covered by test/js/bun/jsc-stress/fixtures/class-field-initializer-and-default-constructor.js.
 
 test.concurrent("coverage of a CommonJS module with a class that is never instantiated", async () => {
   using dir = tempDir("cov", {
@@ -688,10 +690,13 @@ test("defines both classes, instantiates one", () => {
 `,
   });
 
-  const { row, lines } = await coverageReport(String(dir), "lib.js");
-  // Unused's initializer used to be reported as an uncalled function spanning the first make().length
-  // characters of the file, which is where describe() is.
-  expect(row).toMatch(/\|\s+100\.00 \|\s*$/);
+  const { row, functions, lines } = await coverageReport(String(dir), "lib.js");
+  // Used to be " lib.js | 60.00 | 81.82 | 1-2": Unused's initializer was reported as an uncalled function
+  // spanning the first make().length characters of the file, which is where describe() is; Description's
+  // initializer counted as a third executed function and the two classes' default constructors as one
+  // more that never executes.
+  expect(row).toMatch(/^ lib\.js\s+\|\s+100\.00 \|\s+100\.00 \|\s*$/);
+  expect(functions).toEqual({ found: 2, hit: 2 });
   expect(lines(1, 2, 3, 5, 6, 8, 9, 10, 12)).toEqual({
     1: "hit",
     2: "hit",
@@ -703,6 +708,35 @@ test("defines both classes, instantiates one", () => {
     10: "hit",
     12: "hit",
   });
+});
+
+test.concurrent("coverage of classes that do not declare a constructor", async () => {
+  using dir = tempDir("cov", {
+    "lib.js": `let made = 0;
+export class Base {}
+export class Derived extends Base {}
+export class Unused {}
+export function make() {
+  made += 1;
+  return [new Base(), new Derived(), made];
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { Base, Derived, make } from "./lib.js";
+test("instantiates the base and the derived class", () => {
+  expect(make()).toEqual([expect.any(Base), expect.any(Derived), 1]);
+});
+`,
+  });
+
+  const { row, functions, lines } = await coverageReport(String(dir), "lib.js");
+  // Used to be " lib.js | 33.33 | 71.43 | 1-3": the constructors JSC synthesizes for Base and Unused (one
+  // entry, they have the same offsets) and for Derived were reported as functions that never execute,
+  // instantiated or not (#7025), and since their offsets fall on the first lines of the file, those lines
+  // were reported as the uncovered bodies of these functions (#29691).
+  expect(row).toMatch(/^ lib\.js\s+\|\s+100\.00 \|\s+100\.00 \|\s*$/);
+  expect(functions).toEqual({ found: 1, hit: 1 });
+  expect(lines(1, 2, 3, 4, 6, 7)).toEqual({ 1: "hit", 2: "hit", 3: "hit", 4: "hit", 6: "hit", 7: "hit" });
 });
 
 test.concurrent("coverage does not count a class's field initializer as a function once it has run", async () => {
@@ -755,10 +789,12 @@ test("takes one branch", () => {
 `,
     });
 
-    const { row, lines } = await coverageReport(String(dir), "lib.js");
-    // The static initializer runs when the class is defined, and its basic block used to span the whole
-    // module: the dead pick(false) (and pick()'s untaken path) were reported as executed, 100.00% lines.
+    const { row, functions, lines } = await coverageReport(String(dir), "lib.js");
+    // Used to be " lib.js | 50.00 | 100.00 |". The static initializer runs when the class is defined, and
+    // its basic block spanned the whole module: the dead pick(false) (and pick()'s untaken path) were
+    // reported as executed. The 50% was WithStatic's default constructor, reported as never executing.
     expect(row).not.toMatch(/\|\s+100\.00 \|\s*$/);
+    expect(functions).toEqual({ found: 1, hit: 1 });
     expect(lines(1, 2, 4, 5, 6, 10, 11)).toEqual({
       1: "hit",
       2: "hit",
@@ -795,9 +831,12 @@ test("never takes the branch", () => {
 `,
     });
 
-    const { row, lines } = await coverageReport(String(dir), "lib.js");
-    // The initializer's basic block used to span all of run(), reporting lines 7-8 as executed.
+    const { row, functions, lines } = await coverageReport(String(dir), "lib.js");
+    // Used to be " lib.js | 66.67 | 100.00 |": the initializer's basic block spanned all of run(), reporting
+    // lines 7-8 as executed, and the functions were run(), the initializer and Counter's default
+    // constructor (never reported as executed, although every run() call runs it).
     expect(row).not.toMatch(/\|\s+100\.00 \|\s*$/);
+    expect(functions).toEqual({ found: 1, hit: 1 });
     expect(lines(1, 2, 3, 5, 6, 7, 8, 10)).toEqual({
       1: "hit",
       2: "hit",

@@ -189,7 +189,7 @@ const ffiFixtures = [
 
 // From WebKit's JSTests/controlFlowProfiler. These read the profiler's data back through `$vm` (their
 // `//@ requireOptions` line enables it), which only builds of JSC that compile it in expose.
-const controlFlowProfilerFixtures = ["class-field-initializer.js"];
+const controlFlowProfilerFixtures = ["class-field-initializer-and-default-constructor.js"];
 
 const preloadPath = path.join(import.meta.dir, "preload.js");
 

@@ -1,11 +1,14 @@
 // @bun
 //@ requireOptions("--useControlFlowProfiler=true", "--useDollarVM=true")
 
-// The function that runs a class's field initializers is synthesized from the source of the scope that
-// defines the class and has no positions of its own, so the function range it would record is
-// [0, length of that scope's source - 1] and the basic blocks at its start and end would span that whole
-// scope. None of that may appear in the profiler's data for the source. The programs are assembled as
-// strings so that the lengths involved are under control; loadString() evaluates each as its own program.
+// Two functions of a class are synthesized rather than parsed from the source of the code that defines the
+// class, and neither may appear in the profiler's data for that source. The function that runs the class's
+// field initializers is built over the source of the scope that defines the class without positions of its
+// own, so the function range it would record is [0, length of that scope's source - 1] and the basic blocks
+// at its start and end would span that whole scope (parts 1 to 5). The default constructor of a class that
+// does not declare one is built from a template, so the range it would record is made of offsets into the
+// template, i.e. the first few characters of the source (part 6). The programs are assembled as strings so
+// that the lengths and offsets involved are under control; loadString() evaluates each as its own program.
 
 var hasBasicBlockExecuted = $vm.hasBasicBlockExecuted;
 var basicBlockExecutionCount = $vm.basicBlockExecutionCount;
@@ -69,3 +72,17 @@ assert(basicBlockExecutionCount(globalThis.definesConditionalField, "'taken'") =
 assert(!hasBasicBlockExecuted(globalThis.definesConditionalField, "'not taken'"), "the branch the field initializer did not take is recorded");
 assert(basicBlockExecutionCount(globalThis.definesConditionalField, "var before") === 1, "the code before the class ran once, not once per instance");
 assert(basicBlockExecutionCount(globalThis.definesConditionalField, "new C()") === 1, "the code after the class ran once, not once per instance");
+
+// 6. Classes that do not declare a constructor. The default constructor's range would be made of the
+//    template's offsets, which fall on the first characters of the program: with a short function name, on
+//    the parameter list of a function declared there and called, and being far shorter than that function's
+//    first block it would be the range consulted for it. A derived class's default constructor has a longer
+//    template than a base class's, so both are checked; a class that declares its constructor is the control.
+function checkFunctionDeclaredBefore(name, classes) {
+    var declaration = padTo("function " + name + "() { var x = 1; /**/ }", 200);
+    loadString(declaration + "\n" + classes + "\n" + name + "();\n");
+    assert(hasBasicBlockExecuted(globalThis[name], "()"), name + "() ran; `" + classes + "` must not hide that");
+}
+checkFunctionDeclaredBefore("run", "class Base {}");
+checkFunctionDeclaredBefore("run", "class Parent { constructor() {} } class Derived extends Parent {}");
+checkFunctionDeclaredBefore("run", "class Declared { constructor() { this.x = 1; } }");

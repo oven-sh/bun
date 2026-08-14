@@ -398,4 +398,116 @@ describe("`bun audit`", () => {
     expect(stdout).toBe("No vulnerabilities found\n");
     expect(exitCode).toBe(0);
   });
+
+  test("escapes control characters in advisory text and package names instead of writing them to the terminal", async () => {
+    // Every string the report prints comes from the registry response or the
+    // lockfile. Each one gets a different control character here: ESC
+    // sequences that erase/repaint the line, a bare CR, a newline that forges
+    // an extra report line, BEL, TAB, NUL, DEL and the 8-bit CSI (U+009B).
+    const vulnerable = "vuln\x1b[2Kpkg";
+    const dependent = "top\x1b[31mdep";
+    const workspace = "ws\x1b[1Gname";
+    const skipped = "@foo/skipped\x1b[2K\rname";
+    // Reported by the registry without being in the lockfile, and without
+    // `vulnerable_versions`: only the name line and the advisory are printed.
+    const unlisted = "unlisted\npkg";
+
+    using dirHandle = tempDir("bun-test-audit-control-chars", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        workspaces: ["ws"],
+        dependencies: {
+          [dependent]: "1.0.0",
+          [skipped]: "1.0.0",
+        },
+      }),
+      "ws/package.json": JSON.stringify({
+        name: workspace,
+        dependencies: {
+          [vulnerable]: "1.0.0",
+        },
+      }),
+      ".npmrc": "@foo:registry=https://my-registry.example.com/\n",
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "test",
+            "dependencies": {
+              [dependent]: "1.0.0",
+              [skipped]: "1.0.0",
+            },
+          },
+          "ws": {
+            "name": workspace,
+            "dependencies": {
+              [vulnerable]: "1.0.0",
+            },
+          },
+        },
+        "packages": {
+          "ws": [`${workspace}@workspace:ws`],
+          [dependent]: [`${dependent}@1.0.0`, "", { dependencies: { [vulnerable]: "1.0.0" } }, fakeIntegrity],
+          [vulnerable]: [`${vulnerable}@1.0.0`, "", {}, fakeIntegrity],
+          [skipped]: [`${skipped}@1.0.0`, "", {}, fakeIntegrity],
+        },
+      }),
+    });
+
+    await using auditServer = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json({
+          [vulnerable]: [
+            {
+              id: 1,
+              severity: "critical",
+              title: "Erased\x1b[2K\x1b[1G\rforged line\nother-pkg  1.0.0",
+              url: "https://example.com/1\x1b]8;;https://evil.example/\x1b\\example.com\x1b]8;;\x1b\\/",
+              vulnerable_versions: "<2.0.0\t\x7f",
+            },
+            { id: 2, severity: "high", title: "high\x07title", url: "https://example.com/2\u009b2K" },
+            { id: 3, severity: "moderate", title: "moderate\x00title", url: "https://example.com/3\x1b" },
+            { id: 4, severity: "low", title: "low\x1btitle", url: "https://example.com/4\x0d" },
+          ],
+          [unlisted]: [{ id: 5, severity: "high", title: "plain title", url: "https://example.com/5" }],
+        }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dirHandle),
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: auditServer.url.href,
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The expected strings below contain literal backslashes: bun prints the
+    // control characters spelled out, e.g. the 4 characters `\x1b` for ESC.
+    const lines = stdout.split("\n");
+    expect(lines.slice(0, 11)).toEqual([
+      "vuln\\x1b[2Kpkg  <2.0.0\\t\\x7f",
+      "  workspace:ws\\x1b[1Gname › vuln\\x1b[2Kpkg",
+      "  top\\x1b[31mdep › vuln\\x1b[2Kpkg",
+      "  critical: Erased\\x1b[2K\\x1b[1G\\rforged line\\nother-pkg  1.0.0 - https://example.com/1\\x1b]8;;https://evil.example/\\x1b\\example.com\\x1b]8;;\\x1b\\/",
+      "  high: high\\x07title - https://example.com/2\\u009b2K",
+      "  moderate: moderate\\x00title - https://example.com/3\\x1b",
+      "  low: low\\x1btitle - https://example.com/4\\r",
+      "",
+      "unlisted\\npkg",
+      "  high: plain title - https://example.com/5",
+      "",
+    ]);
+    expect(lines).toContain("Skipped @foo/skipped\\x1b[2K\\rname because it does not come from the default registry");
+    // Nothing but the line breaks bun itself prints may reach the terminal.
+    expect(stdout).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f\u0080-\u009f]/);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(1);
+  });
 });

@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
 use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
@@ -192,7 +193,7 @@ fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
             if i > 0 {
                 pretty!(", ");
             }
-            pretty!("{}", BStr::new(package_name));
+            pretty!("{}", escape_control_chars(package_name));
         }
 
         if skipped_packages.len() > 1 {
@@ -837,14 +838,15 @@ fn print_enhanced_audit_report(
                 //     break :brk false;
                 // };
 
+                // Everything printed below is third-party text: advisory fields, lockfile names.
                 if !main_vuln.vulnerable_versions.is_empty() {
                     prettyln!(
                         "<red>{}<r>  {}",
-                        BStr::new(&main_vuln.package_name),
-                        BStr::new(&main_vuln.vulnerable_versions)
+                        escape_control_chars(&main_vuln.package_name),
+                        escape_control_chars(&main_vuln.vulnerable_versions)
                     );
                 } else {
-                    prettyln!("<red>{}<r>", BStr::new(&main_vuln.package_name));
+                    prettyln!("<red>{}<r>", escape_control_chars(&main_vuln.package_name));
                 }
 
                 for path in &package_info.dependents {
@@ -855,8 +857,8 @@ fn print_enhanced_audit_report(
 
                             prettyln!(
                                 "  <d>{} › <red>{}<r>",
-                                BStr::new(workspace_part),
-                                BStr::new(vulnerable_pkg)
+                                escape_control_chars(workspace_part),
+                                escape_control_chars(vulnerable_pkg)
                             );
                         } else {
                             let vulnerable_pkg = &path.path[0];
@@ -877,8 +879,8 @@ fn print_enhanced_audit_report(
 
                             prettyln!(
                                 "  <d>{} › <red>{}<r>",
-                                BStr::new(&vuln_pkg_path),
-                                BStr::new(vulnerable_pkg)
+                                escape_control_chars(&vuln_pkg_path),
+                                escape_control_chars(vulnerable_pkg)
                             );
                         }
                     } else {
@@ -888,30 +890,16 @@ fn print_enhanced_audit_report(
 
                 for vuln in &package_info.vulnerabilities {
                     if !vuln.title.is_empty() {
+                        let title = escape_control_chars(&vuln.title);
+                        let url = escape_control_chars(&vuln.url);
                         if vuln.severity.as_ref() == b"critical" {
-                            prettyln!(
-                                "  <red>critical<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
+                            prettyln!("  <red>critical<d>:<r> {} - <d>{}<r>", title, url);
                         } else if vuln.severity.as_ref() == b"high" {
-                            prettyln!(
-                                "  <red>high<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
+                            prettyln!("  <red>high<d>:<r> {} - <d>{}<r>", title, url);
                         } else if vuln.severity.as_ref() == b"moderate" {
-                            prettyln!(
-                                "  <yellow>moderate<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
+                            prettyln!("  <yellow>moderate<d>:<r> {} - <d>{}<r>", title, url);
                         } else {
-                            prettyln!(
-                                "  <cyan>low<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
+                            prettyln!("  <cyan>low<d>:<r> {} - <d>{}<r>", title, url);
                         }
                     }
                 }

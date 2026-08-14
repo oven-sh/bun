@@ -814,6 +814,69 @@ impl<'a> Transpiler<'a> {
         }
         Ok(())
     }
+
+    /// The tsconfig.json governing the file at `path`: the nearest one in its
+    /// directory or an ancestor, which is what the resolver applies to the file
+    /// when `bun build` bundles it. `None` when there is none, or when `path`
+    /// has no directory on disk (virtual modules).
+    ///
+    /// The directory was already walked to resolve the file, so this is a cache
+    /// lookup in practice. Runs on the JS thread: a cache miss reads the
+    /// directory through this transpiler's resolver.
+    pub fn tsconfig_for_file(&mut self, path: &[u8]) -> Option<&'static TSConfigJSON> {
+        let dir = Fs::PathName::init(path).dir;
+        if !bun_paths::is_absolute(dir) {
+            return None;
+        }
+        self.resolver
+            .read_dir_info(dir)
+            .ok()
+            .flatten()?
+            .enclosing_tsconfig_json
+    }
+
+    /// The [`ParseOptions`] fields that tsconfig.json controls, for a file
+    /// governed by `tsconfig` (see [`Self::tsconfig_for_file`]). A file without
+    /// one gets the values `configure_linker` took from the cwd's tsconfig.
+    pub fn tsconfig_parse_options(&self, tsconfig: Option<&TSConfigJSON>) -> TSConfigParseOptions {
+        match tsconfig {
+            Some(tsconfig) => {
+                let mut jsx = tsconfig.merge_jsx(self.options.jsx.clone());
+                // An explicit NODE_ENV outranks the tsconfig's "react-jsx" /
+                // "react-jsxdev" choice (`force_node_env`); `configure_defines`
+                // already settled it in `options.jsx` for the whole process.
+                if self.options.production
+                    || self.options.force_node_env != options::ForceNodeEnv::Unspecified
+                {
+                    jsx.development = self.options.jsx.development;
+                }
+                TSConfigParseOptions {
+                    jsx,
+                    emit_decorator_metadata: tsconfig.emit_decorator_metadata,
+                    experimental_decorators: tsconfig.experimental_decorators,
+                    use_define_for_class_fields: tsconfig
+                        .use_define_for_class_fields
+                        .unwrap_or(true),
+                }
+            }
+            None => TSConfigParseOptions {
+                jsx: self.options.jsx.clone(),
+                emit_decorator_metadata: self.options.emit_decorator_metadata,
+                experimental_decorators: self.options.experimental_decorators,
+                use_define_for_class_fields: self.options.use_define_for_class_fields,
+            },
+        }
+    }
+}
+
+/// Per-file parse settings derived from a tsconfig.json by
+/// [`Transpiler::tsconfig_parse_options`]; copied into the same-named
+/// [`ParseOptions`] fields.
+pub struct TSConfigParseOptions {
+    pub jsx: crate::options_impl::jsx::Pragma,
+    pub emit_decorator_metadata: bool,
+    pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -953,7 +1016,8 @@ pub struct ParseOptions<'a, 'b> {
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
-    /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
+    /// the lib.rs shim — with the file's tsconfig.json merged in; see
+    /// [`TSConfigParseOptions`].
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
@@ -961,6 +1025,7 @@ pub struct ParseOptions<'a, 'b> {
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
+    /// These three come from the file's tsconfig.json too.
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,

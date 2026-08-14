@@ -22,6 +22,7 @@ use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
 use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
+use bun_resolver::TSConfigJSON;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
@@ -321,6 +322,7 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
+        tsconfig: Option<&'static TSConfigJSON>,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -364,6 +366,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                tsconfig,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
@@ -413,6 +416,11 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: OwnedString,
     pub(crate) non_threadsafe_referrer: OwnedString,
     pub(crate) loader: Loader,
+    /// The tsconfig.json governing `path` (`Transpiler::tsconfig_for_file`),
+    /// looked up on the JS thread: the worker must not touch the resolver's
+    /// directory cache through its bytewise transpiler copy. Interned for the
+    /// life of the process, so the worker reads it without synchronization.
+    pub(crate) tsconfig: Option<&'static TSConfigJSON>,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
@@ -837,6 +845,8 @@ impl TranspilerJob {
             _ => ModuleType::Unknown,
         };
 
+        let tsconfig_options = transpiler.tsconfig_parse_options(self.tsconfig);
+
         let mut parse_options = ParseOptions {
             arena: &arena,
             path,
@@ -849,10 +859,10 @@ impl TranspilerJob {
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            jsx: transpiler.options.jsx.clone(),
-            emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
-            experimental_decorators: transpiler.options.experimental_decorators,
-            use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
+            jsx: tsconfig_options.jsx,
+            emit_decorator_metadata: tsconfig_options.emit_decorator_metadata,
+            experimental_decorators: tsconfig_options.experimental_decorators,
+            use_define_for_class_fields: tsconfig_options.use_define_for_class_fields,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,

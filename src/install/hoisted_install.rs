@@ -629,12 +629,14 @@ pub(crate) fn install_hoisted_packages(
     Ok(summary)
 }
 
-/// Deletes top-level entries of each workspace's `node_modules/` (one level
-/// into `@scope/`) that the hoisted tree does not place there. Stale leftovers
-/// from a previous package-local install shadow the hoisted copy during
-/// resolution, and the installer never visits a workspace tree whose deps all
-/// hoisted away (issue #29793). Only called for unfiltered installs, with the
-/// full tree buffers.
+/// Deletes entries of each workspace's `node_modules/` (one level into
+/// `@scope/`) whose name the workspace declares as a dependency but the
+/// hoisted tree places elsewhere. Such leftovers from a previous
+/// package-local install shadow the hoisted copy during resolution, and the
+/// installer never visits a workspace tree whose deps all hoisted away
+/// (issue #29793). Entries with undeclared names (a manual `bun link`, a
+/// hand-dropped folder) are left alone; `bun prune` handles extraneous
+/// entries. Only called for unfiltered installs, with the full tree buffers.
 fn prune_stale_workspace_node_modules(
     lockfile: &crate::lockfile::Lockfile,
     trees: &[tree::Tree],
@@ -649,9 +651,10 @@ fn prune_stale_workspace_node_modules(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let packages_slice = lockfile.packages.slice();
     let pkg_resolutions = packages_slice.items_resolution();
+    let pkg_dependencies = packages_slice.items_dependencies();
 
     // Walk only workspaces that resolve cleanly; pkg_id 0 (stale lockfile,
-    // hash collision) would otherwise wipe the dir with an empty expected set.
+    // hash collision) cannot be trusted to name a workspace.
     let mut workspaces_to_walk: Vec<(PackageID, Vec<u8>)> = Vec::new();
     {
         let hashes = lockfile.workspace_paths.keys();
@@ -727,17 +730,37 @@ fn prune_stale_workspace_node_modules(
         }
     }
 
-    // Walk only the workspaces we resolved above.
-    for (_pkg_id, fs_path) in &workspaces_to_walk {
+    // For each workspace, prune the declared dependency names the tree does
+    // not place in that workspace's own `node_modules`.
+    for (pkg_id, fs_path) in &workspaces_to_walk {
+        let pkg_idx = *pkg_id as usize;
+        if pkg_idx >= pkg_dependencies.len() {
+            continue;
+        }
         let key = workspace_node_modules_key(fs_path);
-        let expected = expected_by_ws_path.get(key.as_slice());
-        prune_node_modules_at(&key, expected);
+        let placed = expected_by_ws_path.get(key.as_slice());
+
+        let mut prunable: StringHashMap<()> = StringHashMap::default();
+        for dep in pkg_dependencies[pkg_idx].get(deps) {
+            let name = dep.name.slice(string_buf);
+            if name.is_empty() {
+                continue;
+            }
+            if placed.is_some_and(|p| p.contains_key(name)) {
+                continue;
+            }
+            let _ = prunable.put(name, ());
+        }
+        if prunable.is_empty() {
+            continue;
+        }
+        prune_node_modules_at(&key, &prunable);
     }
 }
 
-/// Normalized `<ws_path>/node_modules` key, shared by the expected-set map
-/// and the walk so the two can't diverge (a miss routes through the
-/// `expected == None` branch and deletes legitimate entries).
+/// Normalized `<ws_path>/node_modules` key, shared by the placed-set map and
+/// the walk so the two can't diverge (a miss would treat placed entries as
+/// prunable).
 fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
     let trimmed = match ws_path.last() {
         Some(b'/') | Some(b'\\') => &ws_path[..ws_path.len() - 1],
@@ -758,9 +781,9 @@ fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
 }
 
 /// Opens `<cwd>/<rel_path>` and removes each top-level directory entry whose
-/// name is not present in `expected`. Also descends one level into `@scope/`
-/// directories so scoped packages are handled. Missing directories are ignored.
-fn prune_node_modules_at(rel_path: &[u8], expected: Option<&StringHashMap<()>>) {
+/// name is in `prunable`. Also descends one level into `@scope/` directories
+/// so scoped packages are handled. Missing directories are ignored.
+fn prune_node_modules_at(rel_path: &[u8], prunable: &StringHashMap<()>) {
     let cwd = Fd::cwd();
     // `Dir` closes the fd on drop.
     let dir = match sys::open_dir_for_iteration(cwd, rel_path) {
@@ -787,20 +810,17 @@ fn prune_node_modules_at(rel_path: &[u8], expected: Option<&StringHashMap<()>>) 
 
     for name in &names {
         if name[0] == b'@' {
-            // The expected set stores scoped packages as `@scope/pkg`.
-            prune_scoped_node_modules(dir.fd(), name, expected);
+            // The prunable set stores scoped packages as `@scope/pkg`.
+            prune_scoped_node_modules(dir.fd(), name, prunable);
             continue;
         }
-        if let Some(exp) = expected {
-            if exp.contains_key(name.as_slice()) {
-                continue;
-            }
+        if prunable.contains_key(name.as_slice()) {
+            let _ = dir.delete_tree(name);
         }
-        let _ = dir.delete_tree(name);
     }
 }
 
-fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], expected: Option<&StringHashMap<()>>) {
+fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], prunable: &StringHashMap<()>) {
     let scope_dir = match sys::open_dir_for_iteration(parent_dir, scope) {
         Ok(fd) => Dir::from_fd(fd),
         Err(_) => return,
@@ -832,11 +852,9 @@ fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], expected: Option<&Str
         full_name.push(b'/');
         full_name.extend_from_slice(name);
 
-        if let Some(exp) = expected {
-            if exp.contains_key(full_name.as_slice()) {
-                has_remaining = true;
-                continue;
-            }
+        if !prunable.contains_key(full_name.as_slice()) {
+            has_remaining = true;
+            continue;
         }
 
         if scope_dir.delete_tree(name).is_err() {

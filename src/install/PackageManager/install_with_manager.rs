@@ -1353,7 +1353,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     // taking `&mut` on `manager.log`.
     let realname = dependency.realname();
     let path = manager.lockfile.str(&realname).to_vec();
-    let path_fmt = bun_core::fmt::fmt_path(
+    let path_fmt = bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_path(
         &path,
         bun_core::fmt::PathFormatOptions {
             path_sep: match dependency.version.tag {
@@ -1362,7 +1362,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
             },
             ..Default::default()
         },
-    );
+    ));
 
     let log = manager.log_mut();
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {

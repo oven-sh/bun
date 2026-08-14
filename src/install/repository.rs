@@ -894,7 +894,7 @@ impl RepositoryExt for Repository {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                        BStr::new(committish),
+                        bun_core::fmt::escape_control_chars(committish),
                         BStr::new(name)
                     ),
                 );
@@ -925,7 +925,7 @@ impl RepositoryExt for Repository {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "invalid git commit \"{}\" for \"{}\"",
-                    BStr::new(resolved),
+                    bun_core::fmt::escape_control_chars(resolved),
                     BStr::new(name)
                 ),
             );

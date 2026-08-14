@@ -115,13 +115,13 @@ pub fn enqueue_dependency_list(
             // `format_args!` borrows temporaries — bind the
             // formatter first so it outlives the macro expansion.
             let realname = dependency.realname();
-            let path_fmt = bun_fmt::fmt_path_u8(
+            let path_fmt = bun_fmt::EscapeControlChars(bun_fmt::fmt_path_u8(
                 this.lockfile.str(&realname),
                 bun_fmt::PathFormatOptions {
                     path_sep,
                     escape_backslashes: false,
                 },
-            );
+            ));
             let log = this.log_mut();
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(

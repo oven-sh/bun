@@ -524,7 +524,7 @@ impl PatchTask {
                         &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
-                            BStr::new(&resolution_label)
+                            bun_core::fmt::escape_control_chars(&resolution_label)
                         ),
                     );
                     return Ok(());

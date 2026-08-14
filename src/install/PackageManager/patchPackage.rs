@@ -1396,7 +1396,7 @@ fn pkg_info_for_name_and_version(
         bun_core::pretty_error!(
             "  {}@<blue>{}<r>\n",
             bstr::BStr::new(pkg.name.slice(strbuf)),
-            pkg.resolution.fmt(strbuf, PathSep::Posix)
+            bun_fmt::EscapeControlChars(pkg.resolution.fmt(strbuf, PathSep::Posix))
         );
 
         if i + 1 < pairs.len() {

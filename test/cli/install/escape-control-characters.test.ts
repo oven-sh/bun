@@ -58,7 +58,7 @@ function packumentFor(name: string) {
     name,
     "dist-tags": { latest: "2.0.0", [`tag-${C1}`]: "1.0.0" },
     versions: {
-      "1.0.0": manifest("1.0.0", {}),
+      "1.0.0": manifest("1.0.0", name === "needs-dep" ? { dep: "1.0.0" } : {}),
       "2.0.0": manifest("2.0.0", { sub: BAD_TAG }),
     },
   };
@@ -180,6 +180,18 @@ test.concurrent("resolution errors escape a file: path", async () => {
   expect(stderr).toContain(`Could not find package.json for "file:missing-${C1_ESCAPED}" dependency "dep"`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun patch lists the candidate resolutions escaped", async () => {
+  // Two lockfile entries named `dep`: the root's tarball and the registry's
+  // 1.0.0 that `needs-dep` depends on, so `bun patch dep` has to ask which one.
+  using dir = project("patch", { dependencies: { dep: tarballSpec, "needs-dep": "1.0.0" } });
+  await installOk(String(dir));
+  const { stdout, stderr, exitCode } = await run(String(dir), "patch", "dep");
+  expect(stderr).toContain("Found multiple versions of dep");
+  expect(stderr).toContain(`dep@${tarballSpecEscaped}`);
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).not.toBe(0);
 });
 
 test.concurrent("a workspace range that matches nothing is reported escaped", async () => {

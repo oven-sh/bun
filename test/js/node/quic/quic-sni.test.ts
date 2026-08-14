@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -219,5 +219,43 @@ test("connect() with the default verifyPeer refuses an unverifiable certificate 
       "ExperimentalWarning: quic is an experimental feature and might change at any time",
     ),
     exitCode: 0,
+  });
+});
+
+// node:quic builds its TLS contexts apart from node:tls, so it needs its own
+// check that a trust anchor carrying a critical extension BoringSSL does not
+// implement is rejected the way node (OpenSSL) rejects it. Fixtures are shared
+// with test/js/node/tls/node-tls-cert.test.ts: two anchors for one CA key that
+// differ only in that extension, and a leaf that chains to either.
+describe("trust anchor with an unimplemented critical extension", () => {
+  const fixturesDir = join(import.meta.dir, "..", "tls", "fixtures");
+  const fixture = (name: string) => readFileSync(join(fixturesDir, `critical-ext-anchor-${name}.pem`));
+  const leafIdentity = { keys: [createPrivateKey(fixture("leaf-key"))], certs: [fixture("leaf-cert")] };
+
+  async function validationOutcome(ca: Buffer) {
+    await using server = await listen(ignoreErrors, { sni: { "*": leafIdentity }, alpn: ["quic-test"] });
+    const session = await connect(server.address, {
+      alpn: "quic-test",
+      servername: "localhost",
+      ca,
+      verifyPeer: "manual",
+    });
+    try {
+      const info = await session.opened;
+      return { code: info.validationErrorCode, reason: info.validationErrorReason };
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("reports node's validation error for the anchor with the extension", async () => {
+    expect(await validationOutcome(fixture("ca-cert"))).toEqual({
+      code: "UNSPECIFIED",
+      reason: "unhandled critical extension",
+    });
+  });
+
+  test("validates the same leaf under the anchor without the extension", async () => {
+    expect(await validationOutcome(fixture("ca-plain-cert"))).toEqual({ code: undefined, reason: undefined });
   });
 });

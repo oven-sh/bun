@@ -2405,7 +2405,14 @@ function adoptServerTLS(self, connection, tls) {
     return;
   }
   if (isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
-    attachServerTLSEngine(self, connection, tls);
+    try {
+      attachServerTLSEngine(self, connection, tls);
+    } catch (err) {
+      // Here there is no caller to throw to (unlike the synchronous engine
+      // branch, which throws from the constructor); report on the wrap.
+      self.destroy(err);
+      return;
+    }
     self.emit(kUpgradeAttached);
     return;
   }

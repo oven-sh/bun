@@ -2176,6 +2176,40 @@ it("fails a server wrap on the wrap's 'error' when the connection's handle is al
   }
 });
 
+it("fails a server wrap on the wrap's 'error' when the deferred stream engine refuses the options", async () => {
+  // A fake secureContext passes the constructor (it never validates the
+  // object) but the engine rejects it. With writes still queued at the
+  // deferred tick that rejection happens in the stream-engine branch, where
+  // it used to escape nextTick as an uncaught exception.
+  const accepted = Promise.withResolvers<net.Socket>();
+  const rawServer = net.createServer(accepted.resolve);
+  let outgoing: net.Socket | undefined;
+  let wrapped: TLSSocket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    rawServer.once("error", listening.reject);
+    rawServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    outgoing = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+    const conn = await accepted.promise;
+    wrapped = new TLSSocket(conn, { isServer: true, secureContext: { context: {} } as any });
+    const failed = Promise.withResolvers<Error>();
+    const closed = Promise.withResolvers<void>();
+    wrapped.on("error", failed.resolve);
+    wrapped.on("close", closed.resolve);
+    // Corked, the write stays in the writable buffer into the deferred tick,
+    // which routes the wrap to the stream engine.
+    conn.cork();
+    conn.write("banner");
+    expect((await failed.promise).message).toContain("SecureContext");
+    await closed.promise;
+  } finally {
+    wrapped?.destroy();
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
 it("exposes the server-side peer verification result via socket.ssl.verifyError()", async () => {
   // Node's server path consults the same TLSWrap.verifyError() that clients
   // use, so the shim must be populated for server sockets too:

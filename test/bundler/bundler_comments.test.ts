@@ -175,12 +175,12 @@ describe("single-line comments", () => {
         stdout: "",
       },
     });
-    itBundled("only a comment", {
+    itBundled(`only a comment ${minify ? "with minification" : "without minification"}`, {
       files: {
         "/entry.js": `// This is a comment`,
       },
-      minifyWhitespace: true,
-      minifySyntax: true,
+      minifyWhitespace: minify,
+      minifySyntax: minify,
       run: {
         stdout: "",
       },

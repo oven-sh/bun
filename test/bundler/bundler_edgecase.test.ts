@@ -1260,7 +1260,7 @@ describe("bundler", () => {
   });
   // chunk-concat forgets to de-duplicate source indicies
   // chunk-concat ignores all but the first instance of a chunk
-  itBundled("edgecase/EmitInvalidSourceMap2", {
+  itBundled("edgecase/EmitInvalidSourceMap3", {
     files: {
       "/entry.js": `
         const a = new TextEncoder();
@@ -3174,7 +3174,7 @@ describe("bundler", () => {
 
 for (const backend of ["api", "cli"] as const) {
   describe(`bundler_edgecase/${backend}`, () => {
-    itBundled("edgecase/ProcessEnvArbitrary", {
+    itBundled(`edgecase/${backend}/ProcessEnvArbitrary`, {
       files: {
         "/entry.js": /* js */ `
         capture(process.env.ARBITRARY);

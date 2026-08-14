@@ -486,7 +486,7 @@ describe("bundler", () => {
     },
     run: true,
   });
-  itBundled("extra/PrototypeChain2", {
+  itBundled("extra/PrototypeChain3", {
     files: {
       "in.js": `
         import * as star from './cjs-proto'
@@ -977,7 +977,7 @@ describe("bundler", () => {
           catch (e) { if (e === 'fail') throw e }
         `,
       });
-      add(22, {
+      add(23, {
         "in.js": `
           let x = 1;
           ({ set a(y) { x = y } }${access} = 2);

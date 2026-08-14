@@ -786,24 +786,6 @@ describe("bundler", () => {
 });
 
 describe("esbuild-bundler", () => {
-  itBundled("css/CSSEntryPoint", {
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        body {
-          background: white;
-          color: black }
-      `,
-    },
-  });
-  itBundled("css/CSSAtImportMissing", {
-    files: {
-      "/entry.css": `@import "./missing.css";`,
-    },
-    bundleErrors: {
-      "/entry.css": ['Could not resolve: "./missing.css"'],
-    },
-  });
   itBundled("css/CSSAtImportExternal", {
     external: ["./external1.css", "./external2.css", "./external3.css", "./external4.css", "./external5.css"],
     // GENERATED

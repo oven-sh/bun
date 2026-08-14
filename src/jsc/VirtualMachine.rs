@@ -273,7 +273,8 @@ pub struct VirtualMachine {
     pub is_in_preload: bool,
     pub has_patched_run_main: bool,
     /// `--preserve-symlinks-main` / `NODE_PRESERVE_SYMLINKS_MAIN=1`: resolve
-    /// the entry point without following symlinks.
+    /// the entry point without following symlinks (`--preserve-symlinks`
+    /// alone does not, as in Node).
     pub preserve_symlinks_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
@@ -4387,9 +4388,11 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
+            // As in Node, only `--preserve-symlinks-main` decides whether the
+            // entry point is followed; `--preserve-symlinks` covers the rest.
             let saved_preserve_symlinks = self.transpiler.resolver.opts.preserve_symlinks;
-            if is_entry_point && self.preserve_symlinks_main {
-                self.transpiler.resolver.opts.preserve_symlinks = true;
+            if is_entry_point {
+                self.transpiler.resolver.opts.preserve_symlinks = self.preserve_symlinks_main;
             }
             let resolved = self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,

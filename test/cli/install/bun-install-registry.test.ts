@@ -5366,9 +5366,12 @@ describe("update", () => {
     // the alias name itself (`aliased-dep`) does not exist in the registry.
     const aliasUpdateCases: {
       before: string;
+      /** version installed by `bun install` of `before` */
       installed: string;
       args: string[];
       after: string;
+      /** version installed after the update, 2.0.0 unless the request asks for less */
+      installedAfter?: string;
       realName?: string;
       /** `[install] exact = true` in bunfig.toml */
       exact?: boolean;
@@ -5420,6 +5423,29 @@ describe("update", () => {
         args: ["aliased-dep@npm:no-deps", "--latest"],
         after: "npm:no-deps@~2.0.0",
       },
+      // a request naming a plain version applies it to the alias target (as `bun update no-deps@^1.0.0`
+      // does to a plain dependency) instead of resolving `aliased-dep@<version>` from the registry
+      {
+        before: "npm:no-deps@~1.0.0",
+        installed: "1.0.1",
+        args: ["aliased-dep@^1.0.0"],
+        after: "npm:no-deps@~1.1.0",
+        installedAfter: "1.1.0",
+      },
+      { before: "npm:no-deps@~1.0.0", installed: "1.0.1", args: ["aliased-dep@2.0.0"], after: "npm:no-deps@~2.0.0" },
+      {
+        before: "npm:no-deps@~1.0.0",
+        installed: "1.0.1",
+        args: ["aliased-dep@1.0.0", "--latest"],
+        after: "npm:no-deps@~2.0.0",
+      },
+      {
+        before: "npm:@types/no-deps@1.0.0",
+        installed: "1.0.0",
+        args: ["aliased-dep@^2.0.0"],
+        after: "npm:@types/no-deps@2.0.0",
+        realName: "@types/no-deps",
+      },
       // `exact` replaces the range but not the alias target
       {
         before: "npm:no-deps@~1.0.0",
@@ -5451,7 +5477,7 @@ describe("update", () => {
     ];
     test.each(aliasUpdateCases)(
       `"aliased-dep": "$before" + bun update $args -> "$after"`,
-      async ({ before, installed, args, after, realName = "no-deps", exact = false }) => {
+      async ({ before, installed, args, after, installedAfter = "2.0.0", realName = "no-deps", exact = false }) => {
         await write(
           packageJson,
           JSON.stringify({
@@ -5484,13 +5510,50 @@ describe("update", () => {
         });
         expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
           name: realName,
-          version: "2.0.0",
+          version: installedAfter,
         });
 
         // the rewritten literal still installs (it must not name `aliased-dep` itself)
         await runBunInstall(env, packageDir, { savesLockfile: false });
       },
     );
+    // `bun update <new-name>@npm:<target>` adds the dependency; the written value used to be cut at
+    // the first `@`, which for a scoped target is the scope (`"npm:@^1.0.0"`), and a target without a
+    // version lost its `npm:` prefix entirely.
+    test.each([
+      [
+        "new-alias@npm:@types/no-deps@^1.0.0",
+        "npm:@types/no-deps@^1.0.0",
+        { name: "@types/no-deps", version: "1.0.0" },
+      ],
+      ["new-alias@npm:@types/no-deps", "npm:@types/no-deps@^2.0.0", { name: "@types/no-deps", version: "2.0.0" }],
+      ["new-alias@npm:no-deps", "npm:no-deps@^2.0.0", { name: "no-deps", version: "2.0.0" }],
+      ["new-alias@npm:no-deps@^1.0.0", "npm:no-deps@^1.1.0", { name: "no-deps", version: "1.1.0" }],
+    ])("bun update %s adds %s", async (request, written, installed) => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+
+      await runBunUpdate(env, packageDir, [request]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+          "new-alias": written,
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "new-alias", "package.json")).json()).toEqual(installed);
+
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+    });
     test("update specific aliased package with --latest alongside a regular package", async () => {
       await write(
         packageJson,

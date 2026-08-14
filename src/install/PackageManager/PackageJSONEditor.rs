@@ -56,16 +56,25 @@ fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 }
 
-/// What `--latest` resolves instead of `version_literal`: `latest`, or `npm:<name>@latest`.
-fn latest_version_literal<'a>(arena: &'a bun_alloc::Arena, version_literal: &[u8]) -> &'a [u8] {
-    match split_npm_alias(version_literal) {
-        Some((alias, _)) => {
+/// `version_literal` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
+fn with_alias_of<'a>(
+    arena: &'a bun_alloc::Arena,
+    from: &[u8],
+    version_literal: &'a [u8],
+) -> &'a [u8] {
+    match split_npm_alias(from) {
+        Some((alias, _)) if split_npm_alias(version_literal).is_none() => {
             let mut v = Vec::new();
-            write!(&mut v, "{}@latest", bstr::BStr::new(alias))
-                .expect("infallible: in-memory write");
+            write!(
+                &mut v,
+                "{}@{}",
+                bstr::BStr::new(alias),
+                bstr::BStr::new(version_literal)
+            )
+            .expect("infallible: in-memory write");
             arena_str(arena, &v)
         }
-        None => b"latest",
+        _ => version_literal,
     }
 }
 
@@ -387,7 +396,7 @@ pub(crate) fn edit_update_no_args_in(
                         };
 
                         if update_to_latest {
-                            let temp_version = latest_version_literal(arena, version_literal);
+                            let temp_version = with_alias_of(arena, version_literal, b"latest");
                             dep.value = Some(Expr::allocate(
                                 arena,
                                 E::EString::init(temp_version),
@@ -596,7 +605,7 @@ pub(crate) fn edit_catalogs_before_update(
             });
 
             if update_to_latest {
-                let temp_version = latest_version_literal(arena, version_literal);
+                let temp_version = with_alias_of(arena, version_literal, b"latest");
                 dep.value = Some(Expr::allocate(
                     arena,
                     E::EString::init(temp_version),
@@ -1284,28 +1293,27 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // `bun update <name>` re-resolves the existing entry; anything else, the request.
-                let version_literal: bun_ast::StoreStr = if manager.subcommand != Subcommand::Update
-                    || !options.before_install
-                    || e_string.is_blank()
-                    || request.version.tag == dependency::Tag::Npm
-                {
-                    match request.version.tag {
-                        dependency::Tag::Uninitialized => b"latest".into(),
-                        _ => arena_dup(arena, request.version.literal.slice(request.version_buf()))
-                            .into(),
-                    }
-                } else {
-                    e_string.data
+                // The entry `bun update` is updating keeps its alias target whatever gets resolved.
+                let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
+                    && options.before_install
+                    && !e_string.is_blank())
+                .then(|| e_string.data.slice());
+                let mut version_literal: &[u8] = match existing {
+                    Some(existing) if request.version.tag != dependency::Tag::Npm => existing,
+                    _ => match request.version.tag {
+                        dependency::Tag::Uninitialized => b"latest",
+                        _ => request.version.literal.slice(request.version_buf()),
+                    },
                 };
-
-                e_string.data = if manager.subcommand == Subcommand::Update
+                if let Some(existing) = existing {
+                    version_literal = with_alias_of(arena, existing, version_literal);
+                }
+                if manager.subcommand == Subcommand::Update
                     && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
                 {
-                    latest_version_literal(arena, version_literal.slice()).into()
-                } else {
-                    version_literal
-                };
+                    version_literal = with_alias_of(arena, version_literal, b"latest");
+                }
+                e_string.data = arena_dup(arena, version_literal).into();
 
                 continue;
             }
@@ -1350,26 +1358,18 @@ pub(crate) fn edit(
                                 v
                             };
 
+                            let new_version = arena_str(arena, &new_version);
                             if request.version.tag == dependency::Tag::Npm
                                 && request.version.npm().is_alias
                             {
-                                let dep_literal =
-                                    request.version.literal.slice(request.version_buf());
-                                if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
-                                    let at_index = at_index as usize;
-                                    let mut v = Vec::new();
-                                    write!(
-                                        &mut v,
-                                        "{}@{}",
-                                        bstr::BStr::new(&dep_literal[0..at_index]),
-                                        bstr::BStr::new(&new_version)
-                                    )
-                                    .unwrap();
-                                    break 'npm arena_str(arena, &v);
-                                }
+                                break 'npm with_alias_of(
+                                    arena,
+                                    request.version.literal.slice(request.version_buf()),
+                                    new_version,
+                                );
                             }
 
-                            break 'npm arena_str(arena, &new_version);
+                            break 'npm new_version;
                         }
 
                         arena_dup(arena, request.version.literal.slice(request.version_buf()))

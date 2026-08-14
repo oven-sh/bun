@@ -310,6 +310,55 @@ To disconnect the IPC channel from the parent process, call:
 childProc.disconnect();
 ```
 
+### Passing sockets over IPC
+
+`send()` takes an optional second argument: a listening `net.Server`, a connected `net.Socket` or a bound `dgram.Socket`. The operating system socket is duplicated into the other process, which receives its own `net.Server`, `net.Socket` or `dgram.Socket` for it as the third argument of the `ipc` handler (in the parent) or the second argument of the `"message"` listener (in the child). This is the same handle passing that `child.send()` and `process.send()` do in Node.js, and it also works when the other process is Node.js (with `serialization: "json"`, see below).
+
+```ts parent.ts icon="/icons/typescript.svg"
+import { connect, createServer, type AddressInfo } from "node:net";
+
+const server = createServer();
+
+server.listen(0, "127.0.0.1", () => {
+  const { port } = server.address() as AddressInfo;
+
+  const child = Bun.spawn(["bun", "child.ts"], {
+    ipc(message, subprocess) {
+      // The child replies once it has set up its copy of the server.
+      if (message !== "ready") return;
+      connect(port, "127.0.0.1").on("data", data => {
+        console.log(data.toString()); // "hello from the child"
+        subprocess.kill();
+      });
+    },
+  });
+
+  child.send("take over this server", server);
+  // The child now has its own copy of the listening socket. Closing the parent's
+  // copy leaves every incoming connection to the child.
+  server.close();
+});
+```
+
+```ts child.ts icon="/icons/typescript.svg"
+import { Server } from "node:net";
+
+process.on("message", (message, handle) => {
+  // `handle` is this process's own copy of the socket the parent passed to `send()`.
+  if (handle instanceof Server) {
+    handle.on("connection", socket => socket.end("hello from the child"));
+    process.send("ready");
+  }
+});
+```
+
+The full signature is `send(message, handle?, options?, callback?)`, like `child.send()` in Node.js:
+
+- A `net.Socket` is closed in the sending process once it has been handed over; pass `{ keepOpen: true }` as `options` to keep it open on both sides. `net.Server` and `dgram.Socket` handles always stay open in the sender.
+- `callback` is called with `null` once the message (and handle) has been sent, or with the error that prevented it. Without a callback, sending on a closed channel throws `ERR_IPC_CHANNEL_CLOSED`.
+- `send()` returns `true`, or `false` when messages are queuing up behind a handle the other process has not acknowledged yet (or, with a callback, when the channel is closed).
+- A handle with no open socket behind it (a server that is not listening, a socket that is not connected) is dropped and the message arrives without one. Passing anything else, including a `tls.TLSSocket`, throws `ERR_INVALID_HANDLE_TYPE`.
+
 ### IPC between Bun & Node.js
 
 To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.

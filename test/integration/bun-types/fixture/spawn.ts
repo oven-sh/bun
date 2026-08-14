@@ -226,3 +226,57 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
   Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }
+
+// IPC: Subprocess.send() takes the same (message, handle, options, callback) shapes as process.send(),
+// and the ipc callback receives the handle the child sent.
+import * as dgram from "node:dgram";
+import * as net from "node:net";
+
+{
+  const proc = Bun.spawn(["bun", "child.ts"], {
+    ipc(message, subprocess, handle) {
+      tsd.expectType(subprocess).is<Bun.Subprocess<"ignore", "pipe", "inherit">>();
+      tsd.expectType(handle).is<Bun.Spawn.SendHandle | undefined>();
+      if (handle instanceof net.Server) tsd.expectType(handle).is<net.Server>();
+      else if (handle instanceof net.Socket) tsd.expectType(handle).is<net.Socket>();
+      else if (handle instanceof dgram.Socket) tsd.expectType(handle).is<dgram.Socket>();
+      else tsd.expectType(handle).is<undefined>();
+    },
+  });
+
+  const server = net.createServer();
+  const socket = net.connect(0);
+  const udp = dgram.createSocket("udp4");
+  const onSent = (error: Error | null) => {};
+
+  tsd.expectType(proc.send("message")).is<boolean>();
+  tsd.expectType(proc.send({ some: "object" }, onSent)).is<boolean>();
+
+  tsd.expectType(proc.send("server", server)).is<boolean>();
+  tsd.expectType(proc.send("socket", socket)).is<boolean>();
+  tsd.expectType(proc.send("udp", udp)).is<boolean>();
+  tsd.expectType(proc.send("socket", socket, onSent)).is<boolean>();
+  tsd.expectType(proc.send("socket", socket, { keepOpen: true })).is<boolean>();
+  tsd.expectType(proc.send("socket", socket, { keepOpen: true }, onSent)).is<boolean>();
+  tsd.expectType(proc.send("no handle", undefined, {}, onSent)).is<boolean>();
+
+  const handle: Bun.Spawn.SendHandle = Math.random() > 0.5 ? server : socket;
+  proc.send("either", handle);
+  proc.send("either", handle, { keepOpen: false } satisfies Bun.Spawn.SendOptions);
+  proc.send("either", handle, undefined, onSent);
+
+  // Anything child_process.ChildProcess.send() accepts as a handle can be passed here too.
+  const nodeHandle = null as unknown as import("node:child_process").SendHandle;
+  tsd.expectAssignable<Bun.Spawn.SendHandle | undefined>(nodeHandle);
+
+  const bunListener = Bun.listen({ hostname: "localhost", port: 0, socket: { data() {} } });
+
+  // @ts-expect-error only net.Server, net.Socket and dgram.Socket can be sent
+  proc.send("fd", { fd: 3 });
+  // @ts-expect-error Bun.listen() listeners are not node:net servers and cannot be sent
+  proc.send("bun listener", bunListener);
+  // @ts-expect-error keepOpen is the only option
+  proc.send("socket", socket, { keepAlive: true });
+  // @ts-expect-error the callback receives an error or null
+  proc.send("socket", socket, undefined, (sent: boolean) => {});
+}

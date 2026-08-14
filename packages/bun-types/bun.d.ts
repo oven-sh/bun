@@ -7155,7 +7155,15 @@ declare module "bun" {
          * The {@link Subprocess} that received the message
          */
         subprocess: Subprocess<In, Out, Err>,
-        handle?: unknown,
+        /**
+         * Set when the child passed a socket as the second argument of
+         * `process.send(message, handle)`: a listening `net.Server`, a
+         * connected `net.Socket` or a bound `dgram.Socket` wrapping this
+         * process's own copy of it. This process owns that copy and should
+         * close it when done with it. Use `instanceof` to tell the three
+         * apart. `undefined` for messages sent without a handle.
+         */
+        handle?: SendHandle,
       ): void;
 
       /**
@@ -7343,6 +7351,45 @@ declare module "bun" {
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
         ? number
         : undefined;
+
+    /**
+     * A socket that can be sent over the IPC channel along with a message: the
+     * second argument of {@link Subprocess.send} in the parent and of
+     * `process.send()` in the child. Also works when the other process is
+     * Node.js (with `serialization: "json"`).
+     *
+     * The operating system socket is duplicated into the other process, which
+     * receives a new object of the same kind wrapping it: a listening
+     * `net.Server`, a connected `net.Socket` or a bound `dgram.Socket`. The
+     * parent receives it as the third argument of the {@link BaseOptions.ipc}
+     * callback, the child as the second argument of its `"message"` listener.
+     *
+     * A handle with no open socket behind it (a server that is not listening,
+     * a socket that is not connected or already destroyed, an unbound
+     * `dgram.Socket`) is dropped and the message arrives without a handle.
+     * Any other value, including a `tls.TLSSocket`, makes `send()` throw
+     * `ERR_INVALID_HANDLE_TYPE`.
+     */
+    type SendHandle = import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket;
+
+    /**
+     * Options for {@link Subprocess.send} when sending a {@link SendHandle}.
+     */
+    interface SendOptions {
+      /**
+       * Only meaningful for a `net.Socket` handle. By default the sender's
+       * copy of the connection is closed once the socket has been handed
+       * over, leaving the receiving process as its only owner. With `true`,
+       * the sender's socket stays open too and both processes can read from
+       * and write to the same connection.
+       *
+       * `net.Server` and `dgram.Socket` handles always stay open in the
+       * sender.
+       *
+       * @default false
+       */
+      keepOpen?: boolean | undefined;
+    }
   }
 
   interface ResourceUsage {
@@ -7541,11 +7588,70 @@ declare module "bun" {
 
     /**
      * Send a message to the subprocess. This is only supported if the subprocess
-     * was created with the `ipc` option, and is another instance of `bun`.
+     * was created with the `ipc` option. The subprocess receives it through
+     * `process.on("message")`.
      *
      * Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+     *
+     * Throws `ERR_IPC_CHANNEL_CLOSED` if the channel is closed or the process has
+     * exited, unless a `callback` is given, in which case the error is passed to
+     * the callback and `false` is returned.
+     *
+     * @param callback Called on a later tick with `null` once the message has been
+     * sent, or with the error that prevented sending it. Use it for flow control
+     * when sending many messages.
+     * @returns `true` normally. `false` if the message had to be queued because a
+     * {@link SpawnOptions.SendHandle} sent earlier is still waiting to be
+     * acknowledged by the subprocess and other messages are already queued behind
+     * it, or if the channel is closed and a `callback` was given.
      */
-    send(message: any): void;
+    send(message: any, callback?: (error: Error | null) => void): boolean;
+
+    /**
+     * Send a message together with a socket, like `child.send(message, handle)`
+     * in Node.js. The subprocess receives the message and its own copy of the
+     * socket as the two arguments of its `"message"` listener. See
+     * {@link SpawnOptions.SendHandle} for what can be sent and what arrives.
+     *
+     * A `net.Socket` is closed in this process once it has been handed over
+     * unless `{ keepOpen: true }` is passed as the third argument.
+     *
+     * @example
+     * ```ts
+     * import { createServer } from "node:net";
+     *
+     * const child = Bun.spawn(["bun", "child.ts"], { ipc(message) {} });
+     * const server = createServer();
+     *
+     * server.listen(0, () => {
+     *   // child.ts receives (message, server) in process.on("message") and can
+     *   // accept connections on the port this process bound.
+     *   child.send("take this server", server);
+     *   // Closing this process's copy leaves every connection to the child.
+     *   server.close();
+     * });
+     * ```
+     */
+    send(message: any, handle?: SpawnOptions.SendHandle, callback?: (error: Error | null) => void): boolean;
+
+    /**
+     * Send a message together with a socket, with {@link SpawnOptions.SendOptions}
+     * controlling what happens to this process's copy of the socket.
+     *
+     * @example
+     * ```ts
+     * // Both processes can now use the connection.
+     * child.send("shared", socket, { keepOpen: true }, error => {
+     *   if (error) console.error(error);
+     * });
+     * ```
+     */
+    send(
+      message: any,
+      handle?: SpawnOptions.SendHandle,
+      options?: SpawnOptions.SendOptions,
+      callback?: (error: Error | null) => void,
+    ): boolean;
 
     /**
      * Disconnect the IPC channel to the subprocess. This is only supported if the subprocess

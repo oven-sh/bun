@@ -511,6 +511,94 @@ describe("update", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // Leading whitespace in a version literal is ignored by the installer, so `bun update` has to
+  // treat these entries exactly like their trimmed counterparts above.
+  for (const [flags, expected] of [
+    [[], { "no-deps": "^1.1.0", "aliased-dep": "npm:no-deps@~1.0.1" }],
+    [["--latest"], { "no-deps": "^2.0.0", "aliased-dep": "npm:no-deps@~2.0.0" }],
+  ] as const) {
+    test(`update ${flags.join(" ") || "(no args)"} updates catalog entries with leading whitespace`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-update-whitespace",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: {
+                "no-deps": " ^1.0.0",
+                "aliased-dep": "\tnpm:no-deps@~1.0.0",
+              },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              "no-deps": "catalog:",
+              "aliased-dep": "catalog:",
+            },
+          }),
+        ),
+      ]);
+      await runBunInstall(bunEnv, packageDir);
+
+      const { err, exitCode } = await runUpdate(packageDir, ...flags);
+      expect(err).not.toContain("error:");
+
+      expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual(expected);
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": "catalog:",
+        "aliased-dep": "catalog:",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const flags of [[], ["--latest"]] as const) {
+    test(`update <pkg>${flags.length ? ` ${flags.join(" ")}` : ""} keeps a catalog reference with leading whitespace`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-reference-whitespace",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: {
+                "no-deps": "^1.0.0",
+              },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              "no-deps": " catalog:",
+            },
+          }),
+        ),
+      ]);
+      await runBunInstall(bunEnv, packageDir);
+
+      const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "no-deps", ...flags);
+      expect(err).not.toContain("error:");
+
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": " catalog:",
+      });
+      expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({
+        "no-deps": "^1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 describe("errors", () => {

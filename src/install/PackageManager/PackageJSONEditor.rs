@@ -298,7 +298,8 @@ pub(crate) fn edit_update_no_args_in(
                         let version_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        let mut tag = dependency::Tag::infer(version_literal);
+                        let mut tag =
+                            dependency::Tag::infer(dependency::trim_literal(version_literal));
 
                         // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
@@ -403,7 +404,9 @@ pub(crate) fn edit_update_no_args_in(
                         let value_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        if dependency::Tag::infer(value_literal) == dependency::Tag::Catalog {
+                        if dependency::Tag::infer(dependency::trim_literal(value_literal))
+                            == dependency::Tag::Catalog
+                        {
                             continue;
                         }
 
@@ -499,8 +502,9 @@ pub(crate) fn edit_update_no_args_in(
                                     };
 
                                     if is_alias {
-                                        let dep_literal =
-                                            workspace_dep.version.literal.slice(string_buf);
+                                        let dep_literal = dependency::trim_literal(
+                                            workspace_dep.version.literal.slice(string_buf),
+                                        );
 
                                         // negative because the real package might have a scope
                                         // e.g. "dep": "npm:@foo/bar@1.2.3"
@@ -621,7 +625,7 @@ pub(crate) fn edit_catalogs_before_update(
             let version_literal = value
                 .as_utf8_string_literal()
                 .unwrap_or_else(|| bun_core::out_of_memory());
-            let mut tag = dependency::Tag::infer(version_literal);
+            let mut tag = dependency::Tag::infer(dependency::trim_literal(version_literal));
 
             let mut alias_at_index: Option<usize> = None;
             if strings::trim(version_literal, &strings::WHITESPACE_CHARS).starts_with(b"npm:") {
@@ -781,7 +785,7 @@ pub(crate) fn edit_catalogs_after_update(
         };
 
         new_literals[index] = Some(if info.is_alias {
-            let dep_literal = &info.original_version_literal;
+            let dep_literal = dependency::trim_literal(&info.original_version_literal);
             if let Some(at_index) = strings::last_index_of_char(dep_literal, b'@') {
                 let mut v = Vec::new();
                 write!(
@@ -917,8 +921,9 @@ pub(crate) fn edit(
                                         == Subcommand::Update
                                         && value.expr.as_utf8_string_literal().is_some_and(
                                             |version_literal| {
-                                                dependency::Tag::infer(version_literal)
-                                                    == dependency::Tag::Catalog
+                                                dependency::Tag::infer(dependency::trim_literal(
+                                                    version_literal,
+                                                )) == dependency::Tag::Catalog
                                             },
                                         );
 
@@ -937,8 +942,9 @@ pub(crate) fn edit(
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                let mut tag =
-                                                    dependency::Tag::infer(version_literal);
+                                                let mut tag = dependency::Tag::infer(
+                                                    dependency::trim_literal(version_literal),
+                                                );
 
                                                 if tag != dependency::Tag::Npm
                                                     && tag != dependency::Tag::DistTag
@@ -1423,7 +1429,8 @@ pub(crate) fn edit(
             let e_string = unsafe { &mut *e_string };
             // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
             if manager.subcommand == Subcommand::Update
-                && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
+                && dependency::Tag::infer(dependency::trim_literal(e_string.data.slice()))
+                    == dependency::Tag::Catalog
             {
                 continue;
             }
@@ -1518,7 +1525,9 @@ pub(crate) fn edit(
                                 };
 
                                 if entry.value.is_alias {
-                                    let dep_literal = &entry.value.original_version_literal;
+                                    let dep_literal = dependency::trim_literal(
+                                        &entry.value.original_version_literal,
+                                    );
 
                                     if let Some(at_index) =
                                         strings::last_index_of_char(dep_literal, b'@')

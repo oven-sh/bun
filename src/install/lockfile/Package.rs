@@ -1631,7 +1631,9 @@ impl Package<u64> {
     ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
-            match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
+            match tag.unwrap_or_else(|| {
+                dependency::version::Tag::infer(dependency::trim_literal(version))
+            }) {
                 dependency::version::Tag::Workspace
                 | dependency::version::Tag::Folder
                 | dependency::version::Tag::Symlink
@@ -1683,9 +1685,10 @@ impl Package<u64> {
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
             dependency::version::Tag::Workspace => {
-                if strings::has_prefix(sliced.slice, b"workspace:") {
+                let literal = dependency::trim_literal(sliced.slice);
+                if strings::has_prefix(literal, b"workspace:") {
                     'brk: {
-                        let input = &sliced.slice[b"workspace:".len()..];
+                        let input = &literal[b"workspace:".len()..];
                         let trimmed = strings::trim(input, &strings::WHITESPACE_CHARS);
                         if trimmed.len() != 1
                             || (trimmed[0] != b'*' && trimmed[0] != b'^' && trimmed[0] != b'~')
@@ -2298,7 +2301,7 @@ impl Package<u64> {
                             string_builder.count(value);
 
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                            match dependency::version::Tag::infer(value) {
+                            match dependency::version::Tag::infer(dependency::trim_literal(value)) {
                                 dependency::version::Tag::Folder
                                 | dependency::version::Tag::Workspace => {
                                     string_builder.cap += MAX_PATH_BYTES;

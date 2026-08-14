@@ -5405,6 +5405,89 @@ describe("update", () => {
       });
     });
   });
+  describe("leading whitespace in the version literal", () => {
+    // The installer ignores leading whitespace in a package.json version, so each of these must
+    // end up exactly where the same command takes the value without the whitespace.
+    const cases: [dependency: string, version: string, args: string[], updated: string, installed: string][] = [
+      ["aliased-dep", " npm:no-deps@^1.0.0", ["aliased-dep"], "npm:no-deps@^1.1.0", "1.1.0"],
+      ["aliased-dep", " npm:no-deps@^1.0.0", [], "npm:no-deps@^1.1.0", "1.1.0"],
+      ["aliased-dep", " npm:no-deps@^1.0.0", ["--latest"], "npm:no-deps@^2.0.0", "2.0.0"],
+      ["aliased-dep", "\tnpm:no-deps@~1.0.0", [], "npm:no-deps@~1.0.1", "1.0.1"],
+      ["aliased-dep", "\tnpm:no-deps@~1.0.0", ["--latest"], "npm:no-deps@~2.0.0", "2.0.0"],
+      ["no-deps", " ^1.0.0", [], "^1.1.0", "1.1.0"],
+      ["no-deps", " ^1.0.0", ["no-deps"], "^1.1.0", "1.1.0"],
+      ["no-deps", " ^1.0.0", ["--latest"], "^2.0.0", "2.0.0"],
+      ["no-deps", "\n~1.0.0", [], "~1.0.1", "1.0.1"],
+    ];
+
+    for (const [dependency, version, args, updated, installed] of cases) {
+      test(`${JSON.stringify(version)} with \`bun update${args.map(arg => ` ${arg}`).join("")}\``, async () => {
+        await write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              [dependency]: version,
+            },
+          }),
+        );
+
+        await runBunUpdate(env, packageDir, args);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+        expect(await file(packageJson).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            [dependency]: updated,
+          },
+        });
+        expect(await file(join(packageDir, "node_modules", dependency, "package.json")).json()).toMatchObject({
+          name: "no-deps",
+          version: installed,
+        });
+      });
+    }
+
+    test("a catalog reference in an earlier dependency group is left alone", async () => {
+      // devDependencies are visited before dependencies. The entry recorded for `dependencies`
+      // must not be spent rewriting the `catalog:` reference.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: {
+            catalog: {
+              "no-deps": "^1.0.0",
+            },
+          },
+          devDependencies: {
+            "no-deps": " catalog:",
+          },
+          dependencies: {
+            "no-deps": " ^1.0.0",
+          },
+        }),
+      );
+
+      await runBunUpdate(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        workspaces: {
+          catalog: {
+            "no-deps": "^1.1.0",
+          },
+        },
+        devDependencies: {
+          "no-deps": " catalog:",
+        },
+        dependencies: {
+          "no-deps": "^1.1.0",
+        },
+      });
+    });
+  });
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
     await write(
       packageJson,

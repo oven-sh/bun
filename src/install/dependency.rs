@@ -233,7 +233,7 @@ impl DependencyExt for Dependency {
                 Some(Semver::string::Builder::string_hash(
                     new_name.slice(out_slice),
                 )),
-                new_literal.slice(out_slice),
+                trim_literal(new_literal.slice(out_slice)),
                 self.version.tag,
                 &sliced,
                 None,
@@ -1164,6 +1164,14 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
+/// The specifier inside a version literal: a package.json value may carry leading whitespace
+/// (`" npm:foo@^1"`), which is not part of the specifier. Every path that classifies
+/// (`Tag::infer`) or parses a literal must look at these bytes, never at the raw literal.
+#[inline]
+pub fn trim_literal(literal: &[u8]) -> &[u8] {
+    strings::trim_left(literal, b" \t\n\r")
+}
+
 #[inline]
 pub fn parse<'a, 'b>(
     alias: String,
@@ -1173,7 +1181,7 @@ pub fn parse<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1194,7 +1202,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),

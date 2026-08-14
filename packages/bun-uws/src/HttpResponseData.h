@@ -59,8 +59,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+         * connection, and parked request bytes are received work it still owes a
+         * dispatch, so it is not idle in either case: a closeIdle() sweep (graceful
+         * stop) leaves it alone or marks it close-when-idle, and that mark takes
+         * effect from the markDone() of the last replayed request instead of
+         * closing over the parked ones here. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0
+            && this->parkedRequestBytes.isEmpty();
 
         /* Requests are parked behind this response (Bun.serve pipelining). They
          * are replayed from HttpContext::onWritable rather than here: every caller

@@ -569,6 +569,30 @@ describe("a request pipelined behind a Connection: close request", () => {
   });
 });
 
+// A graceful stop() closes idle connections and marks busy ones to close once
+// their work is done. A request that was received and held behind the response
+// in flight is part of that work: it is answered, and the connection closes after
+// it rather than over it.
+it("a held request is still answered when the server is stopped gracefully while the response ahead of it is pending, then the connection closes", async () => {
+  const handler = holdingHandler();
+  using server = Bun.serve({ ...tcp, fetch: handler.fetch });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.write(request("/hold") + request("/after"));
+  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+
+  const stopped = server.stop();
+  handler.release("/hold");
+  await client.until(c => c.closed);
+  await stopped;
+  expect({ hits: handler.hits, responses: client.responses.map(summarize) }).toEqual({
+    hits: ["/hold", "/probe", "/after"],
+    responses: [ok("body of /hold"), ok("body of /after")],
+  });
+});
+
 // upgrade() is instantiated once per socket flavor, like the parking code; the
 // unix transport shares the plain instantiation.
 describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over $name", transport => {

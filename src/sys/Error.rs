@@ -324,6 +324,13 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
+    pub fn to_named_core_err(&self) -> Option<bun_core::Error> {
+        if self.syscall == Tag::getcwd && self.get_errno() == E::ENOENT {
+            return Some(bun_core::Error::CurrentWorkingDirectoryUnlinked);
+        }
+        None
+    }
+
     /// 1. Convert libuv errno values into libc ones.
     /// 2. Get the tag name as a string for printing.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {

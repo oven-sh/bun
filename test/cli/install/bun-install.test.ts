@@ -10324,9 +10324,10 @@ describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer",
       stderr: "pipe",
       env,
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(err).toContain(`failed to change directory to "${cwd}": ENAMETOOLONG`);
+    expect(out).toBe("");
     expect(exitCode).toBe(1);
   });
 });

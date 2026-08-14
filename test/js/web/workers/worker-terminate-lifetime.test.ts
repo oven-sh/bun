@@ -689,13 +689,15 @@ test(
 // on: that inner drain only watched for the loop to go idle, and with the stop
 // requested the in-flight work's completion is no longer delivered, so the
 // worker slept in its loop forever and terminate() never settled.
-test("terminate() while the worker drains work scheduled by 'beforeExit' stops it", async () => {
-  using server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test(
+  "terminate() while the worker drains work scheduled by 'beforeExit' stops it",
+  async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const { Worker } = require("node:worker_threads");
       const w = new Worker(
         "const { parentPort } = require('node:worker_threads');" +
@@ -710,16 +712,18 @@ test("terminate() while the worker drains work scheduled by 'beforeExit' stops i
       });
       w.on("exit", (c) => console.log("exit", c));
     `,
-    ],
-    env: { ...bunEnv, HANG_URL: server.url.href },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
-  expect(exitCode).toBe(0);
-}, timeout);
+      ],
+      env: { ...bunEnv, HANG_URL: server.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as

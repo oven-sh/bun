@@ -2508,25 +2508,80 @@ console.log(<div {...obj} key="after" />);`),
   // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
   // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
   // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
-  // entity with the same "JSX entity escape is too big" diagnostic it emits
-  // for i32-overflow, instead of forwarding an invalid code point.
+  // entity with a "JSX entity escape is too big" diagnostic instead of
+  // forwarding an invalid code point.
   describe("rejects out-of-range numeric JSX entities without panicking", () => {
     const bun = new Bun.Transpiler({
       loader: "jsx",
       define: { "process.env.NODE_ENV": JSON.stringify("development") },
     });
 
-    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and the
-    // negative-i32 path — parse_int::<i32> accepts a leading '-' so `&#-1;`
-    // lands as a negative CodePoint that must be rejected before it reaches
-    // the u32 cast in push_codepoint_utf16.
-    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
-      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
-    });
+    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and digit
+    // strings wider than u32 (the lexer saturates instead of wrapping). The
+    // issue's `&#-1;` is not a numeric reference at all and is covered as
+    // literal text in the next describe block.
+    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#99999999999999999999;", "&#xFFFFFFFFFF;"])(
+      "%s is rejected",
+      entity => {
+        expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
+      },
+    );
 
     // Boundary: 0x10FFFF is the maximum valid code point and must still work.
     it("&#x10FFFF; (max valid) still transpiles", () => {
       expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    });
+  });
+
+  // Babel and TypeScript only decode `&#[0-9]+;` and `&#x[0-9a-fA-F]+;` (plus
+  // the named entities); any other `&#...;` is ordinary text. Bun used to fail
+  // the whole module with "Invalid JSX entity escape" instead.
+  describe("malformed numeric JSX entities are literal text", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+    const child = text =>
+      `export var x = jsxDEV_7x81h0kn("div", {\n  children: ${text}\n}, undefined, false, undefined, this);\n`;
+    const attr = text =>
+      `export var x = jsxDEV_7x81h0kn("div", {\n  title: ${text}\n}, undefined, false, undefined, this);\n`;
+
+    it.each([
+      // uppercase X is HTML, not JSX
+      ["&#X41;", '"&#X41;"'],
+      ["&#abc;", '"&#abc;"'],
+      ["&#;", '"&#;"'],
+      ["&#x;", '"&#x;"'],
+      ["&#+65;", '"&#+65;"'],
+      ["&#-65;", '"&#-65;"'],
+      ["&#-1;", '"&#-1;"'],
+      ["&#6_5;", '"&#6_5;"'],
+      ["&#x6_5;", '"&#x6_5;"'],
+      ["&#x4G;", '"&#x4G;"'],
+      // a failed reference must not swallow the text up to the next ';'
+      ["&#65 &#xZZ;", '"&#65 &#xZZ;"'],
+      ["&#65;&#X41;&#x41;", '"A&#X41;A"'],
+    ])("<div>%s</div>", (entity, expected) => {
+      expect(bun.transformSync(`export var x = <div>${entity}</div>`)).toBe(child(expected));
+    });
+
+    it.each([
+      ["&#65;", '"A"'],
+      ["&#x41;", '"A"'],
+      ["&#x4a;", '"J"'],
+      ["&#x4A;", '"J"'],
+      ["&#0;", '"\\x00"'],
+    ])("<div>%s</div> still decodes", (entity, expected) => {
+      expect(bun.transformSync(`export var x = <div>${entity}</div>`)).toBe(child(expected));
+    });
+
+    it.each([
+      ["&#X41;", '"&#X41;"'],
+      ["&#abc;", '"&#abc;"'],
+      ["&#+65;", '"&#+65;"'],
+      ["&#65;", '"A"'],
+    ])('<div title="%s" />', (entity, expected) => {
+      expect(bun.transformSync(`export var x = <div title="${entity}" />`)).toBe(attr(expected));
     });
   });
 

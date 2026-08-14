@@ -1,6 +1,7 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
+use bun_ast::ImportRecordFlags;
 use bun_collections::{ArrayHashMap, VecExt};
 
 use crate::LinkerContext;
@@ -117,8 +118,8 @@ struct CrossChunkDependencies<'a, 'bump> {
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // Called once per chunk from the sequential loop above. Writes:
     // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
-    // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
-    // disjoint via `chunk.files_with_parts_in_chunk`),
+    // `self.import_records[source_index][rec].{path,source_index,loader,flags}`
+    // (per-chunk disjoint via `chunk.files_with_parts_in_chunk`),
     // `symbols.assign_chunk_index(ref)` (Relaxed atomic store to
     // `Symbol.chunk_index: AtomicU32`; per-symbol-ref disjoint by chunk
     // membership — debug-asserted in `assign_chunk_index`).
@@ -176,6 +177,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         import_record.source_index = Index::INVALID;
+                        import_record.loader = None;
+                        import_record
+                            .flags
+                            .insert(ImportRecordFlags::POINTS_TO_CHUNK);
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all

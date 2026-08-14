@@ -328,6 +328,101 @@ describe("bundler", () => {
     },
   });
 
+  // A dynamic import the linker points at a chunk must not keep the import
+  // attributes the user wrote for the original file: the chunk is JavaScript,
+  // and the runtime would otherwise try to load it with the attribute's loader.
+  itBundled("splitting/DynamicImportWithAttributeToChunk", {
+    files: {
+      "/entry.ts": `
+        const { default: data } = await import("./data.json", { with: { type: "json" } });
+        console.log(data.answer);
+      `,
+      "/data.json": `{ "answer": 42 }`,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/data-[a-z0-9]+\.js"\)/);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+
+  itBundled("splitting/DynamicImportAttributesToChunkAllLoaders", {
+    files: {
+      "/entry.ts": `
+        const json = await import("./data.json", { assert: { type: "json" } });
+        const text = await import("./note.txt", { with: { type: "text" } });
+        const toml = await import("./config.toml", { with: { type: "toml" } });
+        console.log(json.default.answer, JSON.stringify(text.default), toml.default.name);
+      `,
+      "/data.json": `{ "answer": 42 }`,
+      "/note.txt": `hello`,
+      "/config.toml": `name = "from toml"`,
+    },
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toMatch(/import\("\.\/data-[a-z0-9]+\.js"\)/);
+      expect(entry).toMatch(/import\("\.\/note-[a-z0-9]+\.js"\)/);
+      expect(entry).toMatch(/import\("\.\/config-[a-z0-9]+\.js"\)/);
+      expect(entry).not.toContain("type:");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: '42 "hello" from toml',
+    },
+  });
+
+  itBundled("splitting/DynamicImportAttributesToChunkMinified", {
+    files: {
+      "/entry.ts": `
+        const { default: data } = await import("./data.json", { with: { type: "json" } });
+        console.log(data.answer);
+      `,
+      "/data.json": `{ "answer": 42 }`,
+    },
+    splitting: true,
+    outdir: "/out",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/data-[a-z0-9]+\.js"\)/);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+
+  // The attributes still belong on an import() that stays external: it loads
+  // the file the user named, not a chunk.
+  itBundled("splitting/ExternalDynamicImportKeepsAttributes", {
+    files: {
+      "/entry.ts": `
+        const { default: data } = await import("./data.json", { with: { type: "json" } });
+        console.log(data.answer);
+      `,
+    },
+    external: ["*.json"],
+    splitting: true,
+    outdir: "/out",
+    runtimeFiles: {
+      "/out/data.json": `{ "answer": 42 }`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain('import("./data.json", { with: { type: "json" } })');
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
   // cap with far fewer files than release, hence the scaled N.

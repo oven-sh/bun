@@ -107,17 +107,13 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 const LIGHT_VAR: &[u8] = b"--buncss-light";
 const DARK_VAR: &[u8] = b"--buncss-dark";
 
-/// Compiles `color-scheme` to the `--buncss-light` / `--buncss-dark` variables
-/// when the targets lack `light-dark()`. Merged blocks are minified again, which
-/// feeds those variables back in, so each is kept to one declaration per block.
+/// Compiles `color-scheme` to the `--buncss-light` / `--buncss-dark` variables, one declaration of each per block.
 #[derive(Default)]
 pub struct ColorSchemeHandler {
     /// Index in `dest` of the declaration currently holding each variable.
     light: Option<usize>,
     dark: Option<usize>,
-    /// Declarations below this index are not updated in place: a `color-scheme`
-    /// declaration emits its variables again when the block is minified again,
-    /// so a value set after it has to stay after it.
+    /// Variables before the last `color-scheme` stay put: minifying the block again re-emits them there.
     in_place_from: usize,
 }
 

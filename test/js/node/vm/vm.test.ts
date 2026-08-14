@@ -1163,13 +1163,16 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
     expect(new Script("eval('2 + 2')").runInNewContext(context, options)).toBe(4);
   });
 
-  test("context options are still validated for an existing context", () => {
+  test("context options are validated under runInNewContext's option names, for new and existing contexts", () => {
     const context = createContext({});
+    const sandbox = {};
     const messages: string[] = [];
     for (const fn of [
       () => runInNewContext("1", context, { contextCodeGeneration: 1 }),
       () => runInNewContext("1", context, { contextCodeGeneration: { wasm: 1 } }),
-      () => runInNewContext("1", {}, { contextCodeGeneration: { strings: "no" } }),
+      () => runInNewContext("1", context, { contextName: 1 }),
+      () => runInNewContext("1", sandbox, { contextCodeGeneration: { strings: "no" } }),
+      () => runInNewContext("1", sandbox, { contextOrigin: null }),
       () => new Script("1").runInNewContext(context, { contextCodeGeneration: { strings: "no" } }),
     ]) {
       try {
@@ -1182,9 +1185,13 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
     expect(messages).toEqual([
       'ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration" property must be of type object. Received type number (1)',
       'ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.wasm" property must be of type boolean. Received type number (1)',
+      'ERR_INVALID_ARG_TYPE: The "options.contextName" property must be of type string. Received type number (1)',
       `ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.strings" property must be of type boolean. Received type string ('no')`,
+      'ERR_INVALID_ARG_TYPE: The "options.contextOrigin" property must be of type string. Received null',
       `ERR_INVALID_ARG_TYPE: The "options.contextCodeGeneration.strings" property must be of type boolean. Received type string ('no')`,
     ]);
+    // Like Node, invalid options are rejected before the sandbox is contextified.
+    expect(isContext(sandbox)).toBe(false);
   });
 
   test("every distinct or omitted sandbox still gets its own realm", () => {

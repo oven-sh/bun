@@ -117,19 +117,31 @@ function runInNewContext(code, context, options) {
 
 // Node's getContextOptions(): runInNewContext() takes the context options under
 // context-prefixed names, createContext() under the plain ones. The context
-// created from these is the one Script#runInNewContext() then runs in.
+// created from these is the one Script#runInNewContext() then runs in. The
+// options are validated here under the caller's names and copied key by key,
+// so createContext() never reports them as options.codeGeneration.*.
 function getContextOptions(options) {
   if (!$isObject(options)) {
     return undefined;
   }
-  const { contextCodeGeneration, microtaskMode } = options;
+  const { contextName, contextOrigin, contextCodeGeneration, microtaskMode } = options;
+  if (contextName !== undefined) validateString(contextName, "options.contextName");
+  if (contextOrigin !== undefined) validateString(contextOrigin, "options.contextOrigin");
+  let codeGeneration: { strings?: boolean; wasm?: boolean } | undefined;
   if (contextCodeGeneration !== undefined) {
     validateObject(contextCodeGeneration, "options.contextCodeGeneration");
     const { strings, wasm } = contextCodeGeneration;
-    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
-    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = {};
+    if (strings !== undefined) {
+      validateBoolean(strings, "options.contextCodeGeneration.strings");
+      codeGeneration.strings = strings;
+    }
+    if (wasm !== undefined) {
+      validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+      codeGeneration.wasm = wasm;
+    }
   }
-  return { codeGeneration: contextCodeGeneration, microtaskMode };
+  return { name: contextName, origin: contextOrigin, codeGeneration, microtaskMode };
 }
 
 function createScript(code, options) {

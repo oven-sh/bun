@@ -775,7 +775,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_secure, (JSGlobalObject * lexic
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
-    impl.setSecure(value);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setSecure(value));
     return true;
 }
 
@@ -815,7 +815,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lex
         return false;
     }
 
-    impl.setSameSite(sameSite);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setSameSite(sameSite));
     return true;
 }
 
@@ -901,7 +901,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_partitioned, (JSGlobalObject * 
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
-    impl.setPartitioned(value);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setPartitioned(value));
     return true;
 }
 

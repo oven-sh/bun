@@ -162,29 +162,39 @@ void CookieMap::removeInternal(const String& name)
     });
 }
 
-void CookieMap::set(Ref<Cookie> cookie)
+ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 {
+    // Cookie.parse() does not enforce these rules; re-check before emitting.
+    if (auto validation = Cookie::validateAttributes(cookie->name(), cookie->domain(), cookie->path(), cookie->secure(), cookie->sameSite(), cookie->partitioned()); validation.hasException()) {
+        return validation.releaseException();
+    }
+
     removeInternal(cookie->name());
     // Add the new cookie
     m_modifiedCookies.append(WTF::move(cookie));
+    return {};
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
-    removeInternal(options.name);
-
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
-    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
+    // Normalize a __Host- tombstone to the only shape a browser can have stored (RFC 6265bis 4.1.3.2).
+    bool hasHostPrefix = Cookie::hasHostPrefix(name);
+    bool secure = hasHostPrefix || Cookie::hasSecurePrefix(name);
+    if (hasHostPrefix) {
+        domain = String();
+        path = "/"_s;
+    }
 
-    // Add the new cookie
     auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }
-    auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(WTF::move(cookie));
+
+    removeInternal(name);
+    m_modifiedCookies.append(cookie_exception.releaseReturnValue());
     return {};
 }
 

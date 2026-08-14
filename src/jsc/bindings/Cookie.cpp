@@ -51,6 +51,52 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
+bool Cookie::hasHostPrefix(const String& name)
+{
+    return name.startsWithIgnoringASCIICase("__Host-"_s);
+}
+
+bool Cookie::hasSecurePrefix(const String& name)
+{
+    return name.startsWithIgnoringASCIICase("__Secure-"_s);
+}
+
+ExceptionOr<void> Cookie::validateSecureRequired(const String& name, CookieSameSite sameSite, bool partitioned)
+{
+    if (sameSite == CookieSameSite::None) {
+        return Exception { TypeError, sameSiteNoneSecureMessage };
+    }
+    if (partitioned) {
+        return Exception { TypeError, partitionedSecureMessage };
+    }
+    if (hasHostPrefix(name)) {
+        return Exception { TypeError, hostPrefixSecureMessage };
+    }
+    if (hasSecurePrefix(name)) {
+        return Exception { TypeError, securePrefixSecureMessage };
+    }
+    return {};
+}
+
+// RFC 6265bis 4.1.3 / 5.6.20 and CHIPS: attribute combinations every browser rejects. Not run by parse().
+ExceptionOr<void> Cookie::validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned)
+{
+    if (!secure) {
+        if (auto validation = validateSecureRequired(name, sameSite, partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
+    }
+    if (hasHostPrefix(name)) {
+        if (!domain.isEmpty()) {
+            return Exception { TypeError, hostPrefixDomainMessage };
+        }
+        if (path != "/"_s) {
+            return Exception { TypeError, hostPrefixPathMessage };
+        }
+    }
+    return {};
+}
+
 String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
 {
     if (cookies.empty())

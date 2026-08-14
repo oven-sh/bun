@@ -30,7 +30,7 @@ public:
 
     bool has(const String& name) const;
 
-    void set(Ref<Cookie>);
+    ExceptionOr<void> set(Ref<Cookie>);
 
     Ref<CookieMap> clone();
 

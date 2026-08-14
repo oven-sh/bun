@@ -453,6 +453,33 @@ describe("delete with prefixed cookie names", () => {
       "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]);
   });
+
+  test("deleting a __Host- cookie ignores domain and path options", () => {
+    // The browser could only have stored a __Host- cookie with no Domain and Path=/, so the
+    // expiring cookie is normalized to that shape instead of rejected.
+    const map = new Bun.CookieMap("__Host-id=1");
+    map.delete({ name: "__Host-id", domain: "example.com", path: "/admin" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+    ]);
+    expect(map.get("__Host-id")).toBeNull();
+  });
+
+  test("deleting a __Secure- cookie preserves domain and path options", () => {
+    const map = new Bun.CookieMap("__Secure-id=1");
+    map.delete({ name: "__Secure-id", domain: "example.com", path: "/admin" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Secure-id=; Domain=example.com; Path=/admin; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("a rejected delete leaves the existing entry in place", () => {
+    const map = new Bun.CookieMap("a=1");
+    expect(() => map.delete({ name: "a", path: ";" })).toThrow(TypeError);
+    expect(() => map.delete({ name: "a", path: ";" })).toThrow("Invalid cookie path");
+    expect(map.get("a")).toBe("1");
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
 });
 
 describe("invalid delete usage", () => {

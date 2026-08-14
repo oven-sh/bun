@@ -46,7 +46,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
-
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
     if (m_status != Status::Evaluating)

@@ -750,10 +750,7 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
-/// npm resolves the target with `path.resolve`, which drops trailing separators
-/// (`"bin": { "x": "cli.js/" }` links `cli.js`). `join_abs_string_z` keeps them,
-/// and `<package_dir>/cli.js/` would then fail the exists check in
-/// `link_bin_or_create_shim`.
+/// npm `path.resolve`s bin targets, dropping trailing separators; our join keeps them.
 fn normalized_bin_target(target: &[u8]) -> &[u8] {
     strings::without_trailing_slash(target)
 }

@@ -267,17 +267,10 @@ mod _impl {
             Ok(JSValue::TRUE)
         }
 
-        /// `zlib.ts` installs `onerror` only after `init()` returns, so an
-        /// error raised here can only reach the caller as an exception
-        /// (node's `ZstdStream::Init` throws `ERR_ZLIB_INITIALIZATION_FAILED`
-        /// with the context's message for both a failed `Init()` and a failed
-        /// `SetParameter()`). Otherwise the handle would be left with no
-        /// context and every later write would silently produce no output.
+        /// Thrown rather than emitted because `zlib.ts` installs `onerror` only
+        /// after `init()` returns; node's `ZstdStream::Init` throws the same way.
         fn throw_initialization_failed(&self, global: &JSGlobalObject, err: Error) -> jsc::JsError {
-            self.stream.with_mut(|s| s.close());
-            // The Context is torn down (`mode` is `NONE`); reject any
-            // further operation the way `close()` does.
-            self.closed.set(true);
+            CompressionStream::<Self>::close_internal(self);
             // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
             let msg = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
             global

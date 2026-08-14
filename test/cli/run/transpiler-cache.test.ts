@@ -292,6 +292,98 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
   });
+
+  // While a macro is being evaluated, every module it loads is transpiled in
+  // macro mode (is_macro_runtime, target bun_macro), whose output differs from
+  // a normal transpile of the same file. The mode is part of the features hash
+  // so a normal import never gets an entry written by a macro-mode load.
+  describe("macro mode", () => {
+    // Padding so lib.ts clears MINIMUM_CACHE_SIZE (4 KiB).
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+
+    // use-macro.ts evaluates outer() at transpile time, which loads lib.ts in
+    // macro mode; outer() only looks at the export, so nothing inside lib.ts
+    // runs during the evaluation. use-lib.ts imports the same lib.ts normally
+    // and prints what getAnswer() returns and the code it was transpiled to.
+    function writeFixtures(libSource: string) {
+      writeFileSync(join(temp_dir, "lib.ts"), libSource + filler);
+      writeFileSync(
+        join(temp_dir, "outer-macro.ts"),
+        `import { getAnswer } from "./lib.ts";
+         export function outer() { return typeof getAnswer; }`,
+      );
+      writeFileSync(
+        join(temp_dir, "use-macro.ts"),
+        `import { outer } from "./outer-macro.ts" with { type: "macro" };
+         console.log(outer());`,
+      );
+      writeFileSync(
+        join(temp_dir, "use-lib.ts"),
+        `import { getAnswer } from "./lib.ts";
+         console.log(getAnswer(), "|", getAnswer.toString().replace(/\\s+/g, " "));`,
+      );
+    }
+
+    // Debug builds print "[macro] call outer" to stdout while the macro runs,
+    // so only the script's own (last) line of output is compared.
+    async function run(file: string) {
+      const { stdout, stderr, exitCode } = await bunRun(join(temp_dir, file), env);
+      return { lastLine: stdout.split("\n").pop(), stderr, exitCode };
+    }
+    const printed = (lastLine: string) => ({ lastLine, stderr: "", exitCode: 0 });
+
+    test("a file that uses a macro is expanded by a normal import after a macro-mode load", async () => {
+      writeFileSync(join(temp_dir, "answer-macro.ts"), `export function answer() { return 42; }`);
+      writeFixtures(
+        `import { answer } from "./answer-macro.ts" with { type: "macro" };
+         export function getAnswer() { return answer(); }`,
+      );
+
+      // Macro mode does not expand answer(), so the macro_call_count opt-out does
+      // not apply and the unexpanded output is written to the cache.
+      expect(await run("use-macro.ts")).toEqual(printed("function"));
+      expect(newCacheCount()).toBe(1);
+
+      // Served from that entry this prints `return answer();` (and the call
+      // throws). A normal transpile inlines the macro, and files that expand
+      // macros are never cached, so the macro-mode entry is deleted and not replaced.
+      expect(await run("use-lib.ts")).toEqual(printed("42 | function getAnswer() { return 42; }"));
+      expect(newCacheCount()).toBe(-1);
+    });
+
+    test("a file that uses require() works in a normal import after a macro-mode load", async () => {
+      // Nothing macro-related in the file itself: the macro-mode output differs
+      // only in how the printer handles the target (the `require` binding for ESM
+      // is only emitted for the regular bun target).
+      writeFixtures(`export function getAnswer() { return typeof require("node:path").join; }`);
+
+      expect(await run("use-macro.ts")).toEqual(printed("function"));
+      expect(newCacheCount()).toBe(1);
+
+      // Served from the macro-mode entry this throws "require is not defined".
+      // The normal transpile replaces the entry (delete + write).
+      expect(await run("use-lib.ts")).toEqual(
+        printed('function | function getAnswer() { return typeof require("node:path").join; }'),
+      );
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("macro-mode loads still use the cache, and switching modes replaces the entry", async () => {
+      writeFixtures(`export function getAnswer() { return 42; }`);
+
+      expect(await run("use-macro.ts")).toEqual(printed("function"));
+      expect(newCacheCount()).toBe(1);
+      expect(await run("use-macro.ts")).toEqual(printed("function"));
+      expect(newCacheCount()).toBe(0);
+
+      // The other mode has a different features_hash, so the entry is deleted and
+      // rewritten (net 0) instead of reused, and both modes keep working.
+      expect(await run("use-lib.ts")).toEqual(printed("42 | function getAnswer() { return 42; }"));
+      expect(newCacheCount()).toBe(0);
+      expect(await run("use-macro.ts")).toEqual(printed("function"));
+      expect(newCacheCount()).toBe(0);
+    });
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

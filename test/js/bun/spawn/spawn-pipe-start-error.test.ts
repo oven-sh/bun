@@ -69,9 +69,12 @@ try {
 // the caller that opened it closes it: the subprocess stdin FileSink
 // (Writable::init), the buffered stdin StaticPipeWriter, and Bun.Terminal's
 // pty writer each do so on their own error path. Each fixture provokes that
-// failure and checks that the fd is closed exactly once: an fd left open shows
+// failure and checks that the fd is closed exactly once (an fd left open shows
 // up in /proc/self/fd, a second close of the same number trips the debug
-// build's EBADF assertion on stderr.
+// build's EBADF assertion on stderr) and that the object whose writer failed
+// is still released: with nothing left to close, the writer never reports
+// on_close, so the owner has to retire it on the error path itself, or a
+// buffer stdin keeps its Subprocess wrapper alive as pending activity forever.
 //
 // Bun registers FilePolls through syscall(SYS_epoll_ctl, ...) rather than the
 // epoll_ctl() wrapper, so the shim interposes syscall() and fails every
@@ -107,17 +110,36 @@ long syscall(long number, ...) {
 `;
 
 // The argument selects what to construct; the report is the error it threw
-// and how many fds are still open afterwards, compared to before. Fds that
-// the error path releases asynchronously (the child's pidfd once its exit is
-// reaped, anything owned by a wrapper that is only released by its finalizer)
-// get a bounded window to go away; a leaked fd is reported once it lapses.
+// plus how many fds and Subprocess/Terminal wrappers outlive it, relative to a
+// baseline taken just before. Both classes create their prototype (which
+// heapStats counts under the class name) lazily, so the baseline is taken
+// after materializing it. Releases that happen asynchronously (the child's
+// pidfd once its exit is reaped, a wrapper that becomes collectable only then)
+// get a bounded window; whatever is still there when it lapses is reported.
 const FIXTURE = /* js */ `
 const fs = require("node:fs");
+const { heapStats } = require("bun:jsc");
+const kind = process.argv[2];
 const openFds = () => fs.readdirSync("/proc/self/fd").length;
-const before = openFds();
+const wrappers = () => {
+  const counts = heapStats().objectTypeCounts;
+  return (counts.Subprocess ?? 0) + (counts.Terminal ?? 0);
+};
+
+// Parked on globalThis so the baseline keeps counting it: a local that is never
+// read again is not kept alive across the awaits below.
+if (kind === "terminal") {
+  globalThis.anchor = Bun.Terminal.prototype;
+} else {
+  globalThis.anchor = Bun.spawn({ cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  await globalThis.anchor.exited;
+}
+const fdBaseline = openFds();
+const wrapperBaseline = wrappers();
+
 let error = null;
 try {
-  switch (process.argv[2]) {
+  switch (kind) {
     case "stdin-pipe":
       Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
@@ -132,11 +154,11 @@ try {
   error = { code: e.code, message: e.message };
 }
 const deadline = performance.now() + 2000;
-while (openFds() > before && performance.now() < deadline) {
+while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, leaked: openFds() - before }));
+console.log(JSON.stringify({ error, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 describe.skipIf(!isLinux || !cc)(
@@ -180,26 +202,33 @@ describe.skipIf(!isLinux || !cc)(
       expect(await runFixture("stdin-pipe")).toEqual({
         // The spawn bindings report a failed stdin setup generically, so only
         // the fact that it threw is pinned down here.
-        report: { error: { message: expect.any(String) }, leaked: 0 },
+        report: { error: { message: expect.any(String) }, leakedFds: 0, leakedWrappers: 0 },
         stderr: "",
         exitCode: 0,
       });
     });
 
-    test.concurrent("Bun.spawn with a buffer stdin closes the stdin pipe exactly once", async () => {
-      // On Linux a buffer stdin normally travels through a memfd and never gets
-      // a writer; disabling that takes the pipe writer path every other
-      // platform uses.
-      expect(await runFixture("stdin-buffer", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
-        report: { error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" }, leaked: 0 },
-        stderr: "",
-        exitCode: 0,
-      });
-    });
+    test.concurrent(
+      "Bun.spawn with a buffer stdin closes the stdin pipe exactly once and releases the Subprocess",
+      async () => {
+        // On Linux a buffer stdin normally travels through a memfd and never gets
+        // a writer; disabling that takes the pipe writer path every other
+        // platform uses.
+        expect(await runFixture("stdin-buffer", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+          report: {
+            error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+            leakedFds: 0,
+            leakedWrappers: 0,
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
 
     test.concurrent("new Bun.Terminal() closes the pty fds exactly once", async () => {
       expect(await runFixture("terminal")).toEqual({
-        report: { error: { message: "Failed to start terminal writer" }, leaked: 0 },
+        report: { error: { message: "Failed to start terminal writer" }, leakedFds: 0, leakedWrappers: 0 },
         stderr: "",
         exitCode: 0,
       });

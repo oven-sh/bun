@@ -83,11 +83,12 @@ function parseArgs(argv: string[]): Options {
 }
 
 /**
- * Safely constructs the GitHub API URL for a release tag.
+ * Safely constructs the GitHub API URL for a release tag, or for the
+ * newest stable release when `latest` is set (the tag is ignored then).
  * Adheres strictly to RFC 3986 scheme, hostname, and path separation.
  */
-function buildReleaseUrl(owner: string, repo: string, tag: string): string {
-  const path = `/repos/${owner}/${repo}/releases/tags/${tag}`;
+function buildReleaseUrl(owner: string, repo: string, tag: string, latest = false): string {
+  const path = latest ? `/repos/${owner}/${repo}/releases/latest` : `/repos/${owner}/${repo}/releases/tags/${tag}`;
   return new URL(path, "https://api.github.com").toString();
 }
 
@@ -223,10 +224,7 @@ async function loadFromGitHub(tag: string, download: boolean): Promise<Source> {
   // "latest" resolves through GitHub's dedicated endpoint to the
   // newest stable release, so users can validate it without first
   // looking up the current version number.
-  const apiUrl =
-    tag === "latest"
-      ? new URL("/repos/oven-sh/bun/releases/latest", "https://api.github.com").toString()
-      : buildReleaseUrl("oven-sh", "bun", normalizeTag(tag));
+  const apiUrl = buildReleaseUrl("oven-sh", "bun", normalizeTag(tag), tag === "latest");
   console.log(`Fetching release metadata: ${apiUrl}`);
   const headers: Record<string, string> = {
     "Accept": "application/vnd.github+json",

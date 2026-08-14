@@ -1,4 +1,13 @@
 import type { Loader } from "bun";
+// Deliberately no `declare module` for "*.md" or "*.markdown" in extensions.d.ts: frameworks declare
+// both themselves (astro/client.d.ts gives them a component default export), and a bun-types
+// `export =` declaration merged into theirs silently turns their default export into a string.
+// Projects that want the md loader's imports typed declare the modules themselves; here both imports
+// fail to resolve and stay untyped.
+// @ts-expect-error
+import markdown from "./README.markdown";
+// @ts-expect-error
+import html from "./README.md";
 import { expectAssignable, expectType } from "./utilities";
 
 // The bundler implements json5 and md and accepts them by name (`bun build --loader`,
@@ -8,14 +17,8 @@ expectAssignable<Bun.Loader>("md");
 // @ts-expect-error
 expectAssignable<Loader>("bogus");
 
-// Deliberately no `declare module` for "*.md" or "*.markdown" in extensions.d.ts: frameworks declare
-// both themselves (astro/client.d.ts gives them a component default export), and a bun-types
-// `export =` declaration merged into theirs silently turns their default export into a string.
-// Projects that want the md loader's imports typed declare the modules themselves.
-// @ts-expect-error
-import("./README.md");
-// @ts-expect-error
-import("./README.markdown");
+expectType(html).is<any>();
+expectType(markdown).is<any>();
 
 Bun.build({
   entrypoints: ["hey"],

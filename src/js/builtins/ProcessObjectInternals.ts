@@ -347,82 +347,68 @@ export function initializeNextTickQueue(
     queue = new FixedQueue();
     tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
-    function runTock(tock, frame) {
-      var callback = tock.callback;
-      var args = tock.args;
-      var restore = $getInternalField($asyncContext, 0);
-      $putInternalField($asyncContext, 0, frame);
-      try {
-        if (args === undefined) {
-          callback();
-        } else {
-          switch (args.length) {
-            case 1:
-              callback(args[0]);
-              break;
-            case 2:
-              callback(args[0], args[1]);
-              break;
-            case 3:
-              callback(args[0], args[1], args[2]);
-              break;
-            case 4:
-              callback(args[0], args[1], args[2], args[3]);
-              break;
-            default:
-              callback(...args);
-              break;
-          }
-        }
-      } catch (e) {
-        reportUncaughtException(e);
-      } finally {
-        $putInternalField($asyncContext, 0, restore);
-      }
-    }
-
     // A frame that carries a scheduling domain is `[sentinel, domainId, ...alsPairs]`
     // (see EventLoopDomain.h); anything else belongs to the root (0).
     function domainOfFrame(frame, sentinel) {
       return frame !== undefined && frame.length >= 2 && frame[0] === sentinel ? frame[1] : 0;
     }
 
-    // Inside a domain run of `activeDomain`, only that domain's ticks run. Ticks of
-    // other domains (including the root's, queued before the run began) are parked
-    // in arrival order and put back once this domain's ticks and microtasks are
-    // exhausted, so the code that queued them observes them later, in the same
-    // order, as if the run had not happened.
-    function processTicksInDomain(activeDomain) {
-      // During a run, field 1 is the run's base frame: [sentinel, activeDomain, ...].
-      const sentinel = $getInternalField($asyncContext, 1)[0];
+    // `activeDomain` is non-zero inside a domain run: then only that domain's ticks
+    // run. Ticks of other domains (including the root's, queued before the run
+    // began) are parked in arrival order and put back once this domain's ticks and
+    // microtasks are exhausted, so the code that queued them observes them later,
+    // in the same order, as if the run had not happened. (One loop for both cases:
+    // a helper per tick would add a frame to every nextTick callback's stack.)
+    function processTicksAndRejections(activeDomain) {
+      // During a run, field 1 is the run's bare frame: [sentinel, activeDomain].
+      const sentinel = activeDomain ? $getInternalField($asyncContext, 1)[0] : undefined;
       var parked: any[] | undefined;
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
           var frame = tock.frame;
-          if (domainOfFrame(frame, sentinel) !== activeDomain) {
+          if (activeDomain && domainOfFrame(frame, sentinel) !== activeDomain) {
             (parked ??= []).push(tock);
             continue;
           }
-          runTock(tock, frame);
+          var callback = tock.callback;
+          var args = tock.args;
+          var restore = $getInternalField($asyncContext, 0);
+          $putInternalField($asyncContext, 0, frame);
+          try {
+            if (args === undefined) {
+              callback();
+            } else {
+              switch (args.length) {
+                case 1:
+                  callback(args[0]);
+                  break;
+                case 2:
+                  callback(args[0], args[1]);
+                  break;
+                case 3:
+                  callback(args[0], args[1], args[2]);
+                  break;
+                case 4:
+                  callback(args[0], args[1], args[2], args[3]);
+                  break;
+                default:
+                  callback(...args);
+                  break;
+              }
+            }
+          } catch (e) {
+            reportUncaughtException(e);
+          } finally {
+            $putInternalField($asyncContext, 0, restore);
+          }
         }
+
         drainMicrotasks();
       } while (!queue.isEmpty());
       if (parked !== undefined) {
         for (var i = 0; i < parked.length; i++) queue.push(parked[i]);
       }
-    }
-
-    function processTicksAndRejections(activeDomain) {
-      if (activeDomain) return processTicksInDomain(activeDomain);
-      var tock;
-      do {
-        while ((tock = queue.shift()) !== null) {
-          runTock(tock, tock.frame);
-        }
-
-        drainMicrotasks();
-      } while (!queue.isEmpty());
     }
 
     $putInternalField(nextTickQueue, 0, 0);

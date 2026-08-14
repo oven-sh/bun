@@ -379,16 +379,17 @@ pub extern "C" fn Bun__Domain__runUntilInDomainForTesting(
     // SAFETY: `vm` is the live per-thread VM owning `global`.
     let run = unsafe { DomainRun::enter_new(vm, Policy::PERMISSIVE) };
     // SAFETY: `global` is live; a run was entered above.
-    let result = unsafe { Bun__Domain__callInEntryContext(global.as_ptr(), thunk) };
-    if global.has_exception() {
+    let Ok(result) = bun_jsc::host_fn::from_js_host_call(global, || unsafe {
+        Bun__Domain__callInEntryContext(global.as_ptr(), thunk)
+    }) else {
         return JSValue::ZERO;
-    }
+    };
     let _keep = bun_jsc::Strong::create(result, global);
     let promise = result.as_any_promise();
     let pending = || matches!(&promise, Some(p) if p.status() == PromiseStatus::Pending);
     run.checkpoint();
     // SAFETY: `vm` is live.
-    while pending() && unsafe { (*vm).script_allowed() } && !global.has_exception() {
+    while pending() && unsafe { (*vm).script_allowed() } {
         // SAFETY: `run` is the innermost run.
         unsafe { run.turn(None, || !pending()) };
     }

@@ -97,6 +97,7 @@ void exitDomainRun(JSC::JSGlobalObject*);
 // Call `function` (no arguments) under the innermost run's entry context: what was
 // current when the run was entered, plus the run's domain — for the entering
 // frame's own continuation, as opposed to callbacks dispatched on others' behalf.
+// Returns the empty value iff the call threw.
 JSC::JSValue callInEntryContext(JSC::JSGlobalObject*, JSC::JSValue function);
 
 // Drain this domain's microtasks (and, transitively, whatever they queue for it).

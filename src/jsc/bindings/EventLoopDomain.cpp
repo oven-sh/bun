@@ -184,6 +184,7 @@ void enterDomainRun(JSGlobalObject* globalObject, uint32_t domain, bool admitsLo
 JSValue callInEntryContext(JSGlobalObject* globalObject, JSValue function)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto& runs = eventLoopDomains(vm).runs();
     ASSERT(!runs.isEmpty());
     auto* tuple = asyncContextData(globalObject);
@@ -192,6 +193,7 @@ JSValue callInEntryContext(JSGlobalObject* globalObject, JSValue function)
     tuple->putInternalField(vm, 0, contextWithDomain(globalObject, runs.last().savedContext.get(), runs.last().domain));
     JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), jsUndefined(), ArgList());
     tuple->putInternalField(vm, 0, ambient);
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -225,6 +227,7 @@ extern "C" void Bun__Domain__exitRun(JSGlobalObject* globalObject)
     Bun::exitDomainRun(globalObject);
 }
 
+// Empty iff an exception was thrown.
 extern "C" EncodedJSValue Bun__Domain__callInEntryContext(JSGlobalObject* globalObject, EncodedJSValue function)
 {
     return JSValue::encode(Bun::callInEntryContext(globalObject, JSValue::decode(function)));

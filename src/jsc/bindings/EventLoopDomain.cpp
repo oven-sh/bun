@@ -63,9 +63,13 @@ static void updateDomainSlot(JSGlobalObject* globalObject)
     asyncContextData(globalObject)->putInternalField(globalObject->vm(), 1, runs.isEmpty() ? JSValue(sentinel) : runs.last().runContext.get());
 }
 
-uint32_t allocateDomain(JSGlobalObject* globalObject)
+extern "C" uint32_t Bun__Domain__allocateGlobal();
+
+uint32_t allocateDomain(JSGlobalObject*)
 {
-    return eventLoopDomains(globalObject->vm()).allocate();
+    // One process-wide counter (kept in Rust, which also allocates each JS
+    // thread's root domain from it) so ids never alias across Workers.
+    return Bun__Domain__allocateGlobal();
 }
 
 uint32_t domainOfContext(JSGlobalObject* globalObject, JSValue context)

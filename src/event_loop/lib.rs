@@ -31,9 +31,28 @@ pub mod any_event_loop;
 // and the VM); the one piece of state lower tiers need — which run is innermost
 // on this thread — is mirrored here so `Task` stamping and the gates are a
 // single TLS load with no upward call.
+/// Domain ids are process-unique so a task posted from one JS thread to another
+/// never aliases a domain of the receiving thread. 0 = unattributed.
+static NEXT_DOMAIN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
+
+/// Allocate a fresh scheduling domain id (never 0).
+#[inline]
+pub fn allocate_domain() -> u32 {
+    let id = NEXT_DOMAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    assert!(id != 0, "scheduling domain ids exhausted");
+    id
+}
+
+/// `EventLoopDomain.cpp` allocates through this so C++ and Rust share one counter.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Domain__allocateGlobal() -> u32 {
+    allocate_domain()
+}
+
 thread_local! {
     static ACTIVE_RUN_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
-    static IS_JS_THREAD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    /// This JS thread's root domain (0 on threads that own no VM).
+    static ROOT_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
 }
 
 /// The innermost scoped event-loop run's domain on this thread; 0 when none.
@@ -48,26 +67,32 @@ pub fn set_active_run_domain(domain: u32) {
     ACTIVE_RUN_DOMAIN.set(domain)
 }
 
-/// This thread owns a JS VM (main thread or a Worker): work it creates while no
-/// scoped run is active belongs to the *root* domain rather than to nobody.
+/// This thread owns a JS VM (main thread or a Worker): give it a root domain,
+/// so work it creates while no scoped run is active belongs to *its* root rather
+/// than to nobody. Idempotent.
 #[inline]
 pub fn mark_js_thread() {
-    IS_JS_THREAD.set(true)
+    if ROOT_DOMAIN.get() == 0 {
+        ROOT_DOMAIN.set(allocate_domain());
+    }
 }
 
-/// A [`Task`] stamped with this was created by root-domain code on a JS thread
-/// (as opposed to 0: created off-thread, provenance unknown). During a scoped
-/// run it is foreign like any other domain's; outside one it is nothing special.
-pub const ROOT_TASK_DOMAIN: u32 = u32::MAX;
+/// This JS thread's root domain id (0 on a thread that owns no VM). A [`Task`]
+/// stamped with it was created by root-domain code here; during a scoped run
+/// it is foreign like any other domain's, outside one it is nothing special.
+#[inline]
+pub fn root_domain() -> u32 {
+    ROOT_DOMAIN.get()
+}
 
 /// What a task created right now, on this thread, is attributed to: the active
-/// run's domain; else the root domain on a JS thread; else 0 (unknown — such a
-/// task is admitted by any run, since its observable continuations are
-/// microtasks, which are gated).
+/// run's domain; else this thread's root domain; else 0 (created on a thread
+/// with no VM: provenance unknown — such a task is admitted by any run, since
+/// its observable continuations are microtasks, which are gated).
 #[inline]
 pub fn current_task_domain() -> u32 {
     match ACTIVE_RUN_DOMAIN.get() {
-        0 if IS_JS_THREAD.get() => ROOT_TASK_DOMAIN,
+        0 => ROOT_DOMAIN.get(),
         domain => domain,
     }
 }

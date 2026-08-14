@@ -15,9 +15,9 @@ namespace Bun {
 
 // Scheduling domains and scoped event-loop runs.
 //
-// Every schedulable item is attributed to a *domain*: a small integer naming the
-// scoped run that was current when the item was scheduled (0 = the root, i.e.
-// ordinary execution). Attribution rides in the async-context slot that
+// Every schedulable item is attributed to a *domain*: a process-unique integer
+// naming the scoped run that was current when the item was scheduled (contexts
+// name no domain during ordinary, root, execution). Attribution rides in the async-context slot that
 // AsyncLocalStorage uses: a context array that carries a domain is
 // `[sentinel, domainId, ...alsPairs]`, where `sentinel` is a Symbol over a
 // per-VM private uid that user code can never obtain. Because promise
@@ -46,12 +46,10 @@ public:
     ~EventLoopDomains();
 
     WTF::SymbolImpl& sentinelUid() { return m_sentinelUid.get(); }
-    uint32_t allocate() { return m_nextDomain++; }
     Vector<ScopedRunEntry, 4>& runs() { return m_runs; }
 
 private:
     Ref<WTF::SymbolImpl> m_sentinelUid;
-    uint32_t m_nextDomain { 1 };
     Vector<ScopedRunEntry, 4> m_runs;
 };
 

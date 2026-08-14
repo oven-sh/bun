@@ -15,7 +15,7 @@
 // domain drains.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const jsc = require("bun:jsc");
 const hasDomains = typeof jsc.runInDomainForTesting === "function";
@@ -625,5 +625,42 @@ describe.skipIf(!hasDomains || process.platform === "win32")("spawnSync on a sco
     });
     expect(Bun.peek(result)).toBe("nested");
     expect(currentDomainForTesting()).toEqual([0, 0]);
+  });
+});
+
+describe.skipIf(!hasDomains)("scoped runs: modules and threads", () => {
+  test("dynamic import and require work inside a run", () => {
+    using dir = tempDir("scoped-run-import", {
+      "esm.mjs": "export const x = await Promise.resolve(42);",
+      "cjs.cjs": "module.exports = { y: 7 };",
+    });
+    const result = runUntil(async () => {
+      await sleep(1);
+      const esm = await import(String(dir) + "/esm.mjs");
+      const cjs = require(String(dir) + "/cjs.cjs");
+      const builtin = await import("node:zlib");
+      return [esm.x, cjs.y, typeof builtin.gzipSync];
+    });
+    expect(Bun.peek(result)).toEqual([42, 7, "function"]);
+  });
+
+  test("a Worker message that arrives during spawnSync is delivered after it", async () => {
+    const worker = new Worker(
+      "data:text/javascript," +
+        encodeURIComponent("onmessage = () => setTimeout(() => postMessage('from-worker'), 10);"),
+    );
+    const log: string[] = [];
+    const got = new Promise<void>(resolve => {
+      worker.onmessage = e => {
+        log.push(String(e.data));
+        resolve();
+      };
+    });
+    worker.postMessage("go");
+    Bun.spawnSync({ cmd: [bunExe(), "-e", "await Bun.sleep(80)"], env: bunEnv });
+    log.push("spawnSync-returned");
+    await got;
+    expect(log).toEqual(["spawnSync-returned", "from-worker"]);
+    worker.terminate();
   });
 });

@@ -454,6 +454,13 @@ pub(crate) fn run_task(
             #[cfg(windows)]
             unreachable!("posix-only");
         }
+        task_tag::RunEpochReplay => {
+            // SAFETY: JS thread, from the task queue (this dispatch).
+            #[cfg(not(windows))]
+            unsafe {
+                bun_io::run_epoch::replay_ready()
+            };
+        }
         task_tag::PosixSignalTask => {
             // `ptr` here is *not* a pointer but a packed signal number.
             let _ = core::marker::PhantomData::<PosixSignalTask>;
@@ -603,7 +610,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 62,
+    task_tag::COUNT == 63,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1227,6 +1234,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NativeZstd => release!(NativeZstd),
         task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
+        // No payload; the held events go with the loop.
+        task_tag::RunEpochReplay => {}
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]

@@ -343,10 +343,17 @@ unsafe fn exit_run(vm: *mut VirtualMachine, domain: u32) {
         if (*vm).event_loop_handle.is_some() {
             let uws_loop = (*vm).uws_loop();
             #[cfg(not(windows))]
-            bun_io::run_epoch::rearm_after_run(
+            if bun_io::run_epoch::rearm_after_run(
                 bun_io::uws_to_native(uws_loop),
                 run.outer_start_epoch,
-            );
+            ) {
+                // Held one-shot readiness (a foreign child's exit on kqueue) is its
+                // owner's callback: deliver it from the loop, not from this frame.
+                (*(*vm).event_loop()).enqueue_task(Task::new(
+                    bun_event_loop::task_tag::RunEpochReplay,
+                    core::ptr::null_mut(),
+                ));
+            }
             (*uws_loop).scoped_run_ended(run.outer_start_epoch);
         }
     }

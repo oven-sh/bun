@@ -246,9 +246,9 @@ static MAX_GENERATION_NUMBER: core::sync::atomic::AtomicUsize =
 /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
 /// generation number); FreeBSD only has the plain `struct kevent`.
 #[cfg(target_os = "macos")]
-type KQueueEvent = bun_sys::darwin::kevent64_s;
+pub(crate) type KQueueEvent = bun_sys::darwin::kevent64_s;
 #[cfg(target_os = "freebsd")]
-type KQueueEvent = bun_sys::freebsd::Kevent;
+pub(crate) type KQueueEvent = bun_sys::freebsd::Kevent;
 
 /// Build a `struct kevent` without naming every field. FreeBSD ≥12 added
 /// `ext: [u64; 4]` to the struct, so a literal initializer fails to compile
@@ -502,12 +502,13 @@ impl FilePoll {
     /// This poll became ready during a scoped event-loop run it is foreign to
     /// (see `run_epoch`). Its readiness belongs to outer code, so it is not
     /// dispatched; and since readiness is level-triggered it would wake the poll
-    /// again immediately, so mask it in the kernel set — leaving every flag the
-    /// owner reads untouched — until `rearm_after_run`. Returns `false` when this
-    /// kind of readiness cannot be replayed later and must be dispatched now.
+    /// again immediately, so take it out of the kernel set — leaving every flag
+    /// the owner reads untouched — until `rearm_after_run`. Readiness that is
+    /// delivered only once (kqueue process exit) is held and replayed instead.
+    /// Returns `false` if the poll could not be disarmed and must dispatch now.
     ///
     /// # Safety
-    /// `loop_` is this thread's live poll loop.
+    /// `loop_` is this thread's live poll loop, positioned on this poll's event.
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
@@ -538,10 +539,24 @@ impl FilePoll {
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            // EVFILT_PROC NOTE_EXIT is delivered once; there is nothing to re-arm
-            // for an exited pid, so a foreign child's exit is dispatched now.
-            if self.flags.contains(Flags::PollProcess) || self.flags.contains(Flags::PollMachport) {
+            if self.flags.contains(Flags::PollMachport)
+                || self.flags.contains(Flags::PollMemoryPressure)
+            {
                 return false;
+            }
+            // EVFILT_PROC NOTE_EXIT is delivered once and there is nothing to
+            // re-arm for an exited pid: hold the event and replay it afterwards.
+            if self.flags.contains(Flags::PollProcess) {
+                // SAFETY: per fn contract.
+                let event = unsafe { &*loop_ }.current_ready_event();
+                syslog!(
+                    "hold for replay after run: FilePoll(0x{:x}, fd={})",
+                    std::ptr::from_mut(self) as usize,
+                    self.fd
+                );
+                self.flags.insert(Flags::DisarmedByRun);
+                crate::run_epoch::remember_replay(self, event);
+                return true;
             }
             // A one-shot knote is already gone after delivery; `rearm_after_run`
             // re-adds it. A persistent one is disabled in place.

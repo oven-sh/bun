@@ -1617,6 +1617,25 @@ describe("bun test", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("are not run when node:test is only imported", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-import-only.test.ts",
+        `
+          import { test } from "bun:test";
+          import { mock } from "node:test";
+          void mock;
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
     test("still run when the file itself calls process.exit()", async () => {
       const { stdout, exitCode } = await runFile(
         "explicit-exit.test.ts",
@@ -1630,7 +1649,7 @@ describe("bun test", () => {
       expect(exitCode).toBe(3);
     });
 
-    test("run once node:test is loaded", async () => {
+    test("run once a node:test API registers a test", async () => {
       const { stdout, stderr, exitCode } = await runFile(
         "node.test.ts",
         `
@@ -1644,7 +1663,7 @@ describe("bun test", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("can fail the run once node:test is loaded, like node's common.mustCall()", async () => {
+    test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
       const { stderr, exitCode } = await runFile(
         "node-exit-code.test.ts",
         `

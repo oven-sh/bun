@@ -551,7 +551,7 @@ pub fn is_smol_mode() -> bool {
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
-    /// `bun test` sets this at the end of a run unless `node:test` was loaded: jest and vitest never fire a test file's `process.on('exit')` listeners.
+    /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
 }
 

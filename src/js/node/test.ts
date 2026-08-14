@@ -1628,8 +1628,6 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
-// Makes `bun test` dispatch process.on('exit') listeners when the run ends; node's tests assert from them.
-$rust("jest.rs", "jsNodeTestLoaded");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;

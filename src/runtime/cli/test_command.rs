@@ -2217,7 +2217,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
-                node_test_loaded: false,
+                node_test_used: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -3032,7 +3032,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         // Node's test harness verifies mustCall() counts from an 'exit' listener; jest and vitest never run a test file's.
-        vm.exit_handler.skip_exit_listeners = !reporter.jest.node_test_loaded;
+        vm.exit_handler.skip_exit_listeners = !reporter.jest.node_test_used;
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;

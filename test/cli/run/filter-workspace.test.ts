@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
@@ -181,6 +181,110 @@ describe("bun", () => {
       });
     }
   }
+
+  const expectMixedCaseWorkspacePaths = (workspaces: string[], expectUpper = true) => {
+    using dir = tempDir("filter-workspace-case", {
+      packages: {
+        UpperPkg: {
+          "package.json": JSON.stringify({
+            name: "upper-pkg",
+            scripts: { hi: "echo hello-from-upper" },
+          }),
+        },
+        lowerpkg: {
+          "package.json": JSON.stringify({
+            name: "lower-pkg",
+            scripts: { hi: "echo hello-from-lower" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces,
+      }),
+    });
+
+    const run = (filter: string, stderrContains?: string) => {
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", filter, "hi"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (stderrContains) expect(stderr.toString()).toContain(stderrContains);
+      const output = stdout.toString();
+      const count = (marker: string) => output.split(marker).length - 1;
+      return {
+        exitCode,
+        upper: count("hello-from-upper"),
+        lower: count("hello-from-lower"),
+      };
+    };
+
+    expect({
+      lower: run("lower-pkg"),
+      upper: run("upper-pkg", expectUpper ? undefined : "No packages matched the filter"),
+      all: run("*"),
+    }).toEqual({
+      lower: { exitCode: 0, upper: 0, lower: 1 },
+      upper: expectUpper ? { exitCode: 0, upper: 1, lower: 0 } : { exitCode: 1, upper: 0, lower: 0 },
+      all: expectUpper ? { exitCode: 0, upper: 1, lower: 1 } : { exitCode: 0, upper: 0, lower: 1 },
+    });
+  };
+
+  // https://github.com/oven-sh/bun/issues/36004
+  test("exact workspace paths preserve directory casing", () => {
+    expectMixedCaseWorkspacePaths(["packages/UpperPkg", "packages/lowerpkg"]);
+  });
+
+  test.skipIf(!isWindows)("exact workspace paths use case-insensitive lookup on Windows", () => {
+    expectMixedCaseWorkspacePaths(["packages/upperpkg", "packages/lowerpkg"]);
+    expectMixedCaseWorkspacePaths(["./packages/upperpkg", "./packages/lowerpkg"]);
+    expectMixedCaseWorkspacePaths([String.raw`packages\upperpkg`, String.raw`packages\lowerpkg`]);
+  });
+
+  test.skipIf(isWindows || isMacOS)("exact workspace paths remain case-sensitive on POSIX", () => {
+    expectMixedCaseWorkspacePaths(["packages/upperpkg", "packages/lowerpkg"], false);
+  });
+
+  test.skipIf(isWindows)("escaped glob syntax in workspace paths remains supported", () => {
+    using dir = tempDir("filter-workspace-escaped-glob", {
+      packages: {
+        "foo*bar": {
+          "package.json": JSON.stringify({
+            name: "escaped-star",
+            scripts: { hi: "echo hello-from-escaped-star" },
+          }),
+        },
+        "!foo": {
+          "package.json": JSON.stringify({
+            name: "escaped-bang",
+            scripts: { hi: "echo hello-from-escaped-bang" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: [String.raw`packages/foo\*bar`, String.raw`packages/\!foo`],
+      }),
+    });
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "escaped-star",
+      target_pattern: /hello-from-escaped-star/,
+      command: ["hi"],
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "escaped-bang",
+      target_pattern: /hello-from-escaped-bang/,
+      command: ["hi"],
+    });
+  });
 
   for (const d of dirs) {
     test(`resolve '*' from ${d}`, () => {

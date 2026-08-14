@@ -28,10 +28,7 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-const FOLD = new RegExp(
-  String.raw`\b(?:report_error_or_terminate|__bun_fold_loop_js_error)\s*\(`,
-  "g",
-);
+const FOLD = new RegExp(String.raw`\b(?:report_error_or_terminate|__bun_fold_loop_js_error)\s*\(`, "g");
 
 // The dispatchers. A file here hosts a trampoline/drain that folds what the
 // callbacks it invokes return.

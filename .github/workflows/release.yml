@@ -78,12 +78,23 @@ jobs:
           bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
+      - name: Check GitHub API quota
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: check
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Sign Release
         run: |
           echo "$GPG_PASSPHRASE" | bun upload-assets -- "$BUN_VERSION"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Report GitHub API usage
+        if: ${{ always() }}
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: report
+          token: ${{ secrets.GITHUB_TOKEN }}
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
@@ -107,11 +118,22 @@ jobs:
           bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
+      - name: Check GitHub API quota
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: check
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Release
         run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Report GitHub API usage
+        if: ${{ always() }}
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: report
+          token: ${{ secrets.GITHUB_TOKEN }}
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
@@ -336,6 +358,11 @@ jobs:
           bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
+      - name: Check GitHub API quota
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: check
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Release
         run: bun upload-s3 -- "$BUN_VERSION"
         env:
@@ -344,6 +371,12 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
+      - name: Report GitHub API usage
+        if: ${{ always() }}
+        uses: ./.github/actions/github-rate-limit
+        with:
+          mode: report
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   notify-sentry:
     name: Notify Sentry
@@ -361,4 +394,3 @@ jobs:
           ignore_empty: true
           version: ${{ env.BUN_VERSION }}
           environment: production
-

@@ -1215,15 +1215,23 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
     expect(sandbox.viaGlobal).toBe(1);
   });
 
-  test.concurrent("measureMemory() still lists a context created by vm.runInNewContext()", async () => {
+  test.concurrent("measureMemory() lists one entry per context, however the context was made", async () => {
     const code = `
       const vm = require("node:vm");
       const count = async () => (await vm.measureMemory({ mode: "detailed" })).other.length;
-      const before = await count();
-      const sandbox = {};
-      vm.runInNewContext("1", sandbox);
-      const after = await count();
-      console.log(before, after, vm.isContext(sandbox));
+      const counts = [await count()];
+      const held = [vm.createContext({}), {}, {}, vm.createContext(vm.constants.DONT_CONTEXTIFY)];
+      counts.push(await count());
+      vm.runInNewContext("1", held[1]);
+      counts.push(await count());
+      new vm.Script("1").runInNewContext(held[2]);
+      counts.push(await count());
+      // Reuse adds nothing.
+      vm.runInNewContext("1", held[1]);
+      new vm.Script("1").runInNewContext(held[2]);
+      vm.runInNewContext("1", held[3]);
+      counts.push(await count());
+      console.log(counts.join(" "), held.every(vm.isContext));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
@@ -1232,7 +1240,7 @@ describe("runInNewContext() on a sandbox that is already a context", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("ExperimentalWarning");
-    expect(stdout).toBe("0 1 true\n");
+    expect(stdout).toBe("0 2 3 4 4 true\n");
     expect(exitCode).toBe(0);
   });
 });

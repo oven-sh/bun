@@ -1657,6 +1657,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
     return JSValue::encode(jsBoolean(isContext(globalObject, contextArg)));
 }
 
+// Contexts whose sandbox was still alive at the last GC, for measureMemory().
+JSC_DEFINE_HOST_FUNCTION(vmModule_contextCount, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsNumber(defaultGlobalObject(globalObject)->vmModuleContextMap()->size()));
+}
+
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -1760,6 +1766,9 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "contextCount"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "contextCount"_s, vmModule_contextCount, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);

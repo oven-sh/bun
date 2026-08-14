@@ -45,6 +45,7 @@ const {
   Module: ModuleNative,
   createContext: createContextNative,
   isContext,
+  contextCount,
   compileFunction,
   isModuleNamespaceObject,
   kLinked,
@@ -54,39 +55,11 @@ const {
   USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
-// Live vm contexts, tracked so measureMemory({ mode: "detailed" }) can report
-// one entry per context like Node. WeakRefs so tracking doesn't keep contexts
-// alive; dead entries are pruned on each measurement and, amortized, on
-// creation (so a process that never measures doesn't accumulate dead refs).
-const trackedContexts: WeakRef<object>[] = [];
-let trackedContextsPruneAt = 64;
-
-function pruneTrackedContexts() {
-  let alive = 0;
-  for (let i = 0; i < trackedContexts.length; i++) {
-    const ref = trackedContexts[i];
-    if (ref.deref() !== undefined) {
-      trackedContexts[alive++] = ref;
-    }
-  }
-  trackedContexts.length = alive;
-  return alive;
-}
-
 function createContext(contextObject?, options?) {
   if (typeof options === "object" && options !== null) {
     validateOneOf(options.microtaskMode, "options.microtaskMode", ["afterEvaluate", undefined]);
   }
-  const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
-  const context = createContextNative(contextObject, options);
-  if (!alreadyContextified) {
-    if (trackedContexts.length >= trackedContextsPruneAt) {
-      const alive = pruneTrackedContexts();
-      trackedContextsPruneAt = alive * 2 < 64 ? 64 : alive * 2;
-    }
-    trackedContexts.push(new WeakRef(context));
-  }
-  return context;
+  return createContextNative(contextObject, options);
 }
 
 function runInContext(code, context, options) {
@@ -115,9 +88,8 @@ function runInNewContext(code, context, options) {
   return createScript(code, options).runInNewContext(context, options);
 }
 
-// Node's getContextOptions(): runInNewContext() spells these options with a
-// context- prefix, createContext() without. Validated here so errors name the
-// option the caller passed.
+// Node's getContextOptions(): runInNewContext() spells these with a context- prefix,
+// createContext() without. Validated here so errors name the option the caller passed.
 function getContextOptions(options) {
   if (!$isObject(options)) {
     return undefined;
@@ -173,16 +145,12 @@ function measureMemory(options = kEmptyObject) {
   const result: any = { total: measurement() };
   if (mode === "detailed") {
     result.current = measurement();
+    // One entry per live context, like Node; every context, whichever API made
+    // it, is in the registry isContext() reads.
     const other: object[] = [];
-    let aliveCount = 0;
-    for (let i = 0; i < trackedContexts.length; i++) {
-      const ref = trackedContexts[i];
-      if (ref.deref() !== undefined) {
-        trackedContexts[aliveCount++] = ref;
-        other.push(measurement());
-      }
+    for (let remaining = contextCount(); remaining > 0; remaining--) {
+      other.push(measurement());
     }
-    trackedContexts.length = aliveCount;
     result.other = other;
   }
 

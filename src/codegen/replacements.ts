@@ -117,8 +117,7 @@ export const enums = {
     "md",
     "xml",
   ],
-  // Indexed by the `bun_ast::ImportKind` discriminant (src/ast/lib.rs); the
-  // strings are `ImportKind::label()`.
+  // Ids are the `bun_ast::ImportKind` discriminants; labels are `ImportKind::label()`.
   ImportKind: [
     "entry-point-run", // EntryPointRun
     "entry-point-build", // EntryPointBuild

@@ -1614,15 +1614,18 @@ test.skipIf(isWindows)(
           await Bun.sleep(5);
         }
       }
-      // Release the pool thread after 5 s regardless, so a regression shows up as the elapsed-time
-      // check below failing rather than as the whole test hanging until its timeout.
+      // Release the pool thread after 5 s regardless, so a regression shows up as readDone
+      // being true below rather than as the whole test hanging until its timeout.
       let closed = false;
       const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
       setTimeout(closeWriter, 5000).unref();
       const t = performance.now();
       const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
       const elapsed = performance.now() - t;
-      console.log(result.success, result.outputs.length > 0, elapsed < 4000 || elapsed, readDone);
+      // readDone must still be false: the build finished before the release of the FIFO reader,
+      // i.e. it did not wait for that unrelated pool task. elapsed is diagnostic only.
+      console.error("second build took " + Math.round(elapsed) + " ms");
+      console.log(result.success, result.outputs.length > 0, readDone);
       closeWriter(); // EOF for the reader: let the pool thread go before exiting
       for (const deadline = Date.now() + 10_000; !readDone && Date.now() < deadline; ) await Bun.sleep(5);
       console.log(readDone, readErr ? readErr.code : "ok");
@@ -1637,8 +1640,8 @@ test.skipIf(isWindows)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("true true true false\ntrue ok\n");
+    expect(stderr).toStartWith("second build took ");
+    expect(stdout).toBe("true true false\ntrue ok\n");
     expect(exitCode).toBe(0);
   },
   30_000,

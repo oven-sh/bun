@@ -331,11 +331,9 @@ pub struct CountedTask {
     group: *const WaitGroup,
 }
 
-// SAFETY: as `Task`; `group` is only touched through `WaitGroup::finish_raw`, which any
-// thread may call.
+// SAFETY: as `Task` (sent to one worker, never shared); `group` is only touched through
+// `WaitGroup::finish_raw`, which any thread may call.
 unsafe impl Send for CountedTask {}
-// SAFETY: as for `Send` — nothing is reachable through `&CountedTask` but the `Sync` `WaitGroup`.
-unsafe impl core::marker::Sync for CountedTask {}
 
 impl CountedTask {
     /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
@@ -352,6 +350,8 @@ impl CountedTask {
     }
 
     unsafe fn run_and_finish(task: *mut Task) {
+        // The cast below and every embedder's container-of over its `CountedTask` field rely on it.
+        const _: () = assert!(core::mem::offset_of!(CountedTask, task) == 0);
         let this = task.cast::<CountedTask>();
         // SAFETY: `task` is the `task` field (offset 0) of a live `CountedTask`; read both
         // fields before `run`, after which the embedding struct is the callee's to consume.

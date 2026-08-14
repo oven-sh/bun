@@ -112,9 +112,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // Runs only on the `Err` return below (a bundler or I/O failure). Every
-    // other way out of this function exits the process, and the normal one,
-    // `global_exit()` at the end, tears the VM down itself.
+    // Only the `Err` return below reaches this; the other exits are process exits.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
@@ -214,9 +212,8 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     let mut pt = PerThread::placeholder(vm_ptr);
 
     let result = build_with_vm(ctx, &cwd, &mut pt);
-    // SAFETY: the reborrows `build_with_vm` made through `pt.vm` died when it
-    // returned, so this frame has exclusive access again; the VM stays
-    // allocated until `global_exit` (or `_vm_guard`) destroys it.
+    // SAFETY: `build_with_vm` has returned, so its reborrows through `pt.vm` are
+    // dead; the VM is live until `global_exit` (or `_vm_guard`) destroys it.
     let vm = unsafe { &mut *vm_ptr };
     match result {
         Ok(()) => {}
@@ -230,13 +227,9 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Err(e) => return Err(e),
     }
 
-    // A rendered build exits the same way a failed one does: `on_exit` runs the
-    // `process.on("exit")` handlers the config and prerender registered, and
-    // `global_exit` exits with `process.exitCode`, tearing the VM down first
-    // under BUN_DESTRUCT_VM_ON_EXIT. Returning `Ok` instead would free only the
-    // Rust side of the VM (`_vm_guard`); the JSC heap would never be destroyed,
-    // so the natives still owned by the prerender's JS objects (timers, blobs,
-    // decoders, ...) would never be freed.
+    // Success exits through the VM as well: this runs the 'exit' handlers, applies
+    // process.exitCode and, under BUN_DESTRUCT_VM_ON_EXIT, destroys the JSC heap
+    // that owns the prerender's timers, blobs, ...; `_vm_guard` frees only the Rust side.
     vm.on_exit();
     vm.global_exit()
 }

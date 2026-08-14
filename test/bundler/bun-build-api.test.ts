@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -1646,3 +1647,80 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+describe.concurrent("source whose path is close to the path buffer size", () => {
+  // Bun's fixed path buffer (MAX_PATH_BYTES): PATH_MAX on Linux and macOS, the
+  // UTF-8 worst case of a 32767-character path on Windows.
+  const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+  // The path itself fits in the buffer (and, on Linux and macOS, on disk); the
+  // paths derived from it by relativizing against the cwd below do not.
+  const PATH_LENGTH = MAX_PATH_BYTES - 32;
+
+  async function bundle(mode: string) {
+    using dir = tempDir("bun-build-long-source-path", {});
+    // Relativizing against the cwd adds `../` per level of the cwd outside the
+    // common prefix, so a cwd this deep puts the relative form of the long
+    // path past MAX_PATH_BYTES however long the temp dir itself is.
+    const depth = Math.ceil((String(dir).length + 64) / 3);
+    const cwd = join(String(dir), "cwd", ...Array(depth).fill("a"));
+    mkdirSync(cwd, { recursive: true });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "fixtures", "long-source-path-fixture.ts"),
+        mode,
+        String(PATH_LENGTH),
+        String(dir),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The bug was a panic, which shows up here as a non-zero exit and the
+    // crash report on stderr.
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const result = JSON.parse(stdout);
+    expect(result.path).toHaveLength(PATH_LENGTH);
+    // The display form Bun derives from the path, as node computes it.
+    const relativePath = path.relative(result.cwd, result.path).replaceAll("\\", "/");
+    expect(relativePath.length).toBeGreaterThan(MAX_PATH_BYTES);
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+    return { ...result, relativePath };
+  }
+
+  test("as an in-memory entry point", async () => {
+    const { inputs, sources, relativePath } = await bundle("entry");
+    expect(inputs).toEqual([relativePath]);
+    expect(sources).toEqual([relativePath]);
+  });
+
+  test("as an in-memory asset", async () => {
+    const { outputs } = await bundle("asset");
+    expect(outputs).toEqual([
+      expect.stringMatching(/(^|\/)entry\.js$/),
+      expect.stringMatching(/(^|\/)entry\.js\.map$/),
+      expect.stringMatching(/(^|\/)e*image-[a-z0-9]+\.png$/),
+    ]);
+  });
+
+  // A real path can only get close to the buffer size where the buffer is
+  // sized after PATH_MAX; the Windows buffer is far larger than any path the
+  // filesystem accepts.
+  test.skipIf(isWindows)("as an imported file on disk", async () => {
+    const { inputs, sources, relativePath } = await bundle("import");
+    expect(inputs).toEqual(["entry.js", relativePath]);
+    expect(sources).toEqual([relativePath, "entry.js"]);
+  });
+
+  test.skipIf(isWindows)("as an imported file on disk, with an onResolve plugin that declines it", async () => {
+    const { inputs, sources, relativePath } = await bundle("import-plugin");
+    expect(inputs).toEqual(["entry.js", relativePath]);
+    expect(sources).toEqual([relativePath, "entry.js"]);
+  });
+});

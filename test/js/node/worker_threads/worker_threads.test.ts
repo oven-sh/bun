@@ -379,7 +379,7 @@ test("worker entry-point parse errors reach the parent as a SyntaxError with its
       cmd: [bunExe(), "main-uncaught.mjs"],
       env: { ...bunEnv, NO_COLOR: "1" },
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

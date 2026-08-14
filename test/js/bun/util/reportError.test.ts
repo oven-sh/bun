@@ -133,7 +133,7 @@ describe("native error printer describes an uncaught error by its origin", () =>
       cmd: [bunExe(), entry],
       cwd: String(dir),
       env: { ...bunEnv, NO_COLOR: "1", BUN_JSC_showPrivateScriptsInStackTraces: "0" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

@@ -611,6 +611,37 @@ impl BunxCommand {
         true
     }
 
+    /// A `bunfig.toml` found by walking up into world-writable ancestors
+    /// could be planted by another local user to redirect `[install] registry`;
+    /// accept only a regular file (or one symlink hop to one) owned by the
+    /// current uid or root (an unprivileged attacker cannot create uid-0 files).
+    #[cfg(unix)]
+    fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
+        let owner_ok = |st_uid: libc::uid_t| st_uid == uid || st_uid == 0;
+        let reg_ok = |st: &bun_sys::Stat| {
+            owner_ok(st.st_uid) && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+        };
+        match bun_sys::lstat(path) {
+            Ok(st) if owner_ok(st.st_uid) => {
+                let kind = st.st_mode & libc::S_IFMT;
+                if kind == libc::S_IFREG {
+                    true
+                } else if kind == libc::S_IFLNK {
+                    matches!(bun_sys::stat(path), Ok(target) if reg_ok(&target))
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_local_bunfig(_path: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     #[cfg(unix)]
     fn is_trusted_opened_cache_dir(
         dir: Fd,
@@ -806,6 +837,64 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
+        #[cfg(unix)]
+        // SAFETY: getuid() is always safe to call (no preconditions, never fails)
+        let uid = unsafe { libc::getuid() };
+        #[cfg(windows)]
+        let uid = bun_sys::windows::user_unique_id();
+
+        // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
+        // discover a project-local bunfig.toml on its own. Walk up from the
+        // invoking directory here and forward the first one found as
+        // `--config=<path>` (the `=` form is required; the install arg parser
+        // treats a space-separated value as a positional). See
+        // `is_trusted_local_bunfig` for the ownership check.
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir: &[u8] = unsafe { (*this_transpiler.fs).top_level_dir };
+        let local_bunfig_arg: Option<Vec<u8>> = 'find_bunfig: {
+            const PREFIX: &[u8] = b"--config=";
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let total = buf.len();
+            let mut dir: &[u8] = strings::without_trailing_slash(top_level_dir);
+            loop {
+                let Ok(len) = (|| {
+                    let mut cursor: &mut [u8] = &mut buf[..total - 1];
+                    write!(
+                        cursor,
+                        "--config={dir}{sep}bunfig.toml",
+                        dir = BStr::new(dir),
+                        sep = bun_paths::SEP as char,
+                    )?;
+                    Ok::<_, std::io::Error>((total - 1) - cursor.len())
+                })() else {
+                    break 'find_bunfig None;
+                };
+                buf[len] = 0;
+                let path_z = ZStr::from_buf(&buf[PREFIX.len()..], len - PREFIX.len());
+                if bun_sys::exists_z(path_z) {
+                    if !Self::is_trusted_local_bunfig(path_z, uid) {
+                        bun_core::warn!(
+                            "ignoring <b>{}<r> because it is not a regular file owned by the current user",
+                            BStr::new(path_z.as_bytes()),
+                        );
+                        Output::flush();
+                        break 'find_bunfig None;
+                    }
+                    break 'find_bunfig Some(buf[..len].to_vec());
+                }
+                match bun_paths::dirname(dir) {
+                    Some(parent) => {
+                        let parent = strings::without_trailing_slash(parent);
+                        if parent.len() >= dir.len() {
+                            break 'find_bunfig None;
+                        }
+                        dir = parent;
+                    }
+                    None => break 'find_bunfig None,
+                }
+            }
+        };
+
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {
@@ -850,6 +939,11 @@ impl BunxCommand {
                     BStr::new(display_version),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            }
+            if let Some(arg) = &local_bunfig_arg {
+                // Per-bunfig cache namespace: different projects' registries must not share an entry.
+                write!(&mut v, "@{:x}", hash(&arg[b"--config=".len()..]))
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
             break 'brk v;
         };
@@ -937,12 +1031,6 @@ impl BunxCommand {
         //     where a user can replace the directory with malicious code.
         //
         // If this format changes, please update cache clearing code in package_manager_command.rs
-        #[cfg(unix)]
-        // SAFETY: getuid() is always safe to call (no preconditions, never fails)
-        let uid = unsafe { libc::getuid() };
-        #[cfg(windows)]
-        let uid = bun_sys::windows::user_unique_id();
-
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
@@ -974,7 +1062,6 @@ impl BunxCommand {
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
-        let top_level_dir: &[u8] = fs.top_level_dir;
 
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
         let buf_total = absolute_in_cache_dir_buf.len();
@@ -1322,8 +1409,12 @@ impl BunxCommand {
             install_param.as_slice(),
             b"--no-summary",
         ];
-        let mut args: BoundedArray<&[u8], 8> =
+        let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
+
+        if let Some(config_arg) = local_bunfig_arg.as_deref() {
+            args.append(config_arg).expect("unreachable"); // upper bound is known
+        }
 
         if do_cache_bust {
             // disable the manifest cache when a tag is specified
@@ -1406,6 +1497,10 @@ impl BunxCommand {
                 bun_sys::Result::Ok(result) => result,
             },
         };
+
+        // Don't leak the internal marker into the tool we exec: a scaffolder's
+        // own `bun install` must still run the configured security scanner.
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
 
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {

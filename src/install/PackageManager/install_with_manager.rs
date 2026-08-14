@@ -1682,6 +1682,16 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
         return;
     }
 
+    // The scanner gates what enters the project's dependency tree, not the
+    // bunx tool fetch (which runs in a cache dir whose `{}` package.json
+    // cannot list the scanner).
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL
+        .get()
+        .unwrap_or(false)
+    {
+        return;
+    }
+
     match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
         Err(err) => {
             match err {

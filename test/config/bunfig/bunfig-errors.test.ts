@@ -47,13 +47,13 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
   const INVALID_BUNFIG = "[install\n";
   const SEGMENT = Buffer.alloc(200, "d").toString();
 
-  /** An absolute path below `root` that is exactly `length` bytes long (ASCII only). */
+  /** An absolute path below `root` whose UTF-8 encoding is exactly `length` bytes long. */
   function pathOfLength(root: string, length: number): string {
     let path = root;
     // Leave room for the final component, which has to stay under NAME_MAX (255).
-    while (length - path.length > 256) path = join(path, SEGMENT);
-    path = join(path, Buffer.alloc(length - path.length - 1, "L").toString());
-    expect(path).toHaveLength(length);
+    while (length - Buffer.byteLength(path) > 256) path = join(path, SEGMENT);
+    path = join(path, Buffer.alloc(length - Buffer.byteLength(path) - 1, "L").toString());
+    expect(Buffer.byteLength(path)).toBe(length);
     return path;
   }
 
@@ -93,31 +93,31 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
   }
 
   describe("bunfig.toml auto-loaded from the working directory", () => {
-    const PRINT_CWD_LENGTH = "console.log(process.cwd().length)";
+    const PRINT_CWD_BYTES = "console.log(Buffer.byteLength(process.cwd()))";
 
     test("is loaded when its path is exactly MAX_PATH_BYTES - 1 bytes", async () => {
       using dir = tempDir("bunfig-long-cwd", {});
       const cwd = pathOfLength(String(dir), MAX_PATH_BYTES - "/bunfig.toml".length - 1);
       const config = invalidConfigAt(join(cwd, "bunfig.toml"));
-      expect(config).toHaveLength(MAX_PATH_BYTES - 1);
+      expect(Buffer.byteLength(config)).toBe(MAX_PATH_BYTES - 1);
 
-      expectLoadedFrom(await runBun(["-e", PRINT_CWD_LENGTH], cwd), config);
+      expectLoadedFrom(await runBun(["-e", PRINT_CWD_BYTES], cwd), config);
     });
 
     // No bunfig.toml exists in these directories: its path would be too long to
     // create, and the path is built (and used to overflow) before it is opened.
-    const skippedCases: [configPathWouldBe: string, cwdLength: number][] = [
+    const skippedCases: [configPathWouldBe: string, cwdBytes: number][] = [
       ["exactly MAX_PATH_BYTES bytes, leaving no room for the NUL", MAX_PATH_BYTES - "/bunfig.toml".length],
       ["longer than the buffer", MAX_PATH_BYTES - 1],
     ];
 
-    test.each(skippedCases)("bun -e still runs when the bunfig.toml path would be %s", async (_, cwdLength) => {
+    test.each(skippedCases)("bun -e still runs when the bunfig.toml path would be %s", async (_, cwdBytes) => {
       using dir = tempDir("bunfig-long-cwd", {});
-      const cwd = pathOfLength(String(dir), cwdLength);
+      const cwd = pathOfLength(String(dir), cwdBytes);
       mkdirSync(cwd, { recursive: true });
 
-      expect(await runBun(["-e", PRINT_CWD_LENGTH], cwd)).toEqual({
-        stdout: `${cwdLength}\n`,
+      expect(await runBun(["-e", PRINT_CWD_BYTES], cwd)).toEqual({
+        stdout: `${cwdBytes}\n`,
         stderr: "",
         exitCode: 0,
       });
@@ -125,13 +125,13 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
 
     test("bun <file> still runs when the bunfig.toml path does not fit", async () => {
       using dir = tempDir("bunfig-long-cwd", {});
-      const cwdLength = MAX_PATH_BYTES - "/bunfig.toml".length;
-      const cwd = pathOfLength(String(dir), cwdLength);
+      const cwdBytes = MAX_PATH_BYTES - "/bunfig.toml".length;
+      const cwd = pathOfLength(String(dir), cwdBytes);
       mkdirSync(cwd, { recursive: true });
-      writeFileSync(join(cwd, "x.cjs"), PRINT_CWD_LENGTH);
+      writeFileSync(join(cwd, "x.cjs"), PRINT_CWD_BYTES);
 
       expect(await runBun(["x.cjs"], cwd)).toEqual({
-        stdout: `${cwdLength}\n`,
+        stdout: `${cwdBytes}\n`,
         stderr: "",
         exitCode: 0,
       });
@@ -211,7 +211,7 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
       using dir = tempDir("bunfig-long-global", PACKAGE_JSON);
       const configHome = pathOfLength(String(dir), MAX_PATH_BYTES - "/.bunfig.toml".length - 1);
       const config = invalidConfigAt(join(configHome, ".bunfig.toml"));
-      expect(config).toHaveLength(MAX_PATH_BYTES - 1);
+      expect(Buffer.byteLength(config)).toBe(MAX_PATH_BYTES - 1);
 
       expectLoadedFrom(await pmCache(String(dir), { XDG_CONFIG_HOME: configHome }), config);
     });

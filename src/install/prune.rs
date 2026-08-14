@@ -640,7 +640,6 @@ struct HoistedTree<'a> {
     folders: Vec<TreeFolder>,
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
-    workspace_names: &'a [Box<[u8]>],
     quiet: bool,
     kept_mismatched: Cell<bool>,
     checked: RefCell<DynamicBitSet>,
@@ -656,11 +655,7 @@ enum Installed {
 }
 
 impl<'a> HoistedTree<'a> {
-    fn init(
-        lockfile: &'a Lockfile,
-        workspace_names: &'a [Box<[u8]>],
-        quiet: bool,
-    ) -> HoistedTree<'a> {
+    fn init(lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -711,7 +706,6 @@ impl<'a> HoistedTree<'a> {
             folders,
             paths,
             expected,
-            workspace_names,
             quiet,
             kept_mismatched: Cell::new(false),
             checked: RefCell::new(checked),
@@ -811,7 +805,6 @@ impl<'a> HoistedTree<'a> {
 
     fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
-        let deps = self.lockfile.buffers.dependencies.as_slice();
         let Some(res) = self
             .lockfile
             .packages
@@ -820,8 +813,7 @@ impl<'a> HoistedTree<'a> {
         else {
             return Installed::Mismatch;
         };
-        let Some(folder) = open_tree_folder(self.trees, deps, buf, tree_id, self.workspace_names)
-        else {
+        let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
             return Installed::Missing;
         };
         let kind = entry_kind_of(&folder, alias);
@@ -839,7 +831,7 @@ impl<'a> HoistedTree<'a> {
             ResolutionTag::Folder if kind == EntryKind::SymLink => return Installed::Matches,
             _ => {}
         }
-        let Some(package) = descend(&folder, alias, false) else {
+        let Some(package) = descend(&folder, alias) else {
             return Installed::Mismatch;
         };
         let expected_name = self.lockfile.packages.items_name()[pkg_id as usize].slice(buf);
@@ -913,7 +905,7 @@ fn plan_hoisted(
 
     let quiet = manager.options.log_level == LogLevel::Silent;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, workspace_names, quiet);
+    let hoisted = HoistedTree::init(lockfile, quiet);
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -957,7 +949,7 @@ fn plan_hoisted(
 
         let expected = hoisted.expected(tree_idx);
 
-        let Some(dir) = open_tree_folder(trees, deps, buf, tree_id, workspace_names) else {
+        let Some(dir) = open_tree_folder(lockfile, tree_id) else {
             continue;
         };
 
@@ -978,7 +970,7 @@ fn plan_hoisted(
             if !extracted || has_bundled_deps(lockfile, pkg_id) {
                 continue;
             }
-            let Some(nested) = descend(&dir, alias, false)
+            let Some(nested) = descend(&dir, alias)
                 .and_then(|package| open_real_subdir(&package, b"node_modules"))
             else {
                 continue;
@@ -1019,19 +1011,16 @@ fn plan_hoisted(
             scan_folder(dir, b"node_modules", false, &keep_workspaces, plan);
         }
     }
-    for (pkg_id, res) in pkg_res.iter().enumerate() {
+    for pkg_id in 0..pkg_res.len() {
+        let Some(folder_path) = workspace_node_modules(lockfile, pkg_id as PackageID) else {
+            continue;
+        };
         if visited.is_set(pkg_id)
-            || res.tag != ResolutionTag::Workspace
             || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
             || is_pruned_workspace(&*manager, pkg_id)
         {
             continue;
         }
-        let path = strings::without_trailing_slash(res.workspace().slice(buf));
-        if path.is_empty() {
-            continue;
-        }
-        let folder_path = join(path, b"node_modules");
         if let Ok(dir) = Dir::open(&folder_path) {
             scan_folder(
                 dir,
@@ -1100,8 +1089,8 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(before, &workspace_names, true);
-    let new = HoistedTree::init(after, &workspace_names, quiet);
+    let old = HoistedTree::init(before, true);
+    let new = HoistedTree::init(after, quiet);
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
@@ -1149,13 +1138,7 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         {
             continue;
         }
-        let Some(dir) = open_tree_folder(
-            old.trees,
-            old_deps,
-            old_buf,
-            old_idx as tree::Id,
-            &workspace_names,
-        ) else {
+        let Some(dir) = open_tree_folder(before, old_idx as tree::Id) else {
             continue;
         };
         let folder_idx = plan.push_folder(old_path, FolderKind::NodeModules);
@@ -1198,20 +1181,16 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
-    let pkg_res = after.packages.items_resolution();
-    for pkg_id in 0..pkg_res.len() {
-        let res = &pkg_res[pkg_id];
-        if res.tag != ResolutionTag::Workspace
-            || is_pruned_workspace(manager, pkg_id)
+    for pkg_id in 0..after.packages.len() {
+        let Some(folder_path) = workspace_node_modules(after, pkg_id as PackageID) else {
+            continue;
+        };
+        if is_pruned_workspace(manager, pkg_id)
             || selected_after
                 .as_ref()
                 .is_some_and(|sel| sel.binary_search(&(pkg_id as PackageID)).is_err())
             || has_bundled_deps(after, pkg_id as PackageID)
         {
-            continue;
-        }
-        let path = strings::without_trailing_slash(res.workspace().slice(buf));
-        if path.is_empty() {
             continue;
         }
         let tree_path = join(
@@ -1223,7 +1202,6 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
             None => &[],
         };
         let surviving = tree_at(&new_paths, &tree_path);
-        let folder_path = join(path, b"node_modules");
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
@@ -1273,13 +1251,12 @@ fn tree_at(paths: &[(&[u8], tree::Id)], path: &[u8]) -> Option<tree::Id> {
         .map(|i| paths[i].1)
 }
 
-fn open_tree_folder(
-    trees: &[tree::Tree],
-    deps: &[crate::Dependency],
-    buf: &[u8],
-    tree_id: tree::Id,
-    workspace_names: &[Box<[u8]>],
-) -> Option<Dir> {
+// A workspace's tree is installed into the workspace folder itself; `node_modules/<name>` is only a link to it,
+// and `bun link` can point that link at another checkout. Nothing below the root folder is ever followed.
+fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
+    let trees = lockfile.buffers.trees.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
     let mut chain: Vec<tree::Id> = Vec::new();
     let mut id = tree_id;
     while id != 0 && (id as usize) < trees.len() {
@@ -1288,14 +1265,30 @@ fn open_tree_folder(
     }
     let mut dir = Dir::open(b"node_modules").ok()?;
     while let Some(id) = chain.pop() {
-        let alias = trees[id as usize].folder_name(deps, buf);
-        let package = descend(&dir, alias, contains(workspace_names, alias))?;
+        if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
+            dir = Dir::open(&folder).ok()?;
+            continue;
+        }
+        let package = descend(&dir, trees[id as usize].folder_name(deps, buf))?;
         dir = open_real_subdir(&package, b"node_modules")?;
     }
     Some(dir)
 }
 
-fn descend(dir: &Dir, alias: &[u8], follow: bool) -> Option<Dir> {
+fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {
+    let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
+    if res.tag != ResolutionTag::Workspace {
+        return None;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let path = strings::without_trailing_slash(res.workspace().slice(buf));
+    if path.is_empty() {
+        return None;
+    }
+    Some(join(path, b"node_modules"))
+}
+
+fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
     let (scope, name) = match strings::split_once_char(alias, b'/') {
         Some(split) if alias.first() == Some(&b'@') => (Some(split.0), split.1),
         _ => (None, alias),
@@ -1304,12 +1297,7 @@ fn descend(dir: &Dir, alias: &[u8], follow: bool) -> Option<Dir> {
         Some(scope) => Some(open_real_subdir(dir, scope)?),
         None => None,
     };
-    let parent = scope_dir.as_ref().unwrap_or(dir);
-    if follow {
-        parent.open_at(name).ok()
-    } else {
-        open_real_subdir(parent, name)
-    }
+    open_real_subdir(scope_dir.as_ref().unwrap_or(dir), name)
 }
 
 fn entry_kind_of(dir: &Dir, alias: &[u8]) -> EntryKind {

@@ -840,6 +840,53 @@ test.concurrent("hoisted: a symlinked scope dir is unlinked, not followed", asyn
   expect(existsSync(join(nm, "@real"))).toBeFalse();
 });
 
+test.concurrent(
+  "hoisted: a workspace's nested folder is pruned where bun.lock says the workspace is, not through node_modules/<name>",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
+    });
+    const link = join(dir, "node_modules", "a");
+    const workspaceNoDeps = join(dir, "packages", "a", "node_modules", "no-deps", "package.json");
+    expect(isSymlink(link)).toBeTrue();
+    expect(existsSync(workspaceNoDeps)).toBeTrue();
+    const junk = plant(dir, "packages/a/node_modules/junk");
+
+    // `bun link a` run from another checkout leaves node_modules/a pointing at that checkout, which has a node_modules of its own.
+    rmSync(link);
+    const other = linkOutside(dir, "node_modules/a", {
+      "package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    });
+    const victim = plant(other, "node_modules/victim");
+    const otherNoDeps = plant(other, "node_modules/no-deps");
+
+    const dryRun = await prune(dir, "--dry-run", "--linker", "hoisted");
+    expect(out(dryRun.stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - junk (node_modules/a/node_modules)
+      1 package can be removed (checked 4)
+        bun prune --linker hoisted"
+    `);
+    expect(dryRun.exitCode).toBe(0);
+
+    const { stdout, exitCode } = await prune(dir, "--linker", "hoisted");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - junk (node_modules/a/node_modules)
+      1 package removed (checked 4)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(junk)).toBeFalse();
+    expect(existsSync(workspaceNoDeps)).toBeTrue();
+    expect(existsSync(join(victim, "package.json"))).toBeTrue();
+    expect(existsSync(join(otherNoDeps, "package.json"))).toBeTrue();
+    expect(isSymlink(link)).toBeTrue();
+  },
+);
+
 test.concurrent.skipIf(isWindows)("a symlinked .bin directory is never cleaned through", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
   const nm = join(dir, "node_modules");

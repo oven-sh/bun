@@ -21,7 +21,7 @@ use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
-use crate::mysql::protocol::any_mysql_error_jsc::{mysql_error_to_js, MaybeBytes};
+use crate::mysql::protocol::any_mysql_error_jsc::{MaybeBytes, mysql_error_to_js};
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's

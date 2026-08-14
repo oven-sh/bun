@@ -668,13 +668,15 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
-                                    global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
-                                ) {
+                                if let Err(err) = connection.encode_request(|| {
+                                    PostgresRequest::bind_and_execute(
+                                        global_object,
+                                        stmt,
+                                        binding_value,
+                                        columns_value,
+                                        writer,
+                                    )
+                                }) {
                                     release_query_ref();
                                     return Err(throw_write_error(
                                         b"failed to bind and execute query",
@@ -726,13 +728,15 @@ impl PostgresSQLQuery {
                 if !has_params {
                     bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
-                        global_object,
-                        query_str.slice(),
-                        binding_value,
-                        writer,
-                        &mut signature,
-                    ) {
+                    if let Err(err) = connection.encode_request(|| {
+                        PostgresRequest::prepare_and_query_with_signature(
+                            global_object,
+                            query_str.slice(),
+                            binding_value,
+                            writer,
+                            &mut signature,
+                        )
+                    }) {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements

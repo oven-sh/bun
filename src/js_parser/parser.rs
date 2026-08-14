@@ -264,8 +264,7 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
-        /// `BundleOptions::user_defines_hash`: the `--define` / `--drop` input behind
-        /// the `Define` table of this parse. `None` ≡ none (contributes nothing to the hash).
+        /// `BundleOptions::user_defines_hash`; `None` contributes nothing to the hash.
         pub user_defines_hash: Option<u64>,
 
         /// REPL mode: transforms code for interactive evaluation

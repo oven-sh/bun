@@ -958,9 +958,7 @@ pub(crate) fn defines_from_transform_options(
     Ok((define, user_defines_hash))
 }
 
-/// Order-independent: `user_defines` is a map (a repeated key is already down to
-/// the value that wins) and both inputs are sorted. Length-prefixed, so distinct
-/// inputs never serialize alike. `None` when the user gave neither.
+/// Flag order does not matter: both inputs are sorted, and a repeated key was resolved by the map.
 fn user_defines_hash(user_defines: &defines::RawDefines, drop: &[&[u8]]) -> Option<u64> {
     if user_defines.is_empty() && drop.is_empty() {
         return None;
@@ -1206,8 +1204,7 @@ pub struct BundleOptions<'a> {
     pub banner: Cow<'static, [u8]>,
     pub define: Box<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
-    /// Hash of the `--define` / bunfig `define` / `--drop` input behind `define`,
-    /// for the runtime transpiler cache. Set by `load_defines`; `None` if no input.
+    /// Hash of the `--define` / `--drop` input behind `define`, for the runtime transpiler cache.
     pub user_defines_hash: Option<u64>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.

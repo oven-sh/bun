@@ -1,6 +1,6 @@
 "use strict";
 
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, jest, test } from "bun:test";
 import {
   createCipheriv,
   createDecipheriv,
@@ -806,6 +806,34 @@ describe("crypto.KeyObjects", () => {
       });
     });
   });
+
+  // Node's validateOneOf(length, "options.length", [128, 192, 256]) message,
+  // including the inspected value after "Received".
+  describe.each([
+    ["7", 7],
+    ["128.5", 128.5],
+    ["'128'", "128"],
+    ["undefined", undefined],
+    ["null", null],
+    ["{ bits: 128 }", { bits: 128 }],
+  ])("generateKey aes with length %s", (received, length) => {
+    const expected = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'options.length' must be one of: 128, 192, 256. Received ${received}`,
+    });
+
+    test("generateKeySync", () => {
+      expect(() => generateKeySync("aes", { length })).toThrow(expected);
+    });
+
+    test("generateKey", () => {
+      const callback = jest.fn();
+      expect(() => generateKey("aes", { length }, callback)).toThrow(expected);
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
   describe("Test async elliptic curve key generation with 'jwk' encoding and named curve", () => {
     ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
       const test = curve === "secp256k1" ? it.skip : it;

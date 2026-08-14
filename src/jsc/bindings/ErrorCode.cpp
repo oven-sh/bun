@@ -1108,35 +1108,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const std::span<const ASCIILiteral> oneOf)
-{
-    WTF::StringBuilder builder;
-    builder.append("The "_s);
-    if (WTF::find(name.span(), '.') != WTF::notFound) {
-        builder.append("property '"_s);
-    } else {
-        builder.append("argument '"_s);
-    }
-    builder.append(name);
-    builder.append("' "_s);
-    builder.append(reason);
-
-    bool first = true;
-    for (ASCIILiteral oneOfStr : oneOf) {
-        if (!first) {
-            builder.append(", "_s);
-        }
-        first = false;
-        builder.append('`');
-        builder.append(oneOfStr);
-        builder.append('`');
-    }
-
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
-    throwScope.release();
-    return {};
-}
-
+// for validateOneOf: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L200
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const std::span<const int32_t> oneOf)
 {
     WTF::StringBuilder builder;
@@ -1158,6 +1130,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
         first = false;
         builder.append(oneOfStr);
     }
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
     throwScope.release();

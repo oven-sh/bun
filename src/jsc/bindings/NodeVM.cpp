@@ -685,20 +685,23 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
     }
 
     // microtaskMode: "afterEvaluate" gives the context its own microtask
-    // queue. Validated here (not only in vm.ts) so native entry points like
-    // script.runInNewContext reject invalid values the way Node does.
+    // queue. Only script.runInNewContext reaches this with an unchecked value
+    // (vm.ts createContext() runs validateOneOf first), and on that path Node's
+    // getContextOptions() validateString()s it before createContext()'s
+    // validateOneOf() runs:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L219-L220
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L254-L256
     JSValue microtaskModeValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "microtaskMode"_s));
     RETURN_IF_EXCEPTION(scope, );
     if (microtaskModeValue && !microtaskModeValue.isUndefined()) {
-        bool isAfterEvaluate = false;
-        if (microtaskModeValue.isString()) {
-            String microtaskMode = microtaskModeValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-            isAfterEvaluate = microtaskMode == "afterEvaluate"_s;
+        if (!microtaskModeValue.isString()) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "options.microtaskMode"_s, "string"_s, microtaskModeValue);
+            return;
         }
-        if (!isAfterEvaluate) {
-            static constexpr ASCIILiteral oneOf[] = { "afterEvaluate"_s, "undefined"_s };
-            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.microtaskMode"_s, "must be one of: "_s, microtaskModeValue, oneOf);
+        String microtaskMode = microtaskModeValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        if (microtaskMode != "afterEvaluate"_s) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.microtaskMode"_s, microtaskModeValue, "must be one of: 'afterEvaluate', undefined"_s);
             return;
         }
         outOptions.ownMicrotaskQueue = true;

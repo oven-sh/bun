@@ -1012,6 +1012,65 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("microtaskMode option", () => {
+  // Node's createContext() checks microtaskMode with
+  // validateOneOf(..., ["afterEvaluate", undefined]); the runInNewContext entry
+  // points first go through getContextOptions(), which validateString()s it.
+  const code = "Promise.resolve().then(() => { globalThis.ran = true; }); 1;";
+  const entryPoints: Record<string, (sandbox: any, options: any) => unknown> = {
+    "createContext()": (sandbox, options) => runInContext(code, createContext(sandbox, options)),
+    "runInNewContext()": (sandbox, options) => runInNewContext(code, sandbox, options),
+    "Script#runInNewContext()": (sandbox, options) => new Script(code).runInNewContext(sandbox, options),
+  };
+  const invalidValue = (received: string) =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'options.microtaskMode' must be one of: 'afterEvaluate', undefined. Received ${received}`,
+    });
+  const invalidType = (received: string) =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "options.microtaskMode" property must be of type string. Received ${received}`,
+    });
+  const nonStrings: [unknown, string, string][] = [
+    [1, "1", "type number (1)"],
+    [null, "null", "null"],
+    [{}, "{}", "an instance of Object"],
+  ];
+
+  describe.each(Object.entries(entryPoints))("%s", (_, run) => {
+    test("accepts undefined", () => {
+      expect(run({}, {})).toBe(1);
+      expect(run({}, { microtaskMode: undefined })).toBe(1);
+    });
+
+    test("'afterEvaluate' runs the context's microtasks before returning", () => {
+      const sandbox: any = {};
+      expect(run(sandbox, { microtaskMode: "afterEvaluate" })).toBe(1);
+      expect(sandbox.ran).toBe(true);
+    });
+
+    test("rejects other strings with Node's validateOneOf message", () => {
+      expect(() => run({}, { microtaskMode: "x" })).toThrow(invalidValue("'x'"));
+      expect(() => run({}, { microtaskMode: "it's" })).toThrow(invalidValue(`"it's"`));
+    });
+  });
+
+  test.each(nonStrings)("createContext() reports a non-string (%p) as an invalid value", (microtaskMode, inspected) => {
+    expect(() => entryPoints["createContext()"]({}, { microtaskMode })).toThrow(invalidValue(inspected));
+  });
+
+  test.each(nonStrings)(
+    "the runInNewContext entry points report a non-string (%p) as an invalid type",
+    (microtaskMode, _, received) => {
+      expect(() => entryPoints["runInNewContext()"]({}, { microtaskMode })).toThrow(invalidType(received));
+      expect(() => entryPoints["Script#runInNewContext()"]({}, { microtaskMode })).toThrow(invalidType(received));
+    },
+  );
+});
+
 describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.

@@ -1059,11 +1059,15 @@ describe.concurrent(() => {
         stdio: ["ignore", "pipe", "pipe"],
       });
       const stderr = proc.stderr.text();
-      const { value: firstLine } = await forEachLine(proc.stdout).next();
+      const stdoutLines = forEachLine(proc.stdout);
+      const { value: firstLine } = await stdoutLines.next();
+      // What a watcher makes of the fixture's process.exit() is not under test
+      // here: stop the fixture ourselves once it has reported, then drain it.
       proc.kill();
-      await proc.exited;
-      expect(firstLine).toBe("immediates still running after the error");
+      await Array.fromAsync(stdoutLines);
       expect(await stderr).toInclude("error: boom");
+      expect(firstLine).toBe("immediates still running after the error");
+      await proc.exited;
     });
   });
 

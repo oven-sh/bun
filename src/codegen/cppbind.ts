@@ -739,7 +739,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
     `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,
-    `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,
+    `    if ${errCond} { Err(crate::top_exception_scope::thrown(${gname})) } else { Ok(${okExpr}) }`,
     `}`,
   );
 }

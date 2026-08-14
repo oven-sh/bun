@@ -3891,9 +3891,18 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
-JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
+JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    auto value = JSC::JSValue::decode(JSValue1);
+    if (!value) [[unlikely]] {
+        // Building the rejection value threw — a stopped worker's pending TerminationException cuts
+        // error creation short. That exception is what the caller's frame reports; hand back an
+        // inert promise rather than reject with nothing.
+        auto& vm = JSC::getVM(globalObject);
+        ASSERT(vm.exceptionForInspection());
+        return JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    }
+    return JSC::JSPromise::rejectedPromise(globalObject, value);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -6629,6 +6638,20 @@ CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
+}
+
+// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
+// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
+// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
+// outermost VMEntryScope exits and expects the two to agree while the exception is pending
+// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
+// that point without also ceasing to touch the VM. Called where an entry has just come back with an
+// exception: keep the flag for as long as we keep the exception.
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
+        vm.setHasTerminationRequest();
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

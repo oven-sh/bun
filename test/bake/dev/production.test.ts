@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -597,10 +597,11 @@ export default function IndexPage() {
 
   // `bun build --app` sets up one transpiler per graph of the framework and
   // used to exit without freeing them, so LeakSanitizer reported their
-  // options, define tables and resolver state after every build. An app
-  // without a pages directory finishes right after bundling, which is the
-  // earliest point the transpilers are done with; a leak report makes the
-  // process exit non-zero and shows up in stderr.
+  // options, define tables and resolver state after every build, whether it
+  // succeeded or not. The builds below stop as soon as bundling is over (no
+  // pages directory, or a bundle error), which is the earliest point the
+  // transpilers are done with; a leak report shows up in stderr and makes a
+  // successful build exit non-zero.
   describe.concurrent.skipIf(!isASAN)("frees its transpilers before exiting", () => {
     async function buildApp(cwd: string) {
       await using proc = Bun.spawn({
@@ -626,8 +627,9 @@ export default function IndexPage() {
       exitCode: 0,
     };
 
-    // LSan symbolizes its report against the debug binary when it does find
-    // something, which takes well over the default timeout.
+    // LeakSanitizer's exit-time check symbolizes against the debug binary,
+    // which takes a few seconds even when it finds nothing and longer when it
+    // has a report to print.
     const timeout = 30_000;
 
     test(
@@ -657,6 +659,38 @@ export default function IndexPage() {
         });
 
         expect(await buildApp(String(dir))).toEqual(cleanBuild);
+      },
+      timeout,
+    );
+
+    test(
+      "build that fails while bundling",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-transpiler-leak-bundle-error", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+          "pages/index.tsx": `import { useState } from "react";
+export default function IndexPage() {
+  useState(0);
+}
+`,
+        });
+
+        const { stdout, stderr, exitCode } = await buildApp(dir);
+        expect({ stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode }).toMatchInlineSnapshot(`
+          {
+            "exitCode": 1,
+            "stderr": 
+          "Loading configuration
+          Bundling routes
+          3 |   useState(0);
+                ^
+          error: "useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding \`"use client";\` to the top of the file).
+              at <dir>/pages/index.tsx:3:3
+          error: 'main' returned error.BuildFailed"
+          ,
+            "stdout": "",
+          }
+        `);
       },
       timeout,
     );

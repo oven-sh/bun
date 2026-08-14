@@ -490,7 +490,6 @@ impl VmHandle {
                 }
             }
         }
-        test_gate::closed(self);
         if s.active.load(Ordering::SeqCst) != 0 {
             s.drained.0.lock();
             while s.active.load(Ordering::SeqCst) != 0 {
@@ -624,7 +623,6 @@ mod test_gate {
             h.0.notify();
         }
     }
-    pub(super) fn closed(_: &VmHandle) {}
 }
 #[cfg(not(debug_assertions))]
 mod test_gate {
@@ -639,8 +637,6 @@ mod test_gate {
     pub(super) fn weak_posted(_: &VmHandle, _: bool, _: bun_event_loop::TaskTag, _: bool) {}
     #[inline(always)]
     pub(super) fn draining(_: &VmHandle) {}
-    #[inline(always)]
-    pub(super) fn closed(_: &VmHandle) {}
 }
 
 // ── C++ holds references ──────────────────────────────────────────────────

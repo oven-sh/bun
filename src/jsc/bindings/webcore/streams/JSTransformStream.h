@@ -62,8 +62,7 @@ public:
     // An off-thread codec step holds the coder; ClearAlgorithms / runNativeArm must defer
     // the free until the step's JS-thread completion clears this.
     bool m_asyncCodecInFlight : 1 { false };
-    // Compression/Decompression only: the chunk behind m_codecPromise started on the thread
-    // pool, so its remaining steps are dispatched there too (never run on this thread).
+    // The chunk behind m_codecPromise runs its steps on the thread pool.
     bool m_codecChunkOffThread : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
@@ -71,16 +70,13 @@ public:
     // output straight to `m_nativeSinkPtr` via the Rust SinkHandle dispatcher
     // (Bun__NativeTransformSink__writeBytes) instead of wrapping it in a
     // JSUint8Array and enqueueing on the readable.
-    // `m_nativeSinkReadyPromise` is whatever promise the arm parked on sink
-    // backpressure (the transform-algorithm result itself, or a codec chunk's
-    // resume gate); the sink's onReady (or detaching from the sink) resolves it.
+    // `m_nativeSinkReadyPromise` is the promise an arm parked on sink backpressure;
+    // the sink's onReady (or detaching from the sink) resolves it.
     JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
     JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
-    // Compression/Decompression only: the transform-algorithm promise of a chunk (or
-    // flush) whose codec steps span turns, because a step ran off-thread or stopped at
-    // the coder's output cap and is parked until the consumer has room. Set means the
-    // coder still holds that chunk's state, so ClearAlgorithms defers the coder release
-    // to the chunk's terminal (JSCompressionStreamShared.cpp).
+    // Compression/Decompression only: transform-algorithm promise of a chunk whose codec
+    // steps span turns (off-thread, or parked at the output cap). While set, the coder holds
+    // that chunk's state and ClearAlgorithms defers the coder release to the chunk's terminal.
     JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };

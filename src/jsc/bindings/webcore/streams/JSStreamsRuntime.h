@@ -148,8 +148,7 @@ namespace WebCore {
     V(onTSPerformTransformRejected)
 
 // owner: JSCompressionStreamShared.cpp. context = the JSCompressionStream / JSDecompressionStream
-// (a JSTransformStream) whose codec chunk parked mid-way; registered on the readable side's
-// backpressureChangePromise or on the native sink's ready promise.
+// whose codec chunk is parked.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CODEC(V) \
     V(onCodecChunkResume)
 

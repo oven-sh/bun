@@ -463,9 +463,7 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
 // completion, errors the writable, then throws stream.[[readable]].[[storedError]]).
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
 void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
-// Performs the release ClearAlgorithms deferred (m_nativeStateReleasePending), provided nothing
-// holds the native state any more: no arm on the stack, no off-thread codec step, no codec
-// chunk pending across turns. No-op otherwise.
+// Performs a release ClearAlgorithms deferred, once nothing holds the native state any more.
 void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 
 // Rust-side single dispatch for the native-transform → native-JSSink byte write, routed

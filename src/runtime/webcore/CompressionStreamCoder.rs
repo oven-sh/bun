@@ -8,16 +8,13 @@
 //! `void*` and drive it through the `extern "C"` fns at the bottom of this
 //! file.
 //!
-//! TransformStream backpressure only applies between input chunks, and one
-//! chunk can expand without bound (a few hundred bytes of brotli or zstd
-//! decode to gigabytes), so a chunk is transformed in *steps*: each step
-//! collects at most [`STEP_OUTPUT`] (or [`STEP_OUTPUT_OFF_THREAD`]) bytes, or
-//! the chunk's own size if that is larger, and reports whether the codec
-//! stopped short. The C++ arm
+//! TransformStream backpressure only applies between chunks, and one chunk can
+//! expand without bound (a few hundred bytes of brotli decode to gigabytes), so
+//! a chunk is transformed in steps of bounded output
+//! ([`CompressionStreamCoder::step`]). The C++ arm
 //! (`JSCompressionStreamShared.cpp`) delivers each step's output and steps
-//! again only once the readable side or native sink has room, so a chunk's
-//! expansion is never materialized at once; between steps the coder holds the
-//! chunk's unconsumed input itself ([`Pending`]).
+//! again once the consumer has room; in between, the coder keeps the chunk's
+//! unconsumed input ([`Pending`]).
 
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
@@ -63,23 +60,18 @@ impl Format {
     }
 }
 
-/// Granularity in which a step's output buffer grows.
+/// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// Output bound of one step on the JS thread, and so the largest piece a
-/// consumer of the readable side sees per `read()` for ordinary chunk sizes.
-/// A chunk larger than this may produce up to its own size per step (see
-/// [`CompressionStreamCoder::step`]): the bound is on *expansion*, and a big
-/// chunk's caller has already materialized that much.
+/// Output bound of a step on the JS thread (a chunk larger than this may
+/// produce up to its own size per step: the bound is on expansion).
 pub const STEP_OUTPUT: usize = 64 * 1024;
-/// The same bound for steps run on the thread pool (chunks over the C++
-/// `kAsyncCodecThreshold`): every step there costs a pool round trip, so each
-/// one is allowed to do more work.
+/// Output bound of a step on the thread pool, where every step is a round trip.
 pub const STEP_OUTPUT_OFF_THREAD: usize = 1024 * 1024;
 
-/// Spare room for one codec call: grows `out` by up to [`CHUNK`] but never
-/// lets the step pass `cap`. The caller has checked `out.len() < cap`.
+/// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
 fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
+    debug_assert!(out.len() < cap);
     let budget = cap - out.len();
     out.reserve(budget.min(CHUNK));
     let spare = out.spare_capacity_mut();
@@ -88,22 +80,21 @@ fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
 }
 
 /// The rest of a chunk (or flush) whose last step stopped at the output cap.
-/// The unconsumed input is copied rather than borrowed: user code runs between
-/// steps (the consumer's reads) and may detach or resize the chunk's buffer.
+/// Copied, not borrowed: user code runs between steps and may detach the chunk.
 struct Pending {
     input: Vec<u8>,
     pos: usize,
     finish: bool,
-    /// The chunk's per-step output bound, fixed by its first step.
+    /// Per-step output bound, fixed by the chunk's first step.
     cap: usize,
 }
 
 enum Progress {
-    /// The chunk (or flush) has been fully transformed.
     Done,
-    /// Stopped at the output cap with the codec mid-chunk; the first
-    /// `consumed` bytes of this step's input are no longer needed.
-    More { consumed: usize },
+    /// Stopped at the output cap; `consumed` bytes of this step's input are used up.
+    More {
+        consumed: usize,
+    },
 }
 
 enum Backend {
@@ -142,8 +133,7 @@ pub struct CompressionStreamCoder {
     zstd_head_len: u8,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Output of the latest `step`. Reused across steps; `step` clears it on
-    /// entry.
+    /// Output of the latest `step`, which clears it on entry.
     out: Vec<u8>,
 }
 
@@ -283,14 +273,10 @@ impl CompressionStreamCoder {
                     .all(|(a, b)| *a == b))
     }
 
-    /// Runs one step of the chunk (or final empty flush, `finish`) being
-    /// transformed, collecting at most `max(min_cap, chunk length)` bytes into
-    /// `self.out` (cleared on entry). Returns `true` when the codec stopped at
-    /// that cap: the caller delivers `out` and, once there is room for more,
-    /// steps again with no input; only then may the next chunk be fed.
-    /// `input` / `finish` / `min_cap` are read on a chunk's first step only.
-    /// `finish` drives the codec to completion and performs the "unexpected
-    /// end of file" / "trailing junk" checks.
+    /// One step of the chunk (or, with `finish`, the final flush) in progress:
+    /// collects at most `max(min_cap, chunk length)` bytes into `self.out` and
+    /// returns `true` if the codec stopped at that cap, in which case the caller
+    /// must step again (with no input) before feeding the next chunk.
     fn step(&mut self, input: &[u8], finish: bool, min_cap: usize) -> Result<bool, CodecError> {
         self.out.clear();
         if let Some(mut pending) = self.pending.take() {
@@ -309,8 +295,7 @@ impl CompressionStreamCoder {
                 }
             };
         }
-        // Zstd decode: the frame-magic bytes the previous chunk ended inside of
-        // (`zstd_head`) belong in front of this one.
+        // Zstd decode: re-attach the frame magic the previous chunk ended inside of.
         let joined;
         let bytes: &[u8] = if self.zstd_head_len > 0 {
             joined = [&self.zstd_head[..self.zstd_head_len as usize], input].concat();
@@ -334,9 +319,8 @@ impl CompressionStreamCoder {
         }
     }
 
-    /// Drives the codec over `input` until the chunk is done or `self.out`
-    /// holds `cap` bytes. `continuing` is set for every step of a chunk after
-    /// its first: the codec is then mid-chunk and must be called even with no
+    /// Drives the codec until the chunk is done or `self.out` holds `cap` bytes.
+    /// A `continuing` step (not the chunk's first) calls the codec even with no
     /// input left, to drain the output it is holding.
     fn run(
         &mut self,
@@ -618,11 +602,8 @@ impl CompressionStreamCoder {
                 }
             }
             Backend::ZstdDecode(p) => {
-                // A zstd stream is one or more concatenated frames (RFC 8878
-                // §3.1, including skippable frames). After a frame completes,
-                // the next bytes must be another frame magic; a chunk may end
-                // inside that 4-byte magic, which `zstd_head` carries over to
-                // the next chunk (`step` joins it back on).
+                // After a frame completes, whatever follows must be another frame
+                // magic (see `zstd_head`); `step` has already re-attached a split one.
                 let mut input_buf = zstd::ZSTD_inBuffer {
                     src: input.as_ptr().cast(),
                     size: input.len(),
@@ -788,12 +769,9 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
     }
 }
 
-/// Runs one step (see [`CompressionStreamCoder::step`]) on the JS thread.
-/// Returns a fresh `Uint8Array` (possibly empty) on success, setting `more`
-/// when the coder stopped at the cap and must be stepped again with no input;
-/// or `JSValue::zero` with a `TypeError` thrown on `global` on failure.
-/// `input` may be null iff `input_len == 0`, and is ignored on a continuation
-/// step.
+/// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
+/// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
+/// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transform(
@@ -859,11 +837,9 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
     let _ = global.throw_value(codec_error_to_js(global, &e));
 }
 
-/// [`CompressionStreamCoder__transform`], but the step's output goes straight
-/// to a native JSSink (`m_sinkPtr`) instead of becoming a `JSUint8Array`.
-/// Returns the sink's `write_bytes` result (see nativeSinkWriteIsBackpressure
-/// for the backpressure-signal shapes), `undefined` for an empty output, or
-/// `JSValue::zero` with an exception pending on `global` on codec failure.
+/// [`CompressionStreamCoder__transform`], but the output is written to the
+/// native JSSink `sink_ptr`: returns the sink's `write` result (see
+/// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformInto(
@@ -917,12 +893,8 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
 
 unsafe extern "C" {
-    /// JS-thread completion hook in `JSCompressionStreamShared.cpp`. Copies
-    /// `out[..out_len]` into the sink / a fresh Uint8Array before it clears
-    /// `m_asyncCodecInFlight`, then either settles the stream's
-    /// `m_codecPromise` or, when `more` is set, arranges the chunk's next step
-    /// (another `CompressionStreamCoder__transformAsync` with no input, once
-    /// the consumer has room).
+    /// JS-thread completion in `JSCompressionStreamShared.cpp`: consumes
+    /// `out[..out_len]` before anything may release or re-dispatch the coder.
     fn Bun__CompressionStream__deliverAsync(
         global: &JSGlobalObject,
         stream_cell: JSValue,
@@ -993,11 +965,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         let global = cx.global();
         let (out, out_len, err) = match &this.error {
             None => {
-                // SAFETY: `this` holds a coder reference until it drops at the
-                // end of this fn, so `coder` (and its `out` buffer) stay live
-                // while `Bun__CompressionStream__deliverAsync` copies; it copies
-                // before it can schedule the next step, which is what would
-                // touch `out` again.
+                // SAFETY: `this` holds a coder reference until the end of this fn,
+                // and `deliverAsync` copies `out` before it can re-dispatch the coder.
                 let coder = unsafe { &*this.coder };
                 (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }
@@ -1018,9 +987,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     }
 }
 
-/// Schedules one off-thread step. The first step of a chunk gets the chunk's
-/// bytes; a continuation step (the previous one stopped at the cap) is called
-/// with no chunk and no input, and the coder works from the tail it kept.
+/// Schedules one off-thread step; a continuation step passes no chunk and no
+/// input (the coder kept the tail).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformAsync(

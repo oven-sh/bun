@@ -408,12 +408,9 @@ void nativeTransformReleaseStateIfIdle(JSTransformStream* stream)
     nativeTransformReleaseState(stream);
 }
 
-// ClearAlgorithms is the one shared terminal (post-flush, error, cancel), but it can reach
-// a coder that is still busy: a re-entrant reader.cancel() from user JS inside a native arm
-// (m_nativeStateInUse), an off-thread codec step (m_asyncCodecInFlight), or a codec chunk
-// whose steps are still pending across turns (m_codecPromise; the close algorithm clears
-// algorithms as soon as the flush arm returns, while a large flush may still be parked
-// mid-way). Defer; whoever finishes that work runs nativeTransformReleaseStateIfIdle.
+// ClearAlgorithms (post-flush, error, cancel) can reach a coder that is still busy: an arm on
+// the stack, an off-thread step, or a chunk parked across turns (the close algorithm clears
+// algorithms as soon as the flush arm returns). Whoever finishes that work releases it.
 static void nativeTransformReleaseStateOrDefer(JSTransformStreamDefaultController* controller)
 {
     auto* stream = dynamicDowncast<JSTransformStream>(controller->m_algorithmContext.get());

@@ -278,12 +278,10 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = stream->m_controller.get();
     if (auto* finishPromise = controller->m_finishPromise.get()) {
-        // A close is already in flight, so the spec just hands back its finish promise and the
-        // unblock-write step of the reaction below never runs. That step is what wakes a native
-        // codec flush parked on [[backpressureChangePromise]] (JSCompressionStreamShared.cpp),
-        // and the readable, closed by this cancel, will never pull again, so perform it here.
-        // Nothing else can be waiting on that promise: a close or abort only starts once no
-        // write is in flight.
+        // The spec skips the reaction below (and its unblock-write step) while a close is in
+        // flight; a native codec flush parked on [[backpressureChangePromise]] still needs it,
+        // as the readable this cancel just closed will never pull again. Nothing else waits on
+        // that promise once a close has started.
         transformStreamUnblockWrite(globalObject, stream);
         return finishPromise;
     }

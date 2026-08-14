@@ -1068,6 +1068,7 @@ mod _async_tasks {
         args::Exists,
         args::Access,
         args::CopyFile,
+        args::Cp,
     );
     impl_fs_argument!(@fd
         args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,

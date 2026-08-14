@@ -243,6 +243,13 @@ pub struct ArgumentsSlice<'a> {
     pub all: &'a [JSValue],
     pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
+    /// An errno-class failure met while converting an argument (a path no
+    /// syscall could accept). Node surfaces these from the syscall itself, so
+    /// a binding that returns a promise must reject it with the error rather
+    /// than throw: when `will_be_async` the converter records it here and
+    /// hands back a placeholder, and the binding rejects with it after
+    /// parsing. Only the first failure is kept.
+    pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
 
 impl<'a> ArgumentsSlice<'a> {
@@ -287,6 +294,7 @@ impl<'a> ArgumentsSlice<'a> {
             all: slice,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
+            deferred_error: None,
         }
     }
 

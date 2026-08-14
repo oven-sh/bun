@@ -465,6 +465,8 @@ For each option, if the `S3_*` environment variable is not set, Bun falls back t
 | `bucket`          | `AWS_BUCKET`                  |
 | `sessionToken`    | `AWS_SESSION_TOKEN`           |
 
+For `region` only, if neither `S3_REGION` nor `AWS_REGION` is set, Bun also falls back to `AWS_DEFAULT_REGION`, matching the AWS CLI and SDKs.
+
 Bun reads these environment variables from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (`process.env` is not used for this).
 
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.

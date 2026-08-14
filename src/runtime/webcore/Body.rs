@@ -726,7 +726,8 @@ impl Value {
 
     pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
-            Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
+            // Map `get_size_for_bindings()`'s `u64::MAX` "unknown" marker to `MAX_SIZE`.
+            Value::Blob(b) => b.get_size_for_bindings().min(blob::MAX_SIZE),
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),

@@ -958,12 +958,13 @@ impl RewriterPipe {
                 document_content_handlers,
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
                 memory_settings: lol_html::MemorySettings {
+                    // `input_size` may be unknown (`MAX_SIZE`) or peer-supplied; cap it.
                     preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
+                        >= webcore::blob::MAX_SIZE
                     {
                         1024
                     } else {
-                        input_size.max(1024) as usize
+                        input_size.clamp(1024, 64 * 1024)
                     },
                     max_allowed_memory_usage: u32::MAX as usize,
                 },

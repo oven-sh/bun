@@ -2076,6 +2076,25 @@ export default class {
         exports: ["default"],
         imports: [{ kind: "import-statement", path: "./for-effect" }],
       });
+      // require() only produces an import record with allowBunRuntime.
+      const withRequire = new Bun.Transpiler({
+        loader: "tsx",
+        allowBunRuntime: true,
+        exports: { eliminate: ["getStaticProps"] },
+      });
+      expect(
+        withRequire.scan(`
+          function loadData() { return [import("./server-db"), require("./server-cjs"), require.resolve("./server-bin")]; }
+          export function getStaticProps() { return loadData(); }
+          export default function Page() { return [import("./client-db"), require("./client-cjs")]; }
+        `),
+      ).toEqual({
+        exports: ["default"],
+        imports: [
+          { kind: "dynamic-import", path: "./client-db" },
+          { kind: "require-call", path: "./client-cjs" },
+        ],
+      });
     });
 
     it("exports.eliminate of an export clause frees the local it pointed at", () => {
@@ -2197,6 +2216,9 @@ export default class {
     it("treats every declaration of a redeclared symbol as one", () => {
       expect(shake("var x = 1;\nexport const y = x;\nvar x;")).toBe("var x = 1;\nexport const y = x;\nvar x;\n");
       expect(shake("var x = 1;\nvar x;\nexport const y = 2;")).toBe("export const y = 2;\n");
+      // The exported declaration is live, so the redeclaration that gives it its value must stay.
+      expect(shake("export var x = 1;\nvar x = 2;")).toBe("export var x = 1;\nvar x = 2;\n");
+      expect(shake("export function f() {}\nvar f = 2;")).toBe("export function f() {}\nvar f = 2;\n");
       expect(shake("enum E { A = 1 }\nenum E { B = 2 }\nexport const e = E;", {}, "ts")).toBe(
         [
           "var E;",

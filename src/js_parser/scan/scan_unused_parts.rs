@@ -1,18 +1,26 @@
 use crate::p::P;
 use bun_alloc::ArenaVec;
-use bun_ast::{self as js_ast, Ref, flags};
+use bun_ast::{self as js_ast, DeclaredSymbol, ImportRecordFlags, Ref, flags};
 use bun_collections::HashMap;
 use bun_crash_handler::handle_oom::handle_oom;
 use smallvec::SmallVec;
+
+/// Which parts declare each top-level symbol, keyed by the symbol its `link`
+/// chain ends at: redeclaring a `var` or function creates a second symbol
+/// linked to the first, and every declaration of a live symbol has to stay
+/// (`export var x = 1; var x = 2;`).
+type DeclaringParts = HashMap<Ref, SmallVec<[u32; 1]>>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Single-file tree shaking (`features.remove_unused_declarations`).
     ///
     /// `Options.tree_shaking` gave every top-level statement its own part.
     /// Parts that do anything other than declare something side-effect free
-    /// are roots; a declaration part survives only if a live part uses one of
-    /// its symbols. Removing a part also un-counts its symbol uses, so the
-    /// import scanner that runs next trims the imports only it needed.
+    /// are roots; a declaration part survives only if a live part uses, or
+    /// also declares, one of its symbols. Removing a part also un-counts its
+    /// symbol uses, so the import scanner that runs next trims the imports only
+    /// it needed, and marks the `import()`/`require()` records inside it
+    /// unused, like the ones in dead control flow that are never created.
     pub(crate) fn remove_unused_parts(&mut self, parts: &mut ArenaVec<'a, js_ast::Part>) {
         // The bundler tree shakes in the linker, where cross-file uses are known.
         debug_assert!(!self.options.bundle);
@@ -25,36 +33,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let arena = self.arena;
         let mut live = bun_alloc::vec_from_iter_in(core::iter::repeat_n(false, parts.len()), arena);
         let mut worklist = ArenaVec::<u32>::new_in(arena);
-        // Redeclaring a `var` or function creates a second symbol linked to the
-        // first, so both declarations are keyed by the symbol the links end at.
-        let mut declaring_parts: HashMap<Ref, SmallVec<[u32; 1]>> = HashMap::default();
+        let mut declaring_parts = DeclaringParts::default();
 
         for (i, part) in parts.iter().enumerate() {
             if !self.part_only_declares_removable_symbols(part) {
                 live[i] = true;
                 worklist.push(i as u32);
-                continue;
             }
-            for &declared in part.declared_symbols.refs() {
-                let key = self.follow_symbol_links(declared);
-                handle_oom(declaring_parts.get_or_put(key))
-                    .value_ptr
-                    .push(i as u32);
-            }
+            DeclaredSymbol::for_each_top_level_symbol(
+                &part.declared_symbols,
+                &mut declaring_parts,
+                |declaring_parts, declared| {
+                    handle_oom(declaring_parts.get_or_put(self.follow_symbol_links(declared)))
+                        .value_ptr
+                        .push(i as u32);
+                },
+            );
         }
 
         while let Some(i) = worklist.pop() {
-            for &used in parts[i as usize].symbol_uses.keys() {
-                let Some(declaring) = declaring_parts.get(&self.follow_symbol_links(used)) else {
-                    continue;
-                };
-                for &j in declaring {
-                    if !live[j as usize] {
-                        live[j as usize] = true;
-                        worklist.push(j);
-                    }
-                }
+            let part = &parts[i as usize];
+            for &used in part.symbol_uses.keys() {
+                self.mark_declaring_parts_live(used, &declaring_parts, &mut live, &mut worklist);
             }
+            DeclaredSymbol::for_each_top_level_symbol(
+                &part.declared_symbols,
+                &mut (&mut live, &mut worklist),
+                |(live, worklist), declared| {
+                    self.mark_declaring_parts_live(declared, &declaring_parts, live, worklist);
+                },
+            );
         }
 
         let live_count = live.iter().filter(|&&is_live| is_live).count();
@@ -66,8 +74,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for (part, is_live) in all_parts.into_iter().zip(live.iter()) {
             if *is_live {
                 parts.push(part);
-            } else {
-                self.clear_symbol_usages_from_dead_part(&part);
+                continue;
+            }
+            for &record_index in part.import_record_indices.iter() {
+                self.import_records.items_mut()[record_index as usize]
+                    .flags
+                    .insert(ImportRecordFlags::IS_UNUSED);
+            }
+            self.clear_symbol_usages_from_dead_part(&part);
+        }
+    }
+
+    fn mark_declaring_parts_live(
+        &self,
+        symbol: Ref,
+        declaring_parts: &DeclaringParts,
+        live: &mut [bool],
+        worklist: &mut ArenaVec<'a, u32>,
+    ) {
+        let Some(declaring) = declaring_parts.get(&self.follow_symbol_links(symbol)) else {
+            return;
+        };
+        for &i in declaring {
+            if !live[i as usize] {
+                live[i as usize] = true;
+                worklist.push(i);
             }
         }
     }

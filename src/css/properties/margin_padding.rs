@@ -844,8 +844,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.has_any = true;
     }
 
-    /// Before an unparsed declaration setting `declared` is written out: inline values being
-    /// compiled away stay buffered and what was written out ahead of them is recorded instead.
+    /// For an unparsed declaration setting `declared`, which then overrides like a buffered value.
     fn flush_before_unparsed(
         &mut self,
         declared: DeclaredSides,

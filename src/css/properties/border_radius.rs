@@ -490,8 +490,7 @@ impl BorderRadiusHandler {
         context.should_compile_logical(css::compat::Feature::LogicalBorderRadius)
     }
 
-    /// Before an unparsed declaration setting `declared` is written out: logical corners being
-    /// compiled away stay buffered and what was written out ahead of them is recorded instead.
+    /// For an unparsed declaration setting `declared`, which then overrides like a buffered value.
     fn flush_before_unparsed(
         &mut self,
         declared: DeclaredCorners,

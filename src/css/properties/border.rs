@@ -1615,9 +1615,7 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
-        /// Keeps compiled logical values buffered under the physical one, for
-        /// `flush_overridden_inline`. Every arm storing a physical value records the physical
-        /// category, so the reverse never happens.
+        /// Sound because every arm storing a physical value also records the physical category.
         fn keeps_logical_buffered(
             &self,
             incoming: PropertyCategory,
@@ -1648,8 +1646,7 @@ mod border_handler_body {
             declared
         }
 
-        /// Before an unparsed declaration setting `declared` is written out: inline values being
-        /// compiled away stay buffered and what was written out ahead of them is recorded instead.
+        /// For an unparsed declaration setting `declared`, which then overrides like a buffered one.
         fn flush_before_unparsed(
             &mut self,
             declared: BorderProperty,

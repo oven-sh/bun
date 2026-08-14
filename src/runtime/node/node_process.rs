@@ -431,7 +431,7 @@ mod _impl {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_(b"[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(vm.main_for_argv()));
             }
         }
 

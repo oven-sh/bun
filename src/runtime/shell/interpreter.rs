@@ -1515,7 +1515,7 @@ impl Interpreter {
                 // SAFETY: `bun_vm()` on a JS event loop returns the live
                 // `*VirtualMachine` owning that loop.
                 let vm = unsafe { &*vm_ptr };
-                let main = vm.main();
+                let main = vm.main_for_argv();
                 if !main.is_empty() {
                     if int == 0 {
                         out.extend_from_slice(main);

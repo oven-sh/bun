@@ -992,8 +992,7 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
     (c as i8) >= -0x40
 }
 
-/// The longest prefix of `self_` that fits in `max_len` bytes without ending
-/// inside a multi-byte UTF-8 sequence. Returns `self_` unchanged when it fits.
+/// Longest prefix of `self_` within `max_len` bytes that does not split a UTF-8 sequence.
 pub fn truncate_to_char_boundary(self_: &[u8], max_len: usize) -> &[u8] {
     if self_.len() <= max_len {
         return self_;

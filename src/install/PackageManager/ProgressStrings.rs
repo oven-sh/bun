@@ -102,8 +102,7 @@ impl PackageManager {
         } else {
             0
         };
-        // Dependency names are user input of any length; the progress line is
-        // display-only, so a name that does not fit the buffer is cut short.
+        // Display-only, so a name longer than the buffer is simply cut short.
         let name =
             strings::truncate_to_char_boundary(name, self.progress_name_buf.len() - emoji_len);
         self.progress_name_buf[emoji_len..][..name.len()].copy_from_slice(name);

@@ -2,15 +2,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bun_threading::RwLock;
 
-use crate::api::cron::CronJob;
-use crate::jsc::virtual_machine::VirtualMachine;
-use crate::timer::{
-    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
-    TimeoutObject, TimerHeap, TimerObjectInternals,
-};
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::api::cron::CronJob;
+use crate::jsc::virtual_machine::VirtualMachine;
+use crate::timer::{
+    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
+    InHeap, TimerObjectInternals, TimeoutObject, TimerHeap,
+};
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -36,10 +36,7 @@ pub(crate) struct CurrentTime {
     date_now_offset: AtomicU64,
 }
 
-const MIN_TIMESPEC: Timespec = Timespec {
-    sec: i64::MIN,
-    nsec: i64::MIN,
-};
+const MIN_TIMESPEC: Timespec = Timespec { sec: i64::MIN, nsec: i64::MIN };
 
 static CURRENT_TIME: CurrentTime = CurrentTime {
     offset_raw: RwLock::new(MIN_TIMESPEC),
@@ -67,8 +64,7 @@ impl CurrentTime {
         let mut date_now_offset = f64::from_bits(self.date_now_offset.load(Ordering::Relaxed));
         if let Some(js) = js {
             date_now_offset = js.floor() - timespec_ms;
-            self.date_now_offset
-                .store(date_now_offset.to_bits(), Ordering::Relaxed);
+            self.date_now_offset.store(date_now_offset.to_bits(), Ordering::Relaxed);
         }
         let date_now = date_now_offset + timespec_ms;
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
@@ -117,10 +113,7 @@ use crate::jsc_hooks::timer_all;
 
 #[inline]
 fn from_el_timespec(t: &ElTimespec) -> Timespec {
-    Timespec {
-        sec: t.sec,
-        nsec: t.nsec,
-    }
+    Timespec { sec: t.sec, nsec: t.nsec }
 }
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
@@ -259,13 +252,7 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        let fired = unsafe {
-            EventLoopTimer::fire(
-                next,
-                &now_el,
-                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast(),
-            )
-        };
+        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
@@ -372,9 +359,9 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             } else if now.is_date() {
                 js_now = now.get_unix_timestamp();
             } else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("'now' must be a number or Date"))
-                );
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a number or Date"
+                )));
             }
         }
     }
@@ -499,17 +486,9 @@ fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("useFakeTimers", 0, __jsc_host_use_fake_timers),
     ("useRealTimers", 0, __jsc_host_use_real_timers),
-    (
-        "advanceTimersToNextTimer",
-        0,
-        __jsc_host_advance_timers_to_next_timer,
-    ),
+    ("advanceTimersToNextTimer", 0, __jsc_host_advance_timers_to_next_timer),
     ("advanceTimersByTime", 1, __jsc_host_advance_timers_by_time),
-    (
-        "runOnlyPendingTimers",
-        0,
-        __jsc_host_run_only_pending_timers,
-    ),
+    ("runOnlyPendingTimers", 0, __jsc_host_run_only_pending_timers),
     ("runAllTimers", 0, __jsc_host_run_all_timers),
     ("getTimerCount", 0, __jsc_host_get_timer_count),
     ("clearAllTimers", 0, __jsc_host_clear_all_timers),

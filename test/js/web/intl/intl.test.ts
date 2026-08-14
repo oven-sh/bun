@@ -119,7 +119,7 @@ describe("Intl.Collator", () => {
       cmd: [
         bunExe(),
         "-e",
-        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (1234.5).toLocaleString()]))`,
+        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (12345.5).toLocaleString()]))`,
       ],
       // whatever the environment says, including nothing at all
       env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
@@ -129,7 +129,7 @@ describe("Intl.Collator", () => {
     const [locale, order, grouped] = JSON.parse(stdout);
     expect(locale).not.toContain("posix");
     expect(order).toBe(-1);
-    expect(grouped).toMatch(/^1\D234[.,]5$/); // grouped (whatever the separator); en_US_POSIX gives "1234.5"
+    expect(grouped).toMatch(/^12\D345[.,]5$/); // grouped (whatever the separator); en_US_POSIX gives "12345.5"
     expect(exitCode).toBe(0);
   });
 
@@ -144,7 +144,7 @@ describe("Intl.Collator", () => {
          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setlocale: { args: ["i32", "cstring"], returns: "cstring" } });
          const LC_ALL = 6; // glibc and musl
          const set = String(libc.symbols.setlocale(LC_ALL, Buffer.from("C.UTF-8\\0")));
-         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (1234.5).toLocaleString()]));`,
+         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (12345.5).toLocaleString()]));`,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -155,7 +155,7 @@ describe("Intl.Collator", () => {
     if (set === "C.UTF-8") {
       expect(locale).toBe("en-US");
       expect(order).toBe(-1);
-      expect(grouped).toBe("1,234.5");
+      expect(grouped).toBe("12,345.5");
     }
     expect(exitCode).toBe(0);
   });

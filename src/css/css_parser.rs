@@ -3298,7 +3298,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse the input until exhaustion and check that it contains no "error"
-    /// token. See `Token::is_parse_error`.
+    /// token. See `Token::is_parse_error`. Nested blocks and functions are
+    /// checked recursively, and parsing continues after each of them.
     pub(crate) fn expect_no_error_token(&mut self) -> CssResult<()> {
         loop {
             let tok = match self.next_including_whitespace_and_comments() {
@@ -3308,7 +3309,6 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     self.parse_nested_block(|i| i.expect_no_error_token())?;
-                    return Ok(());
                 }
                 _ => {
                     if tok.is_parse_error() {

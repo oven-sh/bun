@@ -920,8 +920,7 @@ impl RewriterPipe {
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         // https://github.com/oven-sh/bun/issues/3334
-        // Before `wire_input` takes the body: the output body is a stream, so
-        // a Blob input's Content-Type can only be carried over as a header.
+        // Before `wire_input` consumes the body the Content-Type is derived from.
         let headers = original.clone_headers(global)?;
 
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {

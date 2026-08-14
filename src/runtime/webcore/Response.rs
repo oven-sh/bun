@@ -401,9 +401,7 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy of the headers the `.headers` getter would report, without
-    /// materializing them on `self`: the `FetchHeaders` once one exists,
-    /// otherwise the body's Content-Type (`None` when there is neither).
+    /// Deep copy of what the `.headers` getter would report, without materializing it on `self`.
     pub(crate) fn clone_headers(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
         match self.init.get().headers.as_ref() {
             Some(headers) => headers.clone_this(global),
@@ -692,9 +690,7 @@ impl Response {
         Ok(self.init_mut().headers.as_mut().unwrap())
     }
 
-    /// The headers a Response constructed without a `headers` init still has:
-    /// `Some` only when the body is a Blob with a Content-Type (`Bun.file()`
-    /// mime type, `Blob.type`, the FormData boundary).
+    /// `Some` only when the body is a Blob with a Content-Type (`Bun.file()` mime, `Blob.type`).
     fn create_headers_from_body(
         &self,
         global_this: &JSGlobalObject,

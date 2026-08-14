@@ -552,7 +552,7 @@ describe("dns.reverse", () => {
 // (c-ares reads it first; Android goes through bionic/netd, which does too), so
 // whatever they report for 127.0.0.1 must come from the hosts file's loopback
 // entries (reverse() reports the entry's aliases, which may be none).
-const loopbackNames = (() => {
+function hostsNamesFor(address) {
   const hostsPath = isWindows
     ? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\drivers\\etc\\hosts`
     : isAndroid
@@ -563,33 +563,70 @@ const loopbackNames = (() => {
       .readFileSync(hostsPath, "utf8")
       .split("\n")
       .map(line => line.replace(/#.*/, "").trim().split(/\s+/))
-      .filter(parts => parts[0] === "127.0.0.1" || parts[0] === "::1")
+      .filter(parts => parts[0] === address)
       .flatMap(parts => parts.slice(1));
   } catch {
     return [];
   }
-})();
-test.skipIf(!loopbackNames.includes("localhost"))("dns.reverse of loopback comes from the hosts file", async () => {
-  for (const name of await dns.promises.reverse("127.0.0.1")) {
-    expect(loopbackNames).toContain(name);
-  }
-  const { hostname } = await dns.promises.lookupService("127.0.0.1", 22);
-  expect(loopbackNames).toContain(hostname);
-});
+}
+// c-ares merges hosts entries by name, so 127.0.0.1's "localhost" entry may
+// report ::1's aliases too; both loopback lines are acceptable answers.
+const loopbackNames = [...hostsNamesFor("127.0.0.1"), ...hostsNamesFor("::1")];
+test.skipIf(!hostsNamesFor("127.0.0.1").includes("localhost"))(
+  "dns.reverse of loopback comes from the hosts file",
+  async () => {
+    for (const name of await dns.promises.reverse("127.0.0.1")) {
+      expect(loopbackNames).toContain(name);
+    }
+    const { hostname } = await dns.promises.lookupService("127.0.0.1", 22);
+    expect(loopbackNames).toContain(hostname);
+  },
+);
+
+// Answers every A query with 127.0.0.2, so a resolve4 that lands here proves
+// which servers the resolver is using without any outbound DNS.
+async function localDnsServer() {
+  return await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(sock, query, port, addr) {
+        let end = 12;
+        while (query[end] !== 0) end += query[end] + 1;
+        end += 5; // root label + QTYPE + QCLASS
+        const answer = Buffer.concat([
+          query.subarray(0, end),
+          Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 2]),
+        ]);
+        answer[2] = 0x81; // QR + RD
+        answer[3] = 0x80; // RA
+        answer.writeUInt16BE(1, 6); // ANCOUNT
+        answer.writeUInt16BE(0, 8);
+        answer.writeUInt16BE(0, 10);
+        sock.send(answer, port, addr);
+      },
+    },
+  });
+}
 
 // A resolver with no explicit servers uses the platform resolver on Android;
 // setServers([...]) switches it to those servers, setServers([]) switches back.
 test("Resolver getServers/setServers round-trip", async () => {
-  const resolver = new dns.promises.Resolver();
-  if (isAndroid) expect(resolver.getServers()).toEqual([]);
-  resolver.setServers(["1.1.1.1", "8.8.8.8"]);
-  expect(resolver.getServers()).toEqual(["1.1.1.1", "8.8.8.8"]);
-  expect((await resolver.resolve4("example.com")).length).toBeGreaterThan(0);
-  resolver.setServers([]);
-  expect(resolver.getServers()).toEqual([]);
-  if (isAndroid) {
-    // back on the platform resolver: still resolves
-    expect((await resolver.resolve4("example.com")).length).toBeGreaterThan(0);
+  const server = await localDnsServer();
+  try {
+    const resolver = new dns.promises.Resolver();
+    if (isAndroid) expect(resolver.getServers()).toEqual([]);
+    resolver.setServers([`127.0.0.1:${server.port}`]);
+    expect(resolver.getServers()).toEqual([`127.0.0.1:${server.port}`]);
+    expect(await resolver.resolve4("example.com")).toEqual(["127.0.0.2"]);
+    resolver.setServers([]);
+    expect(resolver.getServers()).toEqual([]);
+    if (isAndroid) {
+      // back on the platform resolver, which does not know 127.0.0.2
+      expect(await resolver.resolve4("example.com")).not.toEqual(["127.0.0.2"]);
+    }
+  } finally {
+    server.close();
   }
 });
 

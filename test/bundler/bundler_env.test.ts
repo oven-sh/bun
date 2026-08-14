@@ -27,7 +27,7 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
-    itBundled("env/inline system", {
+    itBundled(`env/${backend}/inline system`, {
       env: {
         PATH: process.env.PATH,
       },
@@ -47,7 +47,7 @@ for (let backend of ["api", "cli"] as const) {
     });
 
     // Test disable mode - no env vars are inlined
-    itBundled("env/disable", {
+    itBundled(`env/${backend}/disable`, {
       env: {
         FOO: "bar",
         BAZ: "123",

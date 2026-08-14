@@ -2,8 +2,8 @@ import { describe } from "bun:test";
 import { itBundled } from "../../expectBundled";
 
 const runTest = (testTitle: string, input: string, expected: string) => {
-  testTitle = testTitle.length === 0 ? input : testTitle;
-  itBundled(testTitle, {
+  // Several WPT cases share a title, so the input is what makes the id unique.
+  itBundled(testTitle.length === 0 ? input : `${input} (${testTitle})`, {
     files: {
       "/a.css": /* css */ `
 h1 {

@@ -4,10 +4,10 @@ import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
 
-describe("bundler", async () => {
+describe("bundler", () => {
   for (let target of ["bun", "node"] as const) {
-    describe(`${target} loader`, async () => {
-      itBundled("bun/loader-yaml-file", {
+    describe(`${target} loader`, () => {
+      itBundled(`${target}/loader-yaml-file`, {
         target,
         files: {
           "/entry.ts": /* js */ `
@@ -18,7 +18,7 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
-      itBundled("bun/loader-text-file", {
+      itBundled(`${target}/loader-text-file`, {
         target,
         outfile: "",
         outdir: "/out",
@@ -32,7 +32,7 @@ describe("bundler", async () => {
         },
         run: { stdout: "Hello, world!" },
       });
-      itBundled("bun/loader-json-file", {
+      itBundled(`${target}/loader-json-file`, {
         target,
         files: {
           "/entry.ts": /* js */ `
@@ -43,7 +43,7 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
-      itBundled("bun/loader-toml-file", {
+      itBundled(`${target}/loader-toml-file`, {
         target,
         files: {
           "/entry.ts": /* js */ `
@@ -54,7 +54,7 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
-      itBundled("bun/loader-text-file", {
+      itBundled(`${target}/loader-text-file-with-json-extension`, {
         target,
         files: {
           "/entry.ts": /* js */ `
@@ -65,7 +65,7 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
-      itBundled("bun/loader-xml-file", {
+      itBundled(`${target}/loader-xml-file`, {
         target,
         files: {
           "/entry.ts": /* js */ `
@@ -84,7 +84,7 @@ describe("bundler", async () => {
     });
   }
 
-  itBundled("bun/loader-text-file", {
+  itBundled("bun/loader-text-file-with-backticks", {
     target: "bun",
     outfile: "",
     outdir: "/out",
@@ -340,9 +340,10 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
+  const moon = fs.readFileSync(
     fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+    "utf8",
+  );
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {

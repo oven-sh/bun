@@ -151,7 +151,32 @@ const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
   mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
-const testsRan = new Set();
+
+/**
+ * Ids registered while the current test file is being collected. An id names the test and is also
+ * its directory under `tempDirectory`, so one registered twice is a copy+paste mistake.
+ *
+ * Cleared by a setImmediate rather than kept for the process: this module stays loaded across test
+ * files and across the re-evaluations `bun test --rerun-each` does, and the runner runs immediates
+ * after each file before evaluating the next one (or the same one again), so every file starts
+ * with an empty set. A file's synchronous describe callbacks (all of them, in test/bundler) are
+ * collected before the immediate fires. A describe callback that awaits the event loop lets it fire
+ * mid-file, and ids registered after that await are only compared with each other.
+ */
+let registeredIds: Set<string> | undefined;
+
+function registerTestId(id: string) {
+  if (!registeredIds) {
+    registeredIds = new Set();
+    setImmediate(() => {
+      registeredIds = undefined;
+    });
+  }
+  if (registeredIds.has(id)) {
+    throw new Error(`itBundled("${id}", ...) was registered twice. Check your tests for bad copy+pasting.`);
+  }
+  registeredIds.add(id);
+}
 
 const originalCwd = process.cwd();
 
@@ -563,11 +588,6 @@ function expectBundled(
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
     throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
-  }
-
-  // This is a sanity check that protects against bad copy pasting.
-  if (testsRan.has(id)) {
-    throw new Error(`expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`);
   }
 
   // Resolve defaults for options and some related things
@@ -1883,6 +1903,7 @@ export function itBundled(
   id: string,
   opts: BundlerTestInput | ((metadata: BundlerTestWrappedAPI) => BundlerTestInput),
 ): BundlerTestRef {
+  registerTestId(id);
   if (typeof opts === "function") {
     const fn = opts;
     opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
@@ -1920,6 +1941,7 @@ export function itBundled(
 }
 
 itBundled.only = (id: string, opts: BundlerTestInput) => {
+  registerTestId(id);
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
 
   it.only(
@@ -1931,6 +1953,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
 };
 
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
+  registerTestId(id);
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }

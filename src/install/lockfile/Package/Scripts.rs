@@ -426,8 +426,6 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        // Folder name, resolution and script bodies are all authored by the
-        // dependency; this listing is what the user reads before `bun pm trust`.
         let resolution = EscapeControlChars(resolution.fmt(resolution_buf, PathSep::Posix));
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {

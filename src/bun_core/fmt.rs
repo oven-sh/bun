@@ -3343,12 +3343,9 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
 // escapeControlChars
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Renders the wrapped `Display` with C0 controls, DEL and C1 controls
-/// spelled out (`\n`, `\r`, `\t`, `\x1b`, `\x7f`, `\u009b`) instead of
-/// written raw. For text somebody else authored (a dependency's
-/// `package.json`, a registry manifest): printed raw, an ESC/CR/C1 sequence
-/// can erase or repaint the line it is shown on and a newline can forge
-/// further lines of our output. Everything else passes through unchanged.
+/// `Display` adapter that spells out C0 controls, DEL and C1 controls
+/// (`\n`, `\x1b`, `\x7f`, `\u009b`, ...) so text authored by a dependency
+/// cannot erase, repaint or forge lines of terminal output when printed.
 pub struct EscapeControlChars<T>(pub T);
 
 /// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.

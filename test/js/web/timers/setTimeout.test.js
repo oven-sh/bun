@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -202,52 +202,29 @@ it("order of setTimeouts", done => {
   Promise.resolve().then(maybeDone(() => nums.push(1)));
 });
 
-it("setTimeout -> refresh", () => {
-  const { exitCode, stdout } = spawnSync({
-    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture.js")],
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
-  expect(stdout.toString()).toBe("SUCCESS\n");
-});
+// The tests below that spawn a process are it.concurrent so their children start together;
+// the CPU and latency measurements further down stay sequential so nothing runs alongside them.
 
-it("setTimeout -> unref -> ref works", () => {
-  const { exitCode, stdout } = spawnSync({
-    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-4.js")],
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
-  expect(stdout.toString()).toBe("TEST PASSED!\n");
-});
+it.concurrent(
+  "setTimeout -> ref/unref/refresh decide which timers run and whether the process stays alive",
+  async () => {
+    // The fixture arms every scenario at once and reports how often each callback ran when the
+    // process exits, which it must do on its own once the ref'd timers have run.
+    const result = await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture.js"));
+    expect(result).toSpawn();
+    expect(JSON.parse(result.stdout)).toEqual({
+      "unref()": 0,
+      "ref().unref()": 0,
+      "unref().ref()": 1,
+      "refresh() inside the callback": 2,
+      "this is the Timeout": 1,
+      "callback returning a pending promise": 1,
+      "unref'd callback returning a pending promise": 1,
+    });
+  },
+);
 
-it("setTimeout -> ref -> unref works, even if there is another timer", () => {
-  const { exitCode, stdout } = spawnSync({
-    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-2.js")],
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
-  expect(stdout.toString()).toBe("");
-});
-
-it("setTimeout -> ref -> unref works", () => {
-  const { exitCode, stdout } = spawnSync({
-    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-5.js")],
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
-  expect(stdout.toString()).toBe("");
-});
-
-it("setTimeout -> unref doesn't keep event loop alive forever", () => {
-  const { exitCode, stdout } = spawnSync({
-    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-3.js")],
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
-  expect(stdout.toString()).toBe("");
-});
-
-it("setTimeout -> fire -> unref -> ref does not keep the event loop alive", async () => {
+it.concurrent("setTimeout -> fire -> unref -> ref does not keep the event loop alive", async () => {
   // After a one-shot timer has fired it is destroyed; calling .unref() then .ref()
   // must not leak an event-loop ref. Previously this would hang forever.
   const src = `
@@ -272,7 +249,7 @@ it("setTimeout -> fire -> unref -> ref does not keep the event loop alive", asyn
   expect(exitCode).toBe(0);
 });
 
-it("setImmediate -> fire -> unref -> ref does not keep the event loop alive", async () => {
+it.concurrent("setImmediate -> fire -> unref -> ref does not keep the event loop alive", async () => {
   const src = `
     const im = setImmediate(() => {});
     setTimeout(() => {
@@ -295,66 +272,66 @@ it("setImmediate -> fire -> unref -> ref does not keep the event loop alive", as
   expect(exitCode).toBe(0);
 });
 
-it("setTimeout should refresh N times", done => {
+it.concurrent("setTimeout should refresh N times", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const refreshReturnedTimer = [];
   let count = 0;
-  let timer = setTimeout(() => {
-    count++;
-    expect(timer.refresh()).toBe(timer);
-  }, 50);
-
-  setTimeout(() => {
-    clearTimeout(timer);
-    try {
-      expect(count).toBeGreaterThanOrEqual(isWindows ? 4 : 5);
-    } finally {
-      done();
-    }
-  }, 300);
+  const timer = setTimeout(() => {
+    if (++count === 5) return resolve();
+    refreshReturnedTimer.push(timer.refresh() === timer);
+  }, 10);
+  await promise;
+  expect(count).toBe(5);
+  expect(refreshReturnedTimer).toEqual([true, true, true, true]);
 });
 
-it("setTimeout if refreshed before run, should reschedule to run later", done => {
-  let start = Date.now();
-  let timer = setTimeout(() => {
-    let end = Date.now();
-    expect(end - start).toBeGreaterThan(120);
-    done();
-  }, 100);
-
+it.concurrent("setTimeout if refreshed before run, should reschedule to run later", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const timer = setTimeout(() => resolve(performance.now()), 100);
+  let refreshedAt;
   setTimeout(() => {
+    refreshedAt = performance.now();
     timer.refresh();
   }, 50);
+  const firedAt = await promise;
+  // Without the refresh the timer fires at its original deadline, ~50ms after refreshedAt.
+  expect(firedAt - refreshedAt).toBeGreaterThanOrEqual(95);
 });
 
-it("setTimeout should refresh after already been run", done => {
-  let count = 0;
-  let timer = setTimeout(() => {
-    count++;
-  }, 50);
+it.concurrent("setTimeout should refresh after already been run", async () => {
+  let fired = 0;
+  let onFire = () => {};
+  const nextFire = () => new Promise(resolve => (onFire = resolve));
+  const timer = setTimeout(() => {
+    fired++;
+    onFire();
+  }, 10);
 
-  setTimeout(() => {
-    timer.refresh();
-  }, 100);
+  await nextFire();
+  expect(fired).toBe(1);
 
-  setTimeout(() => {
-    expect(count).toBe(2);
-    done();
-  }, 300);
+  // Refresh from a later macrotask, once the fired timer has been fully torn down (refreshing
+  // from inside the callback is the separate path covered by the leak fixture below).
+  await new Promise(resolve => setImmediate(resolve));
+  const refired = nextFire();
+  expect(timer.refresh()).toBe(timer);
+  await refired;
+  expect(fired).toBe(2);
+
+  // The refreshed one-shot must not keep firing. A wrong third fire would be due 10ms after
+  // the second one, so it would run before this 20ms timer does.
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(fired).toBe(2);
 });
 
-it("setTimeout should not refresh after clearTimeout", done => {
-  let count = 0;
-  let timer = setTimeout(() => {
-    count++;
-  }, 50);
-
+it.concurrent("setTimeout should not refresh after clearTimeout", async () => {
+  let fired = 0;
+  const timer = setTimeout(() => fired++, 10);
   clearTimeout(timer);
-
-  timer.refresh();
-
-  setTimeout(() => {
-    expect(count).toBe(0);
-    done();
-  }, 100);
+  expect(timer.refresh()).toBe(timer);
+  // Had refresh() re-armed the cleared timer, it would be due before this 20ms timer.
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(fired).toBe(0);
 });
 
 it("setTimeout Timeout objects are unprotected after called", async () => {
@@ -393,15 +370,44 @@ it("setTimeout Timeout objects are unprotected after called", async () => {
 });
 
 it("setTimeout CPU usage #7790", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+  // A pending setTimeout used to make the event loop spin at 100% CPU until it fired. The child
+  // measures its own CPU over a 300ms window during which a far-off timer is pending; the window
+  // opens after a setImmediate so that startup work is not counted.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const pending = setTimeout(() => {}, 200_000);
+       setImmediate(() => {
+         const wall0 = process.hrtime.bigint();
+         const cpu0 = process.cpuUsage();
+         setTimeout(() => {
+           const { user, system } = process.cpuUsage(cpu0);
+           const wallUs = Number((process.hrtime.bigint() - wall0) / 1000n);
+           clearTimeout(pending);
+           const lifetime = process.cpuUsage();
+           console.log(JSON.stringify({ cpuUs: user + system, wallUs, lifetimeCpuUs: lifetime.user + lifetime.system }));
+         }, 300);
+       });`,
+    ],
     env: bunEnv,
-    stdout: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const code = await process.exited;
-  expect(code).toBe(0);
-  const stats = process.resourceUsage();
-  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { cpuUs, wallUs, lifetimeCpuUs } = JSON.parse(stdout);
+  expect(wallUs).toBeGreaterThanOrEqual(250_000);
+  // Spinning reads ~100%. Sleeping properly it reads ~0.2% on release and ~3% on debug+ASAN.
+  expect((cpuUs / wallUs) * 100, `cpuUs=${cpuUs} wallUs=${wallUs}`).toBeLessThan(50);
+  expect(exitCode).toBe(0);
+
+  // Subprocess.resourceUsage() was added together with this test (#7792) and this is where it is
+  // exercised: the child's whole-lifetime CPU time in microseconds, which cannot be less than
+  // what the child itself read via process.cpuUsage() just before exiting.
+  const { cpuTime } = proc.resourceUsage();
+  expect(cpuTime.total).toBe(cpuTime.user + cpuTime.system);
+  expect(Number(cpuTime.total)).toBeGreaterThanOrEqual(lifetimeCpuUs);
 });
 
 // The epoll_pwait(2) fallback (kernels <5.11, gVisor, seccomp-blocked
@@ -411,9 +417,8 @@ it("setTimeout CPU usage #7790", async () => {
 // setInterval(1) spends most of the window asleep.
 // https://man7.org/linux/man-pages/man2/epoll_wait.2.html
 it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
+  const result = await bunRun(
+    [
       "-e",
       `const wall0 = process.hrtime.bigint();
        const cpu0 = process.cpuUsage();
@@ -429,23 +434,15 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
          }
        }, 1);`,
     ],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(filteredStderr).toBe("");
-  const { ticks, cpuUs, wallUs } = JSON.parse(stdout);
+    { BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" },
+  );
+  expect(result).toSpawn();
+  const { ticks, cpuUs, wallUs } = JSON.parse(result.stdout);
   const cpuPercent = (cpuUs / wallUs) * 100;
   // Busy-spinning puts cpuUs ~= wallUs (100%). Sleeping properly it is a
-  // small fraction (~5% release). 50% gives wide headroom for ASAN/debug.
+  // small fraction (~5% release, ~23% debug+ASAN, where each tick costs more).
   expect(cpuPercent, `ticks=${ticks} cpuUs=${cpuUs} wallUs=${wallUs}`).toBeLessThan(50);
   expect(ticks).toBeGreaterThan(0);
-  expect(exitCode).toBe(0);
 });
 
 // EINTR retry used to re-issue the full timeout (on both epoll_pwait and
@@ -490,9 +487,8 @@ __attribute__((constructor)) static void arm(void) {
     ["epoll_pwait2", {}],
     ["epoll_pwait fallback", { BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" }],
   ])("%s: setTimeout fires on time under signal storm", async (_name, extraEnv) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
+    const result = await bunRun(
+      [
         "-e",
         `const s = process.hrtime.bigint();
          setTimeout(() => {
@@ -500,94 +496,91 @@ __attribute__((constructor)) static void arm(void) {
            process.exit(0);
          }, 200);`,
       ],
-      env: { ...bunEnv, ...extraEnv, LD_PRELOAD: soPath },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const filteredStderr = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(filteredStderr).toBe("");
-    const { ms } = JSON.parse(stdout);
+      { ...extraEnv, LD_PRELOAD: soPath },
+    );
+    expect(result).toSpawn();
+    const { ms } = JSON.parse(result.stdout);
     // Without the fix this lands ~900-1000 ms; with it, ~200-210 ms.
     expect(ms).toBeWithin(200, 500);
-    expect(exitCode).toBe(0);
   });
-});
-
-it.concurrent("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
-  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-6.js"))).toSpawn();
-});
-
-it.concurrent("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
-  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-7.js"))).toSpawn();
 });
 
 it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
-  expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn();
+  // The fixture exits non-zero and names the callback if any of them ran the wrong number of times.
+  expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn("");
 });
 
+// RSS is only a usable leak signal on a release build: under ASAN the freed blocks stay resident
+// in the quarantine, so 200k timers grow RSS by the same ~140 MB whether or not the TimeoutObjects
+// get freed, and a debug build needs ~40s to churn through that many timers anyway. Those builds
+// run one batch per mode and rely on LeakSanitizer instead: a TimeoutObject still allocated when
+// the child exits is reported on stderr and fails the exit code. The CI runner sets the same
+// variables for the whole ASAN lane (scripts/runner.node.mjs); setting them here as well makes a
+// plain `bun bd test` catch the leak too. BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the
+// scan, which is what CI does and what keeps the scan at ~0.1s rather than ~3s.
+const leakFixtureMeasuresRss = !isASAN && !isDebug;
+const leakFixtureBatches = leakFixtureMeasuresRss ? 100 : 1;
+const leakFixtureEnv = isASAN
+  ? {
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+    }
+  : {};
 for (const mode of ["clear", "refresh", "repeat"]) {
-  it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const filteredStderr = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(filteredStderr).toBe("");
-    expect(stdout).toContain("delta:");
-    expect(exitCode).toBe(0);
-  }, 90_000);
+  it.concurrent(
+    `setTimeout doesn't leak when ${mode} is called inside its own callback`,
+    async () => {
+      const result = await bunRun(
+        [path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode, String(leakFixtureBatches)],
+        leakFixtureEnv,
+      );
+      expect(result).toSpawn();
+      const { liveTimeouts, rssDeltaMB, ...report } = JSON.parse(result.stdout);
+      expect(report).toEqual({ mode, timers: leakFixtureBatches * 2000, protectedTimeouts: 0 });
+      // A few wrappers survive the final GC via conservative stack scanning (2-4 observed);
+      // retaining the fired timers would leave thousands.
+      expect(liveTimeouts).toBeLessThan(100);
+      // Each leaked TimeoutObject is ~100 bytes, so 100 leaking batches grow RSS by ~20 MB;
+      // without a leak the delta is 0-1 MB.
+      if (leakFixtureMeasuresRss) expect(rssDeltaMB).toBeLessThan(10);
+    },
+    // Passes in ~1.3s on debug+ASAN; when it does leak, symbolizing the LeakSanitizer report
+    // against a debug binary takes another ~5s, and that report is the useful failure output.
+    30_000,
+  );
 }
 
-it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+it.concurrent("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
   // If that read throws, the exception must not be left pending on the VM when setTimeout
-  // returns — otherwise debug builds hit releaseAssertNoException().
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        process.nextTick(() => {});
-        Object.defineProperty(process, "_exiting", {
-          get() { throw new TypeError("boom"); },
-          configurable: true,
-        });
-        const t = setTimeout(() => {}, 1e100);
-        clearTimeout(t);
-        console.log("survived");
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("boom");
-  expect(stdout.trim()).toBe("survived");
-  expect(exitCode).toBe(0);
+  // returns, otherwise debug builds hit releaseAssertNoException(). The throw also aborts the
+  // warning itself, so stderr stays empty.
+  const result = await bunRun([
+    "-e",
+    `
+      process.nextTick(() => {});
+      Object.defineProperty(process, "_exiting", {
+        get() { throw new TypeError("boom"); },
+        configurable: true,
+      });
+      const t = setTimeout(() => {}, 1e100);
+      clearTimeout(t);
+      console.log("survived");
+    `,
+  ]);
+  expect(result).toSpawn("survived");
 });
 
-it("clearTimeout with a numeric id is a no-op after a timeout promoted to an interval is cleared and collected", async () => {
-  // A setTimeout whose numeric id has been observed via `+timer` registers itself in the
-  // setTimeout id map. Assigning `_repeat` promotes it to a setInterval after its first
-  // fire. Once the timer is cleared and its wrapper is collected, the id-map entry must be
-  // gone from whichever map it was inserted into, so that a later clearTimeout(id) with the
-  // raw number is a harmless no-op instead of resolving to the freed timer.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
+it.concurrent(
+  "clearTimeout with a numeric id is a no-op after a timeout promoted to an interval is cleared and collected",
+  async () => {
+    // A setTimeout whose numeric id has been observed via `+timer` registers itself in the
+    // setTimeout id map. Assigning `_repeat` promotes it to a setInterval after its first
+    // fire. Once the timer is cleared and its wrapper is collected, the id-map entry must be
+    // gone from whichever map it was inserted into, so that a later clearTimeout(id) with the
+    // raw number is a harmless no-op instead of resolving to the freed timer.
+    const result = await bunRun([
       "-e",
       `
         async function main() {
@@ -627,59 +620,35 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
           },
         );
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  const stderrLines = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderrLines).toBe("");
-  expect(stdout).toBe("converted: ok\nsurvived\n");
-  expect(exitCode).toBe(0);
-});
+    ]);
+    expect(result).toSpawn("converted: ok\nsurvived");
+  },
+);
 
 it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async () => {
   // Subprocess so no other in-process work has raised the Windows tick
   // resolution; median of 50 so a single scheduler hiccup on a busy CI
   // runner does not fail the assertion.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const samples = [];
-        for (let i = 0; i < 50; i++) {
-          const t0 = process.hrtime.bigint();
-          await new Promise(r => setTimeout(r, 1));
-          samples.push(Number(process.hrtime.bigint() - t0) / 1e6);
-        }
-        samples.sort((a, b) => a - b);
-        const median = samples[samples.length >> 1];
-        process.stdout.write(JSON.stringify({ median, min: samples[0] }));
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(filteredStderr).toBe("");
-  const { median, min } = JSON.parse(stdout);
+  const result = await bunRun([
+    "-e",
+    `
+      const samples = [];
+      for (let i = 0; i < 50; i++) {
+        const t0 = process.hrtime.bigint();
+        await new Promise(r => setTimeout(r, 1));
+        samples.push(Number(process.hrtime.bigint() - t0) / 1e6);
+      }
+      samples.sort((a, b) => a - b);
+      const median = samples[samples.length >> 1];
+      console.log(JSON.stringify({ median, min: samples[0] }));
+    `,
+  ]);
+  expect(result).toSpawn();
+  const { median, min } = JSON.parse(result.stdout);
   // Before: median ~15.6ms. After: median ~1-2ms. 8ms splits the two with
   // plenty of headroom for CI jitter. Also assert we never fire early.
   expect(median).toBeLessThan(8);
   expect(min).toBeGreaterThanOrEqual(1);
-  expect(exitCode).toBe(0);
 });
 
 // Reading a timer's numeric id (`+t`, `${t}`, obj[t]=x, any Symbol.toPrimitive
@@ -689,39 +658,28 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
 // O(n^2). 20k such timers froze the loop for ~2-3 s on release, tens of
 // seconds at 30k+. Node: ~5 ms for 200k. With swap_remove() the sweep is O(n).
 it("GC of many id-accessed timers is not quadratic", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-          const N = 20000;
-          for (let i = 0; i < N; i++) {
-            const t = setTimeout(() => {}, 3_600_000);
-            Number(t);          // mint the id-map entry via Symbol.toPrimitive
-            clearTimeout(t);
-          }
-          const t0 = performance.now();
-          Bun.gc(true);
-          const ms = performance.now() - t0;
-          process.stdout.write(JSON.stringify({ ms: Math.round(ms) }));
-        `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(filteredStderr).toBe("");
-  const { ms } = JSON.parse(stdout);
+  // Creating the 20k timers is itself ~4s on debug+ASAN, hence the raised timeout.
+  const result = await bunRun([
+    "-e",
+    `
+      const N = 20000;
+      for (let i = 0; i < N; i++) {
+        const t = setTimeout(() => {}, 3_600_000);
+        Number(t);          // mint the id-map entry via Symbol.toPrimitive
+        clearTimeout(t);
+      }
+      const t0 = performance.now();
+      Bun.gc(true);
+      const ms = performance.now() - t0;
+      console.log(JSON.stringify({ ms: Math.round(ms) }));
+    `,
+  ]);
+  expect(result).toSpawn();
+  const { ms } = JSON.parse(result.stdout);
   // Before: ~2100-3400 ms release, far more on debug+ASAN (quadratic in N).
   // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
   // the two with ~9x headroom over the fixed debug+ASAN number.
   expect(ms).toBeLessThan(1500);
-  expect(exitCode).toBe(0);
 }, 30_000);
 
 it("timer heap clock is monotonic, not wall-clock", () => {

@@ -1,4 +1,21 @@
-const { mustCall } = require("../../node/test/common");
+// Same contract as node's common.mustCall(), inlined because loading ../../node/test/common
+// takes ~2s on a debug build, more than the timers below take to run.
+const calls = [];
+function mustCall(fn = () => {}, exact = 1) {
+  const entry = { site: new Error().stack.split("\n")[2].trim(), exact, actual: 0 };
+  calls.push(entry);
+  return function (...args) {
+    entry.actual++;
+    return fn.apply(this, args);
+  };
+}
+process.on("exit", () => {
+  for (const { site, exact, actual } of calls) {
+    if (actual === exact) continue;
+    console.error(`Expected exactly ${exact} call(s), got ${actual}: ${site}`);
+    process.exitCode = 1;
+  }
+});
 
 var setTimer;
 if (process.argv[2] === "setTimeout") {

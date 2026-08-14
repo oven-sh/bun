@@ -589,3 +589,224 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+/**
+ * Runs `bun test --coverage` in `dir` and returns what it reported for `file`: the row of the text
+ * reporter, the function counts of the lcov record, and a lookup of line numbers to "hit", "MISSED", or
+ * "-" for a line the lcov record does not list as executable at all.
+ */
+async function coverageReport(dir: string, file: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=cov"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const row = stderr
+    .split("\n")
+    .find(line => line.startsWith(` ${file} `))
+    ?.trimEnd();
+  expect({ stdout, stderr, exitCode, row }).toMatchObject({ exitCode: 0, row: expect.any(String) });
+
+  const record = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8")
+    .split("end_of_record")
+    .find(record => record.includes(`SF:${file}\n`))!;
+  const functions = {
+    found: Number(record.match(/^FNF:(\d+)$/m)![1]),
+    hit: Number(record.match(/^FNH:(\d+)$/m)![1]),
+  };
+  const status: Record<number, "hit" | "MISSED"> = {};
+  for (const [, line, hits] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    status[Number(line)] = Number(hits) > 0 ? "hit" : "MISSED";
+  }
+  return {
+    row: row!,
+    functions,
+    lines: (...numbers: number[]) => Object.fromEntries(numbers.map(line => [line, status[line] ?? "-"])),
+  };
+}
+
+// JSC runs a class's instance (and, separately, static) field initializers in a function it synthesizes
+// without source positions of its own. It used to be recorded as a function spanning the file from offset 0
+// for the length of the scope that defines the class (in a CommonJS module: the module wrapper, i.e. the
+// whole file), and its own basic blocks spanned that whole scope. The tests below cover what that did to
+// the report; the engine's data is covered by test/js/bun/jsc-stress/fixtures/class-field-initializer.js.
+
+test.concurrent("coverage of a CommonJS module with a class that is never instantiated", async () => {
+  using dir = tempDir("cov", {
+    "lib.js": `function used() {
+  return 1;
+}
+class Unused {
+  field = 1;
+}
+function alsoUsed() {
+  return 2;
+}
+module.exports = { used, alsoUsed, Unused };
+`,
+    "lib.test.js": `const { test, expect } = require("bun:test");
+const { used, alsoUsed } = require("./lib.js");
+test("uses the functions, not the class", () => {
+  expect(used() + alsoUsed()).toBe(3);
+});
+`,
+  });
+
+  const { row, functions, lines } = await coverageReport(String(dir), "lib.js");
+  // Used to be " lib.js | 75.00 | 10.00 | 1-9": the initializer's range covered the whole wrapper and
+  // counted as a function that never ran.
+  expect(row).toMatch(/^ lib\.js\s+\|\s+100\.00 \|\s+100\.00 \|\s*$/);
+  expect(lines(1, 2, 4, 7, 8, 10)).toEqual({ 1: "hit", 2: "hit", 4: "hit", 7: "hit", 8: "hit", 10: "hit" });
+  expect(functions.hit).toBe(functions.found);
+});
+
+test.concurrent("coverage of a class that is never instantiated, defined inside a function", async () => {
+  using dir = tempDir("cov", {
+    "lib.js": `export function describe(name) {
+  class Description {
+    name = name;
+  }
+  const description = new Description();
+  return description.name;
+}
+export function make() {
+  class Unused {
+    field = 1;
+  }
+  return typeof Unused;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { describe as describeName, make } from "./lib.js";
+test("defines both classes, instantiates one", () => {
+  expect(describeName("x")).toBe("x");
+  expect(make()).toBe("function");
+});
+`,
+  });
+
+  const { row, lines } = await coverageReport(String(dir), "lib.js");
+  // Unused's initializer used to be reported as an uncalled function spanning the first make().length
+  // characters of the file, which is where describe() is.
+  expect(row).toMatch(/\|\s+100\.00 \|\s*$/);
+  expect(lines(1, 2, 3, 5, 6, 8, 9, 10, 12)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    5: "hit",
+    6: "hit",
+    8: "hit",
+    9: "hit",
+    10: "hit",
+    12: "hit",
+  });
+});
+
+test.concurrent("coverage does not count a class's field initializer as a function once it has run", async () => {
+  using dir = tempDir("cov", {
+    "lib.js": `export function make() {
+  class WithField {
+    constructor() {
+      this.made = true;
+    }
+    field = 1;
+  }
+  return new WithField();
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { make } from "./lib.js";
+test("instantiates", () => {
+  expect(make()).toEqual({ made: true, field: 1 });
+});
+`,
+  });
+
+  const { functions } = await coverageReport(String(dir), "lib.js");
+  // make() and the constructor. The initializer used to be reported as a third function once it had run.
+  expect(functions).toEqual({ found: 2, hit: 2 });
+});
+
+test.concurrent(
+  "coverage of a module with a class that has a static field still reports the module's dead code",
+  async () => {
+    using dir = tempDir("cov", {
+      "lib.js": `export class WithStatic {
+  static count = 0;
+}
+export function pick(a) {
+  if (a) {
+    return 1;
+  }
+  return 2;
+}
+if (typeof globalThis.__coverage_test_never_set__ === "string") {
+  pick(false);
+}
+`,
+      "lib.test.js": `import { test, expect } from "bun:test";
+import { pick } from "./lib.js";
+test("takes one branch", () => {
+  expect(pick(true)).toBe(1);
+});
+`,
+    });
+
+    const { row, lines } = await coverageReport(String(dir), "lib.js");
+    // The static initializer runs when the class is defined, and its basic block used to span the whole
+    // module: the dead pick(false) (and pick()'s untaken path) were reported as executed, 100.00% lines.
+    expect(row).not.toMatch(/\|\s+100\.00 \|\s*$/);
+    expect(lines(1, 2, 4, 5, 6, 10, 11)).toEqual({
+      1: "hit",
+      2: "hit",
+      4: "hit",
+      5: "hit",
+      6: "hit",
+      10: "hit",
+      11: "MISSED",
+    });
+  },
+);
+
+test.concurrent(
+  "coverage of a function that instantiates a class with a field still reports the function's dead code",
+  async () => {
+    using dir = tempDir("cov", {
+      "lib.js": `export function run(flag) {
+  class Counter {
+    count = 0;
+  }
+  const counter = new Counter();
+  if (flag) {
+    counter.count = 1;
+    counter.count = 2;
+  }
+  return counter;
+}
+`,
+      "lib.test.js": `import { test, expect } from "bun:test";
+import { run } from "./lib.js";
+test("never takes the branch", () => {
+  expect(run(false).count).toBe(0);
+});
+`,
+    });
+
+    const { row, lines } = await coverageReport(String(dir), "lib.js");
+    // The initializer's basic block used to span all of run(), reporting lines 7-8 as executed.
+    expect(row).not.toMatch(/\|\s+100\.00 \|\s*$/);
+    expect(lines(1, 2, 3, 5, 6, 7, 8, 10)).toEqual({
+      1: "hit",
+      2: "hit",
+      3: "hit",
+      5: "hit",
+      6: "hit",
+      7: "MISSED",
+      8: "MISSED",
+      10: "hit",
+    });
+  },
+);

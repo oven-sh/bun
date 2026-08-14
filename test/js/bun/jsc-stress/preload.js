@@ -32,3 +32,7 @@ globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
 globalThis.noDFG = jsc.noFTL;
+
+// loadString: evaluates the string as a program of its own in the global scope, like the jsc shell does.
+const { runInThisContext } = require("node:vm");
+globalThis.loadString = source => runInThisContext(source);

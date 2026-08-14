@@ -187,7 +187,23 @@ const ffiFixtures = [
   "ffi-view-args.js",
 ];
 
+// From WebKit's JSTests/controlFlowProfiler. These read the profiler's data back through `$vm` (their
+// `//@ requireOptions` line enables it), which only builds of JSC that compile it in expose.
+const controlFlowProfilerFixtures = ["class-field-initializer.js"];
+
 const preloadPath = path.join(import.meta.dir, "preload.js");
+
+const dollarVMProbe = Bun.spawnSync({
+  cmd: [
+    bunExe(),
+    "-e",
+    'process.stdout.write(typeof globalThis.$vm !== "object" ? "none" : typeof $vm.ffiFunction === "function" ? "ffi" : "vm")',
+  ],
+  env: { ...bunEnv, BUN_JSC_useDollarVM: "1" },
+  stdout: "pipe",
+}).stdout.toString();
+const hasDollarVMFFI = dollarVMProbe === "ffi";
+const hasDollarVM = hasDollarVMFFI || dollarVMProbe === "vm";
 
 // Under ASAN, JSC disables the wasm fault signal handler (and therefore wasm
 // shared memory) unless ASAN is told to let the process handle SIGSEGV. CI's
@@ -271,21 +287,41 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     }
   });
 
-  describe("FFI (bun:ffi engine)", () => {
-    const probeEnv = { ...bunEnv, BUN_JSC_useDollarVM: "1" };
-    const probe = Bun.spawnSync({
-      cmd: [
-        bunExe(),
-        "-e",
-        'process.stdout.write(typeof globalThis.$vm === "object" && typeof $vm.ffiFunction === "function" ? "1" : "0")',
-      ],
-      env: probeEnv,
-      stdout: "pipe",
-    });
-    const hasDollarVM = probe.stdout.toString() === "1";
-
-    for (const fixture of ffiFixtures) {
+  describe("Control flow profiler", () => {
+    for (const fixture of controlFlowProfilerFixtures) {
       test.skipIf(!hasDollarVM)(
+        fixture,
+        async () => {
+          const fixturePath = path.join(fixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
+
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
+    }
+  });
+
+  describe("FFI (bun:ffi engine)", () => {
+    for (const fixture of ffiFixtures) {
+      test.skipIf(!hasDollarVMFFI)(
         fixture,
         async () => {
           const fixturePath = path.join(ffiFixturesDir, fixture);

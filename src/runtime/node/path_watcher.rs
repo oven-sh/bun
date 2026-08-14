@@ -588,12 +588,8 @@ pub(crate) fn watch(
 /// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
 /// (inotify delivers file events on the parent dir's wd so we only need a watch
 /// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
-/// subdirectory just stops that branch (matches Node).
-///
-/// A directory can sit deeper than `PATH_MAX` (anything doing relative `mkdir`s
-/// can create one), so the joined paths are spilled to the heap when they
-/// outgrow a `PathBuffer`; `open`/`inotify_add_watch` then reject them with
-/// ENAMETOOLONG, which reaches `cb` like any other per-directory failure.
+/// subdirectory, or one deeper than `PATH_MAX` (its joined path spills past the
+/// `PathBuffer`), just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
@@ -1099,8 +1095,6 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        // The watched directory itself fits in PATH_MAX (inotify
-                        // accepted it) but `subpath/name` need not.
                         join_z_buf_spill::<platform::Posix>(
                             path_buf.as_mut_slice(),
                             &mut rel_spill,

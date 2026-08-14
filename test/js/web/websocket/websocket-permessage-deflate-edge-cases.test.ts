@@ -2,7 +2,7 @@ import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
-import { deflateRawSync, constants as zc } from "node:zlib";
+import { deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -570,3 +570,122 @@ test.each([false, true])(
     }
   },
 );
+
+const DEFLATE_TRAILER = Buffer.from([0x00, 0x00, 0xff, 0xff]);
+
+/** Unmask one client -> server frame; `null` until all of it has arrived. */
+function parseClientFrame(bytes: Buffer): { fin: boolean; rsv1: boolean; opcode: number; payload: Buffer } | null {
+  if (bytes.length < 2) return null;
+  if (!(bytes[1] & 0x80)) throw new Error("client frame is not masked");
+  let length = bytes[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (bytes.length < 4) return null;
+    length = bytes.readUInt16BE(2);
+    offset = 4;
+  } else if (length === 127) {
+    if (bytes.length < 10) return null;
+    length = Number(bytes.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (bytes.length < offset + 4 + length) return null;
+  const mask = bytes.subarray(offset, offset + 4);
+  const payload = Buffer.from(bytes.subarray(offset + 4, offset + 4 + length));
+  for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+  return { fin: (bytes[0] & 0x80) !== 0, rsv1: (bytes[0] & 0x40) !== 0, opcode: bytes[0] & 0x0f, payload };
+}
+
+// RFC 7692 §7.1.2.2: the client offers `client_max_window_bits` without a
+// value, so the server may answer with any window from 8 to 15 bits. zlib
+// refuses to create a raw deflater with an 8-bit window, which used to leave
+// the negotiated extension without a codec: the client still reported it in
+// `extensions`, sent uncompressed, and closed with 1011 on the first compressed
+// server message. It has to compress with a 9-bit window instead, whose output
+// (back-references of at most 250 bytes) a server holding the negotiated
+// 256-byte window can still inflate.
+test("WebSocket client honors client_max_window_bits=8", async () => {
+  // The same 300 bytes repeated: a compressor using a larger window than
+  // negotiated would encode the repeats as back-references that an 8-bit
+  // window cannot resolve.
+  const block = Buffer.alloc(300);
+  let x = 12345;
+  for (let i = 0; i < block.length; i++) {
+    x = (Math.imul(x, 1103515245) + 12345) | 0;
+    block[i] = 0x20 + ((x >>> 16) % 0x5e);
+  }
+  const clientMessage = Buffer.concat(Array(6).fill(block)).toString("latin1");
+
+  const serverDeflated = deflateRawSync(Buffer.from("hello from the server"), { finishFlush: zc.Z_SYNC_FLUSH });
+  const serverFrame = frame(OPCODE_TEXT, serverDeflated.subarray(0, serverDeflated.length - 4), { rsv1: true });
+
+  // Rejected if the connection fails before the events below arrive; every
+  // await below races against it.
+  const failed = Promise.withResolvers<never>();
+  const clientFrame = Promise.withResolvers<NonNullable<ReturnType<typeof parseClientFrame>>>();
+  let fromClient = Buffer.alloc(0);
+  let handshakeComplete = false;
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      error(_, error) {
+        failed.reject(error);
+      },
+      data(socket, data) {
+        fromClient = Buffer.concat([fromClient, data]);
+        if (!handshakeComplete) {
+          const end = fromClient.indexOf("\r\n\r\n");
+          if (end < 0) return;
+          const key = /Sec-WebSocket-Key:\s*(\S+)/i.exec(fromClient.subarray(0, end).toString("latin1"));
+          if (!key) throw new Error("client did not send Sec-WebSocket-Key");
+          const accept = new Bun.CryptoHasher("sha1").update(key[1] + WEBSOCKET_GUID).digest("base64");
+          handshakeComplete = true;
+          fromClient = fromClient.subarray(end + 4);
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n` +
+              "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=8\r\n" +
+              "\r\n",
+          );
+          socket.write(serverFrame);
+          socket.flush();
+        }
+        const parsed = parseClientFrame(fromClient);
+        if (parsed) clientFrame.resolve(parsed);
+      },
+    },
+  });
+
+  const opened = Promise.withResolvers<void>();
+  const serverMessage = Promise.withResolvers<string>();
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  ws.onopen = () => opened.resolve();
+  ws.onmessage = event => serverMessage.resolve(event.data);
+  ws.onclose = event => failed.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+
+  try {
+    await Promise.race([opened.promise, failed.promise]);
+    expect(ws.extensions).toBe("permessage-deflate; client_max_window_bits=8");
+    ws.send(clientMessage);
+
+    expect(await Promise.race([serverMessage.promise, failed.promise])).toBe("hello from the server");
+
+    const { payload, ...header } = await Promise.race([clientFrame.promise, failed.promise]);
+    expect(header).toEqual({ fin: true, rsv1: true, opcode: OPCODE_TEXT });
+    // Inflate with the window the server negotiated. The small chunkSize makes
+    // zlib resolve back-references through that 256-byte window rather than
+    // through the output buffer, so a longer distance fails here as it would on
+    // a real server.
+    const inflated = inflateRawSync(Buffer.concat([payload, DEFLATE_TRAILER]), {
+      windowBits: 8,
+      chunkSize: 64,
+      finishFlush: zc.Z_SYNC_FLUSH,
+    });
+    expect(inflated.toString("latin1")).toBe(clientMessage);
+  } finally {
+    ws.close();
+    server.stop(true);
+  }
+});

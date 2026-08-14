@@ -1519,8 +1519,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data_handler: Cell::new(None),
+            // Negotiated and already reported via `ws.extensions`, so a silently
+            // missing codec would close the connection on the first compressed
+            // server message. Window bits are range-checked by the upgrade client
+            // (and clamped in `init`), leaving allocation as the only failure.
             deflate: RefCell::new(
-                deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
+                deflate_params.map(|params| bun_core::handle_oom(WebSocketDeflate::init(*params))),
             ),
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),

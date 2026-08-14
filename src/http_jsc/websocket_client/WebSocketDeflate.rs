@@ -77,6 +77,15 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
+/// zlib's `deflateInit2` rejects a raw-deflate window of 8 bits (it silently
+/// uses 9 even for the zlib-wrapped format), so a negotiated
+/// `client_max_window_bits=8` has to be compressed with a 9-bit window. That
+/// still honors the negotiation: deflate caps match distances at
+/// `w_size - MIN_LOOKAHEAD` = 512 - 262 = 250 bytes, within the peer's
+/// 256-byte window. Same substitution as node's `zlib.DeflateRaw`, and
+/// therefore the `ws` client.
+const MIN_DEFLATE_WINDOW_BITS: u8 = 9;
+
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
 
@@ -108,9 +117,10 @@ impl PerMessageDeflate {
     pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
+        let compress_window_bits = params.client_max_window_bits.max(MIN_DEFLATE_WINDOW_BITS);
         let compress_stream = zlib::DeflateEncoder::new(
             Z_DEFAULT_COMPRESSION,
-            -(params.client_max_window_bits as c_int),
+            -(compress_window_bits as c_int),
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
         )

@@ -124,9 +124,10 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 })?;
             }
             ReadFileResultType::Err(err) => {
-                // SAFETY: `promise` was just swapped out of a live `Strong`
-                // handle; the JS heap cell is kept alive by the caller's
-                // `JSRef` over the ReadFile task.
+                // SAFETY: `promise` was just swapped out of `handler.promise`,
+                // the `JSPromiseStrong` that rooted it across the async read;
+                // from here to `reject` it is a JS-thread stack local, kept
+                // alive by JSC's conservative stack scan.
                 let promise = unsafe { &mut *promise };
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
                 promise.reject(global_this, Ok(val))?;
@@ -395,11 +396,10 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
@@ -415,11 +415,10 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On macOS, we use one-shot mode, so:
+        // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
-        #[cfg(target_os = "macos")]
-        {
+        if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }

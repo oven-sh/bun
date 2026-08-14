@@ -8,10 +8,25 @@
  *
  * ## Retry behavior
  *
- * Exponential backoff (1s → 2s → 4s → 8s → cap at 30s), 5 attempts. GitHub
- * releases (our main source) are usually reliable, but CI sees transient
- * CDN failures often enough that no-retry means flaky builds. The cap at
- * 30s means worst-case we spend ~60s total before giving up.
+ * `downloadRetry`: 10 attempts, backoff doubling from 2s and capped at 30s,
+ * so a download keeps trying through ~3 minutes of backoff (plus whatever
+ * the failing attempts themselves take).
+ *
+ * The window is sized for github.com being unreachable from a CI agent, not
+ * for one bad request. Every download starts at github.com (archives and
+ * release assets both 302 from there), and every dep whose pin moved after
+ * the CI images were baked misses the prefetch cache below, so each build
+ * makes on the order of a hundred live github.com downloads (several deps at
+ * any given time, plus WebKit, which is bumped more often than the images
+ * are rebaked). The outages CI actually hits are agent-wide: every
+ * github.com connection from one agent failing for 30s to over two minutes
+ * while the rest of the build is fine. The previous 5 attempts / ~30s gave
+ * up inside those and took a random build lane with them.
+ *
+ * 408/429 are retried along with 5xx and network errors; the other 4xx are
+ * deterministic and fail immediately. Retry lines and the final error name
+ * the underlying failure (`describeError`), since `fetch` itself only says
+ * "fetch failed".
  *
  * ## Atomic writes
  *
@@ -37,7 +52,7 @@ import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
-import { BuildError, assert } from "./error.ts";
+import { BuildError, assert, describeError } from "./error.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -132,15 +147,36 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
 }
 
+/** Retry schedule for one download. Sizing rationale: "Retry behavior" above. */
+export interface RetryPolicy {
+  /** Total tries, including the first. */
+  attempts: number;
+  /** Delay before try number `attempt` (2..attempts). */
+  backoffMs(attempt: number): number;
+}
+
+export const downloadRetry: RetryPolicy = {
+  attempts: 10,
+  backoffMs: attempt => Math.min(1000 * 2 ** (attempt - 1), 30_000),
+};
+
 /**
  * Download a URL to a file with retry. Atomic: temp file → rename on success.
  *
  * Checks `prefetchDir/by-url/` first — on a CI image with a warm prefetch
  * cache the network is never touched for matching URLs.
  *
- * @param logPrefix Shown in progress/retry messages: `[<logPrefix>] retry 2/5`
+ * @param logPrefix Unused: under ninja, stream.ts already prefixes every line
+ *   with the dep name.
+ * @param retry Tests pass a schedule with no backoff to drive the full
+ *   attempt count without sleeping through it.
  */
-export async function downloadWithRetry(url: string, dest: string, logPrefix: string): Promise<void> {
+export async function downloadWithRetry(
+  url: string,
+  dest: string,
+  logPrefix: string,
+  retry: RetryPolicy = downloadRetry,
+): Promise<void> {
   const prefetched = prefetchPathForUrl(url);
   if (prefetched !== undefined && existsSync(prefetched)) {
     console.log(`using prefetch cache: ${prefetched}`);
@@ -153,14 +189,14 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
     return;
   }
 
-  const maxAttempts = 5;
+  const maxAttempts = retry.attempts;
   let lastError: unknown;
   let permanent = false;
 
   for (let attempt = 1; attempt <= maxAttempts && !permanent; attempt++) {
     if (attempt > 1) {
-      const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
-      console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms`);
+      const backoffMs = retry.backoffMs(attempt);
+      console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms (${describeError(lastError)})`);
       await new Promise(r => setTimeout(r, backoffMs));
     }
 
@@ -169,9 +205,10 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
-        // 4xx is deterministic — a bad URL/missing artifact won't succeed on
-        // retry. Only loop on 5xx/network where the CDN may recover.
-        permanent = res.status >= 400 && res.status < 500;
+        // 4xx is deterministic (bad URL, missing artifact) and won't succeed
+        // on retry, except 408/429, which are the server asking for exactly
+        // that. Loop on those, 5xx, and network errors.
+        permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
         continue;
       }
 

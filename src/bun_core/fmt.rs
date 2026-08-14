@@ -1707,12 +1707,12 @@ impl Keywords {
 
 pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // 5 entries — a `matches!` chain is plenty at this size (the big keyword
+    // 6 entries — a `matches!` chain is plenty at this size (the big keyword
     // table in `Keywords::get` is where the length-dispatched map pays off).
     pub(crate) fn has(s: &[u8]) -> bool {
         matches!(
             s,
-            b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
+            b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
         )
     }
 }

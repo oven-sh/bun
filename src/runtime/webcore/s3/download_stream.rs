@@ -206,7 +206,7 @@ impl S3HttpDownloadStreamingTask {
             // bitwise read+write copies its current state into `self.http` without running
             // destructors (the HTTP thread retains ownership of the source until the request
             // completes). `self.http` was previously initialised in
-            // `execute_s3_streaming_download`.
+            // `client::download_stream`.
             unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done

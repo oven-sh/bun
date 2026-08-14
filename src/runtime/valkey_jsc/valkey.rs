@@ -29,15 +29,16 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
-    // These flags could be refactored into an enumerated state machine, which
-    // would read more naturally than a bag of booleans.
-    pub(crate) is_authenticated: bool,
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
-    pub(crate) needs_to_open_socket: bool,
     pub(crate) enable_auto_reconnect: bool,
+    /// Sticky until the next accepted HELLO, so it overlaps `Connecting`
+    /// (`reconnect()` reads it there) and `failed` (`update_poll_ref` reads it
+    /// there); that is why it is not a `Status` variant.
     pub(crate) is_reconnecting: bool,
+    /// Sticky until `on_open`/`connect()`, and orthogonal to `Status`: `fail()`
+    /// while `Connected` leaves the socket open and `status` unchanged.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
@@ -56,11 +57,9 @@ pub struct ConnectionFlags {
 impl Default for ConnectionFlags {
     fn default() -> Self {
         Self {
-            is_authenticated: false,
             is_manually_closed: false,
             is_selecting_db_internal: false,
             enable_offline_queue: true,
-            needs_to_open_socket: true,
             enable_auto_reconnect: true,
             is_reconnecting: false,
             failed: false,
@@ -74,8 +73,13 @@ impl Default for ConnectionFlags {
 /// Valkey connection status
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Status {
+    /// No socket has been opened yet; the first `connect()`/`send()` opens one.
+    /// Every later disconnect lands in `Disconnected` and goes through
+    /// `reconnect()` instead.
+    NeverConnected,
     Disconnected,
     Connecting,
+    /// Socket open and HELLO accepted.
     Connected,
 }
 
@@ -685,7 +689,6 @@ impl ValkeyClient {
         );
 
         self.flags.is_reconnecting = true;
-        self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
 
         self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
@@ -991,7 +994,6 @@ impl ValkeyClient {
             RESPValue::SimpleString(str_) => {
                 if str_.as_ref() == b"OK" {
                     self.status = Status::Connected;
-                    self.flags.is_authenticated = true;
                     self.flags.is_reconnecting = false;
                     self.retry_attempts = 0;
                     self.on_valkey_connect(value)?;
@@ -1031,7 +1033,6 @@ impl ValkeyClient {
 
                 // Authentication successful via HELLO
                 self.status = Status::Connected;
-                self.flags.is_authenticated = true;
                 self.flags.is_reconnecting = false;
                 self.retry_attempts = 0;
                 self.on_valkey_connect(value)?;
@@ -1050,7 +1051,7 @@ impl ValkeyClient {
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
         // Special handling for the initial HELLO response
-        if !self.flags.is_authenticated {
+        if self.status != Status::Connected {
             self.handle_hello_response(value)?;
 
             // We've handled the HELLO response without consuming anything from the command queue
@@ -1286,12 +1287,8 @@ impl ValkeyClient {
         self.reply_scanner.reset();
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
-        // after a previous connection exhausted retries (#29925), and the
-        // new HELLO response would be dropped because `is_authenticated` was
-        // still set from a prior successful handshake — blocking the client
-        // from ever transitioning back to `.connected`.
+        // after a previous connection exhausted retries (#29925).
         self.flags.failed = false;
-        self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
@@ -1311,7 +1308,7 @@ impl ValkeyClient {
     /// Test whether we are ready to run "normal" RESP commands, such as
     /// get/set, pub/sub, etc.
     fn connection_ready(&self) -> bool {
-        self.flags.is_authenticated && !self.flags.is_selecting_db_internal
+        self.status == Status::Connected && !self.flags.is_selecting_db_internal
     }
 
     /// Process queued commands in the offline queue
@@ -1473,7 +1470,7 @@ impl ValkeyClient {
                         self.register_auto_flusher(self.vm);
                     }
                 }
-                Status::Connecting | Status::Disconnected => {
+                Status::NeverConnected | Status::Connecting | Status::Disconnected => {
                     // Only queue if offline queue is enabled
                     if self.flags.enable_offline_queue {
                         self.enqueue(&checked_command, promise)?;

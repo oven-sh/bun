@@ -167,6 +167,7 @@ pub trait PosixPipeWriter {
                 self.on_write(amt, WriteStatus::Drained);
             }
             WriteResult::Err(err) => {
+                // Like `.drained`, this may free the writer; `self` is dead after it.
                 self.on_error(err);
             }
             WriteResult::Done(amt) => {
@@ -175,11 +176,11 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Re-derives the slice from `self.get_buffer()` each iteration.
-    /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
-    fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
+    /// Only writes; the caller dispatches the callbacks (`&self` enforces it,
+    /// and parents rely on no `on_write` arriving after `on_error`). An error
+    /// is always `Err`: `try_write` reports a short write as `Pending`, never
+    /// as `Wrote`, so an error here means nothing was written this round.
+    fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -193,12 +194,7 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` takes `&self`; re-fetching the buffer here keeps the
-            // shared borrow scoped to this statement so the `&mut self` for
-            // `on_error` below is unencumbered. `try_write` does not mutate
-            // `self`, so `get_buffer()` is stable across iterations.
-            let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
-            match attempt {
+            match self.try_write(force_sync, &self.get_buffer()[drained..limit]) {
                 WriteResult::Pending(pending) => {
                     drained += pending;
                     return WriteResult::Pending(drained);
@@ -207,12 +203,7 @@ pub trait PosixPipeWriter {
                     drained += amt;
                 }
                 WriteResult::Err(err) => {
-                    if drained > 0 {
-                        self.on_error(err);
-                        return WriteResult::Wrote(drained);
-                    } else {
-                        return WriteResult::Err(err);
-                    }
+                    return WriteResult::Err(err);
                 }
                 WriteResult::Done(amt) => {
                     drained += amt;
@@ -438,7 +429,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                self.parent_on_error(err);
+                // Same report as a failed write (the streaming writer does the
+                // same): parents expect every error to be followed by `on_close`.
+                self._on_error(err);
             }
             sys::Result::Ok(()) => {}
         }

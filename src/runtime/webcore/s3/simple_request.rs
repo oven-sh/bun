@@ -288,7 +288,7 @@ impl S3HttpSimpleTask {
         crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
             .unregister();
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
+        // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
         // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
 

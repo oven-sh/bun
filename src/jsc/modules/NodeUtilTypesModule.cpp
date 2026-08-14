@@ -393,6 +393,14 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
+// Node's `typeof x !== "object" || x === null`: primitives, null, and callables. Such a value
+// never matches structurally; in compareBranch full strict deep equality decides it, and as a
+// Set member or Map key only an identical counterpart can satisfy it.
+static bool isSpecialValue(JSValue value)
+{
+    return !value.isObject() || value.isCallable();
+}
+
 enum class Pairing { Open,
     Complete };
 
@@ -468,9 +476,10 @@ struct PendingMapEntry {
 };
 
 // Expected's entries as a subset of actual's (node's mapEquiv + partialObjectMapEquiv). A
-// primitive key is settled by one lookup: actual must hold that key and the values must
-// match, since no other entry can stand in for it. Object keys, identical ones included, are
-// queued and matched structurally, key and value together, while actual is walked once.
+// special (non-object or callable) key is settled by one lookup: actual must hold that key and
+// the values must match, since no other entry can stand in for it. Object keys, identical ones
+// included, are queued and matched structurally, key and value together, while actual's
+// object-keyed entries are walked once; its other entries are passed over, as in node.
 static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -483,7 +492,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         RETURN_IF_EXCEPTION(scope, false);
         JSValue expectedKey, expectedValue;
         while (iter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
-            if (expectedKey.isObject()) {
+            if (!isSpecialValue(expectedKey)) {
                 gcBuffer.append(expectedKey);
                 gcBuffer.append(expectedValue);
                 queued.append({ expectedKey, expectedValue });
@@ -514,7 +523,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSValue actualKey, actualValue;
     while (iter->nextKeyValue(globalObject, actualKey, actualValue)) {
         visited++;
-        if (actualKey.isObject()) {
+        if (!isSpecialValue(actualKey)) {
             Pairing pairing = pending.claimWith(scope, [&](const PendingMapEntry& entry) -> bool {
                 bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, actualKey, entry.key);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -535,10 +544,11 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
 }
 
 // Expected's members as a subset of actual's (node's setEquiv + partialObjectSetEquiv). A
-// member actual holds by identity is settled by one lookup, and a primitive it does not hold
-// can match nothing else. The remaining objects are matched with subset semantics
-// (Set([{a:1,b:2}]) partially contains Set([{a:1}])) while actual is walked once; the actual
-// members expected also holds were settled by the lookup and stay reserved for their twin.
+// member actual holds by identity is settled by one lookup, and a special (non-object or
+// callable) member it does not hold can match nothing else. The remaining objects are matched
+// with subset semantics (Set([{a:1,b:2}]) partially contains Set([{a:1}])) while actual is
+// walked once; the actual members expected also holds were settled by the lookup and stay
+// reserved for their twin.
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -555,7 +565,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
             RETURN_IF_EXCEPTION(scope, false);
             if (held)
                 continue;
-            if (!expectedMember.isObject())
+            if (isSpecialValue(expectedMember))
                 return false;
             gcBuffer.append(expectedMember);
             queued.append(expectedMember);
@@ -571,10 +581,15 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSValue actualMember;
     while (iter->next(globalObject, actualMember)) {
         visited++;
-        if (actualMember.isObject()) {
-            bool reserved = expectedSet->has(globalObject, actualMember);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!reserved) {
+        bool reserved = expectedSet->has(globalObject, actualMember);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!reserved) {
+            if (isSpecialValue(actualMember)) {
+                // Node probes such a stray member too (unlike a stray Map key, which it passes
+                // over): every probe misses, and all a full miss leaves behind is the direction
+                // reset, which the pairing of the members after it depends on.
+                pending.probeFront = true;
+            } else {
                 Pairing pairing = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {
                     return compareBranch(globalObject, gcBuffer, cycles, scope, actualMember, expectedMember);
                 });
@@ -676,14 +691,6 @@ static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgu
     if (!contents)
         return false;
     return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
-}
-
-static bool isSpecialValue(JSValue value)
-{
-    // `typeof x !== "object"`: primitives, null, and callables are decided
-    // by full strict deep equality. Every specific type (Error, Date, RegExp,
-    // boxed primitives, ...) has already been handled by its own arm above.
-    return !value.isObject() || value.isCallable();
 }
 
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)

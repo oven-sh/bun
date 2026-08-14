@@ -927,6 +927,15 @@ describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
       true,
     ],
     ["Map: an object key when actual holds only primitive keys", map(["a", 1], ["b", 1]), map([{}, 1]), false],
+    ["Map: a function key both sides hold", map([fn, 1], ["k", 2]), map([fn, 1]), true],
+    ["Map: a function key both sides hold with a different value", map([fn, 1]), map([fn, 2]), false],
+    ["Map: a function key only expected holds", map([() => {}, 1], ["k", 1]), map([() => {}, 1]), false],
+    [
+      "Map: a function key only expected holds, next to entries that would pair",
+      map([{ a: 1 }, 1], ["k", 1]),
+      map([{ a: 1 }, 1], [fn, 1]),
+      false,
+    ],
     [
       "Map: nested collections as keys and values",
       map([map(["a", 1], ["b", 2]), [1, 2, 3]]),
@@ -947,6 +956,42 @@ describe("assert.partialDeepStrictEqual on Sets and Maps", () => {
     } else {
       expect(() => assert.partialDeepStrictEqual(actual, expected)).toThrow(assert.AssertionError);
     }
+  });
+
+  // The pairing is greedy, and which pairing it finds depends on whether a member that can
+  // match nothing (a primitive or a function neither side shares) sits between the objects:
+  // node probes such a Set member, which sends the next member back to the front of the
+  // window, and skips such a Map key, which leaves the next entry probing the back. Bun follows
+  // node in both, so the same four objects pair off differently as Set members and as Map keys.
+  // After `fitsC` claims C off the back of [A, B, C], `fitsAB` is offered A (Set) or B (Map);
+  // whether the last member can take what is left decides the outcome.
+  describe("a member that matches nothing, between members that do", () => {
+    const A = { a: 1 };
+    const B = { b: 2 };
+    const C = { c: 3 };
+    const fitsC = { c: 3, w: 1 };
+    const fitsAB = { a: 1, b: 2 };
+    const fitsB = { b: 2, y: 1 };
+    const fitsA = { a: 1, y: 1 };
+    const strays: [string, unknown][] = [
+      ["a primitive", 7],
+      ["a function", () => {}],
+    ];
+
+    test.each(strays)("%s in a Set", (_, stray) => {
+      assert.partialDeepStrictEqual(set(fitsC, stray, fitsAB, fitsB), set(A, B, C));
+      expect(() => assert.partialDeepStrictEqual(set(fitsC, stray, fitsAB, fitsA), set(A, B, C))).toThrow(
+        assert.AssertionError,
+      );
+    });
+
+    test.each(strays)("%s as a Map key", (_, stray) => {
+      const expected = map([A, 1], [B, 1], [C, 1]);
+      assert.partialDeepStrictEqual(map([fitsC, 1], [stray, 1], [fitsAB, 1], [fitsA, 1]), expected);
+      expect(() =>
+        assert.partialDeepStrictEqual(map([fitsC, 1], [stray, 1], [fitsAB, 1], [fitsB, 1]), expected),
+      ).toThrow(assert.AssertionError);
+    });
   });
 
   // Expected in a stride order, so neither the front nor the back guess fits and most members

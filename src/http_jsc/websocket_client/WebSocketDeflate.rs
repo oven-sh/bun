@@ -77,9 +77,8 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
-/// zlib refuses a raw deflate window of 8 bits. 9 still satisfies a peer that
-/// negotiated 8: match distances never exceed `w_size - MIN_LOOKAHEAD`, which
-/// is 250 bytes for a 9-bit window.
+/// Smallest raw deflate window zlib accepts. Its output fits a peer's 8-bit
+/// window too: match distances are at most `w_size - MIN_LOOKAHEAD` = 250.
 const MIN_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
@@ -110,8 +109,6 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    /// `params` arrive range-checked from the upgrade client, so zlib can only
-    /// fail here on allocation.
     pub(crate) fn init(params: Params) -> Box<Self> {
         // Negative window bits select raw DEFLATE, as required by RFC 7692.
         let compress_window_bits = params.client_max_window_bits.max(MIN_DEFLATE_WINDOW_BITS);

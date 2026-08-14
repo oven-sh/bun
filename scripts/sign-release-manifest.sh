@@ -526,14 +526,29 @@ done
 # it with an older backup. The rm pass below still removes the
 # orphan directory, which is correct: the orphan held a stale copy
 # we no longer need.
-if [ -n "${_newest_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
+#
+# Snapshot the manifest's liveness BEFORE the restores: the .asc
+# restore below is gated on the live manifest having been missing too.
+# If a live manifest exists (so the .txt restore is skipped), the
+# orphan's .asc was made for a different .txt and restoring it would
+# publish a signature that fails verification against the live
+# manifest — skipping it is strictly better than a mismatched pair.
+# The snapshot (rather than re-testing `-e` inline) matters because a
+# successful .txt restore makes `[ -e "${manifest}" ]` true, which
+# would wrongly suppress restoring the matching .asc from the same
+# orphan.
+_live_manifest_missing=0
+if ! [ -e "${manifest}" ]; then
+  _live_manifest_missing=1
+fi
+if [ -n "${_newest_manifest_bak}" ] && [ "${_live_manifest_missing}" -eq 1 ]; then
   if ! mv -f "${_newest_manifest_bak}" "${manifest}"; then
     echo "error: failed to restore ${manifest} from orphan ${_newest_manifest_bak}" >&2 || true
     echo "error: orphan directory preserved for manual recovery" >&2 || true
     exit 75
   fi
 fi
-if [ -n "${_newest_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
+if [ -n "${_newest_signed_bak}" ] && [ "${_live_manifest_missing}" -eq 1 ] && ! [ -e "${signed_manifest}" ]; then
   if ! mv -f "${_newest_signed_bak}" "${signed_manifest}"; then
     echo "error: failed to restore ${signed_manifest} from orphan ${_newest_signed_bak}" >&2 || true
     echo "error: orphan directory preserved for manual recovery" >&2 || true
@@ -548,7 +563,7 @@ for _stale in "${dir}/${scratch_prefix}"*/; do
     rm -rf "${_stale}" || true
   fi
 done
-unset -v _stale _stale_manifest_bak _stale_signed_bak _newest_manifest_bak _newest_signed_bak
+unset -v _stale _stale_manifest_bak _stale_signed_bak _newest_manifest_bak _newest_signed_bak _live_manifest_missing
 
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name
@@ -595,9 +610,9 @@ if [ -f "${signed_manifest}" ]; then
 fi
 unset -v _bak_path
 
-# Hash every artifact in parallel. The canary set is 22 archives, each
-# roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
-# linux agent; parallelised across cores it drops to ~1-2 s. We write
+# Hash every artifact in parallel. The canary set is a few dozen
+# archives, each roughly 30-150 MB — hashing them sequentially takes
+# several seconds; parallelised across cores it drops to ~1-2 s. We write
 # each result to `${hash_dir}/${artifact}.digest` so the collation loop
 # can pick them up in sorted order without caring about which job
 # finished first. `${hash_dir}` is a nested subdirectory of the scratch

@@ -516,7 +516,11 @@ function create_release() {
   # SHASUMS256.txt match the archive bytes GitHub now serves — signing
   # in the same run as the upload is the fix for the .txt/.asc drift in
   # https://github.com/oven-sh/bun/issues/28931.
-  sign_and_upload_manifest "$tag" "${files[@]}"
+  # Guarded: a manifest/signing failure must not abort the script between
+  # the archive upload and the remaining release steps. The daily sign
+  # cron self-heals the manifest on the next pass.
+  sign_and_upload_manifest "$tag" "${files[@]}" \
+    || echo "warn: manifest sign/upload failed (exit $?); the daily sign cron will catch up" >&2
   update_github_release "$tag"
   create_sentry_release "$tag"
   send_discord_announcement "$tag"

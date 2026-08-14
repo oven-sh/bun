@@ -69,12 +69,21 @@ async function sh(cmd: string[], env: Record<string, string> = {}) {
 // be found on PATH (git-for-windows ships one) but posix_spawn on a .sh
 // file fails outright.
 //
-// Bun.which (not a spawnSync probe): spawnSync THROWS ENOENT when the
-// executable is missing rather than returning a non-zero exitCode, so
-// a probe would crash this module at import time on any gpg-less host
-// — before describe.skipIf could fire — turning the intended skip
-// into a file-level failure. Bun.which returns null and never throws.
-const canRun = !isWindows && !!Bun.which("gpg");
+// Functional probe, not just Bun.which: the tests need a gpg that
+// actually runs and accepts --version, not merely a file on PATH.
+// The try/catch matters because spawnSync THROWS ENOENT when the
+// executable is missing rather than returning a non-zero exitCode,
+// which would crash this module at import time on any gpg-less host
+// before describe.skipIf could fire.
+const canRun =
+  !isWindows &&
+  (() => {
+    try {
+      return Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    } catch {
+      return false;
+    }
+  })();
 
 // Throwaway GPG key material shared by every test below.
 let keyringDir: ReturnType<typeof tempDir> | undefined;

@@ -2439,11 +2439,12 @@ describe("css tests", () => {
   // A 4-side shorthand sets all four physical sides, so logical longhands declared before it in the
   // same rule are dead in every writing mode. They must not survive into the output: when logical
   // properties are compiled for old targets, inline longhands become separate :lang() rules emitted
-  // after the rule, which would win over the shorthand.
+  // after the rule, which would win over the shorthand. The one reason to keep anything declared
+  // before the shorthand is a target that rejects the shorthand's value.
   describe("logical longhands overridden by a 4-side shorthand", () => {
-    for (const [shorthand, inlineStart, inlineEnd, inline, blockStart] of [
-      ["margin", "margin-inline-start", "margin-inline-end", "margin-inline", "margin-block-start"],
-      ["padding", "padding-inline-start", "padding-inline-end", "padding-inline", "padding-block-start"],
+    for (const [shorthand, inlineStart, inlineEnd, inline, blockStart, top] of [
+      ["margin", "margin-inline-start", "margin-inline-end", "margin-inline", "margin-block-start", "margin-top"],
+      ["padding", "padding-inline-start", "padding-inline-end", "padding-inline", "padding-block-start", "padding-top"],
     ]) {
       // Safari 8 compiles logical properties away (the :lang() cases above use it too); Safari 15
       // supports them.
@@ -2478,42 +2479,46 @@ describe("css tests", () => {
         });
       }
 
-      // The shorthand's value is not supported by the target, so the overridden declarations stay as
-      // a fallback, like physical longhands do (see the "length" tests).
-      prefix_test(
-        `
-        .foo {
-          ${inlineStart}: 2px;
-          ${shorthand}: max(2cqw, 22px);
-        }
-      `,
-        indoc`
-        .foo {
-          ${inlineStart}: 2px;
-          ${shorthand}: max(2cqw, 22px);
-        }
-      `,
-        {
-          safari: 14 << 16,
-        },
-      );
+      // Safari 14 does not support container query units, so it rejects the whole shorthand and the
+      // earlier declaration still applies there: it has to stay as a fallback, whether it is logical
+      // or a physical side whose own new value (5px) would have been fine. Safari 16 supports them,
+      // so the earlier declaration is dead.
+      for (const earlier of [`${inlineStart}: 2px`, `${top}: 10px`]) {
+        prefix_test(
+          `
+          .foo {
+            ${earlier};
+            ${shorthand}: 5px max(2cqw, 22px);
+          }
+        `,
+          indoc`
+          .foo {
+            ${earlier};
+            ${shorthand}: 5px max(2cqw, 22px);
+          }
+        `,
+          {
+            safari: 14 << 16,
+          },
+        );
 
-      prefix_test(
-        `
-        .foo {
-          ${inlineStart}: 2px;
-          ${shorthand}: max(2cqw, 22px);
-        }
-      `,
-        indoc`
-        .foo {
-          ${shorthand}: max(2cqw, 22px);
-        }
-      `,
-        {
-          safari: 16 << 16,
-        },
-      );
+        prefix_test(
+          `
+          .foo {
+            ${earlier};
+            ${shorthand}: 5px max(2cqw, 22px);
+          }
+        `,
+          indoc`
+          .foo {
+            ${shorthand}: 5px max(2cqw, 22px);
+          }
+        `,
+          {
+            safari: 16 << 16,
+          },
+        );
+      }
 
       // A logical longhand after the shorthand is live and stays.
       prefix_test(

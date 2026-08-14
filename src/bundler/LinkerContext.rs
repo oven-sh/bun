@@ -1366,9 +1366,17 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `line_offset_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.line_offset_wait_group.finish();
+            // SAFETY: the linker is blocked in `line_offset_wait_group.wait()`
+            // (or will be) until this finish, so the group is live; it frees the
+            // tasks as soon as `wait()` returns (`generate_chunks_in_parallel`),
+            // which is why this goes through `finish_raw` and is the last
+            // statement to touch `ctx`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,
+                )
+            };
         }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
@@ -1403,9 +1411,13 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `quoted_contents_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.quoted_contents_wait_group.finish();
+            // SAFETY: as in `run_line_offset`, for `quoted_contents_wait_group`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.quoted_contents_wait_group,
+                )
+            };
         }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`

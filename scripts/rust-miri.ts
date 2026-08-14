@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 /**
- * `cargo miri test` for the FFI-free crate set.
+ * `cargo miri test` for the crates Miri can interpret end to end.
  *
  * Miri interprets MIR and catches UB (use-after-free, out-of-bounds,
  * uninit reads, data races, aliasing violations) at runtime. It cannot call
- * foreign functions, so this only covers the pure-Rust corner of the
- * workspace — which is also where `unsafe` density is highest.
+ * foreign functions beyond the libc subset it ships shims for, so this only
+ * covers the (nearly) pure-Rust corner of the workspace — which is also where
+ * `unsafe` density is highest.
  *
  * Aliasing model: `-Zmiri-tree-borrows`, not the default Stacked Borrows.
  * Stacked Borrows invalidates every raw pointer derived from `&mut self` the
@@ -27,9 +28,11 @@ import { resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "..");
 
 // Crates that pass `cargo miri test` under Tree Borrows. To add one it must
-// (a) have at least one `#[test]`, (b) compile under `--cfg test`, (c) not
-// call into `extern "C"` at test runtime — Miri reports
-// `unsupported operation: can't call foreign function` if it does.
+// (a) have at least one `#[test]`, (b) compile under `--cfg test`, (c) only
+// call `extern "C"` functions Miri ships shims for at test runtime (libc's
+// futex syscall and thread APIs, as bun_threading does, are fine; anything
+// vendored is not) — Miri reports
+// `unsupported operation: can't call foreign function` otherwise.
 const MIRI_CRATES = [
   "bun_ast",
   "bun_base64",
@@ -44,6 +47,7 @@ const MIRI_CRATES = [
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",
+  "bun_threading",
   "bun_wyhash",
 ];
 

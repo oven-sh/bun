@@ -29,12 +29,12 @@ A directory in braces selects every workspace located in that directory or anywh
 
 Adding `...` to a pattern also selects the workspaces related to it through workspace dependencies:
 
-| Pattern    | Selects                                                                     |
-| ---------- | --------------------------------------------------------------------------- |
-| `foo...`   | `foo` and the workspaces it depends on, directly or transitively            |
-| `foo^...`  | only the workspaces `foo` depends on, not `foo` itself                      |
-| `...foo`   | `foo` and the workspaces that depend on it, directly or transitively        |
-| `...^foo`  | only the workspaces that depend on `foo`, not `foo` itself                  |
+| Pattern   | Selects                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `foo...`  | `foo` and the workspaces it depends on, directly or transitively     |
+| `foo^...` | only the workspaces `foo` depends on, not `foo` itself               |
+| `...foo`  | `foo` and the workspaces that depend on it, directly or transitively |
+| `...^foo` | only the workspaces that depend on `foo`, not `foo` itself           |
 
 The middle part is a name glob or a directory selector (`...{./packages/api}`), and `!` still goes first: `--filter '!...foo'` drops `foo` and everything that depends on it.
 

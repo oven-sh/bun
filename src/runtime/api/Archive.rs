@@ -674,7 +674,9 @@ impl PromiseResult {
 
 /// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
 /// stores its result on `self`; `run_from_js` turns it into the promise's
-/// value. It is the off-thread part of an `AsyncTask<C>` job.
+/// value. It is the off-thread part of an `AsyncTask<C>` job, which runs
+/// [`Unborrowed`](bun_jsc::Unborrowed): a context owns everything `run`
+/// touches (a store ref, copied arguments), never JS memory.
 pub trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
@@ -687,9 +689,10 @@ pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
     type Js = JSPromiseStrong;
+    type Vm = bun_jsc::Unborrowed;
     fn run(
         ctx: &mut C,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         ctx.run();

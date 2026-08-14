@@ -567,9 +567,10 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
 impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
     type OffThread = Self;
     type Js = JSPromiseStrong;
+    type Vm = bun_jsc::Unborrowed;
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         this.value = Some(this.op.compute(&this.password));

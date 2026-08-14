@@ -242,8 +242,9 @@ struct SecretsJobOptions {
 // C interface implementation for the native binding
 extern "C" {
 
-// Runs on the threadpool - does the actual platform API work
-void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* global)
+// Runs on the threadpool - does the actual platform API work. The job's VM may
+// be torn down while this blocks (a keychain prompt), so it gets nothing of it.
+void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
 {
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {

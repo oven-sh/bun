@@ -75,9 +75,13 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
+    /// The whole copy happens in `run`, and the source is opened blocking: a
+    /// FIFO, tty or pipe source (`Bun.write(Bun.stdout, Bun.stdin)`) sits there
+    /// until the other side acts. Everything read meanwhile is the stores'.
+    type Vm = jsc::Unborrowed;
     fn run(
         this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
+        _: &jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();

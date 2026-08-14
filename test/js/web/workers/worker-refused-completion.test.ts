@@ -42,6 +42,14 @@ const ROWS: Row[] = [
     refused: "blob::read_file::ReadFile",
   },
   {
+    // The whole copy runs on the pool without holding the worker's VM, so a
+    // copy still going when the worker exits is the normal way to get here.
+    name: "Bun.write(file, file)",
+    worker: `Bun.write("/dev/null", Bun.file(process.execPath).slice(0, 65536));`,
+    refused: "blob::copy_file::CopyFile",
+    skip: isWindows,
+  },
+  {
     // Same read job, different completion: the image's read chain is handed
     // ECANCELED at teardown and has to free itself.
     name: "Bun.Image(Bun.file()).metadata()",

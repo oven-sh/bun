@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -518,6 +519,48 @@ test(
       stderr: "",
       exitCode: 0,
     });
+  },
+  timeout,
+);
+
+// Regression: a worker's Bun.write(file, file) runs the whole copy on the thread
+// pool and opens the source blocking, so with a FIFO (or tty / idle pipe) source
+// the pool thread sits in open(2) until the other side shows up. The worker's
+// teardown waited for that job, so terminate() never settled. Nothing ever
+// opens the FIFO's other end here: the copy stays blocked for the whole test and
+// terminate() has to settle without it.
+test.skipIf(isWindows)(
+  "terminate() settles while the worker's Bun.write(file, file) is blocked opening a FIFO",
+  async () => {
+    using dir = tempDir("worker-terminate-copyfile-fifo", {
+      "main.cjs": `
+        const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        if (isMainThread) {
+          const w = new Worker(__filename);
+          w.on("message", async () => {
+            await w.terminate();
+            console.log("terminated");
+          });
+        } else {
+          Bun.write(path.join(__dirname, "out"), Bun.file(path.join(__dirname, "fifo"))).catch(() => {});
+          // The copy was queued first; once a pool job queued after it has come
+          // back, the pool has taken the copy and it is blocked in open(2).
+          fs.promises.stat(__filename).then(() => parentPort.postMessage("blocked"));
+        }
+      `,
+    });
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "terminated\n", stderr: "", exitCode: 0 });
   },
   timeout,
 );

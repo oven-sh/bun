@@ -1465,6 +1465,7 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
+    type Vm = jsc::vm_handle::Borrow;
     fn run(
         this: &mut Self,
         _vm: &jsc::vm_handle::Borrow,

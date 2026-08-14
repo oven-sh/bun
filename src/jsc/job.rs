@@ -4,11 +4,14 @@
 //! [`WorkPool`], and completes on the JS thread again — unless its VM went away
 //! meanwhile. Which thread may touch which part of it is in the types:
 //!
-//! * [`JobContext::OffThread`] is what the pool body sees. It is `Send`, and it
-//!   runs under a VM [`Borrow`] the carrier takes for it, so the VM's teardown
-//!   waits for a body that is mid-flight and a body never starts against a VM
-//!   that is already closed. JS-backed memory it needs is reachable only through
-//!   [`JsPtr`], i.e. only while that borrow (or a [`JsThread`]) is in hand.
+//! * [`JobContext::OffThread`] is what the pool body sees. It is `Send`, and a
+//!   body never starts against a VM that is already closed. Whether the VM's
+//!   teardown also *waits* for a body that is mid-flight is the impl's
+//!   [`JobContext::Vm`]: a body that reads VM-owned memory runs under a VM
+//!   [`Borrow`] the carrier takes for it (JS-backed memory is reachable only
+//!   through [`JsPtr`], i.e. only while that borrow, or a [`JsThread`], is in
+//!   hand); a body that owns everything it touches runs [`Unborrowed`], and a
+//!   VM torn down underneath it simply refuses its completion.
 //! * [`JobContext::Js`] is the completion's JS-thread state (promise, callback,
 //!   wrapper refs, pins, protected buffers). It is [`JsAffine`] and lives in a
 //!   [`JsSide`], which opens only with a [`JsThread`] token and is never dropped
@@ -234,20 +237,68 @@ pub trait JobContext: Sized + 'static {
     type OffThread: Send;
     type Js: JsAffine;
 
-    /// Pool thread, under a VM borrow the carrier holds for the whole call.
-    /// Return `done` to complete now; keep it (e.g. across async I/O that
-    /// finishes on another thread) and call [`Completion::finish`] later to
-    /// complete then. Work that outlives this call runs under no borrow and
-    /// must touch only `off`.
+    /// What [`run`](Self::run) holds on the VM while it executes:
+    ///
+    /// * [`Borrow`] — `OffThread` reaches memory the VM owns (a [`JsPtr`], the
+    ///   bytes of a pinned buffer), so the body runs under a VM borrow and the
+    ///   VM's teardown waits for it. Only for bodies that cannot block on an
+    ///   external party: `terminate()` of the worker waits exactly as long.
+    /// * [`Unborrowed`] — `OffThread` owns everything the body touches, so
+    ///   teardown does not wait for it: a body still running when its VM goes
+    ///   away (a copy blocked on a FIFO, `getaddrinfo`) finishes on its own
+    ///   time and its completion is refused, i.e. for such a job the release on
+    ///   the pool thread ([`Postable::release_refused`]) is the normal end of
+    ///   in-flight work at teardown, not a rare race.
+    ///
+    /// [`Postable::release_refused`]: crate::Postable::release_refused
+    type Vm: VmHold;
+
+    /// Pool thread, with [`Self::Vm`] held for the whole call. Return `done` to
+    /// complete now; keep it (e.g. across async I/O that finishes on another
+    /// thread) and call [`Completion::finish`] later to complete then. Work
+    /// that outlives this call runs under no borrow and must touch only `off`.
     fn run(
         off: &mut Self::OffThread,
-        vm: &Borrow,
+        vm: &Self::Vm,
         done: Completion<Self>,
     ) -> Option<Completion<Self>>;
 
     /// JS thread: the completion. Both partitions are handed over to use and
     /// drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::Borrow {}
+    impl Sealed for super::Unborrowed {}
+}
+
+/// What the carrier holds on the VM while [`JobContext::run`] executes: see
+/// [`JobContext::Vm`]. Implemented by [`Borrow`] and [`Unborrowed`] only.
+pub trait VmHold: sealed::Sealed + Sized {
+    /// Pool thread, before the body: `None` if the VM is already closed, in
+    /// which case the body does not run.
+    fn acquire(handle: &LoopHandle) -> Option<Self>;
+}
+
+impl VmHold for Borrow {
+    #[inline]
+    fn acquire(handle: &LoopHandle) -> Option<Self> {
+        handle.borrow()
+    }
+}
+
+/// The [`JobContext::Vm`] of a job whose off-thread part owns everything its
+/// body touches: nothing is held, so the VM's teardown does not wait for the
+/// body.
+pub struct Unborrowed(());
+
+impl VmHold for Unborrowed {
+    #[inline]
+    fn acquire(handle: &LoopHandle) -> Option<Self> {
+        (!handle.is_closed()).then_some(Unborrowed(()))
+    }
 }
 
 /// The type-erased head of every [`Job<C>`]: dispatch entries (one task tag
@@ -383,11 +434,12 @@ impl<C: JobContext> Job<C> {
         // SAFETY: live job, exclusively the pool's for this callback.
         let handle = unsafe { (*this).loop_handle.clone() };
         let done = Completion(NonNull::new(this).expect("job"));
-        let Some(vm) = handle.borrow() else {
+        let Some(vm) = C::Vm::acquire(&handle) else {
             // VM already gone: nothing ran; `finish` releases.
             return done.finish();
         };
-        // SAFETY: as above; the borrow keeps the VM (and any JsPtr target) alive.
+        // SAFETY: as above; a `Borrow` keeps the VM (and any JsPtr target)
+        // alive, and an `Unborrowed` body touches only `off`.
         if let Some(done) = C::run(unsafe { &mut (*this).off }, &vm, done) {
             drop(vm);
             done.finish();
@@ -541,7 +593,8 @@ pub enum Never {}
 impl JobContext for Never {
     type OffThread = ();
     type Js = ();
-    fn run(_: &mut (), _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+    type Vm = Unborrowed;
+    fn run(_: &mut (), _: &Unborrowed, done: Completion<Self>) -> Option<Completion<Self>> {
         Some(done)
     }
     fn then(_: (), _: (), _: &JsThread<'_>) -> JsResult<()> {

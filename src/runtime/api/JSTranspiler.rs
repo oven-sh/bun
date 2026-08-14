@@ -677,6 +677,7 @@ pub(crate) struct TransformJs {
 impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
+    type Vm = jsc::vm_handle::Borrow;
     fn run(
         this: &mut Self,
         vm: &jsc::vm_handle::Borrow,

@@ -2855,6 +2855,8 @@ pub mod JSZstd {
     impl jsc::JobContext for ZstdJob {
         type OffThread = Self;
         type Js = jsc::JSPromiseStrong;
+        /// `buffer` may be the caller's JS buffer, read below.
+        type Vm = jsc::vm_handle::Borrow;
 
         fn run(
             this: &mut Self,

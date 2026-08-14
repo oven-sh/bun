@@ -155,3 +155,29 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+// The store behind a file blob is read (and may be released) on pool threads
+// after the call that made it returns, so it has to own its path: a byte path is
+// copied out of the caller's buffer, as documented, not read through it later.
+test.each([
+  ["Uint8Array", (bytes: Uint8Array<ArrayBuffer>) => bytes],
+  ["ArrayBuffer", (bytes: Uint8Array<ArrayBuffer>) => bytes.buffer],
+])("Bun.file() and Bun.write() copy a %s path out of the buffer", async (_, asArgument) => {
+  await using dir = tempDir("bun-file-byte-path", { "a.txt": "from a", "z.txt": "from z" });
+  const encode = (name: string) => new TextEncoder().encode(join(String(dir), name));
+  // "<x>.txt" -> "z.txt", in place.
+  const retarget = (bytes: Uint8Array) => void (bytes[bytes.length - 5] = "z".charCodeAt(0));
+
+  const source = encode("a.txt");
+  const file = Bun.file(asArgument(source));
+  retarget(source);
+  expect(file.name).toBe(join(String(dir), "a.txt"));
+  expect(await file.text()).toBe("from a");
+
+  const destination = encode("c.txt");
+  const written = Bun.write(asArgument(destination), file);
+  retarget(destination);
+  expect(await written).toBe(6);
+  expect(await Bun.file(join(String(dir), "c.txt")).text()).toBe("from a");
+  expect(await Bun.file(join(String(dir), "z.txt")).text()).toBe("from z");
+});

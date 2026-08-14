@@ -48,9 +48,11 @@ impl bun_jsc::JobContext for WriteFile {
     type OffThread = Self;
     /// The completion is delivered through `on_complete_callback(ctx, ..)`.
     type Js = ();
+    /// Writes the source store's own bytes (see the `Send` note above).
+    type Vm = bun_jsc::Unborrowed;
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.

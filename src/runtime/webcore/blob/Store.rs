@@ -18,7 +18,7 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_core::{ZigString, strings};
+use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -110,6 +110,21 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
     bun_http_types::MimeType::by_extension_no_default(ext)
 }
 
+/// Make `path` the store's own. The pool jobs reading a store (`CopyFile`,
+/// `ReadFile`, `WriteFile`) run without a VM borrow and may drop its last ref
+/// after the VM is gone, so it may keep nothing of the JS heap: a `Buffer` path
+/// (`Bun.file(bytes)`, documented as copying) points into the caller's
+/// ArrayBuffer and is copied out here, on the JS thread, which also releases
+/// the pin on that ArrayBuffer; a string path gets its own WTF impl.
+fn own_path(path: &mut PathLike) {
+    if let PathLike::Buffer(buffer) = &*path {
+        let copy = bun_core::handle_oom(ZigStringSlice::init_dupe(buffer.slice()));
+        *path = PathLike::EncodedSlice(copy);
+        return;
+    }
+    path.to_thread_safe();
+}
+
 impl StoreExt for Store {
     /// Caller is responsible for derefing the Store.
     fn to_any_blob(&mut self) -> Option<super::Any> {
@@ -128,8 +143,7 @@ impl StoreExt for Store {
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error> {
         let mut path = pathlike;
-        // this actually protects/refs the pathlike
-        path.to_thread_safe();
+        own_path(&mut path);
 
         // Compute the extension-derived fallback before moving `path` into the
         // Store so we don't need to clone the owned PathLike.
@@ -144,9 +158,13 @@ impl StoreExt for Store {
     }
 
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        mut pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error> {
+        if let PathOrFileDescriptor::Path(path) = &mut pathlike {
+            own_path(path);
+        }
+
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {

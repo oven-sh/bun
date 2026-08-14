@@ -269,6 +269,8 @@ pub(crate) struct Pbkdf2Job {
 impl JobContext for Pbkdf2Job {
     type OffThread = Self;
     type Js = JSPromiseStrong;
+    /// The password and salt may be the caller's JS buffers, read by `run`.
+    type Vm = bun_jsc::vm_handle::Borrow;
 
     fn run(
         this: &mut Self,

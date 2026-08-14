@@ -247,7 +247,8 @@ impl VmHandle {
 
     /// This job is about to use VM-owned memory off-thread; `None` if the VM
     /// is closed (touch nothing). Hold the result until done. Jobs that could
-    /// block indefinitely on an external party must own their memory instead.
+    /// block indefinitely on an external party must own their memory instead
+    /// and only ask [`is_closed`](Self::is_closed) whether to bother starting.
     pub fn borrow(&self) -> Option<Borrow> {
         let a = self.enter()?;
         // SAFETY: lifetime extension is sound because `Borrow` also holds a
@@ -265,6 +266,14 @@ impl VmHandle {
     pub fn borrow_if_running(&self) -> Option<Borrow> {
         let b = self.borrow()?;
         (self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
+    }
+
+    /// Whether `close()` has run, i.e. whatever this work would post is going
+    /// to be refused. Any thread; a snapshot, so only for deciding not to start
+    /// work that owns its memory — work that uses the VM's takes a
+    /// [`borrow`](Self::borrow).
+    pub fn is_closed(&self) -> bool {
+        self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8
     }
 
     // ── embedded work ─────────────────────────────────────────────────────
@@ -800,6 +809,9 @@ impl LoopHandle {
     }
     pub fn borrow_if_running(&self) -> Option<Borrow> {
         self.vm.borrow_if_running()
+    }
+    pub fn is_closed(&self) -> bool {
+        self.vm.is_closed()
     }
     pub fn accepting_work(&self) -> bool {
         self.vm.accepting_work()

@@ -310,6 +310,22 @@ it("Database.open rejects a filename with null bytes instead of truncating it", 
   expect(existsSync(prefix)).toBe(false);
 });
 
+it("loadExtension and setCustomSQLite reject paths with null bytes", () => {
+  using db = new Database(":memory:");
+  expect(() => db.loadExtension(tmpbase + "ext\0.so")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringContaining("The argument 'name' must be a string without null bytes."),
+    }),
+  );
+  expect(() => Database.setCustomSQLite(tmpbase + "libsqlite3\0.dylib")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringContaining("The argument 'path' must be a string without null bytes."),
+    }),
+  );
+});
+
 it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {

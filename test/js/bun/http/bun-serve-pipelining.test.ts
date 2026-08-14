@@ -14,15 +14,18 @@ import { join } from "node:path";
 
 type RawResponse = { statusLine: string; headers: Record<string, string>; body: string };
 
-// Splits the byte stream into Content-Length framed responses (a 101 has no
-// body). Bodies are accumulated as chunks so a multi-megabyte body does not get
-// re-concatenated on every read.
+// Splits the byte stream into responses framed by Content-Length or chunked
+// encoding (a 101 has no body). Content-Length bodies are accumulated as chunks
+// so a multi-megabyte body does not get re-concatenated on every read; the
+// chunked bodies here are small and are simply re-scanned.
 class ResponseReader {
   responses: RawResponse[] = [];
   // Bytes after the last complete response that do not form a head yet (after
   // a 101 these are WebSocket frames).
   unparsed: Buffer = Buffer.alloc(0);
   #head: { statusLine: string; headers: Record<string, string> } | undefined;
+  #chunked = false;
+  #pendingChunked: Buffer = Buffer.alloc(0);
   #bodyChunks: Buffer[] = [];
   #bodyHave = 0;
   #bodyNeed = 0;
@@ -40,20 +43,48 @@ class ResponseReader {
           headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
         }
         this.#head = { statusLine, headers };
+        this.#chunked = headers["transfer-encoding"] === "chunked";
         this.#bodyNeed = Number(headers["content-length"] ?? 0);
         chunk = this.unparsed.subarray(headEnd + 4);
         this.unparsed = Buffer.alloc(0);
       }
-      const take = chunk.subarray(0, this.#bodyNeed - this.#bodyHave);
-      this.#bodyChunks.push(take);
-      this.#bodyHave += take.length;
-      chunk = chunk.subarray(take.length);
-      if (this.#bodyHave < this.#bodyNeed) return;
+      if (this.#chunked) {
+        const rest = this.#takeChunkedBody(chunk);
+        if (rest === undefined) return;
+        chunk = rest;
+      } else {
+        const take = chunk.subarray(0, this.#bodyNeed - this.#bodyHave);
+        this.#bodyChunks.push(take);
+        this.#bodyHave += take.length;
+        chunk = chunk.subarray(take.length);
+        if (this.#bodyHave < this.#bodyNeed) return;
+      }
       this.responses.push({ ...this.#head, body: Buffer.concat(this.#bodyChunks).toString("latin1") });
       this.#head = undefined;
       this.#bodyChunks = [];
       this.#bodyHave = 0;
     }
+  }
+
+  // Returns what follows the body once all of it has arrived, through the
+  // terminating zero-size chunk (nothing here sends trailers); else undefined.
+  #takeChunkedBody(chunk: Buffer): Buffer | undefined {
+    const pending = (this.#pendingChunked = Buffer.concat([this.#pendingChunked, chunk]));
+    const parts: Buffer[] = [];
+    let pos = 0;
+    while (true) {
+      const sizeLineEnd = pending.indexOf("\r\n", pos);
+      if (sizeLineEnd === -1) return undefined;
+      const size = parseInt(pending.subarray(pos, sizeLineEnd).toString("latin1"), 16);
+      pos = sizeLineEnd + 2;
+      if (pending.length < pos + size + 2) return undefined;
+      if (size === 0) break;
+      parts.push(pending.subarray(pos, pos + size));
+      pos += size + 2;
+    }
+    this.#bodyChunks = parts;
+    this.#pendingChunked = Buffer.alloc(0);
+    return pending.subarray(pos + 2);
   }
 }
 
@@ -321,6 +352,68 @@ describe.each(transports)("$name", transport => {
       expect({ closed: client.closed, responses: client.responses.map(summarize) }).toEqual({
         closed: false,
         responses: [ok("body of /hold/1"), ok("body of /hold/2"), ok("body of /hold/3")],
+      });
+    },
+  );
+
+  // The response ahead is still being produced by the app: a streaming body that
+  // ends when the test says so. Ending it makes the response sink resume() the
+  // socket itself (it releases a request-body pause), which must not reopen reads
+  // over the held request; the replay that follows is what reopens them.
+  it.if(transport.supported)(
+    "a request pipelined behind a streaming response is answered once the stream ends",
+    async () => {
+      using dir = tempDir("serve-pipelining", {});
+      const hits: string[] = [];
+      const streaming = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        ...transport.listen(String(dir)),
+        fetch(req) {
+          const path = new URL(req.url).pathname;
+          hits.push(path);
+          if (path !== "/stream") return plainResponse(req);
+          let pulls = 0;
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                if (pulls++ === 0) {
+                  controller.enqueue("first,");
+                  streaming.resolve();
+                  return;
+                }
+                await finish.promise;
+                controller.enqueue("second");
+                controller.close();
+              },
+            }),
+          );
+        },
+      });
+      using client = await RawClient.connect(transport.target(server, String(dir)));
+
+      client.write(request("/stream") + request("/after"));
+      await Promise.race([streaming.promise, client.until(c => c.closed)]);
+      await probe(transport, server, String(dir));
+      expect({ hits, closed: client.closed }).toEqual({ hits: ["/stream", "/probe"], closed: false });
+
+      finish.resolve();
+      await client.until(c => c.responses.length === 2);
+      expect({
+        hits,
+        closed: client.closed,
+        responses: client.responses.map(({ statusLine, headers, body }) => ({
+          statusLine,
+          framing: headers["transfer-encoding"] ?? `content-length ${headers["content-length"]}`,
+          body,
+        })),
+      }).toEqual({
+        hits: ["/stream", "/probe", "/after"],
+        closed: false,
+        responses: [
+          { statusLine: "HTTP/1.1 200 OK", framing: "chunked", body: "first,second" },
+          { statusLine: "HTTP/1.1 200 OK", framing: "content-length 14", body: "body of /after" },
+        ],
       });
     },
   );

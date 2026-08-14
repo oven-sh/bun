@@ -30,9 +30,7 @@ ZigStackFramePosition classSourceStartPosition(const SourceCode& classSource)
     int start = classSource.startOffset();
     WTF::StringView source = provider->source();
 
-    // classSource.startColumn() is counted from wherever the lexer started, which for a class on
-    // the first line of a lazily parsed function body is that function, not the line. Count from
-    // the line start instead; the column is only taken as-is when the source text is unavailable.
+    // startColumn() is only a fallback: on the first line of a lazily parsed function it counts from the function.
     int column = classSource.startColumn().zeroBasedInt();
     if (static_cast<unsigned>(start) <= source.length()) {
         int lineStart = start;

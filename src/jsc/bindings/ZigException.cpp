@@ -135,8 +135,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (!code)
         return;
 
-    // The position below is in the class's source for a default class constructor, so the
-    // source lines have to come from it as well.
+    // Same source getAdjustedPositionForBytecode() positions the frame in.
     auto classSource = Bun::defaultClassConstructorClassSource(code->ownerExecutable());
     auto* provider = classSource.isNull() ? code->source().provider() : classSource.provider();
     if (!provider) [[unlikely]]

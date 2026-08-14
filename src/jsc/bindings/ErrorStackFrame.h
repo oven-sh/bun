@@ -14,20 +14,16 @@ class StackFrame;
 
 namespace Bun {
 
-/// JSC compiles the constructor of a class that declares none from
-/// BuiltinExecutables::defaultConstructorSourceCode(), a fixed one-line string with no URL, so that
-/// executable's source() and bytecode positions only describe that string. For such an executable
-/// this returns the SourceCode of the class itself (its file, starting at the `class` keyword), which
-/// is where V8 reports these frames. Null for every other executable.
+/// The class whose constructor JSC synthesized because it declared none (that constructor's own
+/// source() is the URL-less "(function () { })" template), or null for any other executable.
 JSC::SourceCode defaultClassConstructorClassSource(JSC::ScriptExecutable* executable);
 
-/// Position of the `class` keyword a class SourceCode starts at, in the same coordinates JSC reports
-/// bytecode positions of that file in.
+/// Position of the `class` keyword `classSource` starts at; frames of its default constructor go there, as in V8.
 ZigStackFramePosition classSourceStartPosition(const JSC::SourceCode& classSource);
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc);
 
-/// frame.computeLineAndColumn(), except that a default class constructor frame is placed at its class.
+/// frame.computeLineAndColumn(), with default class constructor frames placed at their class.
 JSC::LineColumn computeLineAndColumn(const JSC::StackFrame& frame);
 
 } // namespace Bun

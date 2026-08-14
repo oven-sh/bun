@@ -51,10 +51,19 @@ afterAll(() => {
  * `serial`, so nothing else may be shared between tests. The serial ones use `toMatchSnapshot()`
  * (not available in concurrent tests), register registry users, or need the registry to be idle.
  */
+let previousSetup: Promise<void> = Promise.resolve();
 async function setupTest() {
-  const { packageDir, packageJson } = await registry.createTestDir({
-    bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
-  });
+  // `createTestDir()` also deletes the registry's htpasswd file. When a concurrent group starts,
+  // every test in it calls this at once, and concurrent deletions of the same file fail on Windows
+  // (EFAULT), so the calls are chained. The directory creation itself takes a few milliseconds.
+  const created = previousSetup.then(() =>
+    registry.createTestDir({ bunfigOpts: { saveTextLockfile: false, linker: "hoisted" } }),
+  );
+  previousSetup = created.then(
+    () => {},
+    () => {},
+  );
+  const { packageDir, packageJson } = await created;
   const tmpDir = join(packageDir, ".bun-tmp");
   const env: NodeJS.Dict<string> = {
     ...bunEnv,
@@ -9075,6 +9084,13 @@ describe.concurrent("windows bin linking shim should work", async () => {
   const PATH = process.env.PATH + ";" + temp_bin_dir;
   // Every test below only executes the bins installed above, so they can all share this directory.
   const shimEnv = mergeWindowEnvs([bunEnv, { PATH }]);
+  // `--bun` creates its fake `node.exe` inside %TEMP% (and debug builds recreate it on every run),
+  // so each `--bun` test gets its own temp directory instead of racing the others on the shared one.
+  function shimEnvWithOwnTemp(subdir: string) {
+    const temp = join(packageDir, subdir);
+    mkdirSync(temp);
+    return mergeWindowEnvs([shimEnv, { TMP: temp, TEMP: temp }]);
+  }
 
   const bins = [
     { bin: "bin1", name: "bin1" },
@@ -9117,7 +9133,7 @@ describe.concurrent("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: shimEnv,
+        env: shimEnvWithOwnTemp(`temp-run-${bin}`),
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();
@@ -9136,7 +9152,7 @@ describe.concurrent("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: shimEnv,
+        env: shimEnvWithOwnTemp(`temp-x-${bin}`),
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();

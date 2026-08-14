@@ -1260,7 +1260,7 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   if (headers.expect !== undefined) {
     // RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
     continueExpression ??= require("node:_http_common").continueExpression;
-    if (continueExpression.test(headers.expect)) {
+    if (RegExpPrototypeExec.$call(continueExpression, headers.expect) !== null) {
       if (server.listenerCount("checkContinue")) {
         server.emit("checkContinue", request, response);
       } else {

@@ -7737,6 +7737,14 @@ describe("css tests", () => {
         ".foo { color: color(from #c86432 a98-rgb r g b / 50%) }",
         ".foo{color:color(a98-rgb .695066 .391898 .220089/.5)}",
       );
+      minify_test(
+        ".foo { color: color(from #c86432 a98-rgb r g b / g) }",
+        ".foo{color:color(a98-rgb .695066 .391898 .220089/.391898)}",
+      );
+      minify_test(
+        ".foo { color: color(from light-dark(color(a98-rgb .5 .25 .125), color(a98-rgb .1 .2 .3)) a98-rgb b g r) }",
+        ".foo{color:light-dark(color(a98-rgb .125 .25 .5),color(a98-rgb .3 .2 .1))}",
+      );
       minify_test(".foo { color: rgb(from color(a98-rgb .5 .25 .125) r g b) }", ".foo{color:#923e17}");
       minify_test(
         ".foo { color: color(from color(a98-rgb .5 .25 .125) srgb r g b) }",
@@ -7806,6 +7814,35 @@ describe("css tests", () => {
       minify_test(
         ".foo { color: color(from #808080 srgb-linear r g b) }",
         ".foo{color:color(srgb-linear .215861 .215861 .215861)}",
+      );
+      minify_test(
+        ".foo { color: color(from #808080 srgb-linear r g b / r) }",
+        ".foo{color:color(srgb-linear .215861 .215861 .215861/.215861)}",
+      );
+      minify_test(
+        ".foo { color: color(from light-dark(red, blue) srgb-linear r g b) }",
+        ".foo{color:light-dark(color(srgb-linear 1 0 0),color(srgb-linear 0 0 1))}",
+      );
+
+      prefix_test(
+        ".foo { color: color(from red srgb-linear r g b) }",
+        indoc`
+          .foo {
+            color: red;
+            color: color(srgb-linear 1 0 0);
+          }
+        `,
+        { chrome: 90 << 16 },
+      );
+      prefix_test(
+        ".foo { color: color(from #808080 srgb-linear r g b) }",
+        indoc`
+          .foo {
+            color: gray;
+            color: color(srgb-linear .215861 .215861 .215861);
+          }
+        `,
+        { chrome: 90 << 16 },
       );
     });
   });

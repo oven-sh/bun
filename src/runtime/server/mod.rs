@@ -932,11 +932,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
-        // Same Finalized-only gate as the network trampolines. Unreachable
-        // today — the saved request's `pending_requests` increment keeps the
-        // wrapper `Strong`, so `finalize()` cannot run — but explicit so a
-        // future accounting bug 503s instead of dispatching with a stale
-        // handler shadow.
+        // Same gate as the network trampolines: the saved request's
+        // `pending_requests` increment keeps the wrapper `Strong` (so it is
+        // never `Finalized` here), but the VM's script gate can have closed
+        // while the bundle was being built.
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
@@ -1886,9 +1885,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self.has_active_connections()
         {
             // Make the wrapper collectible. Dispatch still works while it is
-            // `Weak` (its WriteBarrier slots still root the handlers); the
-            // `js_value_for_dispatch` gate only trips once the wrapper is
-            // actually finalized.
+            // `Weak` (its WriteBarrier slots still root the handlers);
+            // `js_value_for_dispatch` refuses only once the wrapper is
+            // actually finalized (or the VM's script gate has closed).
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

@@ -777,12 +777,6 @@ pub fn is_package_in_cache(
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
     let bin_path = options::make_global_bin_dir(ctx.install.as_deref())?;
-    // Relative symlinks placed in the bin dir are resolved by the kernel from
-    // its physical location, so `bin_path` must be physical for `relative()`.
-    #[cfg(unix)]
-    let mut real_buf = PathBuffer::uninit();
-    #[cfg(unix)]
-    let bin_path = ZBox::from_bytes(sys::realpath(&bin_path, &mut real_buf)?);
     let path = FileSystem::instance()
         .dirname_store()
         .append(bin_path.as_bytes_with_nul())?;

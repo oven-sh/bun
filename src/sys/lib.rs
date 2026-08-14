@@ -866,7 +866,10 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
                 let _ = close(file);
                 r
             }
-            Err(err) => Err(err),
+            Err(mut err) => {
+                err.syscall = Tag::fstatat;
+                Err(err)
+            }
         }
     }
 }
@@ -4290,7 +4293,10 @@ mod windows_impl {
         // `openat(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` no-follow variant.
-        let file = openat(fd, path, 0, 0)?;
+        let file = openat(fd, path, 0, 0).map_err(|mut e| {
+            e.syscall = Tag::fstatat;
+            e
+        })?;
         let r = fstat(file);
         let _ = close(file);
         r

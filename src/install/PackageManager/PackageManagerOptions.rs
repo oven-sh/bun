@@ -296,9 +296,13 @@ fn make_open_dir_with_path(path: &[u8]) -> crate::Result<(bun_sys::Dir, ZBox)> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
 
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd = bun_sys::getcwd_z(&mut cwd_buf)?;
+    let cwd: &[u8] = if bun_paths::is_absolute(path) {
+        b""
+    } else {
+        bun_sys::getcwd_z(&mut cwd_buf)?.as_bytes()
+    };
     let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let abs = join_abs_string_buf::<platform::Auto>(cwd.as_bytes(), &mut abs_buf.0, &[path]);
+    let abs = join_abs_string_buf::<platform::Auto>(cwd, &mut abs_buf.0, &[path]);
     let dir = bun_sys::Dir::cwd().make_open_path(abs, bun_sys::OpenDirOptions::default())?;
     Ok((dir, ZBox::from_bytes(abs)))
 }

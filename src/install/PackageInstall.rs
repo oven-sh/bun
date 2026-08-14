@@ -2156,21 +2156,11 @@ impl<'a> PackageInstall<'a> {
             };
             let dest_dir: &Dir = owned_dest_dir.as_ref().unwrap_or(destination_dir);
 
-            // The kernel resolves the relative link from the physical location
-            // of `dest_dir`, so compute it against the realpath.
-            let dest_dir_path = {
-                let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    &self.node_modules.path,
-                    &mut join_buf.0,
-                    &[subdir.unwrap_or(b"")],
-                );
-                match sys::realpath(joined, &mut dest_buf) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        return InstallResult::fail(err.into(), Step::LinkingDependency, None);
-                    }
-                }
-            };
+            let dest_dir_path = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                &self.node_modules.path,
+                &mut dest_buf.0,
+                &[subdir.unwrap_or(b"")],
+            );
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated

@@ -32,17 +32,21 @@ function git(cwd: string, ...args: string[]) {
 }
 
 interface BranchPackage {
-  name: string;
+  name?: string;
   branch: string;
   dependencies?: Record<string, string>;
 }
 
-// Creates `<root>/shared-repo.git`, a bare repo with one orphan branch per
+// Creates `<root>/<repoName>`, a bare repo with one orphan branch per
 // package, and prepares it for serving over dumb HTTP.
-async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<string> {
-  const bare = join(root, "shared-repo.git");
+async function makeSharedRepo(
+  root: string,
+  packages: BranchPackage[],
+  repoName: string = "shared-repo.git",
+): Promise<string> {
+  const bare = join(root, repoName);
   const work = join(root, "work");
-  await git(root, "init", "-q", "--bare", "shared-repo.git");
+  await git(root, "init", "-q", "--bare", repoName);
   mkdirSync(work);
   await git(work, "init", "-q");
   for (const pkg of packages) {
@@ -421,5 +425,48 @@ test.concurrent("installs a git+file:// dependency", async () => {
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
   expect(stderr).not.toContain("error:");
   expect(await installedVersionOf(project, "@scope/pkg-b")).toBe("pkg-b");
+  expect(exitCode).toBe(0);
+});
+
+// A git package whose package.json has no name is named after its repository. bun.lock stores a
+// package as "<name>@<resolution>", so when that repository name itself contains an "@" (or is
+// otherwise unusable as a package name) the generic name is used instead; the repository name
+// used to be taken as-is, producing an entry the next install could not parse ("Ignoring
+// lockfile"). Folders and tarballs without a name are covered in bun-lock.test.ts.
+test.concurrent("names a git dependency without a package.json name after its repository", async () => {
+  using dir = tempDir("git-dep-no-name", {});
+  using oddDir = tempDir("git-dep-no-name-odd-repo", {});
+  const root = String(dir);
+  const repo = `git+${pathToFileURL(await makeSharedRepo(root, [{ branch: "no-name" }]))}`;
+  const oddRepo = `git+${pathToFileURL(await makeSharedRepo(String(oddDir), [{ branch: "odd-repo" }], "odd@repo.git"))}`;
+
+  const project = join(root, "project");
+  mkdirSync(project);
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({
+      name: "project",
+      version: "1.0.0",
+      dependencies: {
+        "no-name-dep": `${repo}#no-name`,
+        "odd-repo-dep": `${oddRepo}#odd-repo`,
+      },
+    }),
+  );
+
+  let { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).not.toContain("error:");
+  expect(await installedVersionOf(project, "no-name-dep")).toBe("no-name");
+  expect(await installedVersionOf(project, "odd-repo-dep")).toBe("odd-repo");
+  expect(exitCode).toBe(0);
+
+  const lockfile = await Bun.file(join(project, "bun.lock")).text();
+  expect(lockfile).toContain(`"no-name-dep": ["shared-repo.git@${repo}#`);
+  expect(lockfile).toContain(`"odd-repo-dep": ["unnamed-package@${oddRepo}#`);
+
+  ({ stderr, exitCode } = await runInstall(project, join(root, "cache"), {}, "--frozen-lockfile"));
+  expect(stderr).not.toContain("Ignoring lockfile");
+  expect(stderr).not.toContain("error:");
+  expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockfile);
   expect(exitCode).toBe(0);
 });

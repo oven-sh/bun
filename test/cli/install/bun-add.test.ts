@@ -94,6 +94,51 @@ it("should add existing package", async () => {
   );
 });
 
+it("should add a folder whose package.json has no name under the folder's name", async () => {
+  // Used to be added as `"": "file:..."` and then fail to install anywhere.
+  const pkg_dir = join(add_dir, "pkg-without-name");
+  await mkdir(pkg_dir);
+  await writeFile(join(pkg_dir, "package.json"), JSON.stringify({ version: "0.0.1" }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
+  const add_path = relative(package_dir, pkg_dir).replace(/\\/g, "/");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", `file:${add_path}`],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  expect(err).toContain("Saved lockfile");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    `installed pkg-without-name@${add_path}`,
+    "",
+    "1 package installed",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+    dependencies: {
+      "pkg-without-name": `file:${add_path}`,
+    },
+  });
+  expect(await file(join(package_dir, "node_modules", "pkg-without-name", "package.json")).json()).toEqual({
+    version: "0.0.1",
+  });
+});
+
 it("should reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),

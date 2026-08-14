@@ -1304,21 +1304,28 @@ impl Request {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        // Request sources are exempt: their body is copied, not re-extracted,
-                        // and the `keepalive` prototype accessor would otherwise trip this.
+                        // fetch spec: extracting a ReadableStream init.body with the
+                        // request's resolved keepalive (init.keepalive if present, else
+                        // the input Request's) throws (Node's message is "keepalive").
+                        // Request sources are exempt: their body is copied, not
+                        // re-extracted, and the `keepalive` prototype accessor would
+                        // otherwise trip this.
                         if crate::webcore::ReadableStream::is_readable_stream(body_)
                             && value.as_::<Request>().is_none()
                         {
-                            match value.get(global_this, "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(
-                                        global_this.throw_type_error(format_args!("keepalive"))
-                                    ));
-                                }
-                                Ok(_) => {}
+                            let keepalive = match value.get(global_this, "keepalive") {
+                                Ok(Some(keepalive)) => keepalive.to_boolean(),
+                                Ok(None) => values_to_try
+                                    .last()
+                                    .and_then(|v| v.as_::<Request>())
+                                    // SAFETY: as_ returns a live *mut Request payload
+                                    .is_some_and(|r| unsafe { (*r).flags.keepalive }),
                                 Err(e) => bail!(Err(e)),
+                            };
+                            if keepalive {
+                                bail!(Err(
+                                    global_this.throw_type_error(format_args!("keepalive"))
+                                ));
                             }
                         }
                         match BodyValue::from_js(global_this, body_) {

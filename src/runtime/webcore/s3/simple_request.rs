@@ -413,40 +413,48 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    fn stage_http_result(
-        &mut self,
+    /// Stores one result callback's payload on the task (HTTP thread). Takes the task as a
+    /// pointer because `stop_for_vm_teardown` may run on the JS thread at any point during
+    /// the call (test/internal/source-lints/s3-task-http-field.test.ts).
+    ///
+    /// # Safety
+    /// `this` is the live task this callback was registered with, and `stop_for_vm_teardown`
+    /// is the only thing that may touch it concurrently; `async_http` is the HTTP thread's
+    /// initialised copy of the request, live for the duration of the call.
+    unsafe fn stage_http_result(
+        this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         mut result: HTTPClientResult<'_>,
     ) {
-        let previous_metadata = self.result.metadata.take();
-        result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
-        if self.result.metadata.is_none() {
-            self.result.metadata = previous_metadata;
+        // SAFETY: fn contract. Every reference formed below covers one of `result`,
+        // `response_buffer` and `http` for one statement; `stop_for_vm_teardown` touches only
+        // `signal_store` and `async_http_id`. `detach_lifetime`: the stored result's `body` is
+        // never read; its bytes were just moved into `response_buffer`.
+        unsafe {
+            let previous_metadata = (*this).result.metadata.take();
+            result.body_into(&mut (*this).response_buffer.list);
+            (*this).result = result.detach_lifetime();
+            if (*this).result.metadata.is_none() {
+                (*this).result.metadata = previous_metadata;
+            }
+            // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header `EntryList`s), so
+            // a plain `=` here would (a) drop the old `http`, freeing heap buffers that
+            // `*async_http` (a bitwise clone created by the HTTP thread) still aliases, and
+            // (b) leave the http-thread side to drop them again → double-free. We instead
+            // write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
+            // overwrite with no destructor on either side. Ownership of the inner heap data
+            // conceptually transfers here; the http-thread side must free only its outer
+            // allocation (TrivialDeinit).
+            core::ptr::write((*this).http.as_mut_ptr(), core::ptr::read(async_http));
         }
-        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain `=` here would (a) drop the old `self.http`, freeing heap
-        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
-        // aliases, and (b) leave the http-thread side to drop them again → double-free. We
-        // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
-        // overwrite with no destructor on either side. Ownership of the inner heap data
-        // conceptually transfers here; the http-thread side must free only its outer
-        // allocation (TrivialDeinit).
-        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-        // `self.http` was initialised in `Self::schedule`, and nothing reads it on the JS
-        // thread while the request is in flight.
-        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
     }
 
     /// this is the AsyncHTTP callback and is always called from the HTTPThread
     ///
     /// # Safety
-    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
-    /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
-    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    /// `this` must be the live task from `S3HttpSimpleTask::new` this callback was registered
+    /// with, which only the JS thread's `stop_for_vm_teardown` may touch concurrently;
+    /// `async_http` must point to an initialised `AsyncHTTP` for the duration of this call.
     //
     // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
     // request pointers it captured at schedule time, both non-null by construction.
@@ -457,13 +465,13 @@ impl S3HttpSimpleTask {
         result: HTTPClientResult<'_>,
     ) {
         let is_done = !result.has_more;
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
-        // by the HTTP thread until the handoff below; this borrow is scoped to the call.
-        unsafe { (*this).stage_http_result(async_http, result) };
+        // SAFETY: fn contract, which is `stage_http_result`'s contract.
+        unsafe { Self::stage_http_result(this, async_http, result) };
         if is_done {
-            // SAFETY: same exclusivity as above; the queue takes ownership of the inline
-            // `concurrent_task` field's `next` link. The VM waits for its S3 requests
-            // (embedded work) before closing its handle: always queued.
+            // SAFETY: fn contract; `stop_for_vm_teardown` touches neither field used here.
+            // The queue takes ownership of the inline `concurrent_task` field's `next` link.
+            // The VM waits for its S3 requests (embedded work) before closing its handle:
+            // always queued.
             unsafe {
                 let handle = (*this).loop_handle.clone();
                 let queued = core::ptr::NonNull::from(

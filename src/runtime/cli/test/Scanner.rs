@@ -27,6 +27,9 @@ pub struct Scanner<'a> {
     /// True when `path_ignore_patterns` is `DEFAULT_PATH_IGNORE_PATTERNS`
     /// rather than user-configured; `scan_explicit` only bypasses defaults.
     pub(crate) path_ignore_patterns_are_defaults: bool,
+    /// Bit `i` set disables `DEFAULT_PATH_IGNORE_PATTERNS[i]` for the current
+    /// scan; recomputed at the start of every scan.
+    disabled_defaults_mask: u8,
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -88,6 +91,7 @@ impl<'a> Scanner<'a> {
             filter_names: &[],
             path_ignore_patterns: &[],
             path_ignore_patterns_are_defaults: false,
+            disabled_defaults_mask: 0,
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
@@ -144,54 +148,19 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_internal(&mut self, path_literal: &[u8], mode: ScanMode) -> Result<(), ScanError> {
-        let saved_patterns = self.path_ignore_patterns;
-        let narrowed: Option<Box<[&'static [u8]]>> = if matches!(mode, ScanMode::ExplicitPath)
-            && self.path_ignore_patterns_are_defaults
-        {
+        // Recomputed per scan, so no restore is needed on early return.
+        self.disabled_defaults_mask = 0;
+        if matches!(mode, ScanMode::ExplicitPath) && self.path_ignore_patterns_are_defaults {
             // Match against the project-relative path: an empty `rel_path` means
             // the arg is the project root itself, which no default matches, so
             // all stay active (a `build`/`dist` ancestor outside the project
             // must not drop a default).
             let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
-            let mut kept: Vec<&'static [u8]> =
-                Vec::with_capacity(DEFAULT_PATH_IGNORE_PATTERNS.len());
-            for &pattern in DEFAULT_PATH_IGNORE_PATTERNS.iter() {
-                if !pattern_matches_path(pattern, rel_path) {
-                    kept.push(pattern);
+            for (i, &pattern) in DEFAULT_PATH_IGNORE_PATTERNS.iter().enumerate() {
+                if pattern_matches_path(pattern, rel_path) {
+                    self.disabled_defaults_mask |= 1 << i;
                 }
             }
-            Some(kept.into_boxed_slice())
-        } else {
-            None
-        };
-        // RAII guard so early-returns still restore the field.
-        struct RestorePatterns<'r, 'a> {
-            scanner: *mut Scanner<'a>,
-            saved: &'a [&'a [u8]],
-            active: bool,
-            _m: core::marker::PhantomData<&'r ()>,
-        }
-        impl<'r, 'a> Drop for RestorePatterns<'r, 'a> {
-            fn drop(&mut self) {
-                if self.active {
-                    // SAFETY: the guard is only alive for the duration of
-                    // `scan_internal`, which holds `&mut self`; no other
-                    // aliasing exists.
-                    unsafe { (*self.scanner).path_ignore_patterns = self.saved };
-                }
-            }
-        }
-        let _restore: RestorePatterns<'_, 'a> = RestorePatterns {
-            scanner: core::ptr::from_mut(self),
-            saved: saved_patterns,
-            active: narrowed.is_some(),
-            _m: core::marker::PhantomData,
-        };
-        if let Some(ref kept) = narrowed {
-            // SAFETY: lifetime-erase; `narrowed` lives until end of this
-            // function (after the RAII guard restores).
-            self.path_ignore_patterns =
-                unsafe { core::slice::from_raw_parts(kept.as_ptr(), kept.len()) };
         }
 
         let mut scan_dir_buf = PathBuffer::uninit();
@@ -381,7 +350,11 @@ impl<'a> Scanner<'a> {
             return false;
         }
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
-        for pattern in self.path_ignore_patterns {
+        for (i, pattern) in self.path_ignore_patterns.iter().enumerate() {
+            if self.path_ignore_patterns_are_defaults && (self.disabled_defaults_mask >> i) & 1 != 0
+            {
+                continue;
+            }
             if pattern_matches_path(pattern, rel_path) {
                 return true;
             }

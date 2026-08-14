@@ -389,9 +389,6 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             }
             workspace_selection::error_unmatched(filter_patterns);
         }
-        if !silent {
-            workspace_selection::warn_unmatched(filter_patterns, &selected.unmatched_patterns);
-        }
         selected
             .ids
             .into_iter()

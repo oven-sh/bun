@@ -2496,6 +2496,14 @@ describe("bun update <name> semantics", () => {
       expect(exitCode).toBe(1);
     });
 
+    it.concurrent("a pattern with one unmatched filter warns exactly once", async () => {
+      const { dir } = await fanOut();
+      const { stderr, exitCode } = await run(dir, "update", "no-*", "--filter", "api", "--filter", "nope");
+      const warnings = stderr.split("\n").filter(line => line.includes("No workspace packages matched"));
+      expect(warnings).toStrictEqual(['warn: No workspace packages matched the filter "nope"']);
+      expect(exitCode).toBe(0);
+    });
+
     it.concurrent("--dry-run writes nothing", async () => {
       const { dir, before, lockBefore } = await fanOut();
       const { stderr } = await update(dir, "no-deps", "--filter", "api", "--dry-run");

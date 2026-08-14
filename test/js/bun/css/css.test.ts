@@ -7701,6 +7701,115 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("color()", () => {
+    // Every predefined color space, in the absolute form and as the target of a
+    // relative color that references all three channels. Expected values are
+    // lightningcss output. A color() that fails to parse is kept as an unparsed
+    // token stream, so the alpha percentage and the channel keywords would be
+    // printed verbatim instead of being folded.
+    const predefined: [space: string, channels: string, printed?: string][] = [
+      ["srgb", "b g r"],
+      ["srgb-linear", "b g r"],
+      ["display-p3", "b g r"],
+      ["a98-rgb", "b g r"],
+      ["prophoto-rgb", "b g r"],
+      ["rec2020", "b g r"],
+      ["xyz-d50", "z y x"],
+      ["xyz-d65", "z y x", "xyz"],
+      ["xyz", "z y x"],
+    ];
+    for (const [space, channels, printed = space] of predefined) {
+      minify_test(`.foo { color: color(${space} 0 1 0 / 50%) }`, `.foo{color:color(${printed} 0 1 0/.5)}`);
+      minify_test(
+        `.foo { color: color(from color(${space} .5 .25 .125) ${space} ${channels}) }`,
+        `.foo{color:color(${printed} .125 .25 .5)}`,
+      );
+    }
+
+    describe("a98-rgb", () => {
+      minify_test(".foo { color: color(A98-RGB 0 1 0 / 50%) }", ".foo{color:color(a98-rgb 0 1 0/.5)}");
+      minify_test(".foo { color: color(a98-rgb 100% 50% 0%) }", ".foo{color:color(a98-rgb 1 .5 0)}");
+      minify_test(
+        ".foo { color: color(from #c86432 a98-rgb r g b) }",
+        ".foo{color:color(a98-rgb .695066 .391898 .220089)}",
+      );
+      minify_test(
+        ".foo { color: color(from #c86432 a98-rgb r g b / 50%) }",
+        ".foo{color:color(a98-rgb .695066 .391898 .220089/.5)}",
+      );
+      minify_test(".foo { color: rgb(from color(a98-rgb .5 .25 .125) r g b) }", ".foo{color:#923e17}");
+      minify_test(
+        ".foo { color: color(from color(a98-rgb .5 .25 .125) srgb r g b) }",
+        ".foo{color:color(srgb .570881 .241183 .0913544)}",
+      );
+      minify_test(
+        ".foo { color: color(from color(a98-rgb .5 .25 .125) display-p3 r g b) }",
+        ".foo{color:color(display-p3 .530457 .26084 .134638)}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, color(a98-rgb .5 .25 .125), white) }", ".foo{color:#c89e8b}");
+
+      prefix_test(
+        ".foo { color: color(a98-rgb 1 0 0) }",
+        indoc`
+          .foo {
+            color: #ff6251;
+            color: color(a98-rgb 1 0 0);
+          }
+        `,
+        { chrome: 90 << 16 },
+      );
+      prefix_test(
+        ".foo { color: color(a98-rgb 1 0 0) }",
+        indoc`
+          .foo {
+            color: #ff6251;
+            color: color(display-p3 1.0633 .238564 .167582);
+            color: color(a98-rgb 1 0 0);
+          }
+        `,
+        { chrome: 87 << 16, safari: 14 << 16 },
+      );
+      prefix_test(
+        ".foo { color: color(from #c86432 a98-rgb r g b / 50%) }",
+        indoc`
+          .foo {
+            color: #c8643280;
+            color: color(a98-rgb .695066 .391898 .220089 / .5);
+          }
+        `,
+        { chrome: 90 << 16 },
+      );
+      prefix_test(
+        ".foo { background: linear-gradient(color(a98-rgb .5 .25 .125), color(a98-rgb .4 .5 .6)) }",
+        indoc`
+          .foo {
+            background: linear-gradient(#923e17, #59819b);
+            background: linear-gradient(color(a98-rgb .5 .25 .125), color(a98-rgb .4 .5 .6));
+          }
+        `,
+        { chrome: 90 << 16 },
+      );
+    });
+
+    describe("srgb-linear", () => {
+      // The `r` channel keyword of an srgb-linear relative color.
+      minify_test(".foo { color: color(from red srgb-linear r g b) }", ".foo{color:color(srgb-linear 1 0 0)}");
+      minify_test(".foo { color: color(from red srgb-linear g g r) }", ".foo{color:color(srgb-linear 0 0 1)}");
+      minify_test(
+        ".foo { color: color(from color(srgb-linear .5 .25 .125) srgb-linear calc(r / 2) g b) }",
+        ".foo{color:color(srgb-linear .25 .25 .125)}",
+      );
+      minify_test(
+        ".foo { color: color(from color(srgb-linear .5 .25 .125) srgb-linear r g b / 50%) }",
+        ".foo{color:color(srgb-linear .5 .25 .125/.5)}",
+      );
+      minify_test(
+        ".foo { color: color(from #808080 srgb-linear r g b) }",
+        ".foo{color:color(srgb-linear .215861 .215861 .215861)}",
+      );
+    });
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

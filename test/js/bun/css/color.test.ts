@@ -347,6 +347,41 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
   });
 });
 
+describe("color() predefined color spaces", () => {
+  const spaces: [space: string, channels: string, printed?: string][] = [
+    ["srgb", "b g r"],
+    ["srgb-linear", "b g r"],
+    ["display-p3", "b g r"],
+    ["a98-rgb", "b g r"],
+    ["prophoto-rgb", "b g r"],
+    ["rec2020", "b g r"],
+    ["xyz-d50", "z y x"],
+    ["xyz-d65", "z y x", "xyz"],
+    ["xyz", "z y x"],
+  ];
+
+  test.each(spaces)("color(%s ...) parses", (space, channels, printed = space) => {
+    expect(color(`color(${space.toUpperCase()} 0 1 0 / 50%)`, "css")).toBe(`color(${printed} 0 1 0 / .5)`);
+    expect(color(`color(from color(${space} .5 .25 .125) ${space} ${channels})`, "css")).toBe(
+      `color(${printed} .125 .25 .5)`,
+    );
+  });
+
+  test("a98-rgb converts to sRGB", () => {
+    expect(color("rgb(from color(a98-rgb .5 .25 .125) r g b)", "hex")).toBe("#923e17");
+    expect(color("color-mix(in srgb, color(a98-rgb .5 .25 .125), white)", "hex")).toBe("#c89e8b");
+  });
+
+  test("a98-rgb is a relative color target", () => {
+    expect(color("color(from #c86432 a98-rgb r g b)", "css")).toBe("color(a98-rgb .695066 .391898 .220089)");
+  });
+
+  test("srgb-linear relative colors can reference r", () => {
+    expect(color("color(from red srgb-linear r g b)", "css")).toBe("color(srgb-linear 1 0 0)");
+    expect(color("color(from red srgb-linear g g r)", "css")).toBe("color(srgb-linear 0 0 1)");
+  });
+});
+
 // 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate
 // the ASAN lane, so those sweep the ansi256 equivalence classes (~13k deterministic inputs):
 // each single channel, the grey diagonal, the sub-8 cube, and a coarse 17-step cube.

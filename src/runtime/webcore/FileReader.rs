@@ -109,10 +109,6 @@ pub enum ReadDuringJSOnPullResult {
     // see note on `FileReader::pending_view`.
     Js(&'static mut [u8]),
     AmountRead(usize),
-    /// Borrows the reader/JS buffer for the duration of one `on_pull` call
-    /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
-    /// `bun_ptr::Interned` Population-B triage.
-    Temporary(bun_ptr::RawSlice<u8>),
     UseBuffered(usize),
 }
 
@@ -764,9 +760,12 @@ impl FileReader {
                         let remaining = unsafe { &mut *remaining };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
-                        // `buf` outlives the `on_pull` call that consumes this
-                        // variant; holder-lifetime, encoded as `RawSlice<u8>`.
-                        *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
+                        // The final chunk does not fit the JS pull buffer. It cannot be lent to
+                        // `on_pull` as a borrowed slice: at EOF the reader hands its buffer over
+                        // by value and frees it before `read()` returns to `on_pull`. Own a copy
+                        // (the same single copy `to_js` would otherwise make from the slice).
+                        self.buffered.with_mut(|b| b.extend_from_slice(buf));
+                        *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
                     } else if has_more && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                         self.buffered.with_mut(|b| b.extend_from_slice(buf));
                         *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
@@ -942,12 +941,9 @@ impl FileReader {
         // stdout/stderr writes while the caller only awaits one of them.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && (!self.started.get()
+        let ret = !self.started.get()
             || (self.flowing.get()
-                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark));
+                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark);
         close_if_needed!();
         ret
     }
@@ -1056,14 +1052,6 @@ impl FileReader {
                     self.pending_view.set(remaining_buf);
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
                     return streams::Result::Pending(self.pending.as_ptr());
-                }
-                ReadDuringJSOnPullResult::Temporary(buf) => {
-                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
-                    if self.reader().is_done() {
-                        return streams::Result::TemporaryAndDone(buf);
-                    }
-
-                    return streams::Result::Temporary(buf);
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(

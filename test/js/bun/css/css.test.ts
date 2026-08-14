@@ -180,6 +180,71 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A <number> and a <percentage> cannot be added: the declaration is invalid and
+    // is left as written, not evaluated to NaN and serialized as 0.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+  });
+
+  describe("relative color calc() with percentages", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors: a channel keyword is
+    // a <number> in the function's range, so `calc(r * 50%)` is a <percentage> of
+    // the channel. Expected values are lightningcss output.
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb calc(r * 50%) calc(50% * g) b) }",
+      ".foo{color:color(srgb .4 .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(display-p3 .8 .4 .2) display-p3 r calc(g * 50% + 10%) calc(50% - b * 50%)) }",
+      ".foo{color:color(display-p3 .8 .3 .4)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb min(r * 50%, 30%) max(g * 50%, 30%) b) }",
+      ".foo{color:color(srgb .3 .3 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb round(r * 100%, 30%) g b) }",
+      ".foo{color:color(srgb .9 .4 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha * 50%)) }",
+      ".foo{color:color(srgb .8 .4 .2/.25)}",
+    );
+    minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r * 50%) g b) }", ".foo{color:#ff6432}");
+    minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r * 0.1%) g b) }", ".foo{color:#336432}");
+    minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / calc(r * 0.1%)) }", ".foo{color:#c8643233}");
+    minify_test(".foo { color: rgb(from rgb(200 100 50 / .5) r g b / calc(alpha * 50%)) }", ".foo{color:#c8643240}");
+    // Not `rgb(255 0 0/calc(alpha*50%))`, which no browser accepts.
+    minify_test(".foo { color: rgb(from red r g b / calc(alpha * 50%)) }", ".foo{color:#ff000080}");
+    minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(s * 50%) l) }", ".foo{color:#0c0}");
+    minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l * 1.5%)) }", ".foo{color:#6c6}");
+    minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s l / calc(s * 0.5%)) }", ".foo{color:#33993340}");
+    minify_test(".foo { color: hwb(from hwb(120 20% 30%) h calc(w * 2%) b) }", ".foo{color:#66b366}");
+    minify_test(".foo { color: lab(from lab(50% 20 30) calc(l * 1.2%) a b) }", ".foo{color:lab(60% 20 30)}");
+    minify_test(".foo { color: lab(from lab(50% 20 30) l a b / calc(l * 1%)) }", ".foo{color:lab(50% 20 30/.5)}");
+    minify_test(".foo { color: lch(from lch(50% 30 120) calc(l * 1%) c h) }", ".foo{color:lch(50% 30 120)}");
+    minify_test(".foo { color: oklab(from oklab(50% .1 .1) calc(l * 50%) a b) }", ".foo{color:oklab(25% .1 .1)}");
+    minify_test(
+      ".foo { color: oklch(from oklch(50% .1 120 / .5) l c h / calc(alpha * 50%)) }",
+      ".foo{color:oklch(50% .1 120/.25)}",
+    );
+
+    // The keyword-as-percentage forms bun accepted before keep their meaning.
+    minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + 15%) a b) }", ".foo{color:lab(65% 20 30)}");
+    minify_test(".foo { color: rgb(from rgb(200 100 50 / .5) r g b / calc(alpha - 20%)) }", ".foo{color:#c864324d}");
+    minify_test(
+      ".foo { color: color(from color(srgb .8 .4 .2) srgb min(r, 50%) calc(g + 10%) b) }",
+      ".foo{color:color(srgb .5 .5 .2)}",
+    );
+
+    minify_test(
+      ".foo { color: color(from red srgb calc(r * 50% + .1) g b) }",
+      ".foo{color:color(from red srgb calc(r*50% + .1)g b)}",
+    );
+    minify_test(".foo { color: color(srgb calc(1 + 50%) 0 0) }", ".foo{color:color(srgb calc(1 + 50%)0 0)}");
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

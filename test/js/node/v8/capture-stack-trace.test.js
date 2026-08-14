@@ -1121,3 +1121,40 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+test("call sites of an error created in a class field initializer", () => {
+  let callSites;
+  Error.prepareStackTrace = (err, sites) => {
+    callSites = sites;
+    return "prepared";
+  };
+  const reference = new Error("reference");
+  class WithField {
+    field = new Error("from a field"); // two lines below `reference`
+  }
+  reference.stack;
+  const [referenceSite] = callSites;
+  new WithField().field.stack;
+  const [initializer, constructor] = callSites;
+
+  expect({
+    functionName: initializer.getFunctionName(),
+    // The initializer is class code, so it is a strict frame: it exposes neither its function nor its receiver.
+    function: initializer.getFunction(),
+    receiver: initializer.getThis(),
+    isConstructor: initializer.isConstructor(),
+    fileName: initializer.getFileName(),
+    lineNumber: initializer.getLineNumber(),
+    callerName: constructor.getFunctionName(),
+    callerIsConstructor: constructor.isConstructor(),
+  }).toEqual({
+    functionName: "<instance_members_initializer>",
+    function: undefined,
+    receiver: undefined,
+    isConstructor: false,
+    fileName: referenceSite.getFileName(),
+    lineNumber: referenceSite.getLineNumber() + 2,
+    callerName: "WithField",
+    callerIsConstructor: true,
+  });
+});

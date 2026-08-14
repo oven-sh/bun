@@ -636,24 +636,41 @@ impl DirEntry {
         })
     }
 
-    /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
-    /// already lowercase, so no per-call lowercasing buffer is needed.
+    /// Looks up one of the fixed, already-lowercase names the resolver probes
+    /// directories for (`package.json`, `tsconfig.json`, `node_modules`, ...).
+    /// Callers go on to open `dir/<query_lower>` spelled exactly like that, so
+    /// an entry that only matched through the lowercased key (`Package.json`
+    /// on disk) counts only if the filesystem opens that spelling as well,
+    /// which it does iff it folds case itself.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
-        Some(EntryLookup {
+        let lookup = EntryLookup {
             entry: result_ptr,
             _marker: core::marker::PhantomData,
-        })
+        };
+        if lookup.entry().base() != query_lower && !self.spelling_exists(query_lower) {
+            return None;
+        }
+        Some(lookup)
     }
 
-    /// True if a cached entry exists for the given already-lowercase name.
+    /// True if `dir/<query_lower>` exists under exactly that already-lowercase
+    /// name; see [`get_comptime_query`](Self::get_comptime_query).
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        Self::debug_assert_entries_mutex_held();
-        self.data.contains_key(query_lower)
+        self.get_comptime_query(query_lower).is_some()
+    }
+
+    fn spelling_exists(&self, name: &[u8]) -> bool {
+        use bun_paths::resolve_path::{join_string_buf_z, platform};
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::exists_z(join_string_buf_z::<platform::Auto>(
+            &mut buf[..],
+            &[self.dir, name],
+        ))
     }
 }
 

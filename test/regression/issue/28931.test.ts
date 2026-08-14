@@ -337,6 +337,36 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
+  test("signs inside a deeply nested staging directory (gpg socket path cap)", async () => {
+    // gpg-agent binds unix sockets inside GNUPGHOME, and the kernel
+    // caps socket paths at ~108 bytes. The helper's GNUPGHOME sits two
+    // mktemp levels below the staging dir, so a deep staging path (CI
+    // workspaces routinely are) used to overflow the cap: the agent
+    // could not launch and the key import exited 2 before signing.
+    // The helper now redirects the agent sockets into a short /tmp
+    // dir, so signing must succeed regardless of staging-dir depth.
+    using dir = tempDir("bun-28931-deep-", {});
+    // Push the staging dir well past the point where an in-home
+    // socket path would exceed sun_path.
+    const deep = join(String(dir), Buffer.alloc(60, "d").toString(), "stage");
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, "bun-linux-x64.zip"), "deep-bytes");
+
+    const res = await sh([script, deep, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
+
+    const manifest = readFileSync(join(deep, "SHASUMS256.txt"), "utf8").trim();
+    const expected = createHash("sha256").update("deep-bytes").digest("hex");
+    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    // The clearsigned .asc exists and carries the same body.
+    const signed = readFileSync(join(deep, "SHASUMS256.txt.asc"), "utf8");
+    expect(signed).toContain(manifest);
+  });
+
   test("writes unsigned SHASUMS256.txt when GPG env vars are unset entirely", async () => {
     // Same fallback as the empty-string case above, but with both
     // variables genuinely absent from the environment — the state an

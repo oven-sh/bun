@@ -311,6 +311,7 @@ unset -v artifact seen_artifacts
 # the final atomic rename.
 success=0
 gnupghome=""
+gpg_socket_dir=""
 scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
@@ -395,6 +396,11 @@ cleanup() {
   # inline for the one call.
   if [ -d "${gnupghome}" ]; then
     GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
+  fi
+  # The redirected socket dir (see the signing block) holds only unix
+  # sockets, never key material; remove it after the agent is dead.
+  if [ -d "${gpg_socket_dir}" ]; then
+    rm -rf "${gpg_socket_dir}" || true
   fi
   if [ "${restore_failed}" -eq 1 ]; then
     # Preserve scratch_dir as a recovery surface. The .bak files sit
@@ -758,6 +764,27 @@ fi
 # guarantees a unique subdir under scratch_dir.
 gnupghome=$(mktemp -d "${scratch_dir}/.gnupg-XXXXXXXX")
 chmod 700 "${gnupghome}"
+
+# gpg-agent binds unix sockets inside GNUPGHOME, and the kernel caps a
+# socket path (sun_path) at ~108 bytes. ${gnupghome} sits two mktemp
+# levels below ${dir}, so a deep staging path — buildkite workspaces
+# routinely are — overflows the cap, the agent fails to launch, and the
+# key import exits 2 before any signing happens. GnuPG >= 2.1.13
+# supports per-socket redirect files ("%Assuan%" + "socket=<path>"
+# placed at the in-home socket path), so bind the sockets in a short
+# mktemp dir under /tmp instead. The redirect files and socket dir
+# carry no key material — the keyring itself stays inside
+# ${scratch_dir} — so this does not weaken the "secrets never touch
+# /tmp" property documented above. If /tmp is unwritable, skip the
+# redirect and take our chances with the in-home sockets (status quo).
+if gpg_socket_dir=$(mktemp -d /tmp/.bun-sign-gpg.XXXXXXXX 2>/dev/null); then
+  for _sock in S.gpg-agent S.gpg-agent.extra S.gpg-agent.browser S.gpg-agent.ssh S.keyboxd S.scdaemon; do
+    printf '%%Assuan%%\nsocket=%s\n' "${gpg_socket_dir}/${_sock}" > "${gnupghome}/${_sock}"
+  done
+  unset -v _sock
+else
+  gpg_socket_dir=""
+fi
 
 GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 

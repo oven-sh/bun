@@ -417,9 +417,7 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
 // and then complete cleanly. Here the job is a read() blocking a pool thread on
 // a FIFO nobody has written to yet (node:fs reads that way), so its duration is
 // entirely the test's to decide — no timing thresholds. Debug builds also name
-// what the wait is waiting for. (Starting a debug/ASAN host and its worker plus
-// the 2s that report waits on purpose runs past bun test's 5s default, hence
-// the explicit ceiling.)
+// what the wait is waiting for.
 describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
@@ -503,5 +501,5 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
-  }, 30_000);
+  });
 });

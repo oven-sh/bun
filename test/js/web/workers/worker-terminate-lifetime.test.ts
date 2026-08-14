@@ -521,3 +521,165 @@ test(
   },
   timeout,
 );
+
+// A worker's own Bun.serve() listener kept dispatching requests
+// into the fetch handler for the rest of the loop tick after process.exit()
+// had stopped the VM. Building the Request for a VM whose termination had
+// already unwound script initialised JSRequestStructure under a pending
+// TerminationException, tripping VMTraps::deferTerminationSlow's
+// ASSERT(vm.hasTerminationRequest()). A stopped VM's server now answers 503
+// natively, as it already did for node:http.
+test.skipIf(!isDebug)(
+  "process.exit() with requests arriving at the worker's own Bun.serve() does not build them for a stopped VM",
+  async () => {
+    const workers = slow ? 8 : 24;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const s = Bun.serve({ port: 0, fetch: () => new Response('x') });" +
+          "for (let i = 0; i < 8; i++) fetch(s.url).then(r => r.text()).catch(() => {});" +
+          "setImmediate(() => process.exit(0));";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(src, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", (code) => {
+            if (code !== 0) { console.error("worker exited " + code); process.exit(1); }
+            exited++;
+            again();
+          });
+        }
+        again();
+        again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// WebCore-style callbacks (PerformanceObserver, abort algorithms)
+// were still invoked from the task queue after terminate() had stopped the
+// worker's VM mid-tick, entering JS with the TerminationException a previous
+// task left pending and tripping executeCallImpl's assertNoException(). They
+// now refuse once script is forbidden, like event listeners already did.
+test.skipIf(!isDebug)(
+  "terminate() while PerformanceObserver deliveries are queued does not invoke the observer on a stopped VM",
+  async () => {
+    const workers = slow ? 24 : 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const src =
+          "const { PerformanceObserver, performance } = require('node:perf_hooks');" +
+          "new PerformanceObserver(() => {}).observe({ entryTypes: ['mark', 'measure'] });" +
+          "self.onmessage = () => { performance.mark('x'); performance.measure('mx', 'x'); };" +
+          "for (let i = 0; i < 50; i++) { performance.mark('a' + i); performance.measure('m' + i, 'a' + i); }" +
+          "postMessage('go');" +
+          "Bun.sleepSync(20);";
+        const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+        let started = 0, closed = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (closed === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(url, { smol: true });
+          for (let i = 0; i < 500; i++) {
+            const ab = new ArrayBuffer(64);
+            w.postMessage({ i, ab }, [ab]);
+          }
+          w.onmessage = () => w.terminate();
+          w.onerror = () => {};
+          w.addEventListener("close", () => { closed++; again(); });
+        }
+        again(); again(); again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A nested worker's parent that is itself being terminated still
+// tried to settle the getHeapSnapshot()/getHeapStatistics() promises it had
+// pending against its child when the child's exit was processed in the same
+// tick, building the ERR_WORKER_NOT_RUNNING error under its own pending
+// TerminationException — which yields no object — and rejecting with a null
+// cell (UBSan null member call in debug, SEGV in JSCell::validateIsNotSweeping
+// under ASAN). A stopped parent VM now settles nothing and just drops them.
+test(
+  "terminate() of a worker with cross-VM requests pending against its own child does not settle them on the stopped VM",
+  async () => {
+    const workers = slow ? 12 : 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const inner = "setImmediate(() => process.exit(0)); require('node:worker_threads').parentPort.postMessage('x');";
+        const middle =
+          "const { Worker, parentPort } = require('node:worker_threads');" +
+          "const w2 = new Worker(" + JSON.stringify(inner) + ", { eval: true });" +
+          "w2.on('error', () => {});" +
+          "w2.getHeapSnapshot().then(() => {}, () => {});" +
+          "const iv = setInterval(() => { w2.getHeapSnapshot().then(() => {}, () => {}); w2.getHeapStatistics().then(() => {}, () => {}); }, 1);" +
+          "w2.on('exit', () => clearInterval(iv));" +
+          "w2.terminate(); w2.terminate();" +
+          "parentPort.postMessage('up');";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w1 = new Worker(middle, { eval: true });
+          w1.on("online", () => w1.terminate());
+          w1.on("error", () => {});
+          w1.on("exit", () => { exited++; again(); });
+        }
+        again(); again();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

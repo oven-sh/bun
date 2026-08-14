@@ -512,6 +512,132 @@ console.log("survived", require("./late.js"));`,
     expect(dn).toBe(path.dirname(filename));
   });
 
+  describe("Module.prototype._compile with a hashbang line", () => {
+    // require.extensions hooks (pirates, esbuild-register, ...) pass _compile the
+    // contents of the file, and CLI entry files start with "#!". Node accepts it.
+    function compile(source, filename = "/hashbang-test/module.js") {
+      const module = new Module(filename);
+      module._compile(source, filename);
+      return module.exports;
+    }
+
+    test.each([
+      ["\\n", "#!/usr/bin/env node\nmodule.exports = 42;\n", 42],
+      ["\\r\\n", "#!/usr/bin/env node\r\nmodule.exports = 'crlf';\r\n", "crlf"],
+      ["\\r", "#!/usr/bin/env node\rmodule.exports = 'cr';", "cr"],
+      ["\\u2028", "#!/usr/bin/env node\u2028module.exports = 'ls';", "ls"],
+      ["\\u2029", "#!/usr/bin/env node\u2029module.exports = 'ps';", "ps"],
+    ])("hashbang line ended by %s", (_, source, expected) => {
+      expect(compile(source)).toBe(expected);
+    });
+
+    test("source that is only a hashbang line", () => {
+      expect(compile("#!/usr/bin/env node")).toEqual({});
+      expect(compile("#!")).toEqual({});
+    });
+
+    test("a directive prologue after the hashbang still applies", () => {
+      const source = [
+        "#!/usr/bin/env node",
+        '"use strict";',
+        "module.exports = (function () { return this; })() === undefined;",
+      ].join("\n");
+      expect(compile(source)).toBe(true);
+    });
+
+    test("line numbers are unchanged", () => {
+      const filename = "/hashbang-test/lines.js";
+      const error = compile(["#!/usr/bin/env node", "", "module.exports = new Error('here');"].join("\n"), filename);
+      expect(error.stack).toContain(`${filename}:3:`);
+
+      let syntaxError;
+      try {
+        compile(["#!/usr/bin/env node", "var ok = 1;", "var = ;"].join("\n"), filename);
+      } catch (e) {
+        syntaxError = e;
+      }
+      expect(syntaxError).toBeInstanceOf(SyntaxError);
+      expect(syntaxError.stack).toMatch(/\/hashbang-test\/lines\.js:3\b/);
+    });
+
+    test("a hashbang line is not a sourceURL directive", () => {
+      const exportError = "module.exports = new Error('x');";
+      for (const marker of ["#", "@"]) {
+        const { stack } = compile(`#!${marker} sourceURL=fake.js\n${exportError}`, "/hashbang-test/real.js");
+        expect(stack).toContain("/hashbang-test/real.js:2:");
+        expect(stack).not.toContain("fake.js");
+      }
+      // The same line as a real comment is a directive, so the check above is meaningful.
+      const { stack } = compile(`//# sourceURL=directive.js\n${exportError}`, "/hashbang-test/real.js");
+      expect(stack).toContain("directive.js:2:");
+    });
+
+    test("a hashbang anywhere but offset 0 is still a syntax error, as in node", () => {
+      for (const source of [
+        " #!/usr/bin/env node\nmodule.exports = 1;",
+        "\n#!/usr/bin/env node\nmodule.exports = 1;",
+        "\uFEFF#!/usr/bin/env node\nmodule.exports = 1;",
+        "#\nmodule.exports = 1;",
+        "module.exports = 1;\n#!/usr/bin/env node\n",
+      ]) {
+        expect(() => compile(source)).toThrow(SyntaxError);
+      }
+    });
+
+    test("require.extensions hook that passes the file contents to _compile", async () => {
+      using dir = tempDir("compile-hashbang-hook", {
+        "cli.js": "#!/usr/bin/env node\nmodule.exports = new Error('x');\n",
+        "main.cjs": /* js */ `
+          const fs = require("node:fs");
+          require.extensions[".js"] = function (module, filename) {
+            module._compile(fs.readFileSync(filename, "utf8"), filename);
+          };
+          const error = require("./cli.js");
+          console.log(JSON.stringify({ frame: /cli\\.js:\\d+/.exec(error.stack)[0] }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ frame: "cli.js:2" });
+      expect(exitCode).toBe(0);
+    });
+
+    test("with an overridden Module.wrapper", async () => {
+      // Module.wrapper is process-wide once assigned, so this runs in a child.
+      // Node rejects this combination (a patched wrapper makes it compile
+      // Module.wrap(source) as a script, which also breaks require() of every
+      // shebang file); bun's require() keeps working there and so does _compile.
+      const code = /* js */ `
+        const Module = require("node:module");
+        Module.wrapper = [
+          "(function (exports, require, module, __filename, __dirname) { globalThis.wrapped = (globalThis.wrapped ?? 0) + 1;",
+          "\\n});",
+        ];
+        const filename = "/hashbang-test/wrapped.js";
+        const m = new Module(filename);
+        m._compile(["#!/usr/bin/env node", "module.exports = new Error('x');"].join("\\n"), filename);
+        console.log(JSON.stringify({ wrapped: globalThis.wrapped, frame: /wrapped\\.js:\\d+/.exec(m.exports.stack)[0] }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ wrapped: 1, frame: "wrapped.js:2" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("Module._extensions", () => {
     expect(".js" in Module._extensions).toBeTrue();
     expect(".json" in Module._extensions).toBeTrue();

@@ -21,7 +21,7 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -1434,6 +1434,22 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `<dir>/.npmrc` for the user-level `.npmrc` candidates in [`init`]. `dir` is
+/// `$XDG_CONFIG_HOME` or `$HOME`, so it can be longer than `buf`; a path that
+/// does not fit could not be opened either, and `None` makes the caller treat
+/// it like a missing file.
+fn user_npmrc_path<'a>(dir: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
+    // The last byte is reserved for the NUL terminator.
+    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+        dir,
+        &mut buf[..MAX_PATH_BYTES - 1],
+        &[b".npmrc"],
+    )?
+    .len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(&buf[..], len))
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1877,24 +1893,18 @@ pub fn init(
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
-        let parts = [b"./.npmrc" as &[u8]];
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            let p =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
-            if bun_sys::exists_z(p) {
-                global_len = p.len();
-            }
+            global_len = user_npmrc_path(xdg_dir, &mut buf)
+                .filter(|p| bun_sys::exists_z(p))
+                .map_or(0, ZStr::len);
         }
         if global_len == 0 {
             if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                    home_dir, &mut buf, &parts,
-                )
-                .len();
+                global_len = user_npmrc_path(home_dir, &mut buf).map_or(0, ZStr::len);
             }
         }
 

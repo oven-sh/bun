@@ -164,7 +164,9 @@ To install in production mode (without `devDependencies`):
 bun install --production
 ```
 
-For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
+Passing `--production` also implies `--frozen-lockfile`, so the install fails if `package.json` is out of sync with the lockfile.
+
+For reproducible installs without skipping `devDependencies`, use `--frozen-lockfile` on its own. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
 
 ```bash terminal icon="terminal"
 bun install --frozen-lockfile

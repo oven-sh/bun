@@ -34,7 +34,7 @@ semver.satisfies("1.0.0", "1.0.0 - 2.0.0"); // true
 semver.satisfies("1.0.0", "1.0.0 - 1.0.1"); // true
 ```
 
-If `range` or `version` is invalid, it returns `false`.
+If `version` is invalid, it returns `false`. An unparseable `range` is treated as a wildcard.
 
 ## `Bun.semver.order(versionA: string, versionB: string): 0 | 1 | -1`
 

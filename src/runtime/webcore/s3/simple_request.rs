@@ -436,10 +436,7 @@ impl S3HttpSimpleTask {
             // `concurrent_task` field's `next` link. The ticket is moved out first: the
             // JS thread may free `this` the moment it is queued.
             unsafe {
-                let ticket = (*this)
-                    .http_ticket
-                    .take()
-                    .expect(Self::HOLDS_TICKET);
+                let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
                 let queued = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
@@ -460,10 +457,7 @@ impl S3HttpSimpleTask {
         unsafe {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
-            let ticket = (*this)
-                .http_ticket
-                .take()
-                .expect(Self::HOLDS_TICKET);
+            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
             let queued = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );

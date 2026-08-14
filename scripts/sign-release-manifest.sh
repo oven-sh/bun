@@ -782,6 +782,15 @@ chmod 700 "${gnupghome}"
 # inside ${scratch_dir} — and mktemp creates the dir mode 700, so a
 # shared /tmp fallback stays private. If no candidate works, skip the
 # redirect and take our chances with the in-home sockets (status quo).
+#
+# Deliberate asymmetry with the ${scratch_prefix} orphan sweep: a
+# SIGKILL'd run leaks its socket dir until the OS tmp reaper ages it
+# out, and we do NOT sweep for strays here. The base dirs are
+# host-global (concurrent invocations against different staging dirs
+# each own one, and the test suite runs this helper concurrently), so
+# a blanket rm would race a live sibling, and the leak is bounded to
+# a few dead socket inodes with no recoverable state — nothing like
+# the .bak restore that justifies the scratch-dir sweep.
 gpg_socket_dir=""
 for _sock_base in "${TMPDIR:-}" "${HOME:-}" /tmp; do
   if [ -z "${_sock_base}" ] || ! [ -d "${_sock_base}" ]; then

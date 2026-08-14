@@ -550,8 +550,6 @@ impl<R> CssRuleList<R> {
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
                         if lay.rules.v.is_empty() {
-                            // An empty named block still fixes the layer's position in the
-                            // cascade order, so it is kept as `@layer a;`.
                             let Some(name) = lay.name.take() else {
                                 break 'arm;
                             };

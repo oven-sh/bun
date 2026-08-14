@@ -315,11 +315,7 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
-// JSC's reifyStaticProperty passes the PropertyCallback result straight to
-// putDirect without checking for exceptions, and JSValue::get asserts
-// (!scope.exception() || !hasSlot). So these callbacks must not leave a
-// pending exception; if loading the module fails we report it and return
-// jsUndefined() so the property is reified to a valid value.
+// reifyStaticProperty putDirects the result without an exception check.
 static JSValue requireBunSqlModule(VM& vm, Zig::GlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);

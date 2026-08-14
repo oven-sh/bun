@@ -93,10 +93,7 @@ FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-// PropertyCallbacks are reified by JSC::reifyStaticProperty, which hands the
-// result straight to putDirect without checking for an exception, so a getter
-// that threw has its exception folded here: report it, then reify the slot as
-// undefined rather than an empty JSValue.
+// reifyStaticProperty putDirects the result without an exception check.
 static JSC::JSValue bunObjectLazyPropertyResult(JSC::ThrowScope& scope, JSC::JSObject* object, JSC::JSValue result)
 {
     if (auto* exception = scope.exception()) [[unlikely]] {

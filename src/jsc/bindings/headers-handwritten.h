@@ -128,7 +128,7 @@ typedef struct ResolvedSource {
     bool needsDeref;
     bool already_bundled;
     // -- Bytecode cache fields --
-    uint8_t* bytecode_cache;
+    const uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
     void* module_info;
     // File path used as source origin for bytecode cache validation.

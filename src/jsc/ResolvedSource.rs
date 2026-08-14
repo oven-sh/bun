@@ -43,7 +43,7 @@ pub struct ResolvedSource {
     pub already_bundled: bool,
 
     // -- Bytecode cache fields --
-    pub bytecode_cache: *mut u8,
+    pub bytecode_cache: *const u8,
     pub bytecode_cache_size: usize,
     pub module_info: *mut c_void,
     /// The file path used as the source origin for bytecode cache validation.
@@ -66,7 +66,7 @@ impl Default for ResolvedSource {
             tag: Tag::Javascript,
             source_code_needs_deref: true,
             already_bundled: false,
-            bytecode_cache: core::ptr::null_mut(),
+            bytecode_cache: core::ptr::null(),
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),

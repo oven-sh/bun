@@ -1613,10 +1613,16 @@ test.skipIf(isWindows)(
           await Bun.sleep(5);
         }
       }
+      // Release the pool thread after 5 s regardless, so a regression shows up as the elapsed-time
+      // check below failing rather than as the whole test hanging until its timeout.
+      let closed = false;
+      const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
+      setTimeout(closeWriter, 5000).unref();
       const t = performance.now();
       const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
-      console.log(result.success, result.outputs.length > 0, performance.now() - t < 10_000, readDone);
-      fs.closeSync(writer); // EOF for the reader: let the pool thread go before exiting
+      const elapsed = performance.now() - t;
+      console.log(result.success, result.outputs.length > 0, elapsed < 4000 || elapsed, readDone);
+      closeWriter(); // EOF for the reader: let the pool thread go before exiting
       for (const deadline = Date.now() + 10_000; !readDone && Date.now() < deadline; ) await Bun.sleep(5);
       console.log(readDone);
       process.exit(0);

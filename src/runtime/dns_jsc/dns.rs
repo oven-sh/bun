@@ -679,8 +679,8 @@ impl GetHostByAddrInfoRequest {
 }
 
 impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
-    fn on_hostent(
-        &mut self,
+    unsafe fn on_hostent(
+        this: *mut Self,
         status: Option<c_ares::Error>,
         timeouts: i32,
         results: *mut c_ares::struct_hostent,
@@ -690,7 +690,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
         } else {
             Some(results)
         };
-        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
+        Self::on_cares_complete(this, status, timeouts, result);
     }
 }
 
@@ -931,21 +931,13 @@ impl GetNameInfoRequest {
 
 impl c_ares::NameinfoHandler for GetNameInfoRequest {
     #[inline]
-    fn on_nameinfo(
-        &mut self,
+    unsafe fn on_nameinfo(
+        this: *mut Self,
         status: Option<c_ares::Error>,
         timeouts: i32,
         info: Option<c_ares::struct_nameinfo>,
     ) {
-        // SAFETY: `self` is the `heap::alloc`'d heap request registered with
-        // c-ares; `on_cares_complete` consumes it (heap::take) on every path.
-        // The c-ares callback wrapper does not touch `self` after this returns.
-        GetNameInfoRequest::on_cares_complete(
-            std::ptr::from_mut::<Self>(self),
-            status,
-            timeouts,
-            info,
-        );
+        Self::on_cares_complete(this, status, timeouts, info);
     }
 }
 
@@ -1463,8 +1455,8 @@ impl GetAddrInfoRequest {
 
 // Wires `GetAddrInfoRequest` into `Channel::get_addr_info`.
 impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
-    fn on_addr_info(
-        &mut self,
+    unsafe fn on_addr_info(
+        this: *mut Self,
         status: Option<c_ares::Error>,
         timeouts: i32,
         results: *mut c_ares::AddrInfo,
@@ -1474,7 +1466,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
         } else {
             Some(results)
         };
-        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
+        Self::on_cares_complete(this, status, timeouts, result);
     }
 }
 
@@ -3353,8 +3345,8 @@ macro_rules! impl_cares_record_type {
         }
         // Generic reply handler — forwards to `on_cares_complete`.
         impl c_ares::ReplyHandler<$ty> for ResolveInfoRequest<$ty> {
-            fn on_reply(
-                &mut self,
+            unsafe fn on_reply(
+                this: *mut Self,
                 status: Option<c_ares::Error>,
                 timeouts: i32,
                 results: *mut $ty,
@@ -3362,7 +3354,7 @@ macro_rules! impl_cares_record_type {
                 // SAFETY: `ares_reply_callback` hands over the `ares_parse_*_reply`
                 // allocation, which `destroy` frees.
                 let result = NonNull::new(results).map(|reply| unsafe { OwnedReply::adopt(reply) });
-                Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+                Self::on_cares_complete(this, status, timeouts, result);
             }
         }
     };
@@ -3441,8 +3433,8 @@ impl CAresRecordType for c_ares::struct_any_reply {
     }
 }
 impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
-    fn on_any(
-        &mut self,
+    unsafe fn on_any(
+        this: *mut Self,
         status: Option<c_ares::Error>,
         timeouts: i32,
         results: Option<Box<c_ares::struct_any_reply>>,
@@ -3450,7 +3442,7 @@ impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
         // SAFETY: `destroy` re-boxes the allocation released here.
         let result =
             results.map(|reply| unsafe { OwnedReply::adopt(bun_core::heap::into_raw_nn(reply)) });
-        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
+        Self::on_cares_complete(this, status, timeouts, result);
     }
 }
 
@@ -3479,8 +3471,8 @@ macro_rules! hostent_newtype {
             }
         }
         impl c_ares::HostentHandler for ResolveInfoRequest<$name> {
-            fn on_hostent(
-                &mut self,
+            unsafe fn on_hostent(
+                this: *mut Self,
                 status: Option<c_ares::Error>,
                 timeouts: i32,
                 results: *mut c_ares::struct_hostent,
@@ -3491,7 +3483,7 @@ macro_rules! hostent_newtype {
                 // lends to `GetHostByAddrInfoRequest`); `#[repr(transparent)]` makes the
                 // cast sound.
                 let result = hostent.map(|reply| unsafe { OwnedReply::adopt(reply) });
-                Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+                Self::on_cares_complete(this, status, timeouts, result);
             }
         }
     };
@@ -3533,8 +3525,8 @@ macro_rules! hostent_ttls_newtype {
         impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
             const PARSE: fn(&[u8]) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
                 c_ares::hostent_with_ttls::$parse;
-            fn on_hostent_with_ttls(
-                &mut self,
+            unsafe fn on_hostent_with_ttls(
+                this: *mut Self,
                 status: Option<c_ares::Error>,
                 timeouts: i32,
                 results: Option<Box<c_ares::hostent_with_ttls>>,
@@ -3544,7 +3536,7 @@ macro_rules! hostent_ttls_newtype {
                 let result = results.map(|reply| unsafe {
                     OwnedReply::adopt(bun_core::heap::into_raw_nn(reply).cast::<$name>())
                 });
-                Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+                Self::on_cares_complete(this, status, timeouts, result);
             }
         }
     };
@@ -5123,11 +5115,9 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
-        // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
-        unsafe {
-            (*channel).get_host_by_addr(ip, &mut *request);
-        }
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until its handler consumes it (possibly during this call).
+        unsafe { (*channel).get_host_by_addr(ip, request) };
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
         self.request_sent(global_this.bun_vm());
@@ -5447,11 +5437,9 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-        // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
-        // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
-        // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until `on_cares_complete` consumes it (possibly during this call).
+        unsafe { (*channel).resolve(name, request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5502,12 +5490,9 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-        // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx
-        // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
-        // (→ `on_cares_complete`) which consumes the request, so the `&mut`
-        // borrow is not held past this call.
-        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until `on_cares_complete` consumes it (possibly during this call).
+        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -6027,15 +6012,15 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
-        // sockaddr_storage reborrowed as sockaddr; `request` was just
-        // `heap::alloc`'d and is owned by c-ares until the callback fires.
+        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid sockaddr_storage
+        // reborrowed as sockaddr; the heap `request` lives until `on_cares_complete`
+        // consumes it (possibly during this call).
         unsafe {
             (*channel).get_name_info(
                 // See `get_sockaddr` call above — inferred `sockaddr` type is
                 // platform-dependent and unnameable on Windows from this crate.
                 &mut *(&raw mut sa).cast(),
-                &mut *request,
+                request,
             );
         }
 

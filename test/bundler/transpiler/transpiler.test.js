@@ -2099,6 +2099,21 @@ export default class {
         expect(replacing.scan(source).imports).toEqual([]);
       });
 
+      it("typescript: drops the binding but keeps the import statement, like eliminate does", () => {
+        // TypeScript removes an import statement only when its bindings are unused in the
+        // whole file, dead code included, so the statement survives as a side effect import.
+        const ts = new Bun.Transpiler({
+          loader: "ts",
+          exports: { replace: { foo: 42 }, eliminate: ["loader"] },
+          treeShaking: true,
+          trimUnusedImports: true,
+        });
+        expect(ts.transformSync(deadImport + `export const foo = () => ${deadCall};`)).toBe(
+          'import"fs";\nexport const foo = 42;\n',
+        );
+        expect(ts.transformSync(deadImport + `export const loader = () => ${deadCall};`)).toBe('import"fs";\n');
+      });
+
       it("keeps an import that is also used outside the discarded value", () => {
         expect(
           replacing.transformSync(

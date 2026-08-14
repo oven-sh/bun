@@ -5535,8 +5535,8 @@ pub mod linux {
     // ThreadPool worker panics inside its idle wait.
     #[inline]
     pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        // SAFETY: caller contract — `uaddr` points to a live, suitably-aligned
-        // `u32` for the syscall's duration.
+        // SAFETY: caller contract — `uaddr` is `u32`-aligned; a WAKE only uses it as
+        // a key, so it need not point to live memory.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
         if rc == -1 {
             -(errno() as isize)

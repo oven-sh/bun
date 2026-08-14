@@ -1,6 +1,5 @@
 [bun_bundler]
 "pub_invariant_fields:src/bundler/options.rs" = 3
-"stored_projection:src/bundler/ParseTask.rs" = 1
 
 [bun_core]
 "pub_invariant_fields:src/bun_core/string/mod.rs" = 1
@@ -34,6 +33,7 @@
 "pub_invariant_fields:src/router/lib.rs" = 1
 
 [bun_runtime]
+"asymmetric_guard:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "bypassed_validator:src/runtime/cli/pack_command.rs" = 2
 "pub_invariant_fields:src/runtime/api/JSBundler.rs" = 7
 "pub_invariant_fields:src/runtime/api/bun/Terminal.rs" = 1

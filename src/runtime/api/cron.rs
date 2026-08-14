@@ -21,7 +21,7 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
@@ -1987,7 +1987,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
+        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             // Note: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick

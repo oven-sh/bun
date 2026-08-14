@@ -302,19 +302,19 @@ impl PosixLoop {
 
     /// A domain run has started on this loop's thread (see `bun_runtime::domain_run`):
     /// readiness of polls older than `start_epoch` is held until it ends;
-    /// `permissive` says whether the run executes code of its own (keeps accepting
-    /// on older listen sockets, adopts older sockets it writes to, runs the
-    /// embedder's pre/post hooks) or is strict (spawnSync).
-    pub fn domain_run_began(&mut self, start_epoch: u32, permissive: bool) {
+    /// `executes_scripts` says whether the run runs code of its own (keeps
+    /// accepting on older listen sockets, adopts older sockets it writes to, runs
+    /// the embedder's pre/post hooks) or only waits on native work (spawnSync).
+    pub fn domain_run_began(&mut self, start_epoch: u32, executes_scripts: bool) {
         self.internal_loop_data.run_start_epoch = start_epoch;
-        self.internal_loop_data.run_permissive = permissive as core::ffi::c_int;
+        self.internal_loop_data.run_executes_scripts = executes_scripts as core::ffi::c_int;
     }
 
     /// The innermost domain run has ended and `outer` describes the run that is
     /// now innermost (start epoch 0 if none): put back every held poll that is
     /// not still foreign to the outer run.
-    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_permissive: bool) {
-        self.domain_run_began(outer_start_epoch, outer_permissive);
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_executes_scripts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_executes_scripts);
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_internal_release_held_polls(self, outer_start_epoch) };
     }
@@ -425,14 +425,14 @@ impl WindowsLoop {
     /// See `PosixLoop::domain_run_began`. libuv-backed polls are not gated by
     /// epoch (spawnSync keeps its isolated loop on Windows); this records the
     /// state the shared C code reads.
-    pub fn domain_run_began(&mut self, start_epoch: u32, permissive: bool) {
+    pub fn domain_run_began(&mut self, start_epoch: u32, executes_scripts: bool) {
         self.internal_loop_data.run_start_epoch = start_epoch;
-        self.internal_loop_data.run_permissive = permissive as core::ffi::c_int;
+        self.internal_loop_data.run_executes_scripts = executes_scripts as core::ffi::c_int;
     }
 
     /// See `PosixLoop::domain_run_ended`.
-    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_permissive: bool) {
-        self.domain_run_began(outer_start_epoch, outer_permissive);
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_executes_scripts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_executes_scripts);
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_internal_release_held_polls(self, outer_start_epoch) };
     }

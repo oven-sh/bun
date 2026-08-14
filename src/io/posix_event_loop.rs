@@ -817,11 +817,11 @@ impl FilePoll {
         fd: Fd,
     ) -> sys::Result<()> {
         // (Re)arming a poll is active use by whatever code is running: inside a
-        // permissive domain run that is the run's own code, and the poll's
-        // readiness is from here on the run's to dispatch. (A strict run runs no
-        // code that could re-arm an outer poll; keep the birth it had.)
+        // script-running domain run that is the run's own code, and the poll's
+        // readiness is from here on the run's to dispatch. (A native-only run
+        // runs no code that could re-arm an outer poll; keep the birth it had.)
         let was_disarmed = self.forget_run_disarm();
-        if !crate::run_epoch::active_run_is_strict() {
+        if !crate::run_epoch::active_run_is_native_only() {
             self.epoch = crate::run_epoch::current();
         }
         #[cfg(any(

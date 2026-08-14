@@ -161,7 +161,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
   });
 });
 
-// spawnSync turns the real event loop inside a strict domain run (POSIX): what
+// spawnSync turns the real event loop inside a native-only domain run (POSIX): what
 // predates the call is held until it returns and then delivered in order.
 describe.concurrent("spawnSync on the real loop holds everything that predates it", () => {
   /** Run `script` in a child and return the JSON it prints last. */

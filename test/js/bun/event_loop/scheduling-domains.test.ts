@@ -11,8 +11,8 @@
 //          during the run, and observes them afterwards in the same relative
 //          order and with unchanged deadlines.
 //
-// Driven through bun:jsc testing hooks (a permissive run around a thunk);
-// skipped on builds whose JSC lacks domain drains. spawnSync's strict runs are
+// Driven through bun:jsc testing hooks (a script-running run around a thunk);
+// skipped on builds whose JSC lacks domain drains. spawnSync's native-only runs are
 // covered in test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -27,7 +27,7 @@ const { runUntilInDomainForTesting, activeRunForTesting } = jsc as {
   activeRunForTesting: () => number;
 };
 
-/** Turn the loop inside a fresh (permissive) run until `thunk`'s promise settles; returns it settled. */
+/** Turn the loop inside a fresh (script-running) run until `thunk`'s promise settles; returns it settled. */
 function runUntil<T>(thunk: () => Promise<T>): Promise<T> {
   const p = runUntilInDomainForTesting(thunk);
   // The run only returns once the promise is no longer pending.

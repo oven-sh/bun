@@ -551,8 +551,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
 // Domain runs (src/runtime/domain_run.rs), testing hooks.
 //
 // runUntilInDomainForTesting(thunk[, timeoutMs = 30000]) -> promise
-//   Enter a permissive domain run, call thunk (it returns a promise the run
-//   created) and turn the whole loop for the run until the promise settles.
+//   Enter a script-running domain run, call thunk (it returns a promise the
+//   run created) and turn the whole loop for the run until the promise settles.
 extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk, uint32_t timeoutMs);
 JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);
 JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))

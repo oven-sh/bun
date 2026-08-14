@@ -301,8 +301,8 @@ pub(crate) fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-/// How spawnSync blocks. On POSIX it turns the real event loop inside a strict
-/// domain run (`crate::domain_run`): the child's pipes and exit are ordinary
+/// How spawnSync blocks. On POSIX it turns the real event loop inside a
+/// native-only domain run (`crate::domain_run`): the child's pipes and exit are ordinary
 /// polls on Bun's one loop while everything that predates the call is held until
 /// it returns. libuv-backed polls carry no birth epoch, so Windows waits on the
 /// isolated `SpawnSyncEventLoop`.
@@ -1094,7 +1094,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut domain_run = (IS_SYNC && SyncWait::USES_RUN).then(|| unsafe {
         crate::domain_run::DomainRun::enter(
             global_this.bun_vm_ptr(),
-            crate::domain_run::Policy::Strict,
+            crate::domain_run::Policy::Native,
         )
     });
     // For IS_SYNC without a domain run, use the isolated loop's `event_loop`

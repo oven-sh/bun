@@ -39,14 +39,14 @@ pub const PRIMORDIAL: u32 = 1;
 struct RunTls {
     /// Start epoch of the innermost run on this thread; 0 when no run is active.
     active_start: Cell<u32>,
-    /// Whether that run is strict (executes no code of its own; see
-    /// `bun_runtime::domain_run::Policy`).
-    active_strict: Cell<bool>,
+    /// Whether that run's own consequences include scripts
+    /// (`bun_runtime::domain_run::Policy::NativeAndScripts`).
+    active_executes_scripts: Cell<bool>,
 }
 
 thread_local! {
     static RUN: RunTls = const {
-        RunTls { active_start: Cell::new(0), active_strict: Cell::new(false) }
+        RunTls { active_start: Cell::new(0), active_executes_scripts: Cell::new(false) }
     };
 }
 
@@ -88,21 +88,21 @@ pub fn active_run_start() -> u32 {
     RUN.with(|r| r.active_start.get())
 }
 
-/// Whether a strict run is active on this thread: one that executes no code of
-/// its own, so housekeeping that acts for outer owners (auto-flush queues,
-/// embedder loop hooks) waits too.
+/// Whether a native-only run is active on this thread (`Policy::Native`): one
+/// whose own consequences include no script, so housekeeping that acts for
+/// outer owners (auto-flush queues, embedder loop hooks) waits too.
 #[inline]
-pub fn active_run_is_strict() -> bool {
-    RUN.with(|r| r.active_start.get() != 0 && r.active_strict.get())
+pub fn active_run_is_native_only() -> bool {
+    RUN.with(|r| r.active_start.get() != 0 && !r.active_executes_scripts.get())
 }
 
 /// `bun_runtime::domain_run` only: entering a run (or restoring the outer run
 /// on exit; start 0 when leaving the outermost).
 #[inline]
-pub fn set_active_run(start: u32, strict: bool) {
+pub fn set_active_run(start: u32, executes_scripts: bool) {
     RUN.with(|r| {
         r.active_start.set(start);
-        r.active_strict.set(strict);
+        r.active_executes_scripts.set(executes_scripts);
     })
 }
 

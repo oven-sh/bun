@@ -67,8 +67,8 @@ pub struct InternalLoopData {
     /// thread (0 = none). Written by `bun_runtime::domain_run`; read by the C
     /// ready-poll dispatch to hold readiness of sockets that predate the run.
     pub run_start_epoch: u32,
-    /// Whether the innermost domain run is permissive (see `loop_data.h`).
-    pub run_permissive: c_int,
+    /// Whether the innermost domain run executes scripts of its own (see `loop_data.h`).
+    pub run_executes_scripts: c_int,
     /// Polls the active run(s) hold; owned and managed by the C side.
     pub held_polls: *mut *mut c_void,
     pub held_polls_len: u32,

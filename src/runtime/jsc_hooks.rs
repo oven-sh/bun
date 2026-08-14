@@ -1056,12 +1056,12 @@ pub(crate) unsafe fn auto_tick_after_immediates(
         let has_pending_immediate = has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // Fold the QUIC deadline into the poll timeout (a strict domain run does
-        // not process the engines, so their stale deadline is no reason to wake).
+        // Fold the QUIC deadline into the poll timeout (a native-only domain run
+        // does not process the engines, so their stale deadline is no reason to wake).
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() || bun_io::run_epoch::active_run_is_strict() {
+            if ild.quic_head.is_null() || bun_io::run_epoch::active_run_is_native_only() {
                 None
             } else {
                 Some(ild.quic_next_tick_us)

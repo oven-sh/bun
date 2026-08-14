@@ -380,13 +380,13 @@ void us_internal_poll_put_back(struct us_poll_t *p, struct us_loop_t *loop);
  * enclosing run back into the kernel set; pending readiness reports again. */
 void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch);
 
-/* A permissive run's own code is writing to `s`: if `s` predates the run, the
- * socket (and the reply on it) becomes the run's. Strict runs execute no code
- * of their own that could write to an older socket; writes that happen while
- * one is active are outer housekeeping (cork/auto-flush) and change nothing. */
+/* A script-running run's own code is writing to `s`: if `s` predates the run,
+ * the socket (and the reply on it) becomes the run's. Native-only runs execute
+ * no code of their own that could write to an older socket; writes that happen
+ * while one is active are outer housekeeping (cork/auto-flush) and change nothing. */
 static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
 #ifndef LIBUS_USE_LIBUV
-    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && loop->data.run_permissive && !us_socket_is_closed(s)) {
+    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && loop->data.run_executes_scripts && !us_socket_is_closed(s)) {
         s->p.bun_epoch = Bun__runEpoch();
         if (s->p.held) {
             us_internal_held_poll_forget(loop, &s->p);

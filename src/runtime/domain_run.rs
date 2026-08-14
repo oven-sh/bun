@@ -21,29 +21,28 @@ use crate::timer::ImmediateObject;
 
 bun_core::declare_scope!(DomainRun, hidden);
 
-/// What a run admits besides what was born since it started. A run must be able
-/// to wait on its own consequences without deadlocking; everything else it can
-/// hold.
+/// What the run's own consequences are made of. A run must be able to wait on
+/// its own consequences without deadlocking; everything else it can hold.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
-    /// The run executes no code of its own while it waits (spawnSync): nothing
-    /// that predates it is admitted, microtasks and nextTicks are not drained
-    /// at all (`vm.suppress_microtask_drain`), and the embedder's loop hooks
-    /// are skipped. Needs nothing from JSC.
-    Strict,
-    /// The run executes arbitrary code of its own (a frame awaiting a promise it
-    /// created): older listen sockets keep accepting (a fetch to a server created
-    /// outside must not deadlock), older sockets it writes to become its own,
-    /// module-loader jobs run, and callbacks it dispatches on others' behalf run
-    /// under its domain so that what they schedule is admitted.
-    Permissive,
+    /// Native work only (spawnSync: the child's pipes and exit). No script the
+    /// caller caused can be pending, so none runs: microtasks and nextTicks are
+    /// not drained at all (`vm.suppress_microtask_drain`), everything older is
+    /// held, and the embedder's loop hooks are skipped. Needs nothing from JSC.
+    Native,
+    /// Native work and the frame's own scripts (a frame awaiting a promise it
+    /// created): its microtasks and ticks must run while older ones wait, older
+    /// listen sockets keep accepting (a fetch to a server created outside must
+    /// not deadlock), older sockets its code writes to become its own, and
+    /// module-loader jobs run.
+    NativeAndScripts,
 }
 
 struct RunState {
     /// The run's name: I/O, tasks and timers born before it are foreign.
     start: u32,
     policy: Policy,
-    /// Strict runs: `vm.suppress_microtask_drain` at entry, restored on exit.
+    /// `Native` runs: `vm.suppress_microtask_drain` at entry, restored on exit.
     suppressed_before: bool,
     /// Foreign `setImmediate`s that reached the front, in order.
     parked_immediates: Vec<*mut ImmediateObject>,
@@ -118,10 +117,10 @@ impl DomainRun {
     /// innermost first.
     pub unsafe fn enter(vm: *mut VirtualMachine, policy: Policy) -> DomainRun {
         let start = run_epoch::bump();
-        let permissive = policy == Policy::Permissive;
+        let executes_scripts = policy == Policy::NativeAndScripts;
         // SAFETY: per fn contract.
         let suppressed_before = unsafe {
-            if permissive {
+            if executes_scripts {
                 // Its own code's microtasks must run: JSC drains only what was
                 // queued since `start` (see EventLoopDomain.h).
                 Bun__Domain__enterRun((*vm).global, start);
@@ -139,11 +138,11 @@ impl DomainRun {
                 parked_tasks: Vec::new(),
             })
         });
-        run_epoch::set_active_run(start, policy == Policy::Strict);
+        run_epoch::set_active_run(start, executes_scripts);
         // SAFETY: per fn contract; the uws loop exists before any run can start.
         unsafe {
             if (*vm).event_loop_handle.is_some() {
-                (*(*vm).uws_loop()).domain_run_began(start, permissive);
+                (*(*vm).uws_loop()).domain_run_began(start, executes_scripts);
             }
         }
         bun_core::scoped_log!(DomainRun, "enter run {}", start);
@@ -207,8 +206,9 @@ unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
             let immediates = core::mem::take(&mut run.parked_immediates);
             (tasks, immediates, run.policy, run.suppressed_before, outer)
         });
-    // No outer run: start 0, and nothing is permissive.
-    let (outer_start, outer_policy) = outer.unwrap_or((0, Policy::Strict));
+    // No outer run: start 0, and no scripts.
+    let (outer_start, outer_policy) = outer.unwrap_or((0, Policy::Native));
+    let outer_executes_scripts = outer_policy == Policy::NativeAndScripts;
     bun_core::scoped_log!(
         DomainRun,
         "exit run {} (handing back {} immediates, {} tasks)",
@@ -252,24 +252,24 @@ unsafe fn exit_run(vm: *mut VirtualMachine, start: u32) {
                 replay.birth = start;
                 el.enqueue_task(replay);
             }
-            (*uws_loop).domain_run_ended(outer_start, outer_policy == Policy::Permissive);
+            (*uws_loop).domain_run_ended(outer_start, outer_executes_scripts);
         }
     }
 
     RUNS.with_borrow_mut(|runs| {
         runs.pop();
     });
-    run_epoch::set_active_run(outer_start, outer_policy == Policy::Strict);
+    run_epoch::set_active_run(outer_start, outer_executes_scripts);
     // SAFETY: per fn contract.
     unsafe {
         match policy {
-            Policy::Permissive => Bun__Domain__exitRun((*vm).global),
-            Policy::Strict => (*vm).suppress_microtask_drain.set(suppressed_before),
+            Policy::NativeAndScripts => Bun__Domain__exitRun((*vm).global),
+            Policy::Native => (*vm).suppress_microtask_drain.set(suppressed_before),
         }
     }
 }
 
-/// bun:jsc `runUntilInDomainForTesting(thunk)`: enter a permissive run, call
+/// bun:jsc `runUntilInDomainForTesting(thunk)`: enter a script-running run, call
 /// `thunk` (it returns a promise the run created), and turn the loop until the
 /// promise settles or `timeout_ms` elapses. Returns the promise.
 #[unsafe(no_mangle)]
@@ -280,7 +280,7 @@ pub extern "C" fn Bun__Domain__runUntilInDomainForTesting(
 ) -> JSValue {
     let vm = global.bun_vm_ptr();
     // SAFETY: `vm` is the live per-thread VM owning `global`.
-    let run = unsafe { DomainRun::enter(vm, Policy::Permissive) };
+    let run = unsafe { DomainRun::enter(vm, Policy::NativeAndScripts) };
     let Ok(result) = thunk.call(global, JSValue::UNDEFINED, &[]) else {
         return JSValue::ZERO;
     };

@@ -511,10 +511,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
      * here so QUIC retransmit/idle timers fire without other I/O waking us. */
     struct timespec quic_ts;
-    /* (A strict domain run does not process QUIC engines, so their stale
+    /* (A native-only domain run does not process QUIC engines, so their stale
      * deadline is not a reason to wake.) */
     if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0
-        && (LIKELY(!loop->data.run_start_epoch) || loop->data.run_permissive)) {
+        && (LIKELY(!loop->data.run_start_epoch) || loop->data.run_executes_scripts)) {
         long long us = loop->data.quic_next_tick_us;
         if (!timeout ||
             (long long) timeout->tv_sec * 1000000 + timeout->tv_nsec / 1000 > us) {
@@ -811,7 +811,7 @@ int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t
         /* The loop's own wakeup/async fds: infrastructure, nobody's callback. */
         return 0;
     case POLL_TYPE_SEMI_SOCKET:
-        if (!(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_permissive) {
+        if (!(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_executes_scripts) {
             /* A listen socket, and this run keeps accepting: a new connection is an
              * external event, and a run that fetches from a server created outside
              * it must not deadlock. */

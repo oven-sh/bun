@@ -10,13 +10,13 @@ namespace Bun {
 // Domain runs, JS side (the driver and the model are src/runtime/domain_run.rs
 // and src/io/run_epoch.rs).
 //
-// Only a *permissive* run — one that executes code of its own while it turns the
-// loop — has a JS side: microtasks and nextTicks queued before it started are
+// Only a run whose own consequences include scripts (Policy::NativeAndScripts:
+// a frame awaiting a promise it created) has a JS side: microtasks and nextTicks queued before it started are
 // set aside until it exits (JSC's MicrotaskQueue::DrainScope; nextTick's gate
 // in ProcessObjectInternals.ts reads the active run from tuple field 1), and
 // while it turns the loop the ambient async context is empty, as it is at the
 // top of the ordinary loop, so callbacks it dispatches on others' behalf do not
-// inherit the entering frame's AsyncLocalStorage values. A *strict* run
+// inherit the entering frame's AsyncLocalStorage values. A native-only run
 // (spawnSync) executes no JavaScript, drains nothing (vm.suppress_microtask_drain)
 // and never reaches this file.
 

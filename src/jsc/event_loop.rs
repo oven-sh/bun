@@ -373,9 +373,9 @@ impl EventLoop {
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        // Auto-flushes act for their sinks' owners; a strict domain run runs
-        // nothing on an outer owner's behalf (`bun_io::run_epoch`).
-        if !bun_event_loop::active_run_is_strict() {
+        // Auto-flushes act for their sinks' owners; a native-only domain run
+        // runs nothing on an outer owner's behalf (`bun_io::run_epoch`).
+        if !bun_event_loop::active_run_is_native_only() {
             vm.is_inside_deferred_task_queue.set(true);
             self.deferred_tasks.run();
             vm.is_inside_deferred_task_queue.set(false);

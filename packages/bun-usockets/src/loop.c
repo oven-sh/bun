@@ -450,11 +450,11 @@ __attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop
     return loop->data.iteration_nr;
 }
 
-/* A strict domain run (spawnSync) turns the loop for its own I/O only: the
+/* A native-only domain run (spawnSync) turns the loop for its own I/O only: the
  * embedder's pre/post hooks (cork flushes, deferred callbacks) and QUIC engine
  * processing act on behalf of connections that predate it, so they wait. */
 static inline int us_internal_loop_runs_outer_hooks(struct us_loop_t *loop) {
-    return LIKELY(!loop->data.run_start_epoch) || loop->data.run_permissive;
+    return LIKELY(!loop->data.run_start_epoch) || loop->data.run_executes_scripts;
 }
 
 /* These may have somewhat different meaning depending on the underlying event library */

@@ -30,7 +30,8 @@ pub mod any_event_loop;
 // Attribution lives in the lowest tier (`bun_io::run_epoch`); re-exported so
 // task producers here and above stamp births without naming `bun_io`.
 pub use bun_io::run_epoch::{
-    PRIMORDIAL as PRIMORDIAL_EPOCH, active_run_is_strict, active_run_start, birth as birth_epoch,
+    PRIMORDIAL as PRIMORDIAL_EPOCH, active_run_is_native_only, active_run_start,
+    birth as birth_epoch,
 };
 
 // ─── public surface ─────────────────────────────────────────────────────────

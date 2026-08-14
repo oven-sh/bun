@@ -7306,10 +7306,8 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        // The generated files are not registered in the path maps:
-                        // every graph keeps resolving this path to the file it
-                        // parsed itself, and `LinkerGraph::load` redirects the
-                        // import records that cross the boundary to the reference.
+                        // The path maps keep pointing at the parsed file; `LinkerGraph::load`
+                        // redirects the import records that cross the boundary.
                         this.graph
                             .server_component_boundaries
                             .put(

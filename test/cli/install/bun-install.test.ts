@@ -4944,7 +4944,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  test.serial("should report error on invalid format for package.json", async () => {
+  it("should report error on invalid format for package.json", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(join(ctx.package_dir, "package.json"), "foo");
       const { stdout, stderr, exited } = spawn({
@@ -4956,16 +4956,24 @@ describe.concurrent("bun-install", () => {
         env,
       });
       const err = await stderr.text();
-      expect(
-        err.replaceAll(joinP(ctx.package_dir + sep), "[dir]/").replaceAll(ctx.package_dir + sep, "[dir]/"),
-      ).toMatchSnapshot();
+      const normalized = err
+        .replaceAll(joinP(ctx.package_dir + sep), "[dir]/")
+        .replaceAll(ctx.package_dir + sep, "[dir]/");
+      expect(normalized).toMatchInlineSnapshot(`
+        "1 | foo
+            ^
+        error: Unexpected foo
+            at [dir]/package.json:1:1
+        ParserError: failed to parse '[dir]/package.json'
+        "
+      `);
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
     });
   });
 
-  test.serial("should report error on invalid format for dependencies", async () => {
+  it("should report error on invalid format for dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -4984,7 +4992,16 @@ describe.concurrent("bun-install", () => {
         env,
       });
       const err = await stderr.text();
-      expect(err.replaceAll(joinP(ctx.package_dir + sep), "[dir]/")).toMatchSnapshot();
+      expect(err.replaceAll(joinP(ctx.package_dir + sep), "[dir]/")).toMatchInlineSnapshot(`
+        "1 | {"name":"foo","version":"0.0.1","dependencies":[]}
+                                            ^
+        error: dependencies expects a map of specifiers, e.g.
+          "dependencies": {
+            <green>"bun"<r>: <green>"latest"<r>
+          }
+            at [dir]/package.json:1:33
+        "
+      `);
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
@@ -5028,7 +5045,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  test.serial("should report error on invalid format for workspaces", async () => {
+  it("should report error on invalid format for workspaces", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -5049,7 +5066,18 @@ describe.concurrent("bun-install", () => {
         env,
       });
       const err = await stderr.text();
-      expect(err.replaceAll(joinP(ctx.package_dir + sep), "[dir]/")).toMatchSnapshot();
+      expect(err.replaceAll(joinP(ctx.package_dir + sep), "[dir]/")).toMatchInlineSnapshot(`
+        "1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
+                                                                     ^
+        error: "workspaces.packages" expects an array of strings, e.g.
+          "workspaces": {
+            "packages": [
+              "path/to/package"
+            ]
+          }
+            at [dir]/package.json:1:58
+        "
+      `);
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
@@ -9281,10 +9309,28 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  test.serial("should handle modified git resolutions in bun.lock", async () => {
+  it("should handle modified git resolutions in bun.lock", async () => {
     await withContext(defaultOpts, async ctx => {
       // install-test-8 has a dependency but because it's not in the lockfile
       // it won't be included in the install.
+      const lockfile = JSON.stringify({
+        "lockfileVersion": 0,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
+            {},
+            "3a1288830817d13da39e9231302261896f8721ea",
+          ],
+        },
+      });
       await Promise.all([
         write(
           join(ctx.package_dir, "package.json"),
@@ -9296,27 +9342,7 @@ describe.concurrent("bun-install", () => {
             },
           }),
         ),
-        write(
-          join(ctx.package_dir, "bun.lock"),
-          JSON.stringify({
-            "lockfileVersion": 0,
-            "configVersion": 1,
-            "workspaces": {
-              "": {
-                "dependencies": {
-                  "jquery": "3.7.1",
-                },
-              },
-            },
-            "packages": {
-              "jquery": [
-                "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
-                {},
-                "3a1288830817d13da39e9231302261896f8721ea",
-              ],
-            },
-          }),
-        ),
+        write(join(ctx.package_dir, "bun.lock"), lockfile),
       ]);
 
       const { stdout, stderr, exited } = spawn({
@@ -9335,9 +9361,16 @@ describe.concurrent("bun-install", () => {
       expect(out).toContain("1 package installed");
       expect(await exited).toBe(0);
 
-      expect(
-        (await file(join(ctx.package_dir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
-      ).toMatchSnapshot();
+      // The git resolution from the lockfile wins over the registry version in package.json: nothing is fetched
+      // from the registry, the repository's own dependency is not installed, and the lockfile is left untouched.
+      expect(ctx.requested).toBe(0);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "jquery"]);
+      expect(await file(join(ctx.package_dir, "node_modules", "jquery", "package.json")).json()).toEqual({
+        name: "install-test-eight",
+        version: "2.2.2",
+        dependencies: { jquery: "3.7.1" },
+      });
+      expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
     });
   });
 

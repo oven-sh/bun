@@ -624,6 +624,94 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
 );
 
 it(
+  "should report a reloaded module's error while a beforeExit listener keeps re-arming the event loop",
+  async () => {
+    const root = join(cwd, "hot-before-exit-keepalive.js");
+    // The keep-alive idiom: every 'beforeExit' schedules more work, so once the
+    // first one fires the process stays inside the beforeExit drain for good and
+    // every reload below lands there. The generations log to stderr, where --hot
+    // reports errors, so one stream shows the order of the listener's lines and
+    // the error report.
+    const gen1 = `console.error("gen1");
+if (!globalThis.armed) {
+  globalThis.armed = true;
+  process.on("beforeExit", () => {
+    console.error("beforeExit");
+    setTimeout(() => {}, 10);
+  });
+}
+`;
+    const gen2 = `console.error("gen2");\nthrow new Error("boom");\n`;
+    const gen3 = `console.error("gen3 fine");\n`;
+
+    let current = gen1;
+    writeFileSync(root, gen1);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let output = "";
+    let exited = false;
+    const waiters: Array<() => void> = [];
+    const notify = () => {
+      for (const wake of waiters.splice(0)) wake();
+    };
+    (async () => {
+      for await (const chunk of runner.stderr) {
+        output += new TextDecoder().decode(chunk);
+        notify();
+      }
+    })();
+    runner.exited.then(() => {
+      exited = true;
+      notify();
+    });
+    const waitFor = async (pred: () => boolean, what: string) => {
+      while (!pred()) {
+        if (exited) throw new Error(`--hot process exited before "${what}"\nstderr:\n${output}`);
+        await new Promise<void>(resolve => waiters.push(resolve));
+      }
+    };
+    const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+    const beforeExitsSince = (marker: string) => {
+      const at = output.indexOf(marker);
+      return at === -1 ? 0 : count(output.slice(at), "beforeExit");
+    };
+    const save = (content: string) => writeHotFileAtomicSync(root, (current = content));
+    // In case the watcher coalesced or missed a save, re-save the current generation.
+    const resave = setInterval(() => save(current), 1000);
+
+    try {
+      // With the listener re-arming the loop, every dispatch after the first
+      // comes from inside the drain, so the reloads below are handled there.
+      await waitFor(
+        () => output.includes("gen1") && count(output, "beforeExit") >= 2,
+        "gen1 inside the beforeExit drain",
+      );
+
+      save(gen2);
+      // The error has to be reported as soon as the generation rejects, not
+      // once the drain ends (it never does here). If the drain keeps cycling
+      // past the rejected generation without reporting it, stop waiting.
+      await waitFor(() => output.includes("error: boom") || beforeExitsSince("gen2") >= 20, "gen2's error");
+      expect(output).toContain("error: boom");
+
+      // The unreported rejection would also have made every later reload defer forever.
+      save(gen3);
+      await waitFor(() => output.includes("gen3 fine"), "gen3 after the failed generation");
+    } finally {
+      clearInterval(resave);
+    }
+  },
+  timeout,
+);
+
+it(
   "should work with sourcemap loading",
   async () => {
     let bundleIn = join(cwd, "bundle_in.ts");

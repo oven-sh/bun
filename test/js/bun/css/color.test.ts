@@ -380,6 +380,16 @@ describe("color() predefined color spaces", () => {
     expect(color("color(from red srgb-linear r g b)", "css")).toBe("color(srgb-linear 1 0 0)");
     expect(color("color(from red srgb-linear g g r)", "css")).toBe("color(srgb-linear 0 0 1)");
   });
+
+  test("color-mix(in xyz-d50) stays in xyz-d50", () => {
+    expect(color("color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 .3 .2 .1))", "css")).toBe(
+      "color(xyz-d50 .2 .2 .2)",
+    );
+    expect(color("color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 .3 .2 .1))", "css")).toBe(
+      "color(xyz-d50 .3 .2 .2)",
+    );
+    expect(color("color-mix(in xyz, color(xyz .1 .2 .3), color(xyz .3 .2 .1))", "css")).toBe("color(xyz .2 .2 .2)");
+  });
 });
 
 // 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate

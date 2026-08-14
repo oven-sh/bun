@@ -350,48 +350,23 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
-  describe("redirect js obj inside command substitution", () => {
-    // The lexer ends a `$(...)` / backtick body with a Delimit token after the
-    // JSObjRef, which the parser has to consume as part of the redirect instead
-    // of treating it as the start of a second command.
+  describe("end of cmd subst", () => {
+    // Closing a `$(...)` or backtick substitution used to push a Delimit even when
+    // the last token was not a word (a JS object redirect target, a subshell's `)`,
+    // a `;`, or an empty body); the parser then read that Delimit as the start of
+    // another command and failed with `expected a command or assignment but got: "CmdSubstEnd"`.
     const BACKTICK = { raw: "`" };
     const buffer = new Uint8Array(64);
 
-    // `echo <cmd_subst>` where the substituted script is a single command
-    // redirected to jsbuf #0.
-    const echoOfSubst = (inner: { name_and_args: unknown[]; redirect: unknown }, quoted = false) => ({
+    // `echo <cmd_subst>` whose substituted script has the given statements.
+    const echoOfSubst = (stmts: unknown[], quoted = false) => ({
       stmts: [
         {
           exprs: [
             {
               cmd: {
                 assigns: [],
-                name_and_args: [
-                  { simple: { Text: "echo" } },
-                  {
-                    simple: {
-                      cmd_subst: {
-                        script: {
-                          stmts: [
-                            {
-                              exprs: [
-                                {
-                                  cmd: {
-                                    assigns: [],
-                                    name_and_args: inner.name_and_args,
-                                    redirect: inner.redirect,
-                                    redirect_file: { jsbuf: { idx: 0 } },
-                                  },
-                                },
-                              ],
-                            },
-                          ],
-                        },
-                        quoted,
-                      },
-                    },
-                  },
-                ],
+                name_and_args: [{ simple: { Text: "echo" } }, { simple: { cmd_subst: { script: { stmts }, quoted } } }],
                 redirect: redirect({}),
                 redirect_file: null,
               },
@@ -401,63 +376,115 @@ describe("parse shell", () => {
       ],
     });
 
-    const echoFooToBuffer = {
-      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
-      redirect: redirect({ stdout: true }),
+    const echoHi = {
+      cmd: {
+        assigns: [],
+        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "hi" } }],
+        redirect: redirect({}),
+        redirect_file: null,
+      },
     };
 
-    test("$(cmd > buf)", () => {
-      expect(JSON.parse(parse`echo $(echo foo > ${buffer})`)).toEqual(echoOfSubst(echoFooToBuffer));
+    // A single command redirected to jsbuf #0.
+    const redirectedToBuffer = (name_and_args: unknown[], flags: Parameters<typeof redirect>[0]) => [
+      {
+        exprs: [
+          { cmd: { assigns: [], name_and_args, redirect: redirect(flags), redirect_file: { jsbuf: { idx: 0 } } } },
+        ],
+      },
+    ];
+    const echoFooToBuffer = redirectedToBuffer([{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }], {
+      stdout: true,
     });
 
-    test("$(cmd > buf ) with whitespace before the closing paren", () => {
-      expect(JSON.parse(parse`echo $(echo foo > ${buffer} )`)).toEqual(echoOfSubst(echoFooToBuffer));
-    });
+    describe("redirect to a js obj", () => {
+      test("$(cmd > buf)", () => {
+        expect(JSON.parse(parse`echo $(echo foo > ${buffer})`)).toEqual(echoOfSubst(echoFooToBuffer));
+      });
 
-    test('"$(cmd > buf)" quoted', () => {
-      expect(JSON.parse(parse`echo "$(echo foo > ${buffer})"`)).toEqual(echoOfSubst(echoFooToBuffer, true));
-    });
+      test("$(cmd > buf ) with whitespace before the closing paren", () => {
+        expect(JSON.parse(parse`echo $(echo foo > ${buffer} )`)).toEqual(echoOfSubst(echoFooToBuffer));
+      });
 
-    test("$(cmd 2> buf)", () => {
-      expect(JSON.parse(parse`echo $(echo foo 2> ${buffer})`)).toEqual(
-        echoOfSubst({ ...echoFooToBuffer, redirect: redirect({ stderr: true }) }),
-      );
-    });
+      test('"$(cmd > buf)" quoted', () => {
+        expect(JSON.parse(parse`echo "$(echo foo > ${buffer})"`)).toEqual(echoOfSubst(echoFooToBuffer, true));
+      });
 
-    test("$(cmd < buf)", () => {
-      expect(JSON.parse(parse`echo $(cat < ${buffer})`)).toEqual(
-        echoOfSubst({ name_and_args: [{ simple: { Text: "cat" } }], redirect: redirect({ stdin: true }) }),
-      );
-    });
+      test("$(cmd 2> buf)", () => {
+        expect(JSON.parse(parse`echo $(echo foo 2> ${buffer})`)).toEqual(
+          echoOfSubst(
+            redirectedToBuffer([{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }], { stderr: true }),
+          ),
+        );
+      });
 
-    test("`cmd > buf`", () => {
-      expect(JSON.parse(parse`echo ${BACKTICK}echo foo > ${buffer}${BACKTICK}`)).toEqual(echoOfSubst(echoFooToBuffer));
-    });
+      test("$(cmd < buf)", () => {
+        expect(JSON.parse(parse`echo $(cat < ${buffer})`)).toEqual(
+          echoOfSubst(redirectedToBuffer([{ simple: { Text: "cat" } }], { stdin: true })),
+        );
+      });
 
-    test("$(cmd > buf) followed by more of the outer command", () => {
-      const expected = {
-        stmts: [
-          {
-            exprs: [
-              {
-                binary: {
-                  op: "And",
-                  left: echoOfSubst(echoFooToBuffer).stmts[0].exprs[0],
-                  right: {
-                    cmd: {
-                      assigns: [],
-                      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
-                      redirect: redirect({ stdout: true }),
-                      redirect_file: { jsbuf: { idx: 1 } },
+      test("`cmd > buf`", () => {
+        expect(JSON.parse(parse`echo ${BACKTICK}echo foo > ${buffer}${BACKTICK}`)).toEqual(
+          echoOfSubst(echoFooToBuffer),
+        );
+      });
+
+      test("$(cmd > buf) followed by more of the outer command", () => {
+        const expected = {
+          stmts: [
+            {
+              exprs: [
+                {
+                  binary: {
+                    op: "And",
+                    left: echoOfSubst(echoFooToBuffer).stmts[0].exprs[0],
+                    right: {
+                      cmd: {
+                        assigns: [],
+                        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
+                        redirect: redirect({ stdout: true }),
+                        redirect_file: { jsbuf: { idx: 1 } },
+                      },
                     },
                   },
                 },
+              ],
+            },
+          ],
+        };
+        expect(JSON.parse(parse`echo $(echo foo > ${buffer}) && echo bar > ${buffer}`)).toEqual(expected);
+      });
+    });
+
+    test("subshell", () => {
+      const expected = echoOfSubst([
+        {
+          exprs: [
+            {
+              subshell: {
+                script: { stmts: [{ exprs: [echoHi] }] },
+                redirect: null,
+                redirect_flags: redirect({}),
               },
-            ],
-          },
-        ],
-      };
-      expect(JSON.parse(parse`echo $(echo foo > ${buffer}) && echo bar > ${buffer}`)).toEqual(expected);
+            },
+          ],
+        },
+      ]);
+      expect(JSON.parse(parse`echo $( (echo hi) )`)).toEqual(expected);
+      expect(JSON.parse(parse`echo ${BACKTICK}(echo hi)${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("trailing semicolon", () => {
+      const expected = echoOfSubst([{ exprs: [echoHi] }]);
+      expect(JSON.parse(parse`echo $(echo hi;)`)).toEqual(expected);
+      expect(JSON.parse(parse`echo ${BACKTICK}echo hi;${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("empty", () => {
+      expect(JSON.parse(parse`echo $()`)).toEqual(echoOfSubst([]));
+      expect(JSON.parse(parse`echo "$()"`)).toEqual(echoOfSubst([], true));
+      expect(JSON.parse(parse`echo ${BACKTICK}${BACKTICK}`)).toEqual(echoOfSubst([]));
     });
   });
 

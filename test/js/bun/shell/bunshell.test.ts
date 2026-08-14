@@ -522,9 +522,34 @@ describe("bunshell", () => {
     );
   });
 
-  describe("redirect to a JS object inside a command substitution", () => {
-    // Used to fail to parse with: expected a command or assignment but got: "CmdSubstEnd"
+  describe("command substitution ending in something other than a word", () => {
+    // Each of these used to fail to parse with: expected a command or assignment but got: "CmdSubstEnd"
     const BACKTICK = { raw: "`" };
+
+    test.concurrent("$( (subshell) )", async () => {
+      const { stdout } = await $`echo $( (echo hi) ) $( (echo there) )`;
+      expect(stdout.toString()).toEqual("hi there\n");
+    });
+
+    test.concurrent("`(subshell)`", async () => {
+      const { stdout } = await $`echo ${BACKTICK}(echo hi)${BACKTICK}`;
+      expect(stdout.toString()).toEqual("hi\n");
+    });
+
+    test.concurrent("$([[ cond ]] )", async () => {
+      const { stdout } = await $`echo $([[ -n x ]] ) && echo yes`;
+      expect(stdout.toString()).toEqual("\nyes\n");
+    });
+
+    test.concurrent("`cmd;` with a trailing semicolon", async () => {
+      const { stdout } = await $`echo ${BACKTICK}echo hi;${BACKTICK}`;
+      expect(stdout.toString()).toEqual("hi\n");
+    });
+
+    test.concurrent("empty $() and ``", async () => {
+      const { stdout } = await $`echo "[$()]" a $() b ${BACKTICK}${BACKTICK} c`;
+      expect(stdout.toString()).toEqual("[] a b c\n");
+    });
 
     test.concurrent("$(cmd > buffer)", async () => {
       const buffer = Buffer.alloc(64);

@@ -1390,8 +1390,6 @@ impl<'bump> Parser<'bump> {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
                     };
-                    // The lexer delimits the target before a closing `)`/backtick.
-                    let _ = self.r#match(TokenTag::Delimit);
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
@@ -2347,13 +2345,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.delimit_quote = snap.delimit_quote;
     }
 
-    fn last_tok_tag(&self) -> Option<TokenTag> {
-        if self.tokens.is_empty() {
-            return None;
-        }
-        Some(self.tokens[self.tokens.len() - 1].tag())
-    }
-
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
@@ -2646,11 +2637,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word_operator()?;
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    if toktag != TokenTag::Delimit {
-                                        self.tokens.push(Token::Delimit);
-                                    }
-                                }
                                 self.tokens.push(Token::CmdSubstEnd);
                                 return Ok(());
                             } else {
@@ -2726,25 +2712,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
 
-                            self.break_word(true)?;
-                            // Command substitution can be put in a word so need to add delimiter
                             if self.in_subshell == Some(SubShellKind::Dollar) {
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    match toktag {
-                                        TokenTag::Delimit
-                                        | TokenTag::Semicolon
-                                        | TokenTag::Eof
-                                        | TokenTag::Newline => {}
-                                        _ => {
-                                            self.tokens.push(Token::Delimit);
-                                        }
-                                    }
-                                }
-                            }
-
-                            if self.in_subshell == Some(SubShellKind::Dollar) {
+                                // A trailing word like the `$x` in `$(echo $x)` still needs its Delimit.
+                                self.break_word_operator()?;
                                 self.tokens.push(Token::CmdSubstEnd);
-                            } else if self.in_subshell == Some(SubShellKind::Normal) {
+                            } else {
+                                self.break_word(true)?;
                                 self.tokens.push(Token::CloseParen);
                             }
                             return Ok(());

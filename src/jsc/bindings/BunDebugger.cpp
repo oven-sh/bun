@@ -683,9 +683,8 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
-// ws+unix:// paths internal/debugger.ts is listening on (--inspect and BUN_INSPECT can
-// each add one). Appended by the debugger thread, read by whichever thread reloads the
-// process (possibly the crash handler): atomic head, entries are never freed.
+// Appended by the debugger thread (one per --inspect / BUN_INSPECT ws+unix:// URL), walked by
+// whichever thread reloads the process, possibly the crash handler; entries are never freed.
 struct InspectorUnixSocket {
     CString path;
     InspectorUnixSocket* next;
@@ -706,10 +705,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject 
     return JSValue::encode(jsUndefined());
 }
 
-// The reload execs over this process, which closes the sockets but not their files, and
-// the reloaded process binds the same paths again (the unlink Server.stop() would do).
-// A bind still in flight on the debugger thread is not waited for: a reload in that
-// startup window fails with EADDRINUSE as every reload did before this existed.
+// exec closes the sockets but leaves their files, and the reloaded process binds the same paths.
+// A bind still in flight on the debugger thread is not waited for; that reload fails as before.
 extern "C" void BunDebugger__willReloadProcess()
 {
     for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)

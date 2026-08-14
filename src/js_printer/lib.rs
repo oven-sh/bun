@@ -1175,6 +1175,11 @@ pub struct Options<'a> {
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
+    /// The source being printed is a copy of the bundler runtime. The dev server
+    /// format prints it as plain top-level code rather than as a module; a
+    /// bundle can contain more than one copy, so the bundler says which sources
+    /// these are instead of the printer assuming source index 0.
+    pub source_is_runtime: bool,
 
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
@@ -1241,6 +1246,7 @@ impl<'a> Default for Options<'a> {
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
+            source_is_runtime: false,
             ts_enums: None,
             line_offset_tables: None,
             mangled_props: None,
@@ -7704,6 +7710,7 @@ pub(crate) fn print_with_writer_and_platform<
     type PrinterType<'a, W, const B: bool, const G: bool> =
         Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
     let module_type = opts.module_type;
+    let source_is_runtime = opts.source_is_runtime;
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
         GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS),
@@ -7729,8 +7736,7 @@ pub(crate) fn print_with_writer_and_platform<
     printer.binary_expression_stack = Vec::new();
     // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
-    // `Index::is_runtime` ⇔ `index.value == 0`.
-    if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
+    if module_type == bundle_opts::Format::InternalBakeDev && !source_is_runtime {
         printer.print_dev_server_module(source, ast, &parts[0]);
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually

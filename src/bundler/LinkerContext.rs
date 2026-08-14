@@ -2137,8 +2137,9 @@ impl<'a> LinkerContext<'a> {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
             ..Default::default()
         }];
-        let enable_source_maps = self.options.source_maps != SourceMapOption::None
-            && !self.graph.is_runtime_source(source_index.get());
+        let source_is_runtime = self.graph.is_runtime_source(source_index.get());
+        let enable_source_maps =
+            self.options.source_maps != SourceMapOption::None && !source_is_runtime;
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
@@ -2187,6 +2188,7 @@ impl<'a> LinkerContext<'a> {
             minify_syntax: self.options.minify_syntax,
             input_module_type: ast.exports_kind.into(),
             module_type: self.options.output_format,
+            source_is_runtime,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 

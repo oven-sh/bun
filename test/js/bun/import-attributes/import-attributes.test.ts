@@ -1,4 +1,6 @@
-import { bunExe, tempDir, tempDirWithFiles } from "harness";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -360,4 +362,146 @@ describe("?raw", () => {
       expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
     });
   }
+});
+
+// `export ... from` takes the same `with { type }` attribute as `import`. The files
+// below use an extension bun knows nothing about, so without the attribute they get
+// the "file" loader and the re-export resolves to a path string.
+describe.concurrent("type attribute on export ... from", () => {
+  function serializedDatabase(): Buffer {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.exec("insert into messages values ('Hello, world!')");
+    return db.serialize();
+  }
+
+  async function run(files: Record<string, string | Buffer>) {
+    using dir = tempDir("export-from-type-attribute", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("export { default as name } from", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "data.unknownext": "hello from data",
+      "reexport.mjs": `export { default as text } from "./data.unknownext" with { type: "text" };`,
+      "main.mjs": `import { text } from "./reexport.mjs"; console.log(JSON.stringify(text));`,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe('"hello from data"\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("export * as ns from", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "data.unknownext": "hello from data",
+      "reexport.mjs": `export * as ns from "./data.unknownext" with { type: "text" };`,
+      "main.mjs": `import { ns } from "./reexport.mjs"; console.log(JSON.stringify(ns.default));`,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe('"hello from data"\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("export * from", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "data.unknownext": `{ "answer": 42 }`,
+      "reexport.mjs": `export * from "./data.unknownext" with { type: "json" };`,
+      "main.mjs": `import { answer } from "./reexport.mjs"; console.log(answer);`,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("sqlite re-exports may use the default and db names", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "app.unknownext": serializedDatabase(),
+      "reexport.mjs": `export { default as db, db as sameDb } from "./app.unknownext" with { type: "sqlite" };`,
+      "main.mjs": `
+        import { db, sameDb } from "./reexport.mjs";
+        console.log(db.query("select message from messages").get().message, db === sameDb);
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Hello, world! true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an attribute matching the extension's loader keeps working", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "config.json": `{ "a": 1 }`,
+      "reexport.mjs": `
+        export { default as config } from "./config.json" with { type: "json" };
+        export * as ns from "./config.json" with { type: "json" };
+      `,
+      "main.mjs": `import { config, ns } from "./reexport.mjs"; console.log(JSON.stringify([config, ns.default]));`,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe('[{"a":1},{"a":1}]\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("text loader only exports default", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "data.unknownext": "hello from data",
+      "reexport.mjs": `export { notDefault as text } from "./data.unknownext" with { type: "text" };`,
+      "main.mjs": `import "./reexport.mjs";`,
+    });
+    expect(stderr).toContain('This loader type only supports the "default" import');
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("sqlite loader only exports default and db", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "app.unknownext": serializedDatabase(),
+      "reexport.mjs": `export { connection } from "./app.unknownext" with { type: "sqlite" };`,
+      "main.mjs": `import "./reexport.mjs";`,
+    });
+    expect(stderr).toContain('sqlite imports only support the "default" or "db" imports');
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // `bun test --isolate` builds the module record from the transpiler's ModuleInfo
+  // instead of letting JSC re-parse the printed source, so the attribute also has to
+  // reach the export records. Debug builds diff the two and fail the import with
+  // "Imports different between parseFromSourceCode and fallbackParse" if they disagree.
+  test("the attribute reaches the module record under bun test --isolate", async () => {
+    using dir = tempDir("export-from-type-attribute-isolate", {
+      "text.unknownext": "hello from data",
+      "json.unknownext": `{ "answer": 42 }`,
+      "reexport.ts": `
+        export { default as text } from "./text.unknownext" with { type: "text" };
+        export * as ns from "./text.unknownext" with { type: "text" };
+        export * from "./json.unknownext" with { type: "json" };
+      `,
+      "reexport.test.ts": `
+        import { expect, test } from "bun:test";
+        import { answer, ns, text } from "./reexport.ts";
+        test("re-exports honor the type attribute", () => {
+          expect([text, ns.default, answer]).toEqual(["hello from data", "hello from data", 42]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "reexport.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Imports different");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

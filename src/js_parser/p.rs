@@ -3985,42 +3985,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut S::Import,
     ) -> Result<(), crate::Error> {
         if let Some(loader) = path.loader {
-            self.import_records.items_mut()[stmt.import_record_index as usize].loader =
-                Some(loader);
-
-            if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
-                // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-                for item in stmt.items.iter() {
-                    // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
-                    let alias: &[u8] = item.alias.slice();
-                    if !(alias == b"default" || alias == b"db") {
-                        self.log().add_error(
-                            Some(self.source),
-                            item.name.loc,
-                            b"sqlite imports only support the \"default\" or \"db\" imports",
-                        );
-                        break;
-                    }
-                }
-            } else if loader == options::Loader::File || loader == options::Loader::Text {
-                // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-                for item in stmt.items.iter() {
-                    // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
-                    if item.alias.slice() != b"default" {
-                        self.log().add_error(
-                            Some(self.source),
-                            item.name.loc,
-                            b"This loader type only supports the \"default\" import",
-                        );
-                        break;
-                    }
-                }
-            }
+            // In an import clause, `ClauseItem.alias` is the name imported from the module.
+            self.set_import_record_loader(
+                stmt.import_record_index,
+                loader,
+                stmt.items
+                    .iter()
+                    .map(|item| (item.alias.slice(), item.name.loc)),
+            );
         } else if path.import_tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
             self.import_records.items_mut()[stmt.import_record_index as usize].tag =
                 path.import_tag;
         }
         Ok(())
+    }
+
+    /// Applies a `with { type: "..." }` attribute to the import record of an `import` or
+    /// `export ... from` statement. `imported_names` are the names the statement imports from
+    /// the module; loaders whose modules only have a fixed set of exports reject other names.
+    #[cold]
+    pub(crate) fn set_import_record_loader<'n>(
+        &mut self,
+        import_record_index: u32,
+        loader: options::Loader,
+        imported_names: impl Iterator<Item = (&'n [u8], bun_ast::Loc)>,
+    ) {
+        self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
+
+        let (exported_names, error): (&[&[u8]], &[u8]) = match loader {
+            options::Loader::Sqlite | options::Loader::SqliteEmbedded => (
+                &[b"default", b"db"],
+                b"sqlite imports only support the \"default\" or \"db\" imports",
+            ),
+            options::Loader::File | options::Loader::Text => (
+                &[b"default"],
+                b"This loader type only supports the \"default\" import",
+            ),
+            _ => return,
+        };
+
+        for (name, loc) in imported_names {
+            if !exported_names.contains(&name) {
+                self.log().add_error(Some(self.source), loc, error);
+                break;
+            }
+        }
     }
 
     pub(crate) fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {

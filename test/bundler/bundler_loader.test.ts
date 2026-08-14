@@ -81,8 +81,52 @@ describe("bundler", async () => {
             '[{"hello":{"@to":"world","b":"there","#text":"hi"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
+      // Without the attribute, these extensions would all get the "file" loader.
+      itBundled("bun/loader-type-attribute-on-export-from", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import { text, ns, fromJs } from './reexport.ts';
+        console.write(JSON.stringify([text, ns.default, fromJs]));
+      `,
+          "/reexport.ts": /* js */ `
+        export { default as text } from './hello.foo' with {type: "text"};
+        export * as ns from './hello.notjson' with {type: "json"};
+        export * from './hello.notjs' with {type: "js"};
+      `,
+          "/hello.foo": "Hello, world!",
+          "/hello.notjson": JSON.stringify({ hello: "world" }),
+          "/hello.notjs": `export const fromJs = "from js";`,
+        },
+        run: { stdout: '["Hello, world!",{"hello":"world"},"from js"]' },
+      });
     });
   }
+
+  // The runtime transpiler goes through the same printer, so the attribute has to
+  // survive transpile-only output for `bun run` to see it on a re-export.
+  itBundled("bun/loader-type-attribute-on-export-from-no-bundle", {
+    target: "bun",
+    bundling: false,
+    files: {
+      "/entry.ts": /* js */ `
+        import hello from './hello.foo' with {type: "text"};
+        export { default as text } from './hello.foo' with {type: "text"};
+        export * as ns from './hello.foo' with {type: "text"};
+        export * from './hello.notjson' with {type: "json"};
+        console.log(hello);
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").split("\n").filter(Boolean)).toEqual([
+        `import hello from "./hello.foo" with { type: "text" };`,
+        `export { default as text } from "./hello.foo" with { type: "text" };`,
+        `export * as ns from "./hello.foo" with { type: "text" };`,
+        `export * from "./hello.notjson" with { type: "json" };`,
+        `console.log(hello);`,
+      ]);
+    },
+  });
 
   itBundled("bun/loader-text-file", {
     target: "bun",

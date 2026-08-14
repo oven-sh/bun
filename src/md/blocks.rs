@@ -3,8 +3,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use core::mem::{align_of, size_of};
-
 type BlockHeader = parser::BlockHeader;
 
 impl Parser<'_> {
@@ -211,19 +209,9 @@ impl Parser<'_> {
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.blocks.last_type() == Some(BlockType::Li)
                     {
-                        let align_mask_: usize = align_of::<BlockHeader>() - 1;
-                        let top_off = (self.block_bytes.len() - size_of::<BlockHeader>()
-                            + align_mask_)
-                            & !align_mask_;
-                        if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            let top_type =
-                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                            if top_type == BlockType::Li as u8 {
-                                self.last_list_item_starts_with_two_blank_lines = true;
-                            }
-                        }
+                        self.last_list_item_starts_with_two_blank_lines = true;
                     }
                 }
                 break;
@@ -236,18 +224,14 @@ impl Parser<'_> {
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.blocks.last_type() == Some(BlockType::Li)
                     {
-                        let top_type =
-                            self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                        if top_type == BlockType::Li as u8 {
-                            n_parents -= 1;
-                            line.indent = total_indent;
-                            if n_parents > 0 {
-                                line.indent -= line
-                                    .indent
-                                    .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                            }
+                        n_parents -= 1;
+                        line.indent = total_indent;
+                        if n_parents > 0 {
+                            line.indent -= line
+                                .indent
+                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
                         }
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
@@ -639,8 +623,8 @@ impl Parser<'_> {
             }
         }
 
-        // Flush current leaf block before any container transitions
-        // so that VerbatimLine data stays contiguous after its BlockHeader.
+        // Flush the current leaf block before any container transitions so it
+        // lands in `blocks` ahead of the container headers pushed below.
         if (n_children == 0 && n_parents + n_brothers < self.n_containers)
             || n_brothers > 0
             || n_children > 0
@@ -712,21 +696,18 @@ impl Parser<'_> {
         // Opening code fence: start block but don't include fence line as content
         if line.r#type == LineType::Fencedcode && line.enforce_new_block {
             self.end_current_block()?;
-            self.start_new_block(line)?;
             self.fence_indent = line.indent;
 
             // Extract info string position and store in block data
-            if let Some(cb_off) = self.current_block {
-                let fence_count = line.data >> 8;
-                let mut info_beg: OFF = line.beg + fence_count;
-                // Skip whitespace before info string
-                while info_beg < line.end && helpers::is_blank(self.text[info_beg as usize]) {
-                    info_beg += 1;
-                }
-                let hdr = self.get_block_header_at(cb_off);
-                hdr.data = info_beg;
-                hdr.flags |= types::BLOCK_FENCED_CODE;
+            let fence_count = line.data >> 8;
+            let mut info_beg: OFF = line.beg + fence_count;
+            // Skip whitespace before info string
+            while info_beg < line.end && helpers::is_blank(self.text[info_beg as usize]) {
+                info_beg += 1;
             }
+            let hdr = self.start_new_block(line);
+            hdr.data = info_beg;
+            hdr.flags |= types::BLOCK_FENCED_CODE;
             *pivot_line = *line;
             return Ok(());
         }
@@ -738,7 +719,7 @@ impl Parser<'_> {
         // Single-line blocks
         if line.r#type == LineType::Hr || line.r#type == LineType::Atxheader {
             self.end_current_block()?;
-            self.start_new_block(line)?;
+            self.start_new_block(line);
             self.add_line_to_current_block(line)?;
             self.end_current_block()?;
             *pivot_line = Line {
@@ -750,8 +731,7 @@ impl Parser<'_> {
 
         // Setext underline changes current block to header
         if line.r#type == LineType::Setextunderline {
-            if let Some(cb_off) = self.current_block {
-                let blk = self.get_block_at(cb_off);
+            if let Some(blk) = &mut self.current_block {
                 blk.block_type = BlockType::H;
                 blk.data = line.data;
                 blk.flags |= types::BLOCK_SETEXT_HEADER;
@@ -776,14 +756,13 @@ impl Parser<'_> {
 
         // Table underline
         if line.r#type == LineType::Tableunderline {
-            if let Some(cb_off) = self.current_block {
+            if let Some(hdr) = &mut self.current_block {
                 if self.current_block_lines.len() > 1 {
                     // GFM: table interrupts paragraph. Split: lines 0..N-2 stay as paragraph,
                     // last line becomes table header.
                     let last_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     // Remove the last line from current paragraph block
                     let _ = self.current_block_lines.pop();
-                    let hdr = self.get_block_header_at(cb_off);
                     hdr.n_lines -= 1;
                     // End the paragraph
                     self.end_current_block()?;
@@ -796,13 +775,12 @@ impl Parser<'_> {
                         data: line.data,
                         ..Line::default()
                     };
-                    self.start_new_block(&header_as_line)?;
+                    self.start_new_block(&header_as_line);
                     self.add_line_to_current_block(&header_as_line)?;
                 } else {
                     // Single line paragraph: convert directly to table
-                    let blk = self.get_block_at(cb_off);
-                    blk.block_type = BlockType::Table;
-                    blk.data = line.data;
+                    hdr.block_type = BlockType::Table;
+                    hdr.data = line.data;
                 }
             }
             // Change pivot to table
@@ -818,7 +796,7 @@ impl Parser<'_> {
 
         // Start new block if needed
         if self.current_block.is_none() {
-            self.start_new_block(line)?;
+            self.start_new_block(line);
             *pivot_line = *line;
         }
 
@@ -831,7 +809,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub(crate) fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
+    pub(crate) fn start_new_block(&mut self, line: &Line) -> &mut BlockHeader {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -841,25 +819,20 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
-        let aligned = self.append_block_header(BlockHeader {
+        self.current_block_lines.clear();
+        self.current_block.insert(BlockHeader {
             block_type,
-            _pad: [0; 3],
             flags: 0,
             data: line.data,
             n_lines: 0,
-        })?;
-
-        self.current_block = Some(aligned);
-        self.current_block_lines.clear();
-        Ok(())
+        })
     }
 
     pub(crate) fn add_line_to_current_block(
         &mut self,
         line: &Line,
     ) -> Result<(), bun_alloc::AllocError> {
-        if let Some(cb_off) = self.current_block {
-            let hdr = self.get_block_header_at(cb_off);
+        if let Some(hdr) = &mut self.current_block {
             hdr.n_lines += 1;
             self.current_block_lines.push(VerbatimLine {
                 beg: line.beg,
@@ -871,25 +844,16 @@ impl Parser<'_> {
     }
 
     pub(crate) fn end_current_block(&mut self) -> Result<(), parser::Error> {
-        if let Some(cb_off) = self.current_block {
-            // Capture the header fields, drop the &mut borrow, then access
-            // other &self fields.
-            let (is_setext, hdr_n_lines) = {
-                let hdr = self.get_block_header_at(cb_off);
-                (
-                    hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0,
-                    hdr.n_lines,
-                )
-            };
-            if is_setext
-                && hdr_n_lines > 0
+        if let Some(mut hdr) = self.current_block.take() {
+            if hdr.block_type == BlockType::H
+                && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0
+                && hdr.n_lines > 0
                 && self.current_block_lines.len() > 0
                 && self.current_block_lines[0].beg < self.size
                 && self.text[self.current_block_lines[0].beg as usize] == b'['
             {
-                self.consume_ref_defs_from_current_block();
+                self.consume_ref_defs_from_current_block(&mut hdr);
             }
-            let hdr = self.get_block_header_at(cb_off);
 
             // Handle setext heading after ref def consumption
             if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
@@ -902,6 +866,7 @@ impl Parser<'_> {
                     // keep block open so subsequent lines join this paragraph (md4c behavior)
                     hdr.block_type = BlockType::P;
                     hdr.flags &= !types::BLOCK_SETEXT_HEADER;
+                    self.current_block = Some(hdr);
                     return Ok(()); // Don't close the block!
                 } else {
                     // All lines consumed (shouldn't normally happen)
@@ -909,24 +874,12 @@ impl Parser<'_> {
                 }
             }
 
-            // Write accumulated lines to block_bytes
-            // SAFETY: VerbatimLine is POD; reinterpret slice as bytes for serialization
-            let line_bytes: &[u8] = unsafe {
-                core::slice::from_raw_parts(
-                    self.current_block_lines.as_ptr().cast::<u8>(),
-                    self.current_block_lines.len() * size_of::<VerbatimLine>(),
-                )
-            };
-            // The block's lines land in `block_bytes` too (12 bytes per
-            // line), not just its header, so this growth needs the same cap.
-            parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;
-            self.block_bytes.extend_from_slice(line_bytes);
-            self.current_block = None;
+            self.blocks.push(hdr, &self.current_block_lines)?;
         }
         Ok(())
     }
 
-    pub(crate) fn consume_ref_defs_from_current_block(&mut self) {
+    pub(crate) fn consume_ref_defs_from_current_block(&mut self, hdr: &mut BlockHeader) {
         if self.current_block_lines.is_empty() {
             return;
         }
@@ -994,27 +947,21 @@ impl Parser<'_> {
         self.buffer = merged;
 
         if lines_consumed > 0 {
-            if let Some(cb_off) = self.current_block {
-                let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
-                if lines_consumed >= hdr_n_lines {
-                    // All lines consumed
-                    self.current_block_lines.clear();
-                    self.get_block_header_at(cb_off).n_lines = 0;
-                } else {
-                    // Remove first lines_consumed lines
-                    let total = self.current_block_lines.len();
-                    let remaining = total - lines_consumed as usize;
-                    // SAFETY: ranges overlap (src after dst); copy_within handles memmove semantics
-                    self.current_block_lines
-                        .copy_within(lines_consumed as usize..total, 0);
-                    self.current_block_lines.truncate(remaining);
-                    self.get_block_header_at(cb_off).n_lines = hdr_n_lines - lines_consumed;
-                }
+            if lines_consumed >= hdr.n_lines {
+                // All lines consumed
+                self.current_block_lines.clear();
+                hdr.n_lines = 0;
+            } else {
+                // Remove first lines_consumed lines
+                let total = self.current_block_lines.len();
+                let remaining = total - lines_consumed as usize;
+                self.current_block_lines
+                    .copy_within(lines_consumed as usize..total, 0);
+                self.current_block_lines.truncate(remaining);
+                hdr.n_lines -= lines_consumed;
             }
         }
     }
-
-    // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
 use crate::types::LineType;

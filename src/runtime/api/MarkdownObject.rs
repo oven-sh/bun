@@ -59,8 +59,8 @@ fn parser_err_to_js(
                 ..Default::default()
             },
         ),
-        // The document, not the input length, overflowed the parser's u32
-        // block offsets, so an `input.byteLength` bound would be misleading.
+        // The document, not the input length, exhausted the parser's block
+        // metadata budget, so an `input.byteLength` bound would be misleading.
         ParserError::TooManyBlocks => global_this
             .err(
                 bun_jsc::ErrCode::OUT_OF_RANGE,

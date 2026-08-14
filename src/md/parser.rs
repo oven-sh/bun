@@ -1,7 +1,6 @@
 // Sub-modules
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -48,13 +47,7 @@ pub(crate) struct Parser<'a> {
 
     // Dynamic arrays
     pub(crate) containers: Vec<Container>,
-    // 4-byte alignment is
-    // load-bearing for the `BlockHeader` reinterpretation in
-    // `get_block_header_at`. Here the invariant rests on (a) offsets being
-    // padded to a multiple of 4 by every writer and (b) the global allocator
-    // returning >=16-byte-aligned bases; `get_block_header_at`
-    // debug-asserts it on every access.
-    pub(crate) block_bytes: Vec<u8>,
+    pub(crate) blocks: BlockList,
     pub(crate) buffer: Vec<u8>,
     pub(crate) emph_delims: Vec<EmphDelim>,
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
@@ -71,8 +64,8 @@ pub(crate) struct Parser<'a> {
     // Number of active containers
     pub(crate) n_containers: u32,
 
-    // Current block being built
-    pub(crate) current_block: Option<usize>,
+    // Current block being built; pushed onto `blocks` by end_current_block
+    pub(crate) current_block: Option<BlockHeader>,
     pub(crate) current_block_lines: Vec<VerbatimLine>,
 
     // HTML block tracking
@@ -96,25 +89,11 @@ pub(crate) struct Parser<'a> {
     pub(crate) stack_check: StackCheck,
 }
 
-#[repr(C)]
-pub struct BlockHeader {
+pub(crate) struct BlockHeader {
     pub(crate) block_type: BlockType,
-    pub(crate) _pad: [u8; 3],
     pub(crate) flags: u32,
     pub(crate) data: u32,
     pub(crate) n_lines: u32,
-}
-
-impl Default for BlockHeader {
-    fn default() -> Self {
-        Self {
-            block_type: BlockType::Doc,
-            _pad: [0, 0, 0],
-            flags: 0,
-            data: 0,
-            n_lines: 0,
-        }
-    }
 }
 
 /// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
@@ -132,8 +111,7 @@ pub enum ParserError {
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.
     InputTooLarge,
-    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
-    /// so the parser's `u32` block offsets cannot address it.
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata.
     TooManyBlocks,
 }
 
@@ -160,24 +138,14 @@ pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len()
 /// never to wrap.
 pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
-/// The most bytes `block_bytes` may hold: a block's offset into the buffer
-/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
-/// it), and each new header is written at the end of `block_bytes` rounded
-/// up to its alignment, so the buffer must stop one aligned header short of
-/// `OFF::MAX`.
+/// Cap on the block metadata a document may record, in the bytes
+/// [`BlockList::push`] charges (a `BlockHeader` per block, a `VerbatimLine`
+/// per line); it also keeps `Container.opener_idx` representable as a `u32`.
 const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
 
-// The headroom proof: a buffer filled to the cap can still be aligned up and
-// take one more header without leaving `OFF` range.
-const _: () = assert!(
-    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
-        + size_of::<BlockHeader>()
-        <= OFF::MAX as usize
-);
-
-/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
-/// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
+/// The runtime block-metadata cap checked by [`BlockList::push`]: always
+/// [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
 /// [`set_max_block_bytes_for_testing`].
 static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
 
@@ -190,16 +158,65 @@ pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
     BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
 }
 
-/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
-/// block offsets could no longer address it. Every site that grows the
-/// buffer (`append_block_header`, `end_current_block`) checks this before
-/// appending.
-#[inline]
-pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
-    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
-        return Err(ParserError::TooManyBlocks);
+/// Closed blocks in document order; `lines` holds each header's `n_lines`
+/// lines contiguously in that same order, which is how `iter`/`iter_mut`
+/// pair them without stored offsets.
+#[derive(Default)]
+pub(crate) struct BlockList {
+    pub(crate) headers: Vec<BlockHeader>,
+    pub(crate) lines: Vec<VerbatimLine>,
+}
+
+impl BlockList {
+    /// The only way a block is added: it enforces the block-metadata cap and
+    /// sets `n_lines` from `lines`, so the header/line pairing `iter` relies on
+    /// cannot drift from what a caller counted.
+    pub(crate) fn push(
+        &mut self,
+        mut header: BlockHeader,
+        lines: &[VerbatimLine],
+    ) -> Result<(), ParserError> {
+        debug_assert_eq!(header.n_lines as usize, lines.len());
+        let needed = (self.headers.len() + 1) * size_of::<BlockHeader>()
+            + (self.lines.len() + lines.len()) * size_of::<VerbatimLine>();
+        if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
+            return Err(ParserError::TooManyBlocks);
+        }
+        header.n_lines = u32::try_from(lines.len()).expect("int cast");
+        self.headers.push(header);
+        self.lines.extend_from_slice(lines);
+        Ok(())
     }
-    Ok(())
+
+    /// Index the next pushed block will get; `push` keeps the count far below `u32::MAX`.
+    pub(crate) fn next_idx(&self) -> u32 {
+        u32::try_from(self.headers.len()).expect("int cast")
+    }
+
+    pub(crate) fn last_type(&self) -> Option<BlockType> {
+        self.headers.last().map(|header| header.block_type)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&BlockHeader, &[VerbatimLine])> {
+        let mut lines: &[VerbatimLine] = &self.lines;
+        self.headers.iter().map(move |header| {
+            let (block_lines, rest) = lines.split_at(header.n_lines as usize);
+            lines = rest;
+            (header, block_lines)
+        })
+    }
+
+    pub(crate) fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&mut BlockHeader, &mut [VerbatimLine])> {
+        let mut lines: &mut [VerbatimLine] = &mut self.lines;
+        self.headers.iter_mut().map(move |header| {
+            let (block_lines, rest) =
+                core::mem::take(&mut lines).split_at_mut(header.n_lines as usize);
+            lines = rest;
+            (header, block_lines)
+        })
+    }
 }
 
 /// Callers that size anything from the input length must reject oversized
@@ -213,48 +230,6 @@ pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
 }
 
 impl<'a> Parser<'a> {
-    pub(crate) fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
-        // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
-        // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
-        // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
-        unsafe {
-            let ptr = self
-                .block_bytes
-                .as_mut_ptr()
-                .add(off)
-                .cast::<c_void>()
-                .cast::<BlockHeader>();
-            debug_assert!(ptr.is_aligned());
-            &mut *ptr
-        }
-    }
-
-    #[inline]
-    pub(crate) fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
-        self.get_block_header_at(off)
-    }
-
-    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
-    /// byte offset. This is the only way a header is added, so the
-    /// block-metadata cap cannot be forgotten by a new caller.
-    pub(crate) fn append_block_header(
-        &mut self,
-        header: BlockHeader,
-    ) -> Result<usize, ParserError> {
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        check_block_bytes_len(needed)?;
-        self.block_bytes
-            .reserve(needed.saturating_sub(self.block_bytes.len()));
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the header write below.
-        self.block_bytes.resize(needed, 0);
-        *self.get_block_header_at(aligned) = header;
-        Ok(aligned)
-    }
-
     /// Charge one resolved reference link/image against the reference-definition
     /// output budget (`max_ref_def_output`). On exhaustion the budget is zeroed, so
     /// this and every later reference degrade to literal text (md4c, mity/md4c#238).
@@ -285,7 +260,7 @@ impl<'a> Parser<'a> {
             },
             mark_char_map: MarkCharMap::init_empty(),
             containers: Vec::new(),
-            block_bytes: Vec::new(),
+            blocks: BlockList::default(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
@@ -372,7 +347,7 @@ impl<'a> Parser<'a> {
     // blocks.rs — impl Parser:
     //   process_doc, analyze_line, process_line, start_new_block,
     //   add_line_to_current_block, end_current_block,
-    //   consume_ref_defs_from_current_block, get_block_header_at, get_block_at
+    //   consume_ref_defs_from_current_block
     //
     // containers.rs — impl Parser:
     //   push_container, push_container_bytes, enter_child_containers,

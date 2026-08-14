@@ -191,7 +191,6 @@ impl Default for Line {
 }
 
 /// A verbatim line (stores beg/end offsets plus indent for indented code).
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct VerbatimLine {
     pub(crate) beg: OFF,
@@ -209,7 +208,8 @@ pub struct Container {
     pub(crate) start: u32,
     pub(crate) mark_indent: u32,
     pub(crate) contents_indent: u32,
-    pub(crate) block_byte_off: u32,
+    /// Index of this list's `Ul`/`Ol` opener in `Parser::blocks` (unused for blockquotes).
+    pub(crate) opener_idx: u32,
 }
 
 pub(crate) const BLOCK_CONTAINER_CLOSER: u32 = 0x01;

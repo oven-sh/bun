@@ -1,10 +1,8 @@
-use core::mem::{align_of, size_of};
-
 use bun_alloc::AllocError;
 
 use crate::autolinks::is_list_bullet;
 use crate::parser::{self, BlockHeader, Parser};
-use crate::types::{self, BlockType, Container, VerbatimLine};
+use crate::types::{self, BlockType, Container};
 
 impl Parser<'_> {
     pub(crate) fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
@@ -13,11 +11,6 @@ impl Parser<'_> {
         } else {
             self.containers[self.n_containers as usize] = *c;
         }
-
-        // Record block_byte offset in the container.
-        // In range: every `block_bytes` grower enforces `check_block_bytes_len`.
-        let block_off: u32 = u32::try_from(self.block_bytes.len()).expect("int cast");
-        self.containers[self.n_containers as usize].block_byte_off = block_off;
 
         self.n_containers += 1;
         Ok(())
@@ -29,14 +22,15 @@ impl Parser<'_> {
         data: u32,
         flags: u32,
     ) -> Result<(), parser::Error> {
-        self.append_block_header(BlockHeader {
-            block_type,
-            _pad: [0; 3],
-            flags,
-            data,
-            n_lines: 0,
-        })?;
-        Ok(())
+        self.blocks.push(
+            BlockHeader {
+                block_type,
+                flags,
+                data,
+                n_lines: 0,
+            },
+            &[],
+        )
     }
 
     pub(crate) fn enter_child_containers(&mut self, count: u32) -> Result<(), parser::Error> {
@@ -54,11 +48,7 @@ impl Parser<'_> {
                 self.push_container_bytes(BlockType::Quote, 0, types::BLOCK_CONTAINER_OPENER)?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Save opener position for later loose-list patching
-                let align_mask_: usize = align_of::<BlockHeader>() - 1;
-                // In range: every `block_bytes` grower enforces
-                // `check_block_bytes_len`, which leaves alignment headroom.
-                self.containers[idx].block_byte_off =
-                    u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
+                self.containers[idx].opener_idx = self.blocks.next_idx();
                 // Unordered list + list item
                 self.push_container_bytes(BlockType::Ul, 0, types::BLOCK_CONTAINER_OPENER)?;
                 self.push_container_bytes(
@@ -72,11 +62,7 @@ impl Parser<'_> {
                 )?;
             } else if ch == b'.' || ch == b')' {
                 // Save opener position for later loose-list patching
-                let align_mask_: usize = align_of::<BlockHeader>() - 1;
-                // In range: every `block_bytes` grower enforces
-                // `check_block_bytes_len`, which leaves alignment headroom.
-                self.containers[idx].block_byte_off =
-                    u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
+                self.containers[idx].opener_idx = self.blocks.next_idx();
                 // Ordered list + list item
                 self.push_container_bytes(BlockType::Ol, start, types::BLOCK_CONTAINER_OPENER)?;
                 self.push_container_bytes(
@@ -104,7 +90,7 @@ impl Parser<'_> {
             let is_task = self.containers[idx].is_task;
             let task_mark_off = self.containers[idx].task_mark_off;
             let start = self.containers[idx].start;
-            let block_byte_off = self.containers[idx].block_byte_off;
+            let opener_idx = self.containers[idx].opener_idx as usize;
             let loose_flag: u32 = if is_loose { types::BLOCK_LOOSE_LIST } else { 0 };
 
             // Emit container closer blocks
@@ -112,9 +98,8 @@ impl Parser<'_> {
                 self.push_container_bytes(BlockType::Quote, 0, types::BLOCK_CONTAINER_CLOSER)?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Retroactively patch the opener with loose flag
-                if is_loose && (block_byte_off as usize) < self.block_bytes.len() {
-                    let opener_hdr = self.get_block_header_at(block_byte_off as usize);
-                    opener_hdr.flags |= types::BLOCK_LOOSE_LIST;
+                if is_loose {
+                    self.blocks.headers[opener_idx].flags |= types::BLOCK_LOOSE_LIST;
                 }
                 self.push_container_bytes(
                     BlockType::Li,
@@ -132,9 +117,8 @@ impl Parser<'_> {
                 )?;
             } else if ch == b'.' || ch == b')' {
                 // Retroactively patch the opener with loose flag
-                if is_loose && (block_byte_off as usize) < self.block_bytes.len() {
-                    let opener_hdr = self.get_block_header_at(block_byte_off as usize);
-                    opener_hdr.flags |= types::BLOCK_LOOSE_LIST;
+                if is_loose {
+                    self.blocks.headers[opener_idx].flags |= types::BLOCK_LOOSE_LIST;
                 }
                 self.push_container_bytes(
                     BlockType::Li,
@@ -173,54 +157,17 @@ impl Parser<'_> {
     }
 
     pub(crate) fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
-        let mut off: usize = 0;
-        // Capture the raw ptr/len so we can call &mut self methods inside the
-        // loop. block_bytes is not mutated during process_all_blocks.
-        let bytes_len = self.block_bytes.len();
-        let bytes_ptr = self.block_bytes.as_ptr();
+        // Taken out so the loop can call `&mut self` methods; rendering is the list's last use.
+        let blocks = core::mem::take(&mut self.blocks);
 
         // Reuse containers array for tight/loose tracking (same approach as md4c).
         // The containers are no longer needed for line analysis at this point.
         self.n_containers = 0;
-        let mut block_lines: Vec<VerbatimLine> = Vec::new();
 
-        while off < bytes_len {
-            // Align to BlockHeader
-            let align_mask: usize = align_of::<BlockHeader>() - 1;
-            off = (off + align_mask) & !align_mask;
-            if off + size_of::<BlockHeader>() > bytes_len {
-                break;
-            }
-
-            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
-            // block parser wrote a valid BlockHeader at this offset.
-            let hdr: BlockHeader =
-                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
-            off += size_of::<BlockHeader>();
-
+        for (hdr, block_lines) in blocks.iter() {
             let block_type = hdr.block_type;
-            let n_lines = hdr.n_lines;
             let data = hdr.data;
             let flags = hdr.flags;
-
-            // Read lines after header
-            let lines_size = (n_lines as usize) * size_of::<VerbatimLine>();
-            if off + lines_size > bytes_len {
-                break;
-            }
-            block_lines.clear();
-            for li in 0..n_lines as usize {
-                // SAFETY: li < n_lines so off + li*size_of::<VerbatimLine>() is within the
-                // [off, off + lines_size) range bounds-checked above; end_current_block wrote
-                // n_lines contiguous VerbatimLine entries there.
-                block_lines.push(unsafe {
-                    bytes_ptr
-                        .add(off + li * size_of::<VerbatimLine>())
-                        .cast::<VerbatimLine>()
-                        .read_unaligned()
-                });
-            }
-            off += lines_size;
 
             // Handle container openers/closers
             if flags & types::BLOCK_CONTAINER_OPENER != 0 {
@@ -270,12 +217,12 @@ impl Parser<'_> {
             }
             match block_type {
                 BlockType::Hr => {}
-                BlockType::Code => self.process_code_block(&block_lines, data, flags)?,
-                BlockType::Html => self.process_html_block(&block_lines)?,
-                BlockType::Table => self.process_table_block(&block_lines, data)?,
-                BlockType::P => self.process_leaf_block(&block_lines, true)?,
-                BlockType::H => self.process_leaf_block(&block_lines, true)?,
-                _ => self.process_leaf_block(&block_lines, false)?,
+                BlockType::Code => self.process_code_block(block_lines, data, flags)?,
+                BlockType::Html => self.process_html_block(block_lines)?,
+                BlockType::Table => self.process_table_block(block_lines, data)?,
+                BlockType::P => self.process_leaf_block(block_lines, true)?,
+                BlockType::H => self.process_leaf_block(block_lines, true)?,
+                _ => self.process_leaf_block(block_lines, false)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;

@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
+use bun_jsc::{ArgumentsSlice, JSGlobalObject, JSType as JsType, JSValue, JsResult};
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects
@@ -47,6 +47,25 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Optio
         }
     }
     Ok(None)
+}
+
+/// Eats the next argument (a missing one is `undefined`, as in Node) and
+/// throws Node's `toUnixTimestamp` error when [`from_js`] rejects it.
+pub fn from_js_required(
+    global_object: &JSGlobalObject,
+    arguments: &mut ArgumentsSlice,
+    name: &str,
+) -> JsResult<TimeLike> {
+    let value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+    from_js(global_object, value)?.ok_or_else(|| {
+        // Node passes `["Date", "Time in seconds"]` as the expected types and its
+        // ERR_INVALID_ARG_TYPE list renderer prints that as "an Time in seconds".
+        global_object.throw_invalid_argument_type_value2(
+            name,
+            "an instance of Date or an Time in seconds",
+            value,
+        )
+    })
 }
 
 #[cfg(windows)]

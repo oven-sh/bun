@@ -462,20 +462,15 @@ impl Terminal {
         {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
-                // POSIX: writer.start() may have allocated a poll holding write_fd
-                // before registerWithFd failed; closeInternal → writer.close()
-                // frees the poll and closes write_fd. Windows: writer.start()
-                // failure leaves source==null so writer.close() is a no-op; close
-                // write_fd directly. Pre-set writer_done so onWriterClose's deref
-                // is skipped and the struct isn't freed mid-closeInternal.
+                // A failed writer.start() leaves write_fd with us: close both pty
+                // fds here, closeInternal releases master/slave. The writer holds
+                // nothing, so its close() reports nothing; WRITER_DONE keeps
+                // onWriterClose a no-op either way, as the only ref is dropped below.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
-                #[cfg(windows)]
-                {
-                    terminal.write_fd.get().close();
-                    terminal.write_fd.set(Fd::INVALID);
-                }
+                terminal.write_fd.get().close();
+                terminal.write_fd.set(Fd::INVALID);
                 terminal.close_internal();
                 terminal.deref_();
                 return Err(InitError::WriterStartFailed);

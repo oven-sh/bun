@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -746,6 +747,34 @@ describe("bundler", () => {
       ]);
       expect(build.outputs.map(output => basename(output.path)).sort()).toEqual(["entry.css", "entry.js"]);
     },
+  });
+
+  // Bun.build() returns every message the bundler recorded, so a bunfig
+  // logLevel that hides warnings has to keep this one out of the log like any
+  // other warning. Spawned because bunfig.toml is read at process startup.
+  test.concurrent.each([
+    ['logLevel = "warn"', [["warn", "The value of color in the class button is undefined."]]],
+    ['logLevel = "error"', []],
+  ])("css/ComposesWithSharedPropertiesWarning honors bunfig %s", async (bunfig, expectedLogs) => {
+    using dir = tempDir("composes-loglevel", {
+      ...composesWithSharedPropertiesFiles,
+      "bunfig.toml": bunfig,
+      "build.js": `
+        const result = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => [log.level, log.message]) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: expectedLogs });
+    expect(exitCode).toBe(0);
   });
 
   itBundled("css/ComposesSameFile", {

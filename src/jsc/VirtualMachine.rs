@@ -3825,8 +3825,7 @@ impl VirtualMachine {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
-                    // Still loading: a second load would share the module registry with it.
-                    // Executing: only a top-level await is pending, and it may never settle.
+                    // A load still in flight would share the registry with a new one; a pending top-level await would not.
                     if !crate::cpp::Bun__entryRootIsEvaluating(self.global()) {
                         self.hot_reload_deferred = true;
                         return;

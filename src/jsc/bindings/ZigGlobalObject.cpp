@@ -3943,8 +3943,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__entryRootIsEvaluating(Zig::GlobalOb
     return entryRootIsEvaluating(globalObject, globalObject->moduleLoader());
 }
 
-// A module body is about to run. Before the root is Evaluating it belongs to some other root, such as a
-// preload's un-awaited import() finishing while the entry is still fetching, so it does not count.
+// A body running before the root is Evaluating belongs to another root (a preload's un-awaited import()).
 static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     void* bunVM = globalObject->bunVM();

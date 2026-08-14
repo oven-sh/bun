@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import inspector from "node:inspector";
 
 test("inspector.url()", () => {
@@ -550,6 +551,100 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
 });
+
+// Under `bun test` an error nothing handled is tallied, not fatal, so a later
+// waitForDebugger() runs with the VM's unhandled-error count nonzero. The wait
+// must still park the thread: the run loops' turn of the event loop
+// (auto_tick_active) stops polling once that count has ended a run, so a wait
+// ticking with it would spin here instead. Measured from outside, on the
+// fixture's main thread, before any client connects, so that nothing but the
+// wait itself is in the window. /proc is what makes the per-thread reading
+// possible, hence Linux only.
+const waitForDebuggerAfterUnhandledErrorFixture = `
+import { test } from "bun:test";
+import inspector from "node:inspector";
+
+test("leaves an error nothing handles", () => {
+  Promise.reject(new Error("tallied by the runner"));
+});
+
+test("then waits for a debugger", () => {
+  inspector.open(0, "127.0.0.1", false);
+  process.stderr.write("WAITING_FOR_DEBUGGER\\n");
+  inspector.waitForDebugger();
+  inspector.close();
+});
+`;
+
+test.skipIf(!isLinux)(
+  "inspector.waitForDebugger() parks the thread after an earlier unhandled error under bun test",
+  async () => {
+    using dir = tempDir("inspector-wait-after-error", {
+      "wait.test.ts": waitForDebuggerAfterUnhandledErrorFixture,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "wait.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    const decoder = new TextDecoder();
+    const reader = proc.stderr.getReader();
+    let stderrText = "";
+    while (!stderrText.includes("WAITING_FOR_DEBUGGER")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stderr closed before the fixture started waiting; got: ${stderrText}`);
+      stderrText += decoder.decode(value);
+    }
+    expect(stderrText).toContain("tallied by the runner");
+    const wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+    expect(wsUrl).toBeDefined();
+
+    // utime + stime of the main thread, in clock ticks (100 per second), from
+    // /proc/<pid>/task/<pid>/stat; the fields follow the parenthesized name.
+    const mainThreadTicks = () => {
+      const stat = readFileSync(`/proc/${proc.pid}/task/${proc.pid}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      return Number(fields[11]) + Number(fields[12]);
+    };
+    const windowMs = 500;
+    const windowTicks = windowMs / 10;
+    const ticksBefore = mainThreadTicks();
+    // The measurement window: the fixture is waiting for a client the whole
+    // time, and the question is what that costs it.
+    await Bun.sleep(windowMs);
+    const ticksDuringWait = mainThreadTicks() - ticksBefore;
+
+    const ws = new WebSocket(wsUrl!);
+    const opened = Promise.withResolvers<void>();
+    ws.onopen = () => opened.resolve();
+    ws.onerror = error => opened.reject(error);
+    await opened.promise;
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+    const drained = (async () => {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderrText += decoder.decode(value);
+      }
+    })();
+    const exitCode = await proc.exited;
+    await drained;
+    ws.close();
+
+    // Parked: the thread runs nothing in the window (0 ticks, 1 if the idle GC
+    // timer fires). Spinning: about the whole window.
+    expect(ticksDuringWait).toBeLessThan(windowTicks / 4);
+    // The tallied error fails the file; that it was tallied is the case under test.
+    expect(exitCode).toBe(1);
+  },
+  // Boots a `bun test` child with the inspector, then holds it for the window;
+  // several seconds on a debug build.
+  30_000,
+);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();

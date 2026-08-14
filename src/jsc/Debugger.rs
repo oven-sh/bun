@@ -191,7 +191,7 @@ impl Debugger {
     ///
     /// Aliasing: `this.debugger` is read through a raw pointer
     /// with fresh short-lived borrows because `event_loop().tick()` /
-    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
+    /// `auto_tick()` re-enter JS, which calls `VirtualMachine::get()`
     /// and may form independent `&mut VirtualMachine` borrows. Holding a
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
@@ -318,7 +318,11 @@ impl Debugger {
             };
             match wait {
                 Wait::Forever => {
-                    this.event_loop_mut().auto_tick_active();
+                    // A condition wait, like `wait_for_promise`, not a run loop:
+                    // `auto_tick_active` stops polling once a counted error has
+                    // ended the run (see its contract), and under `bun test`,
+                    // where such errors end nothing, that would spin here.
+                    this.event_loop_mut().auto_tick();
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(

@@ -456,4 +456,28 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(stdout).not.toContain("New project configured!");
     expect(exitCode).toBe(1);
   });
+
+  // Failing to write package.json itself was also reported and then ignored:
+  // init went on to scaffold the rest of the project around it and exited 0.
+  // `ulimit -f 0` makes every regular-file write fail with EFBIG (bun ignores
+  // SIGXFSZ), and the existing package.json already lists everything the blank
+  // template would add, so no `bun install` runs and the exit code is init's
+  // own.
+  test.skipIf(isWindows)("bun init exits non-zero when package.json cannot be written", async () => {
+    const pkg = { name: "already-here", devDependencies: { "@types/bun": "latest", typescript: "^6" } };
+    await using temp = tempDir("bun-init-package-json-write-fails", { "package.json": JSON.stringify(pkg) });
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -f 0 && exec "$0" init -y', bunExe()],
+      cwd: temp,
+      stdio: ["ignore", "ignore", "pipe"],
+      env: initEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("package.json failed to write due to error EFBIG");
+    // Nothing else gets scaffolded once package.json has failed.
+    expect(readdirSync(temp).sort()).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
 });

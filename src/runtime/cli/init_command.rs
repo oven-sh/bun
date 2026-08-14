@@ -787,7 +787,7 @@ impl InitCommand {
             template.write_to_package_json(&mut fields, &bump)?;
         }
 
-        'write_package_json: {
+        {
             let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
                 .as_ref()
             {
@@ -820,8 +820,7 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     err.name(),
                 );
-                package_json_file = None;
-                break 'write_package_json;
+                Global::exit(1);
             }
             let written = package_json_writer.ctx.get_written();
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
@@ -829,8 +828,7 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
                 );
-                package_json_file = None;
-                break 'write_package_json;
+                Global::exit(1);
             }
             if let Err(err) =
                 bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
@@ -839,8 +837,7 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
                 );
-                package_json_file = None;
-                break 'write_package_json;
+                Global::exit(1);
             }
         }
 

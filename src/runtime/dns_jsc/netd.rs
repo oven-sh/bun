@@ -636,18 +636,26 @@ impl NameLookup {
         let mut result: *mut libc::hostent = ptr::null_mut();
         let mut h_errno: c_int = 0;
         let mut buf = vec![0u8; 8192];
-        // SAFETY: all pointers reference live locals of the stated sizes.
-        let rc = unsafe {
-            gethostbyaddr_r(
-                addr,
-                addrlen,
-                family,
-                &raw mut hostent,
-                buf.as_mut_ptr().cast::<c_char>(),
-                buf.len(),
-                &raw mut result,
-                &raw mut h_errno,
-            )
+        let rc = loop {
+            // SAFETY: all pointers reference live locals of the stated sizes.
+            let rc = unsafe {
+                gethostbyaddr_r(
+                    addr,
+                    addrlen,
+                    family,
+                    &raw mut hostent,
+                    buf.as_mut_ptr().cast::<c_char>(),
+                    buf.len(),
+                    &raw mut result,
+                    &raw mut h_errno,
+                )
+            };
+            // ERANGE: the answer did not fit the scratch buffer; grow and retry.
+            if rc == libc::ERANGE && buf.len() < 256 * 1024 {
+                buf.resize(buf.len() * 2, 0);
+                continue;
+            }
+            break rc;
         };
         if rc != 0 || result.is_null() {
             self.status = if rc == libc::ERANGE || rc == libc::ENOMEM {

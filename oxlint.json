@@ -74,6 +74,7 @@
     // Top-level `for await` in .ts files with no import/export, which oxlint parses as scripts
     "test/js/bun/console/console-iterator-run.ts",
     "test/regression/issue/18239/18239.fixture.ts",
+    "test/js/node/fs/fs-stream.winlink.js", // git symlink; a Windows checkout turns it into a text file holding the link target
 
     // TODO: fix these
     "src/js/node/http2.ts",

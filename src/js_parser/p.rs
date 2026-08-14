@@ -1112,8 +1112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        // Stack frames for a call are mapped at its callee, so the replacement
-        // takes the `require` token's location rather than the argument's.
+        // Stack frames map a call at its callee, so this lives at `require`, not at the argument.
         let call_target_loc = state.loc;
 
         if !self.options.features.allow_runtime {

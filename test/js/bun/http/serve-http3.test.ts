@@ -1319,9 +1319,8 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // Expect: 100-continue is handled at the uWS layer for both transports
-  // (HttpContext.h / Http3Context.h call writeContinue before routing); a
-  // curl --expect100-timeout assertion was flaky enough to drop here.
+  // Expect handling over H3 is covered by "Expect dispatch" in the request
+  // validation describe below via h3Exchange (no curl dependency).
 });
 
 async function h3Exchange(
@@ -1375,6 +1374,41 @@ const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
 });
 
 describe("Bun.serve HTTP/3 request validation", () => {
+  // https://github.com/oven-sh/bun/issues/30248 — Http3Context.h's Expect
+  // dispatch: recognized 100-continue forms route to the handler, anything
+  // else answers 417 before the handler runs.
+  test("Expect dispatch: 100-continue casings reach the handler, unknown expectations 417", async () => {
+    let dispatched = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch() {
+        dispatched++;
+        return new Response("ok:" + dispatched);
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const value of ["100-continue", "100-Continue", "100-CONTINUE"]) {
+      results[value] = await h3Exchange(server.port, requestHeaders("/", { expect: value }));
+    }
+    const dispatchedAfterAccepted = dispatched;
+    for (const value of ["muffins", "x100-continue"]) {
+      results[value] = await h3Exchange(server.port, requestHeaders("/", { expect: value }));
+    }
+
+    expect(results).toEqual({
+      "100-continue": "200 ok:1",
+      "100-Continue": "200 ok:2",
+      "100-CONTINUE": "200 ok:3",
+      "muffins": "417 ",
+      "x100-continue": "417 ",
+    });
+    expect(dispatchedAfterAccepted).toBe(3);
+    expect(dispatched).toBe(3);
+  });
+
   test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
     let reachedWithProbe = 0;
     await using server = Bun.serve({

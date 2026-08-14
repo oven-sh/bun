@@ -3050,6 +3050,49 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
     },
   );
 
+  // RFC 9110 §5.2: repeated field lines of a list-typed field are one combined
+  // list, so the match must not depend on which Expect line comes first.
+  it.each([
+    ["muffins", "100-continue"],
+    ["100-continue", "muffins"],
+  ])("sends 100 Continue when Expect is split across field lines (%s, %s)", async (first, second) => {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        return new Response("echo:" + (await req.text()));
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    let bodySent = false;
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write(
+        "POST /test HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${server.port}\r\n` +
+          "Content-Length: 5\r\n" +
+          `Expect: ${first}\r\n` +
+          `Expect: ${second}\r\n` +
+          "\r\n",
+      );
+    });
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (!bodySent && received.includes("HTTP/1.1 100 Continue\r\n\r\n")) {
+        bodySent = true;
+        socket.write("hello");
+      }
+      if (received.includes("echo:hello")) socket.end();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(received));
+
+    const output = await promise;
+    expect(output).toStartWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n");
+    expect(output).toContain("echo:hello");
+  });
+
   // RFC 9110 §15.2: a server MUST NOT send a 1xx to an HTTP/1.0 client; Node
   // routes the whole Expect dispatch to the plain handler for HTTP/1.0.
   it.each([

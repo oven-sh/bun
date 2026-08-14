@@ -1030,7 +1030,18 @@ public:
                  * are answered 417 without dispatching, matching Node.js. */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (expect.length()) {
-                    if (utils::hasExpect100Continue(expect)) {
+                    bool has100Continue = utils::hasExpect100Continue(expect);
+                    if (!has100Continue) {
+                        /* Expect is list-typed, so repeated field lines form one
+                         * list (RFC 9110 §5.2); scan the rest before rejecting. */
+                        for (auto [key, value] : *user.httpRequest) {
+                            if (utils::asciiIEquals(key, "expect") && utils::hasExpect100Continue(value)) {
+                                has100Continue = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (has100Continue) {
                         user.httpResponse->writeContinue();
                     } else {
                         user.httpResponse->writeStatus("417 Expectation Failed");

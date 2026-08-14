@@ -5206,10 +5206,9 @@ pub(crate) fn write_file_internal(
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         //
-        // A consumed body must be rejected before dispatch: `use_()` turns a
-        // `Used` body into an empty blob, which would replace the destination
-        // with 0 bytes and resolve 0, and a drained stream has no producer
-        // left to settle the locked-body wait.
+        // Consumed bodies are rejected before dispatch: `use_()` on a `Used` body
+        // yields an empty blob (the write would truncate the destination), and a
+        // drained stream would wait in the Locked arm for a producer that is gone.
         if let Some(response) = data.as_class_ref::<Response>() {
             response.throw_if_body_unusable(global_this)?;
             let bv = std::ptr::from_mut(response.get_body_value());

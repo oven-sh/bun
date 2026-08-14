@@ -1184,15 +1184,9 @@ pub(crate) struct Injected<'a> {
 }
 
 impl<'a> Injected<'a> {
-    /// `zname` was opened relative to the cwd of that moment (or is already
-    /// absolute); pin it in `temp_path_buf` so a later `chdir` cannot retarget
-    /// the rename/unlink.
-    fn new(fd: Fd, zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => &cwd_buf[..len],
-            Err(_) => b"",
-        };
+    /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
+    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
         let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
@@ -1213,6 +1207,17 @@ pub(crate) fn inject<'a>(
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
+                err
+            );
+            return None;
+        }
+    };
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1480,7 +1485,12 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(cloned_executable_fd, zname, temp_path_buf));
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -1541,7 +1551,12 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(cloned_executable_fd, zname, temp_path_buf));
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -1599,7 +1614,12 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(cloned_executable_fd, zname, temp_path_buf));
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         _ => {
             let total_byte_count: usize;
@@ -1678,7 +1698,12 @@ pub(crate) fn inject<'a>(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return Some(Injected::new(cloned_executable_fd, zname, temp_path_buf));
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
     }
 }
@@ -1951,7 +1976,8 @@ pub fn to_executable(
     ) else {
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
-            "failed to write compiled executable"
+            "failed to write compiled executable {}",
+            bstr::BStr::new(outfile)
         )));
     };
     let fd = injected.fd;
@@ -2022,6 +2048,7 @@ pub fn to_executable(
         } == windows::FALSE
         {
             let werr = windows::Win32Error::get();
+            let _ = Syscall::unlink(injected.temp_path);
             if let Some(sys_err) = werr.to_system_errno() {
                 if sys_err == bun_sys::SystemErrno::EISDIR {
                     return Ok(CompileResult::fail_fmt(format_args!(

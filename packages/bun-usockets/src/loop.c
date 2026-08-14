@@ -23,6 +23,7 @@
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
@@ -698,23 +699,33 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
+                        // Received descriptors must not leak into children we spawn.
+                        #ifdef MSG_CMSG_CLOEXEC
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags | MSG_CMSG_CLOEXEC);
+                        #else
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        #endif
 
                         // Extract the file descriptor if present. One per message is the
                         // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
                             int fd = -1;
                             for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
-                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS) {
+                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS || cmsg_ptr->cmsg_len < CMSG_LEN(0)) {
                                     continue;
                                 }
-                                int *fds = (int *)CMSG_DATA(cmsg_ptr);
+                                unsigned char *fds = CMSG_DATA(cmsg_ptr);
                                 size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
                                 for (size_t i = 0; i < nfds; i++) {
+                                    int received;
+                                    memcpy(&received, fds + i * sizeof(int), sizeof(int));
+                                    #ifndef MSG_CMSG_CLOEXEC
+                                    fcntl(received, F_SETFD, FD_CLOEXEC);
+                                    #endif
                                     if (fd == -1) {
-                                        fd = fds[i];
+                                        fd = received;
                                     } else {
-                                        close(fds[i]);
+                                        close(received);
                                     }
                                 }
                             }

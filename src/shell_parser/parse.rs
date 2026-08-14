@@ -1390,6 +1390,10 @@ impl<'bump> Parser<'bump> {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
                     };
+                    // The lexer emits a Delimit before the `)` / backtick that closes a
+                    // command substitution; consume it like parse_atom does for a file
+                    // target, or it gets parsed as the start of a second command.
+                    let _ = self.r#match(TokenTag::Delimit);
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 

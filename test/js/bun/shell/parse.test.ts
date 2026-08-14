@@ -350,6 +350,117 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  describe("redirect js obj inside command substitution", () => {
+    // The lexer ends a `$(...)` / backtick body with a Delimit token after the
+    // JSObjRef, which the parser has to consume as part of the redirect instead
+    // of treating it as the start of a second command.
+    const BACKTICK = { raw: "`" };
+    const buffer = new Uint8Array(64);
+
+    // `echo <cmd_subst>` where the substituted script is a single command
+    // redirected to jsbuf #0.
+    const echoOfSubst = (inner: { name_and_args: unknown[]; redirect: unknown }, quoted = false) => ({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [
+                  { simple: { Text: "echo" } },
+                  {
+                    simple: {
+                      cmd_subst: {
+                        script: {
+                          stmts: [
+                            {
+                              exprs: [
+                                {
+                                  cmd: {
+                                    assigns: [],
+                                    name_and_args: inner.name_and_args,
+                                    redirect: inner.redirect,
+                                    redirect_file: { jsbuf: { idx: 0 } },
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        quoted,
+                      },
+                    },
+                  },
+                ],
+                redirect: redirect({}),
+                redirect_file: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const echoFooToBuffer = {
+      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+      redirect: redirect({ stdout: true }),
+    };
+
+    test("$(cmd > buf)", () => {
+      expect(JSON.parse(parse`echo $(echo foo > ${buffer})`)).toEqual(echoOfSubst(echoFooToBuffer));
+    });
+
+    test("$(cmd > buf ) with whitespace before the closing paren", () => {
+      expect(JSON.parse(parse`echo $(echo foo > ${buffer} )`)).toEqual(echoOfSubst(echoFooToBuffer));
+    });
+
+    test('"$(cmd > buf)" quoted', () => {
+      expect(JSON.parse(parse`echo "$(echo foo > ${buffer})"`)).toEqual(echoOfSubst(echoFooToBuffer, true));
+    });
+
+    test("$(cmd 2> buf)", () => {
+      expect(JSON.parse(parse`echo $(echo foo 2> ${buffer})`)).toEqual(
+        echoOfSubst({ ...echoFooToBuffer, redirect: redirect({ stderr: true }) }),
+      );
+    });
+
+    test("$(cmd < buf)", () => {
+      expect(JSON.parse(parse`echo $(cat < ${buffer})`)).toEqual(
+        echoOfSubst({ name_and_args: [{ simple: { Text: "cat" } }], redirect: redirect({ stdin: true }) }),
+      );
+    });
+
+    test("`cmd > buf`", () => {
+      expect(JSON.parse(parse`echo ${BACKTICK}echo foo > ${buffer}${BACKTICK}`)).toEqual(echoOfSubst(echoFooToBuffer));
+    });
+
+    test("$(cmd > buf) followed by more of the outer command", () => {
+      const expected = {
+        stmts: [
+          {
+            exprs: [
+              {
+                binary: {
+                  op: "And",
+                  left: echoOfSubst(echoFooToBuffer).stmts[0].exprs[0],
+                  right: {
+                    cmd: {
+                      assigns: [],
+                      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
+                      redirect: redirect({ stdout: true }),
+                      redirect_file: { jsbuf: { idx: 1 } },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+      expect(JSON.parse(parse`echo $(echo foo > ${buffer}) && echo bar > ${buffer}`)).toEqual(expected);
+    });
+  });
+
   test("cmd subst", () => {
     const expected = {
       stmts: [

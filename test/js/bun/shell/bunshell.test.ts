@@ -522,6 +522,84 @@ describe("bunshell", () => {
     );
   });
 
+  describe("redirect to a JS object inside a command substitution", () => {
+    // Used to fail to parse with: expected a command or assignment but got: "CmdSubstEnd"
+    const BACKTICK = { raw: "`" };
+
+    test.concurrent("$(cmd > buffer)", async () => {
+      const buffer = Buffer.alloc(64);
+      const { stdout } = await $`echo a $(echo hi > ${buffer}) b`;
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "a b\n",
+        buffer: "hi\n",
+      });
+    });
+
+    test.concurrent("$(cmd > buffer ) with whitespace before the closing paren", async () => {
+      const buffer = Buffer.alloc(64);
+      const { stdout } = await $`echo a $(echo hi > ${buffer} ) b`;
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "a b\n",
+        buffer: "hi\n",
+      });
+    });
+
+    test.concurrent("$(cmd 2> buffer)", async () => {
+      const buffer = Buffer.alloc(128);
+      const { stdout } = await $`echo $(${BUN} -e ${"console.log('out'); console.error('err')"} 2> ${buffer})`.env(
+        bunEnv,
+      );
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "out\n",
+        buffer: "err\n",
+      });
+    });
+
+    test.concurrent("$(cmd < buffer)", async () => {
+      const input = Buffer.from("from buffer\n");
+      const { stdout } = await $`echo got: $(cat < ${input})`;
+      expect(stdout.toString()).toEqual("got: from buffer\n");
+    });
+
+    test.concurrent('"$(cmd > buffer)" inside double quotes', async () => {
+      const buffer = new Uint8Array(64);
+      const { stdout } = await $`echo "[$(echo hi > ${buffer})]"`;
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "[]\n",
+        buffer: "hi\n",
+      });
+    });
+
+    test.concurrent("`cmd > buffer`", async () => {
+      const buffer = Buffer.alloc(64);
+      const { stdout } = await $`echo a ${BACKTICK}echo hi > ${buffer}${BACKTICK} b`;
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "a b\n",
+        buffer: "hi\n",
+      });
+    });
+
+    test.concurrent("nested: $(cmd $(cmd > buffer))", async () => {
+      const buffer = Buffer.alloc(64);
+      const { stdout } = await $`echo $(echo outer $(echo inner > ${buffer}))`;
+      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+        stdout: "outer\n",
+        buffer: "inner\n",
+      });
+    });
+
+    test.concurrent("the rest of the outer command still runs", async () => {
+      const first = Buffer.alloc(64);
+      const second = Buffer.alloc(64);
+      const { stdout } = await $`echo $(echo one > ${first}) && echo two > ${second} && echo three`;
+      expect({ stdout: stdout.toString(), first: stringifyBuffer(first), second: stringifyBuffer(second) }).toEqual({
+        stdout: "\nthree\n",
+        first: "one\n",
+        second: "two\n",
+      });
+    });
+  });
+
   test("pipeline", async () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 

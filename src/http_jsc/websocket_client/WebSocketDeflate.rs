@@ -77,9 +77,8 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
-/// Smallest raw deflate window zlib accepts. Its output fits a peer's 8-bit
-/// window too: match distances are at most `w_size - MIN_LOOKAHEAD` = 250.
-const MIN_DEFLATE_WINDOW_BITS: u8 = 9;
+/// Still decodable by an 8-bit peer: deflate's match distances stay <= 512 - MIN_LOOKAHEAD = 250.
+const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
@@ -111,7 +110,9 @@ pub enum CompressError {
 impl PerMessageDeflate {
     pub(crate) fn init(params: Params) -> Box<Self> {
         // Negative window bits select raw DEFLATE, as required by RFC 7692.
-        let compress_window_bits = params.client_max_window_bits.max(MIN_DEFLATE_WINDOW_BITS);
+        let compress_window_bits = params
+            .client_max_window_bits
+            .max(ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS);
         let compress_stream = handle_oom(zlib::DeflateEncoder::new(
             Z_DEFAULT_COMPRESSION,
             -(compress_window_bits as c_int),

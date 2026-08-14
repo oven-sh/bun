@@ -1872,10 +1872,10 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
 void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     globalObject->m_nodeVMDontContextify.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_dont_contextify"_s));
+        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_context_no_contextify"_s));
     });
     globalObject->m_nodeVMUseMainContextDefaultLoader.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_use_main_context_default_loader"_s));
+        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_dynamic_import_main_context_default"_s));
     });
 
     globalObject->m_NodeVMScriptClassStructure.initLater(

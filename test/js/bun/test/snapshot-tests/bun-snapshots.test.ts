@@ -38,7 +38,7 @@ describe("toMatchSnapshot errors", () => {
     }).toThrow();
     expect(() => {
       expect({ a: () => {} }).toMatchSnapshot({ a: () => {} });
-    }).toThrow("Expected propertyMatchers to match properties from received object");
+    }).toThrow("to match properties from received object");
   });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {

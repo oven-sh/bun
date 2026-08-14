@@ -220,7 +220,6 @@ impl Drop for Walker {
 /// `self` must have been opened with `OpenDirOptions{.iterate = true}`.
 /// Must call `Walker.deinit` when done.
 /// The order of returned file system entries is undefined.
-/// `self` will not be closed after walking it.
 /// Walk `self_`, which the caller keeps open for the walker's lifetime.
 pub fn walk(
     self_: Fd,

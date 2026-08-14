@@ -1,5 +1,5 @@
 use bun_collections::ByteVecExt;
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, ScopedRef};
 use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
@@ -199,17 +199,37 @@ impl FetchRequestBodySink {
         ))
     }
 
+    /// JS entry: only a JS-pump sink has a JS object, and its release belongs
+    /// to the pump promise, so there is never a ref to release here.
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+        let release = self.end_and_take_task(err.map(StreamError::Error));
+        debug_assert!(release.is_none());
         bun_sys::Result::Ok(())
     }
 
     /// Native-path terminator called from `SinkHandle::end`. Carries the full
     /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
     /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
-    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
-        if self.ended {
+    /// Raw pointer like `NetworkSink::end_from_stream`: the release may free
+    /// the tasklet and, through `clear_sink`, this sink.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
+        // SAFETY: `this` is the live sink behind the handle; the borrow is
+        // scoped to this call and nothing touches `*this` after it.
+        let Some((task, err_js)) = (unsafe { (*this).end_and_take_task(err) }) else {
             return;
+        };
+        FetchTasklet::write_end_request(task.as_ptr(), err_js);
+    }
+
+    /// Marks the sink ended; for a native source, hands back the tasklet ref
+    /// `start_request_stream` took and the error to end the request with.
+    fn end_and_take_task(
+        &mut self,
+        err: Option<StreamError>,
+    ) -> Option<(BackRef<FetchTasklet, bun_ptr::Mut>, Option<JSValue>)> {
+        if self.ended {
+            return None;
         }
         self.ended = true;
         if matches!(
@@ -220,22 +240,16 @@ impl FetchRequestBodySink {
             // field; detach (not cancel) so we don't re-enter the source while
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
-            if let Some(mut task) = self.task.take() {
-                let err_js = err.map(|e| e.to_js(&task.global_this));
-                // SAFETY: the `+1` taken in `start_request_stream` keeps the
-                // tasklet live while `task` was `Some`; `write_end_request` is
-                // the balancing release and may free `*self` via `clear_sink`,
-                // so do not touch `self` afterwards.
-                unsafe { task.get_mut() }.write_end_request(err_js);
-            }
-            return;
+            let task = self.task.take()?;
+            let err_js = err.map(|e| e.to_js(&task.global_this));
+            return Some((task, err_js));
         }
-        // JS pump path: the assign_to_stream result handler is the single balancing release.
         let sys_err = match err {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
         self.source.close(sys_err);
+        None
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -253,7 +267,9 @@ impl FetchRequestBodySink {
         if let Some(task) = task {
             // Balances the `ref_()` taken in `start_request_stream` when the
             // assign_to_stream-result handler never ran to release it.
-            FetchTasklet::deref(task.as_ptr());
+            // SAFETY: that handler clears `task` before releasing, so `task`
+            // being `Some` means the ref is still held and the tasklet live.
+            drop(unsafe { ScopedRef::<FetchTasklet>::adopt(task.as_ptr()) });
         }
     }
 

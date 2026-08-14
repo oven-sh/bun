@@ -349,7 +349,7 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => {
-            cast!(FetchTasklet).on_progress_update()?;
+            FetchTasklet::on_progress_update(cast_ptr!(FetchTasklet))?;
         }
         task_tag::FetchTaskletDeinit => {
             // SAFETY: posted by `deref_from_thread` with the last ref.

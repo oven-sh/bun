@@ -13,6 +13,9 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject*);
+
 namespace Bun {
 using namespace JSC;
 
@@ -63,6 +66,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         auto* exception = scope.exception();
         (void)scope.tryClearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        Bun__VM__keepTerminationRequestWithPendingException(globalObject);
         hadException = true;
     }
 

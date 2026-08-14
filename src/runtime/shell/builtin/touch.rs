@@ -265,13 +265,10 @@ impl ShellTouchTask {
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
-        // We have to give an absolute path. An operand that does not fit the
-        // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
-        // for it like for any other operand.
+        // We have to give an absolute path; however long, the OS gets it whole.
         let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Re-terminate (`filepath` is the bare argv bytes without the
-            // trailing NUL).
+            // Re-terminate: `filepath` is the bare argv bytes without a trailing NUL.
             resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
         } else {
             resolve_path::join_z_spill::<platform::Auto>(

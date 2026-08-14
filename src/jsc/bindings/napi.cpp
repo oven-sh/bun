@@ -141,8 +141,7 @@ private:
 
 } // namespace
 
-// NAPI_PREAMBLE for the pure value constructors/accessors that Node gates with CHECK_ENV only: they
-// keep working while an exception is pending, which node-addon-api relies on to build its Error.
+// NAPI_PREAMBLE for what Node gates with CHECK_ENV only: callable while an exception is pending.
 #define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                      \
     NAPI_LOG_CURRENT_FUNCTION;                                                    \
     NAPI_CHECK_ARG(_env, _env);                                                   \

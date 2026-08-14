@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows } from "harness";
-import { BundlerTestInput, itBundled, MappingSnapshot } from "./expectBundled";
+import { isWindows } from "harness";
+import { BundlerTestInput, expectBundled, itBundled, MappingSnapshot } from "./expectBundled";
 
 // Every case in this file bundles the same two files. out/entry.js is:
 //
@@ -35,36 +35,24 @@ function withMapping(mapping: MappingSnapshot): Partial<BundlerTestInput> {
   return { snapshotSourceMap: { "entry.js.map": { files, mappings: [mapping] } } };
 }
 
-// Snapshots that disagree with the emitted source map, and what their failure
-// has to say. The quoted text does exist at each claimed generated position,
-// which used to be the only thing `mappings` checked.
-const rejected: Record<string, { opts: Partial<BundlerTestInput>; output: string[] }> = {
+// Source map checks that have to fail, and how each failure has to start. The
+// quoted text does exist at each claimed generated position, which used to be
+// the only thing `mappings` checked.
+const rejected: Record<string, { opts: Partial<BundlerTestInput>; error: string }> = {
   // Generated line 8 also starts with `console`, but entry.ts:2 maps to line 7.
   WrongLine: {
     opts: withMapping(["entry.ts:2:'console'", "8:0:console"]),
-    output: [
-      "entry.js.map: generated position of entry.ts:2:'console'",
-      'Expected: "8:0:console"',
-      'Received: "7:0:console"',
-    ],
+    error: `entry.js.map: generated position of entry.ts:2:'console'\n\nExpected: "8:0:console"\nReceived: "7:0:console"`,
   },
   WrongText: {
     opts: withMapping(["entry.ts:2:'console'", "7:0:nope"]),
-    output: [
-      "entry.js.map: generated position of entry.ts:2:'console'",
-      'Expected: "7:0:nope"',
-      'Received: "7:0:cons"',
-    ],
+    error: `entry.js.map: generated position of entry.ts:2:'console'\n\nExpected: "7:0:nope"\nReceived: "7:0:cons"`,
   },
   // Generated line 1 is the `// greet.ts` comment; nothing in greet.ts:1 (also
   // a comment) is mapped at all.
   Unmapped: {
     opts: withMapping(["greet.ts:1:'greets'", "1:3:greet"]),
-    output: [
-      "entry.js.map: generated position of greet.ts:1:'greets'",
-      'Expected: "1:3:greet"',
-      'Received: "unmapped"',
-    ],
+    error: `entry.js.map: generated position of greet.ts:1:'greets'\n\nExpected: "1:3:greet"\nReceived: "unmapped"`,
   },
   // runtimeFiles are written after bundling, so the map's sourcesContent no
   // longer matches greet.ts on disk.
@@ -73,20 +61,24 @@ const rejected: Record<string, { opts: Partial<BundlerTestInput>; output: string
       snapshotSourceMap: { "entry.js.map": { files } },
       runtimeFiles: { "/greet.ts": `export function greet() {}` },
     },
-    output: ["entry.js.map: sourcesContent of ../greet.ts"],
+    error: "entry.js.map: sourcesContent of ../greet.ts\n",
+  },
+  // Every external source map is checked for one generated position that maps
+  // to two source positions. "AACA" adds a segment at the column of the last
+  // segment on generated line 8 that points one source line further down.
+  DuplicateMapping: {
+    opts: {
+      onAfterBundle(api) {
+        const map = JSON.parse(api.readFile("out/entry.js.map"));
+        map.mappings = map.mappings.replace(/;*$/, ",AACA");
+        api.writeFile("out/entry.js.map", JSON.stringify(map));
+      },
+    },
+    error: "Duplicate mapping in source-map for 8:24\n8:24 -> 3:24 [/entry.ts]\n8:24 -> 4:24 [/entry.ts]",
   },
 };
-const CHILD_ENV = "BUN_BUNDLER_TEST_REJECTED_SNAPSHOTS";
 
 describe("bundler", () => {
-  if (process.env[CHILD_ENV]) {
-    // Spawned by the test below: only register the cases that have to fail.
-    for (const [name, { opts }] of Object.entries(rejected)) {
-      itBundled(`harness/SnapshotSourceMap${name}`, { ...bundle, ...opts });
-    }
-    return;
-  }
-
   itBundled("harness/SnapshotSourceMap", {
     ...bundle,
     snapshotSourceMap: {
@@ -102,32 +94,23 @@ describe("bundler", () => {
     },
   });
 
-  // itBundled() registers nothing on Windows yet: expectBundled's "test/bundler/"
-  // stack check never matches backslash paths, so the child would have nothing to fail.
-  test.skipIf(isWindows)(
-    "snapshotSourceMap rejects snapshots the emitted source map disagrees with",
-    async () => {
-      const env: Record<string, string | undefined> = { ...bunEnv, [CHILD_ENV]: "1" };
-      // bunEnv spreads process.env; an ambient filter would keep the child from registering its cases.
-      delete env.BUN_BUNDLER_TEST_FILTER;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--timeout=60000", import.meta.path],
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
+  // expectBundled's "test/bundler/" stack check never matches backslash paths, so
+  // it throws before bundling anything on Windows (the itBundled case above is
+  // silently dropped there for the same reason).
+  describe.skipIf(isWindows)("rejects", () => {
+    for (const [name, { opts, error }] of Object.entries(rejected)) {
+      const id = `harness/SnapshotSourceMap${name}`;
+      test(id, async () => {
+        let message = "<expectBundled() passed>";
+        try {
+          // ignoreFilter: an ambient BUN_BUNDLER_TEST_FILTER must not turn these into no-ops.
+          await expectBundled(id, { ...bundle, ...opts }, false, true);
+        } catch (e: any) {
+          // Expected/Received are colored when running in a terminal.
+          message = Bun.stripANSI(e.message);
+        }
+        expect(message).toStartWith(error);
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const output = stdout + stderr;
-
-      for (const [name, { output: lines }] of Object.entries(rejected)) {
-        expect(output).toContain(`(fail) bundler > harness/SnapshotSourceMap${name}`);
-        for (const line of lines) expect(output).toContain(line);
-      }
-      expect(output).toContain(" 0 pass\n");
-      expect(output).toContain(` ${Object.keys(rejected).length} fail\n`);
-      expect(exitCode).toBe(1);
-    },
-    // A debug build spends a few seconds just starting the child and importing the harness in it.
-    isDebug ? 60_000 : undefined,
-  );
+    }
+  });
 });

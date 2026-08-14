@@ -466,7 +466,7 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
-function expectBundled(
+export function expectBundled(
   id: string,
   opts: BundlerTestInput,
   dryRun = false,
@@ -1654,8 +1654,8 @@ for (const [key, blob] of build.outputs) {
 
               const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
               if (mappedLocations.has(loc_key)) {
-                const fmtLoc = (loc: any) =>
-                  `${loc.generatedLine}:${m.generatedColumn} -> ${m.originalLine}:${m.originalColumn} [${m.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
+                const fmtLoc = (loc: typeof m) =>
+                  `${loc.generatedLine}:${loc.generatedColumn} -> ${loc.originalLine}:${loc.originalColumn} [${loc.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
 
                 const a = fmtLoc(mappedLocations.get(loc_key));
                 const b = fmtLoc(m);

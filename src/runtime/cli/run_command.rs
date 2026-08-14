@@ -1091,7 +1091,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
 
         Run {
             ctx,
@@ -1280,7 +1280,7 @@ impl Run<'_> {
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // ── CPU profiler ────────────────────────────────────────────────────
@@ -1448,7 +1448,7 @@ impl Run<'_> {
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     // The core run-loop below does the actual waiting.
-                    if vm.hot_reload != 0 || handled {
+                    if vm.hot_reload != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.

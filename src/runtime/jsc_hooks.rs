@@ -3505,13 +3505,9 @@ fn transpile_source_code_inner(
         // .sqlite / .sqlite_embedded
         // ────────────────────────────────────────────────────────────────────
         L::Sqlite | L::SqliteEmbedded => {
-            // The low-tier
-            // `VirtualMachine.hot_reload` slot is a raw `u8`; compare against
-            // the real `HotReload` enum discriminant (`!= 0` would also match
-            // `.watch`, which is wrong).
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             let hot =
-                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot as u8;
+                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {

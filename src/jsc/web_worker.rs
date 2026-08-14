@@ -62,8 +62,8 @@ pub struct WebWorker {
     /// **Parent thread only** (`child_workers`, `parent_poll_ref`); the worker
     /// thread never dereferences it — what it needs was copied below.
     parent: *mut VirtualMachine,
-    standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    hot_reload: u8,
+    /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
+    hot_reload: crate::virtual_machine::HotReload,
     /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
     /// a nested worker parked on a post to its worker parent would keep that
@@ -388,7 +388,6 @@ impl WebWorker {
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             messaging_proxy: proxy,
             parent,
-            standalone_module_graph: parent_ref.standalone_module_graph,
             hot_reload: parent_ref.hot_reload,
             arm_test_gate: cfg!(debug_assertions)
                 && parent_ref.is_main_thread()
@@ -579,7 +578,7 @@ impl WebWorker {
     }
 
     #[inline]
-    pub(crate) fn hot_reload(&self) -> u8 {
+    pub(crate) fn hot_reload(&self) -> crate::virtual_machine::HotReload {
         self.hot_reload
     }
 
@@ -699,7 +698,7 @@ impl WebWorker {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
-                graph: self.standalone_module_graph,
+                graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
         )?;
@@ -744,7 +743,7 @@ impl WebWorker {
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
-            if let Some(graph) = self.standalone_module_graph {
+            if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
         }

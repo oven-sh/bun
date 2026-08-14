@@ -209,9 +209,8 @@ pub struct VirtualMachine {
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // LAYERING: real type is `bun_runtime::cli::Command::HotReload` (forward
-    // dep); stored as its `u8` repr (see `HOT_RELOAD_*` constants).
-    pub hot_reload: u8,
+    /// `--hot` / `--watch` mode this VM runs under.
+    pub hot_reload: HotReload,
     pub jsc_vm: *mut VM,
 
     /// hide bun:wrap from stack traces
@@ -405,8 +404,19 @@ unsafe extern "C" {
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
 
-pub const HOT_RELOAD_HOT: u8 = 1;
-pub const HOT_RELOAD_WATCH: u8 = 2;
+pub use bun_options_types::context::HotReload;
+
+/// The `bun build --compile` executable's embedded module graph, if this
+/// process is one: set when the first VM is created with it, the same for
+/// every VM after.
+static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<
+    &'static dyn bun_resolver::StandaloneModuleGraph,
+> = std::sync::OnceLock::new();
+
+/// See [`STANDALONE_MODULE_GRAPH`]. Any thread.
+pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph> {
+    STANDALONE_MODULE_GRAPH.get().copied()
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
@@ -1564,7 +1574,7 @@ impl VirtualMachine {
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
-        if self.hot_reload != HOT_RELOAD_HOT {
+        if self.hot_reload != HotReload::Hot {
             return None;
         }
         Some(self.rare_data().hot_map())
@@ -2469,6 +2479,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
             addr_of_mut!((*vm).channel_ref).write(Default::default());
+            if let Some(graph) = opts.graph {
+                let _ = STANDALONE_MODULE_GRAPH.set(graph);
+            }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
@@ -3780,7 +3793,7 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
-        if self.hot_reload == HOT_RELOAD_WATCH {
+        if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state), and
             // emit the --watch-kill-signal JS handlers first, like node.
@@ -4899,7 +4912,7 @@ impl VirtualMachine {
 
     /// Tracks a listening socket so watch-mode reloads can close it.
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data().add_listening_socket_for_watch_mode(socket);
@@ -4907,7 +4920,7 @@ impl VirtualMachine {
 
     /// Stops tracking a watch-mode listening socket.
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data()

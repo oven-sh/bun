@@ -399,8 +399,15 @@ cleanup() {
   fi
   # The redirected socket dir (see the signing block) holds only unix
   # sockets, never key material; remove it after the agent is dead.
-  if [ -d "${gpg_socket_dir}" ]; then
+  # Then best-effort reap siblings leaked by SIGKILL'd prior runs in
+  # the same base dir, since a kill skips this trap the same way it
+  # skips the scratch-dir one. Age-gated to an hour so a concurrently
+  # running sibling's live socket dir is never touched: a signing run
+  # lasts seconds, so any hour-old dir is garbage. `-mmin` is
+  # supported by GNU, BSD/macOS, and busybox find.
+  if [ -n "${gpg_socket_dir}" ]; then
     rm -rf "${gpg_socket_dir}" || true
+    find "${gpg_socket_dir%/*}" -maxdepth 1 -name '.bun-sign-gpg.*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
   fi
   if [ "${restore_failed}" -eq 1 ]; then
     # Preserve scratch_dir as a recovery surface. The .bak files sit
@@ -783,14 +790,12 @@ chmod 700 "${gnupghome}"
 # shared /tmp fallback stays private. If no candidate works, skip the
 # redirect and take our chances with the in-home sockets (status quo).
 #
-# Deliberate asymmetry with the ${scratch_prefix} orphan sweep: a
-# SIGKILL'd run leaks its socket dir until the OS tmp reaper ages it
-# out, and we do NOT sweep for strays here. The base dirs are
-# host-global (concurrent invocations against different staging dirs
-# each own one, and the test suite runs this helper concurrently), so
-# a blanket rm would race a live sibling, and the leak is bounded to
-# a few dead socket inodes with no recoverable state — nothing like
-# the .bak restore that justifies the scratch-dir sweep.
+# A SIGKILL'd run leaks its socket dir (the EXIT trap is skipped, and
+# unlike ${scratch_prefix} there is no startup sweep here: the base
+# dirs are host-global and concurrently shared, so an unconditional rm
+# would race a live sibling). cleanup() instead does a best-effort
+# age-gated reap of hour-old sibling dirs — old enough that no live
+# run can be touched, frequent enough that strays never accumulate.
 gpg_socket_dir=""
 for _sock_base in "${TMPDIR:-}" "${HOME:-}" /tmp; do
   if [ -z "${_sock_base}" ] || ! [ -d "${_sock_base}" ]; then

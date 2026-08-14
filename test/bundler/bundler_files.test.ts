@@ -200,7 +200,99 @@ describe("bundler files option", () => {
     expect(result.outputs.length).toBe(1);
 
     const output = await result.outputs[0].text();
-    expect(output).toContain("Hello JSX");
+    expect(output).toContain('h("div", null, "Hello JSX")');
+    expect(output).not.toContain("jsxDEV");
+  });
+
+  test("jsx option applies to an in-memory entry point, not only to in-memory imports", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.jsx"],
+      files: {
+        "/entry.jsx": `
+          import { child, childFragment } from "./child.jsx";
+          export const entry = <div>{child}{childFragment}</div>;
+          export const entryFragment = <>entry</>;
+        `,
+        "/child.jsx": `
+          export const child = <span>child</span>;
+          export const childFragment = <>child</>;
+        `,
+      },
+      jsx: {
+        runtime: "classic",
+        factory: "myFactory",
+        fragment: "MyFragment",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    // imported in-memory file
+    expect(output).toContain('myFactory("span", null, "child")');
+    expect(output).toContain('myFactory(MyFragment, null, "child")');
+    // in-memory entry point itself
+    expect(output).toContain('myFactory("div", null, child, childFragment)');
+    expect(output).toContain('myFactory(MyFragment, null, "entry")');
+    expect(output).not.toContain("jsxDEV");
+    expect(output).not.toContain("jsx-dev-runtime");
+  });
+
+  test("jsx.importSource and jsx.development apply to an in-memory entry point", async () => {
+    const files = {
+      "/entry.jsx": `export const entry = <div>entry</div>;`,
+    };
+
+    const dev = await Bun.build({
+      entrypoints: ["/entry.jsx"],
+      files,
+      jsx: { runtime: "automatic", importSource: "my-jsx-lib" },
+      external: ["my-jsx-lib/*"],
+    });
+    expect(dev.success).toBe(true);
+    expect(await dev.outputs[0].text()).toContain('import { jsxDEV } from "my-jsx-lib/jsx-dev-runtime";');
+
+    const prod = await Bun.build({
+      entrypoints: ["/entry.jsx"],
+      files,
+      jsx: { runtime: "automatic", importSource: "my-jsx-lib", development: false },
+      external: ["my-jsx-lib/*"],
+    });
+    expect(prod.success).toBe(true);
+    expect(await prod.outputs[0].text()).toContain('import { jsx } from "my-jsx-lib/jsx-runtime";');
+  });
+
+  test("jsx option applies to an in-memory import that an onResolve plugin declined", async () => {
+    let resolveCalled = false;
+
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `export { child } from "./child.jsx";`,
+        "/child.jsx": `export const child = <span>child</span>;`,
+      },
+      jsx: {
+        runtime: "classic",
+        factory: "myFactory",
+        fragment: "MyFragment",
+      },
+      plugins: [
+        {
+          name: "decline",
+          setup(build) {
+            build.onResolve({ filter: /child\.jsx$/ }, () => {
+              resolveCalled = true;
+              return undefined;
+            });
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(resolveCalled).toBe(true);
+    const output = await result.outputs[0].text();
+    expect(output).toContain('myFactory("span", null, "child")');
+    expect(output).not.toContain("jsxDEV");
   });
 
   test("in-memory file with Blob content", async () => {

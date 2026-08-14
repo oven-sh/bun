@@ -922,9 +922,15 @@ pub mod bv2_impl {
                 /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
                 /// (lives for the entire build pass) instead of the map's key
                 /// storage.
+                ///
+                /// `jsx` is the configured pragma of the transpiler the file is
+                /// bundled with. The resolver fills `Result.jsx` from its options
+                /// for on-disk files and `ParseTask::init` parses with whatever the
+                /// `Result` carries, so a virtual file has to carry it too.
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
+                    jsx: &crate::options::jsx::Pragma,
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
@@ -946,7 +952,7 @@ pub mod bv2_impl {
                     // key, not the parameter).
                     #[cfg(not(windows))]
                     if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
+                        return Some(Self::result_for_key(dupe(key.as_ref()), jsx));
                     }
                     #[cfg(windows)]
                     {
@@ -954,7 +960,7 @@ pub mod bv2_impl {
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                         if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
+                            return Some(Self::result_for_key(dupe(key.as_ref()), jsx));
                         }
                     }
 
@@ -1017,7 +1023,7 @@ pub mod bv2_impl {
                         }
                         let joined = &buf[0..joined_len];
                         if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
+                            return Some(Self::result_for_key(dupe(key.as_ref()), jsx));
                         }
                     }
 
@@ -1030,12 +1036,16 @@ pub mod bv2_impl {
                 /// the resulting `Path<'static>` borrows arena memory rather than
                 /// forging a `'static` from a map borrow.
                 #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
+                fn result_for_key(
+                    key: &'static [u8],
+                    jsx: &crate::options::jsx::Pragma,
+                ) -> bun_resolver::Result {
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
+                        jsx: jsx.clone(),
                         module_type: crate::options::ModuleType::Unknown,
                         ..Default::default()
                     }
@@ -2250,6 +2260,8 @@ pub mod bv2_impl {
             if let Some(file_map) = self.file_map {
                 if let Some(_file_map_result) = file_map.resolve(
                     self.arena(),
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &(*transpiler).options.jsx },
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
@@ -3064,8 +3076,12 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
-                    {
+                    if let Some(file_map_result) = file_map.resolve(
+                        self.arena(),
+                        &self.transpiler.options.jsx,
+                        b"",
+                        entry_point,
+                    ) {
                         let _ = self.enqueue_entry_item(
                             &mut { file_map_result },
                             true,
@@ -6164,9 +6180,12 @@ pub mod bv2_impl {
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
+                    if let Some(_file_map_result) = file_map.resolve(
+                        self.arena(),
+                        &transpiler.options.jsx,
+                        source.path.text,
+                        import_record.path.text,
+                    ) {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {

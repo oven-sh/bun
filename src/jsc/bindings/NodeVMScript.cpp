@@ -31,27 +31,6 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
-        // Validate contextName and contextOrigin are strings
-        auto contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (contextNameOpt) {
-            if (!contextNameOpt.isUndefined() && !contextNameOpt.isString()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextName"_s, "string"_s, contextNameOpt);
-                return false;
-            }
-            any = true;
-        }
-
-        auto contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (contextOriginOpt) {
-            if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextOrigin"_s, "string"_s, contextOriginOpt);
-                return false;
-            }
-            any = true;
-        }
-
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
             RETURN_IF_EXCEPTION(scope, false);
             any = true;
@@ -642,7 +621,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
+    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, runInNewContextOptionKeys, &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;

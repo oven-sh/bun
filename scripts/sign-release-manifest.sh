@@ -772,18 +772,35 @@ chmod 700 "${gnupghome}"
 # key import exits 2 before any signing happens. GnuPG >= 2.1.13
 # supports per-socket redirect files ("%Assuan%" + "socket=<path>"
 # placed at the in-home socket path), so bind the sockets in a short
-# mktemp dir under /tmp instead. The redirect files and socket dir
-# carry no key material — the keyring itself stays inside
-# ${scratch_dir} — so this does not weaken the "secrets never touch
-# /tmp" property documented above. If /tmp is unwritable, skip the
+# mktemp dir instead. Base-dir candidates in preference order: TMPDIR
+# (user-private on most modern systems), HOME, then /tmp — but only a
+# candidate SHORT enough to matter: a CI TMPDIR pointing into the deep
+# workspace is the very path that overflowed, so each candidate must
+# leave the longest socket path ("/.bun-sign-gpg.XXXXXXXX/" +
+# "S.gpg-agent.browser" = 44 bytes) under the cap. The redirect files
+# and socket dir carry no key material — the keyring itself stays
+# inside ${scratch_dir} — and mktemp creates the dir mode 700, so a
+# shared /tmp fallback stays private. If no candidate works, skip the
 # redirect and take our chances with the in-home sockets (status quo).
-if gpg_socket_dir=$(mktemp -d /tmp/.bun-sign-gpg.XXXXXXXX 2>/dev/null); then
+gpg_socket_dir=""
+for _sock_base in "${TMPDIR:-}" "${HOME:-}" /tmp; do
+  if [ -z "${_sock_base}" ] || ! [ -d "${_sock_base}" ]; then
+    continue
+  fi
+  if [ "${#_sock_base}" -gt 60 ]; then
+    continue
+  fi
+  if gpg_socket_dir=$(mktemp -d "${_sock_base}/.bun-sign-gpg.XXXXXXXX" 2>/dev/null); then
+    break
+  fi
+  gpg_socket_dir=""
+done
+unset -v _sock_base
+if [ -n "${gpg_socket_dir}" ]; then
   for _sock in S.gpg-agent S.gpg-agent.extra S.gpg-agent.browser S.gpg-agent.ssh S.keyboxd S.scdaemon; do
     printf '%%Assuan%%\nsocket=%s\n' "${gpg_socket_dir}/${_sock}" > "${gnupghome}/${_sock}"
   done
   unset -v _sock
-else
-  gpg_socket_dir=""
 fi
 
 GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"

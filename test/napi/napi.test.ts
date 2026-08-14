@@ -1459,6 +1459,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     const fixture = join(__dirname, "napi-app/vm-teardown-finalizers.js");
     const kinds = ["add_finalizer", "add_finalizer_ref", "external", "empty_external_buffer"];
 
+    // The ASAN lanes export BUN_DESTRUCT_VM_ON_EXIT and LSan settings that the
+    // children would inherit. The variants below choose which VM is destroyed
+    // themselves, and the fixture's pins are never deleted (nothing of the
+    // addon's runs after the point they have to survive), so they keep its
+    // NapiEnv and the VM handle ref it holds alive, which LSan reports once the
+    // Worker is gone.
+    const { BUN_DESTRUCT_VM_ON_EXIT: _destruct, BUN_INSPECT_CONNECT_TO: _inspect, ...inheritedEnv } = bunEnv;
+    const fixtureEnv = (...asanOptions: string[]) => ({
+      ...inheritedEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0", ...asanOptions].filter(Boolean).join(":"),
+    });
+
     const vms = [
       { vm: "a worker_threads Worker", flags: [] as string[], extraEnv: {} as Record<string, string> },
       { vm: "the main thread", flags: ["--main-thread"], extraEnv: { BUN_DESTRUCT_VM_ON_EXIT: "1" } },
@@ -1468,7 +1480,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       async ({ flags, extraEnv }) => {
         await using proc = spawn({
           cmd: [bunExe(), fixture, "test_vm_teardown_finalizers", kinds.join(","), ...flags],
-          env: { ...bunEnv, ...extraEnv },
+          env: { ...fixtureEnv(), ...extraEnv },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1494,7 +1506,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it.each(["external", "add_finalizer"])(
       "an experimental module's %s finalizer is told it is running from GC",
       async kind => {
-        const { BUN_INSPECT_CONNECT_TO: _, ...env } = bunEnv;
         await using proc = spawn({
           // The trailing flag makes a debug build's crash handler skip its slow
           // symbolized backtrace; the fixture ignores it.
@@ -1505,11 +1516,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             kind,
             "--debug-crash-handler-use-trace-string",
           ],
-          env: {
-            ...env,
-            BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-            ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
-          },
+          env: { ...fixtureEnv("disable_coredump=1", "symbolize=0"), BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
           stdout: "pipe",
           stderr: "pipe",
         });

@@ -12,8 +12,14 @@
 //!      exports, everything else via `LoadLibraryA` + `GetProcAddress`
 //!   3. `VirtualProtect` each section to its shipped protection, then
 //!      `FlushInstructionCache`
-//!   4. `RtlAddFunctionTable` for the addon's `.pdata`
-//!   5. call the addon's `DllMain(DLL_PROCESS_ATTACH)`
+//!   4. call the addon's `DllMain(DLL_PROCESS_ATTACH)`
+//!
+//! Unwind tables need no runtime step: Windows only consults the exception
+//! directory of the image containing a pc (`RtlAddFunctionTable` tables are for
+//! code outside every image), so the build merged the addon's entries into
+//! bun.exe's directory and pointed every exception handler they name at
+//! `Bun__linkedAddonExceptionHandler`, which gives the real handler the addon's
+//! own image base and function entry, as it would have had under `LoadLibrary`.
 //!
 //! Addons with real `__declspec(thread)` storage are never merged: no userspace
 //! API hands out a loader TLS slot. Neither are addons importing
@@ -35,7 +41,8 @@ use core::mem::size_of;
 
 use bun_core::scoped_log;
 use bun_exe_format::pe::{
-    Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_MAGIC, LINKED_VERSION,
+    Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_INDEX_ENTRY_SIZE,
+    LINKED_MAGIC, LINKED_VERSION,
 };
 use bun_threading::Mutex;
 use bun_windows_sys::externs::kernel32;
@@ -87,14 +94,12 @@ enum BindError {
     BadReloc,
     BadImport,
     BadSection,
-    BadPdata,
     NoBlob,
     NoModuleHandle,
     ImportNameTooLong,
     ImportDllMissing,
     ImportSymbolMissing,
     VirtualProtectFailed,
-    RtlAddFunctionTableFailed,
     DllMainFalse,
 }
 
@@ -181,8 +186,6 @@ struct Entry {
     image_size: u32,
     entry_point: u32,
     preferred_base: u64,
-    pdata_rva: u32,
-    pdata_count: u32,
     export_register: u32,
     export_api_version: u32,
     /// Blob offset of the section list: u32 count, then `SECTION_INFO_SIZE` bytes each.
@@ -264,6 +267,12 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
         return Err(BindError::BadVersion);
     }
     let count = r.u32_()?;
+    // The handler index is only read by `Bun__linkedAddonExceptionHandler`.
+    r.skip(
+        (count as usize)
+            .checked_mul(LINKED_INDEX_ENTRY_SIZE)
+            .ok_or(BindError::Truncated)?,
+    )?;
     // No `reserve(count)`: a corrupt count should hit `Truncated`, not abort on OOM.
     for _ in 0..count {
         let name = r.str_()?;
@@ -271,8 +280,6 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
         let image_size = r.u32_()?;
         let entry_point = r.u32_()?;
         let preferred_base = r.u64_()?;
-        let pdata_rva = r.u32_()?;
-        let pdata_count = r.u32_()?;
         let export_register = r.u32_()?;
         let export_api_version = r.u32_()?;
         let sections_pos = r.pos;
@@ -301,8 +308,6 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
             image_size,
             entry_point,
             preferred_base,
-            pdata_rva,
-            pdata_count,
             export_register,
             export_api_version,
             sections_pos,
@@ -393,29 +398,6 @@ fn bind(entry: &Entry) -> Result<Resolved, BindError> {
             base.add(entry.rva_base as usize).cast(),
             entry.image_size as usize,
         );
-    }
-
-    // BaseAddress is the addon's own RVA 0: its unwind info RVAs are addon-relative.
-    if entry.pdata_count > 0 {
-        let pdata_entry_size: u64 = if cfg!(target_arch = "aarch64") { 8 } else { 12 };
-        if (entry.pdata_rva as u64) < lo
-            || entry.pdata_rva as u64 + entry.pdata_count as u64 * pdata_entry_size > hi
-        {
-            return Err(BindError::BadPdata);
-        }
-        // SAFETY: the function table points at `pdata_count` entries
-        // inside the merged addon span (checked above); BaseAddress is
-        // where the addon's RVA 0 landed.
-        if unsafe {
-            kernel32::RtlAddFunctionTable(
-                base.add(entry.pdata_rva as usize).cast(),
-                entry.pdata_count,
-                (base_addr + entry.rva_base as usize) as u64,
-            )
-        } == 0
-        {
-            return Err(BindError::RtlAddFunctionTableFailed);
-        }
     }
 
     // DllMain(DLL_PROCESS_ATTACH) runs the addon's CRT init and static constructors.
@@ -663,4 +645,114 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__linkedNodeModuleUnlock() {
     LOCK.unlock();
+}
+
+/// The leading fields of DISPATCHER_CONTEXT, which x64 and ARM64 lay out identically.
+#[repr(C)]
+pub struct DispatcherContext {
+    control_pc: u64,
+    image_base: u64,
+    function_entry: *mut u32,
+}
+
+type ExceptionRoutine =
+    unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void, *mut DispatcherContext) -> i32;
+
+const EXCEPTION_CONTINUE_SEARCH: i32 = 1;
+/// Words in an exception-directory entry: x64 RUNTIME_FUNCTION or ARM64's begin + unwind pair.
+const FUNCTION_ENTRY_WORDS: usize = if cfg!(target_arch = "aarch64") { 2 } else { 3 };
+
+struct Redirect {
+    rva_base: u32,
+    handler: u32,
+}
+
+/// Finds the handler the build displaced from the unwind info at `unwind_info` (a bun.exe RVA).
+fn find_redirect(unwind_info: u32) -> Option<Redirect> {
+    let blob = blob()?;
+    let mut r = Reader {
+        bytes: blob,
+        pos: 0,
+    };
+    if r.u32_().ok()? != LINKED_MAGIC || r.u32_().ok()? != LINKED_VERSION {
+        return None;
+    }
+    let count = r.u32_().ok()?;
+    for _ in 0..count {
+        let rva_base = r.u32_().ok()?;
+        let image_size = r.u32_().ok()?;
+        let handlers_pos = r.u32_().ok()? as usize;
+        let handler_count = r.u32_().ok()? as usize;
+        if unwind_info < rva_base || unwind_info - rva_base >= image_size {
+            continue;
+        }
+        let pair_at = |index: usize| -> Option<(u32, u32)> {
+            let mut pair = Reader {
+                bytes: blob,
+                pos: handlers_pos.checked_add(index.checked_mul(8)?)?,
+            };
+            Some((pair.u32_().ok()?, pair.u32_().ok()?))
+        };
+        let (mut lo, mut hi) = (0, handler_count);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let (key, handler) = pair_at(mid)?;
+            match key.cmp(&unwind_info) {
+                core::cmp::Ordering::Equal => return Some(Redirect { rva_base, handler }),
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+            }
+        }
+        return None;
+    }
+    None
+}
+
+/// Exported from bun.exe and installed by the build as the exception handler of every merged
+/// unwind info. Windows resolved this frame against bun.exe, so before forwarding to the addon's
+/// real handler, present the dispatch the way `LoadLibrary` would have: the addon's own image base
+/// and its function entry in addon-relative terms, which is what the handler's data refers to.
+///
+/// Runs during exception dispatch on any thread, possibly while `LOCK` is held by this thread, so
+/// it reads only the immutable blob.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
+    record: *mut c_void,
+    frame: *mut c_void,
+    context: *mut c_void,
+    dispatcher: *mut DispatcherContext,
+) -> i32 {
+    // SAFETY: Windows passes a valid DISPATCHER_CONTEXT whose FunctionEntry is the entry from the
+    // exe's exception directory (or a chained entry inside the addon) that led here; both hold
+    // FUNCTION_ENTRY_WORDS words of bun.exe RVAs.
+    let (os_image_base, os_entry) =
+        unsafe { ((*dispatcher).image_base, (*dispatcher).function_entry) };
+    let mut entry = [0u32; FUNCTION_ENTRY_WORDS];
+    for (i, word) in entry.iter_mut().enumerate() {
+        // SAFETY: as above.
+        *word = unsafe { os_entry.add(i).read_unaligned() };
+    }
+    let Some(redirect) = find_redirect(entry[FUNCTION_ENTRY_WORDS - 1]) else {
+        return EXCEPTION_CONTINUE_SEARCH;
+    };
+    for word in &mut entry {
+        *word = word.wrapping_sub(redirect.rva_base);
+    }
+    // SAFETY: the build recorded `handler` as the bun.exe RVA of the addon's original handler.
+    let handler: ExceptionRoutine =
+        unsafe { core::mem::transmute(os_image_base as usize + redirect.handler as usize) };
+    // SAFETY: `dispatcher` is valid for the duration of this call (see above); `entry` outlives the
+    // handler call and is unhooked again below unless the handler replaced the context wholesale.
+    unsafe {
+        (*dispatcher).image_base = os_image_base + redirect.rva_base as u64;
+        (*dispatcher).function_entry = entry.as_mut_ptr();
+        let disposition = handler(record, frame, context, dispatcher);
+        // ExceptionNestedException / ExceptionCollidedUnwind hand Windows a context the handler
+        // filled in itself; for the other dispositions put ours back.
+        if disposition == 0 || disposition == EXCEPTION_CONTINUE_SEARCH {
+            (*dispatcher).image_base = os_image_base;
+            (*dispatcher).function_entry = os_entry;
+        }
+        disposition
+    }
 }

@@ -13,7 +13,14 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-type Section = { name: string; virtualSize: number; virtualAddress: number; rawSize: number; characteristics: number };
+type Section = {
+  name: string;
+  virtualSize: number;
+  virtualAddress: number;
+  rawSize: number;
+  rawPtr: number;
+  characteristics: number;
+};
 
 function parsePESections(exePath: string): Section[] {
   const buf = readFileSync(exePath);
@@ -33,6 +40,7 @@ function parsePESections(exePath: string): Section[] {
       virtualSize: buf.readUInt32LE(off + 8),
       virtualAddress: buf.readUInt32LE(off + 12),
       rawSize: buf.readUInt32LE(off + 16),
+      rawPtr: buf.readUInt32LE(off + 20),
       characteristics: buf.readUInt32LE(off + 36),
     });
   }
@@ -63,6 +71,24 @@ function readSectionData(exePath: string, name: string): Buffer {
   throw new Error(`section ${name} not found`);
 }
 
+// IMAGE_DIRECTORY_ENTRY_EXCEPTION of a PE32+ file.
+function exceptionDirectory(exePath: string): { rva: number; size: number } {
+  const buf = readFileSync(exePath);
+  const dd = buf.readUInt32LE(0x3c) + 24 + 112 + 3 * 8;
+  return { rva: buf.readUInt32LE(dd), size: buf.readUInt32LE(dd + 4) };
+}
+
+function readRva(exePath: string, rva: number, length: number): Buffer {
+  const s = parsePESections(exePath).find(s => rva >= s.virtualAddress && rva + length <= s.virtualAddress + s.rawSize);
+  if (!s) throw new Error(`rva ${rva.toString(16)} is not backed by a section`);
+  const buf = readFileSync(exePath);
+  const at = s.rawPtr + (rva - s.virtualAddress);
+  return buf.subarray(at, at + length);
+}
+
+// x64 RUNTIME_FUNCTION is begin/end/unwind; ARM64 entries are begin/unwind-or-packed.
+const FUNCTION_ENTRY_SIZE = process.arch === "arm64" ? 8 : 12;
+
 // Construct the smallest PE32+ DLL that exercises every code path in
 // `pe.PEFile.addLinkedAddon`: headers, a `.text` section with one DIR64
 // relocation, an import descriptor (from `node.exe`, so the runtime would
@@ -91,6 +117,8 @@ function makeTinyPEDll(): Buffer {
   const exp_ords_off = 0x0f8;
   const exp_name_off = 0x100; // "addon.dll"
   const reg_name_off = 0x110; // "napi_register_module_v1"
+  const unwind_off = 0x140; // UNWIND_INFO (x64) or .xdata (ARM64) for the function at code_off, with a handler
+  const pdata_off = 0x180; // one exception-directory entry
   const sect_vsize = 0x200;
   const sect_rawsize = FILE_ALIGN;
 
@@ -134,6 +162,7 @@ function makeTinyPEDll(): Buffer {
   setDir(0, TEXT_RVA + exp_off, 40); // EXPORT
   setDir(1, TEXT_RVA + impdesc_off, 40); // IMPORT (2 descriptors × 20)
   setDir(5, TEXT_RVA + reloc_off, 12); // BASERELOC
+  setDir(3, TEXT_RVA + pdata_off, process.arch === "arm64" ? 8 : 12); // EXCEPTION
 
   // Section header
   const shOff = optOff + 240;
@@ -187,6 +216,24 @@ function makeTinyPEDll(): Buffer {
   body.write("addon.dll\0", exp_name_off, "latin1");
   body.write("napi_register_module_v1\0", reg_name_off, "latin1");
 
+  // Unwind data for the function at code_off, naming code_off itself as its
+  // exception handler. The merge must rebase the entry into the exe's own
+  // exception directory and swap the handler for bun's exported trampoline.
+  if (process.arch === "arm64") {
+    body.writeUInt32LE(TEXT_RVA + code_off, pdata_off); // BeginAddress
+    body.writeUInt32LE(TEXT_RVA + unwind_off, pdata_off + 4); // .xdata RVA (low bits clear)
+    // FunctionLength = 1 word, X (handler present), one code word.
+    body.writeUInt32LE(1 | (1 << 20) | (1 << 27), unwind_off);
+    body.writeUInt32LE(0xe4, unwind_off + 4); // unwind code: end
+    body.writeUInt32LE(TEXT_RVA + code_off, unwind_off + 8); // exception handler RVA
+  } else {
+    body.writeUInt32LE(TEXT_RVA + code_off, pdata_off); // BeginAddress
+    body.writeUInt32LE(TEXT_RVA + code_off + 1, pdata_off + 4); // EndAddress
+    body.writeUInt32LE(TEXT_RVA + unwind_off, pdata_off + 8); // UnwindInfoAddress
+    body[unwind_off] = 0x01 | (1 << 3); // version 1, UNW_FLAG_EHANDLER, no codes
+    body.writeUInt32LE(TEXT_RVA + code_off, unwind_off + 4); // exception handler RVA
+  }
+
   return buf;
 }
 
@@ -227,9 +274,9 @@ async function compileForWindows(
 // The `.bunL` blob's first addon name, for key-format assertions.
 function readBunLKey(exePath: string): string {
   const bunL = readSectionData(exePath, ".bunL");
-  // [u64 len]['BLNK' u32][version u32][count u32][nameLen u32][name...]
-  const nameLen = bunL.readUInt32LE(20);
-  return bunL.subarray(24, 24 + nameLen).toString("utf8");
+  // [u64 len]['BLNK' u32][version u32][count u32][16-byte index record][nameLen u32][name...]
+  const nameLen = bunL.readUInt32LE(36);
+  return bunL.subarray(40, 40 + nameLen).toString("utf8");
 }
 
 describe.skipIf(!isWindows)("bun build --compile native addon static link", () => {
@@ -272,17 +319,24 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const blobLen = Number(bunL.readBigUInt64LE(0));
       expect(blobLen).toBeGreaterThan(12);
       expect(bunL.readUInt32LE(8)).toBe(0x4b4e4c42); // 'BLNK'
-      expect(bunL.readUInt32LE(12)).toBe(1); // version
+      expect(bunL.readUInt32LE(12)).toBe(2); // version
       expect(bunL.readUInt32LE(16)).toBe(1); // one addon
-      const nameLen = bunL.readUInt32LE(20);
-      const name = bunL.subarray(24, 24 + nameLen).toString("utf8");
+      // Handler index record: rva_base, image_size, handler list offset (into the blob), count.
+      const handlersPos = bunL.readUInt32LE(28);
+      expect([bunL.readUInt32LE(20), bunL.readUInt32LE(24), bunL.readUInt32LE(32)]).toEqual([
+        bn0.virtualAddress,
+        0x2000,
+        1,
+      ]);
+      const nameLen = bunL.readUInt32LE(36);
+      const name = bunL.subarray(40, 40 + nameLen).toString("utf8");
       // toBytes() prefixes with the public $bunfs path so process.dlopen's
       // argument matches the key. The bundler may append a content hash
       // to the asset basename (default --asset-naming), so match the
       // shape rather than the exact string.
       expect(name).toMatch(/^B:\/~BUN\/root\/addon(-[0-9a-z]+)?\.node$/);
 
-      let p = 24 + nameLen;
+      let p = 40 + nameLen;
       const rvaBase = bunL.readUInt32LE(p);
       p += 4;
       const imageSize = bunL.readUInt32LE(p);
@@ -291,7 +345,6 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       p += 4;
       const preferredBase = bunL.readBigUInt64LE(p);
       p += 8;
-      p += 8; // pdata_rva + pdata_count (none in the fixture)
       const exportRegister = bunL.readUInt32LE(p);
       p += 8; // export_register + export_api_version
       const nSections = bunL.readUInt32LE(p);
@@ -345,6 +398,31 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const absSlot = bn0Data.readBigUInt64LE(0x1000 + 0x008);
       expect(absSlot).toBe(preferredBase + BigInt(bn0.virtualAddress + 0x1000));
       expect(bn0Data.readBigUInt64LE(0x1000 + 0x020)).toBe(0n);
+
+      // The addon's exception-directory entry was appended, rebased, to a copy of bun.exe's
+      // own directory, which now lives in .bunL after the blob.
+      const template = exceptionDirectory(bunExe());
+      const merged = exceptionDirectory(exe);
+      expect(merged.size).toBe(template.size + FUNCTION_ENTRY_SIZE);
+      expect(merged.rva).toBeGreaterThanOrEqual(findSection(exe, ".bunL")!.virtualAddress + 8 + blobLen);
+      expect(readRva(exe, merged.rva, template.size)).toEqual(readRva(bunExe(), template.rva, template.size));
+      const last = readRva(exe, merged.rva + template.size, FUNCTION_ENTRY_SIZE);
+      const unwindRva = bn0.virtualAddress + 0x1000 + 0x140;
+      expect(last.readUInt32LE(0)).toBe(bn0.virtualAddress + 0x1000);
+      expect(last.readUInt32LE(FUNCTION_ENTRY_SIZE - 4)).toBe(unwindRva);
+
+      // Its handler field now names bun's trampoline, and the blob records where the addon's own
+      // handler (code_off) went so the trampoline can forward to it.
+      const handlerField = process.arch === "arm64" ? 0x148 : 0x144;
+      const trampoline = bn0Data.readUInt32LE(0x1000 + handlerField);
+      expect(trampoline).not.toBe(bn0.virtualAddress + 0x1000);
+      expect(trampoline).toBeGreaterThan(0);
+      expect(trampoline).toBeLessThan(bn0.virtualAddress); // inside bun.exe proper
+      // The blob starts at section offset 8, so blob offsets are section offsets minus 8.
+      expect([bunL.readUInt32LE(8 + handlersPos), bunL.readUInt32LE(8 + handlersPos + 4)]).toEqual([
+        unwindRva,
+        bn0.virtualAddress + 0x1000,
+      ]);
     },
     timeout,
   );

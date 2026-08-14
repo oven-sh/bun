@@ -17,6 +17,11 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     };
     let name = bun_core::String::from_js(args[2], global)?;
     let name_utf8 = name.to_utf8_bytes();
+    // Stands in for the exe's exported trampoline, which a synthetic host does not have.
+    let exception_handler = match args.get(3) {
+        Some(value) if value.is_number() => value.to_u32(),
+        _ => 0,
+    };
 
     let result = JSValue::create_empty_object(global, 5);
     let put_err = |kind: &str, e: pe::Error| -> JsResult<JSValue> {
@@ -43,10 +48,11 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         Err(e) => return put_err("host", e),
     };
 
-    let linked = match host.add_linked_addon(addon_buf.byte_slice(), 0, &name_utf8) {
-        Ok(l) => l,
-        Err(e) => return put_err("addon", e),
-    };
+    let linked =
+        match host.add_linked_addon(addon_buf.byte_slice(), 0, &name_utf8, exception_handler) {
+            Ok(l) => l,
+            Err(e) => return put_err("addon", e),
+        };
     let Some(linked) = linked else {
         // Tests compare this against their input to check a skip leaves the host untouched.
         result.put(global, b"skipped", JSValue::js_boolean(true));
@@ -55,7 +61,7 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     };
 
     let meta = pe::serialize_linked_addons(core::slice::from_ref(&linked));
-    if let Err(e) = host.add_linked_addon_section(&meta) {
+    if let Err(e) = host.add_linked_addon_section(core::slice::from_ref(&linked)) {
         return put_err("bunL", e);
     }
     if let Err(e) = host.validate() {

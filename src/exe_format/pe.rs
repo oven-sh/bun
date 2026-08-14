@@ -42,6 +42,8 @@ pub enum Error {
     InvalidSectionData,
     #[error("SizeOfImageMismatch")]
     SizeOfImageMismatch,
+    #[error("BadFunctionTable")]
+    BadFunctionTable,
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables
@@ -215,6 +217,21 @@ const IMAGE_IMPORT_DESCRIPTOR_SIZE: u32 = 20;
 const IMAGE_DELAYLOAD_DESCRIPTOR_SIZE: u32 = 32;
 const IMAGE_EXPORT_DIRECTORY_SIZE: u32 = 40;
 const IMAGE_BASE_RELOCATION_SIZE: u32 = 8;
+
+const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
+
+/// Size of one exception-directory entry: x64 RUNTIME_FUNCTION or ARM64's two-word entry.
+fn function_table_entry_size(machine: u16) -> usize {
+    if machine == IMAGE_FILE_MACHINE_ARM64 {
+        8
+    } else {
+        12
+    }
+}
+
+/// Exported by bun.exe (src/symbols.def). Every exception handler named by a merged addon's
+/// unwind info is replaced with this; `LinkedNodeModule.rs` forwards to the real one.
+pub const LINKED_ADDON_EXCEPTION_HANDLER: &[u8] = b"Bun__linkedAddonExceptionHandler";
 
 // Safe access helpers for unaligned views.
 // All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
@@ -711,12 +728,22 @@ pub struct LinkedAddon {
     /// The addon's `IMAGE_BASE_RELOCATION` blocks, page RVAs rebased.
     pub relocs: Vec<u8>,
     pub imports: Vec<LinkedImportLib>,
-    /// `.pdata` location for `RtlAddFunctionTable`; zero count when absent.
-    pub pdata_rva: u32,
-    pub pdata_count: u32,
+    /// The addon's exception-directory entries rebased to bun.exe RVAs; `add_linked_addon_section`
+    /// appends them to bun.exe's own directory, which is the only table Windows consults for code
+    /// inside the exe image.
+    pub function_table: Vec<u8>,
+    /// Sorted by `unwind_info`. The unwind infos in the image now name the exported trampoline.
+    pub handlers: Vec<HandlerRedirect>,
     /// Export RVAs, zero when the addon does not export the symbol.
     pub export_register: u32, // napi_register_module_v1
     pub export_api_version: u32, // node_api_module_get_api_version_v1
+}
+
+/// Where an unwind info's original exception handler went, both as bun.exe RVAs.
+#[derive(Copy, Clone)]
+pub struct HandlerRedirect {
+    pub unwind_info: u32,
+    pub handler: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -910,12 +937,15 @@ fn read_u64_le(b: &[u8], off: usize) -> u64 {
 }
 
 impl PEFile {
+    /// `exception_handler` is this image's `LINKED_ADDON_EXCEPTION_HANDLER` export (0 if absent, which
+    /// rules out addons whose code has exception handlers).
     /// `Ok(None)`: not merged (malformed, or unsupported per LinkedNodeModule.rs); tempfile fallback.
     pub fn add_linked_addon(
         &mut self,
         addon_bytes: &[u8],
         addon_index: u32,
         virtual_path: &[u8],
+        exception_handler: u32,
     ) -> Result<Option<LinkedAddon>, Error> {
         let Ok(addon) = AddonView::init(addon_bytes) else {
             return Ok(None);
@@ -1000,24 +1030,18 @@ impl PEFile {
             }
         }
 
-        // RUNTIME_FUNCTION is 12 bytes on x64 and 8 on ARM64 (the addon's machine is the host's).
-        const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
-        let pdata_entry_size: u32 = if addon.pe.machine == IMAGE_FILE_MACHINE_ARM64 {
-            8
-        } else {
-            12
+        let Some((function_table, handlers)) =
+            collect_function_table(&addon, &mut image, rva_base, exception_handler)
+        else {
+            return Ok(None);
         };
-        let pdata_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
-        let mut pdata_rva: u32 = 0;
-        let mut pdata_count: u32 = 0;
-        if pdata_dir.size >= pdata_entry_size
-            && pdata_dir.virtual_address as u64 + pdata_dir.size as u64 <= addon_image as u64
-        {
-            pdata_rva = rva_base + pdata_dir.virtual_address;
-            pdata_count = pdata_dir.size / pdata_entry_size;
-        }
 
-        let exports = find_exports(&addon, rva_base, addon_image);
+        let mut exports = LinkedExports::default();
+        scan_exports(&addon, |name, fn_rva| match name {
+            b"napi_register_module_v1" => exports.register = rva_base + fn_rva,
+            b"node_api_module_get_api_version_v1" => exports.api_version = rva_base + fn_rva,
+            _ => {}
+        });
 
         // RW on disk; the runtime applies each section's `final_protect` once it has patched it.
         let characteristics =
@@ -1042,26 +1066,100 @@ impl PEFile {
             sections: section_infos,
             relocs,
             imports,
-            pdata_rva,
-            pdata_count,
+            function_table,
+            handlers,
             export_register: exports.register,
             export_api_version: exports.api_version,
         }))
     }
 
-    /// Appends `.bunL` as `[u64 len][blob]`; call after the addons and before `add_bun_section`.
-    pub fn add_linked_addon_section(&mut self, blob: &[u8]) -> Result<(), Error> {
-        // SAFETY: pointer from get_optional_header is bounds-checked into self.data.
-        let file_alignment = unsafe { (*self.get_optional_header_mut()?).file_alignment };
+    /// RVA of a named export of this image, if any.
+    pub fn export_rva(&self, wanted: &[u8]) -> Option<u32> {
+        let view = AddonView::init(&self.data).ok()?;
+        let mut found = None;
+        scan_exports(&view, |name, rva| {
+            if name == wanted {
+                found = Some(rva);
+            }
+        });
+        found
+    }
+
+    /// Appends `.bunL`: `[u64 len][blob]` (see `serialize_linked_addons`) followed by the exe's
+    /// exception directory with the addons' entries appended, which the directory is re-pointed at.
+    /// Call after the addons and before `add_bun_section`.
+    pub fn add_linked_addon_section(&mut self, addons: &[LinkedAddon]) -> Result<(), Error> {
+        // SAFETY: pointers from get_pe_header/get_optional_header are bounds-checked into self.data.
+        let (machine, file_alignment) = unsafe {
+            (
+                (*self.get_pe_header_mut()?).machine,
+                (*self.get_optional_header_mut()?).file_alignment,
+            )
+        };
         // This section plus the `.bun` section that follows it.
         self.reserve_section_headers(2, file_alignment)?;
         let place = self.next_section_placement()?;
 
+        let blob = serialize_linked_addons(addons);
         let mut payload = Vec::with_capacity(blob.len() + 8);
         payload.extend_from_slice(&(blob.len() as u64).to_le_bytes());
-        payload.extend_from_slice(blob);
+        payload.extend_from_slice(&blob);
+
+        let mut table = self.host_function_table(machine)?;
+        let host_entries = table.len();
+        let entry_size = function_table_entry_size(machine);
+        for a in addons {
+            if a.function_table.is_empty() {
+                continue;
+            }
+            // Each addon lies above everything merged before it, so appending keeps the table sorted;
+            // a table that is not would break bun.exe's own unwinding, hence the check.
+            if table.len() >= entry_size
+                && read_u32_le(&a.function_table, 0)
+                    <= read_u32_le(&table, table.len() - entry_size)
+            {
+                return Err(Error::BadFunctionTable);
+            }
+            table.extend_from_slice(&a.function_table);
+        }
+        let mut directory = None;
+        if table.len() > host_entries {
+            while payload.len() % 4 != 0 {
+                payload.push(0);
+            }
+            let table_rva = place.va + u32::try_from(payload.len()).map_err(|_| Error::Overflow)?;
+            let table_size = u32::try_from(table.len()).map_err(|_| Error::Overflow)?;
+            payload.extend_from_slice(&table);
+            directory = Some((table_rva, table_size));
+        }
+
         let characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
-        self.append_section(place, BUNL_SECTION_NAME, characteristics, &payload)
+        self.append_section(place, BUNL_SECTION_NAME, characteristics, &payload)?;
+
+        if let Some((virtual_address, size)) = directory {
+            let opt = self.get_optional_header_mut()?;
+            // SAFETY: opt points into self.data at validated offset.
+            unsafe {
+                let dd =
+                    ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_EXCEPTION]);
+                (*dd).virtual_address = virtual_address;
+                (*dd).size = size;
+            }
+        }
+        Ok(())
+    }
+
+    /// A copy of this image's exception directory entries (empty when it has none).
+    fn host_function_table(&self, machine: u16) -> Result<Vec<u8>, Error> {
+        let view = AddonView::init(&self.data)?;
+        let dir = view.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
+        if dir.size == 0 {
+            return Ok(Vec::new());
+        }
+        if !(dir.size as usize).is_multiple_of(function_table_entry_size(machine)) {
+            return Err(Error::BadFunctionTable);
+        }
+        Ok(view.slice_at_rva(dir.virtual_address, dir.size)?.to_vec())
     }
 
     /// The RVA and file offset the next appended section will occupy.
@@ -1218,6 +1316,22 @@ impl PEFile {
         let expected = align_up_u32(max_va_end, optional_header.section_alignment)?;
         if optional_header.size_of_image != expected {
             return Err(Error::SizeOfImageMismatch);
+        }
+
+        // SAFETY: pe_header points into self.data at validated offset.
+        let machine = unsafe { (*self.get_pe_header_mut()?).machine };
+        let table = self.host_function_table(machine)?;
+        let entry_size = function_table_entry_size(machine);
+        let mut previous_begin: Option<u32> = None;
+        for entry in table.chunks_exact(entry_size) {
+            let begin = read_u32_le(entry, 0);
+            if previous_begin.is_some_and(|previous| begin <= previous)
+                || begin >= optional_header.size_of_image
+                || (entry_size == 12 && read_u32_le(entry, 4) <= begin)
+            {
+                return Err(Error::BadFunctionTable);
+            }
+            previous_begin = Some(begin);
         }
         Ok(())
     }
@@ -1383,28 +1497,27 @@ struct LinkedExports {
     api_version: u32,
 }
 
-/// Looks up the exports `process.dlopen` needs, as bun.exe RVAs (zero when absent or bogus).
-fn find_exports(addon: &AddonView, rva_base: u32, image_size: u32) -> LinkedExports {
-    let mut exports = LinkedExports::default();
-    let dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXPORT);
+/// Calls `f(name, rva)` for each named export whose RVA lies inside the image.
+fn scan_exports(view: &AddonView, mut f: impl FnMut(&[u8], u32)) {
+    let dir = view.dir(IMAGE_DIRECTORY_ENTRY_EXPORT);
     if dir.size < IMAGE_EXPORT_DIRECTORY_SIZE {
-        return exports;
+        return;
     }
-    let Ok(table) = addon.slice_at_rva(dir.virtual_address, IMAGE_EXPORT_DIRECTORY_SIZE) else {
-        return exports;
+    let Ok(table) = view.slice_at_rva(dir.virtual_address, IMAGE_EXPORT_DIRECTORY_SIZE) else {
+        return;
     };
     // IMAGE_EXPORT_DIRECTORY: ..., NumberOfFunctions@20, NumberOfNames@24, then the three arrays.
     let n_funcs = read_u32_le(table, 20);
     let n_names = read_u32_le(table, 24);
     let (Ok(funcs), Ok(names), Ok(ords)) = (
-        addon.slice_at_rva(read_u32_le(table, 28), n_funcs.saturating_mul(4)),
-        addon.slice_at_rva(read_u32_le(table, 32), n_names.saturating_mul(4)),
-        addon.slice_at_rva(read_u32_le(table, 36), n_names.saturating_mul(2)),
+        view.slice_at_rva(read_u32_le(table, 28), n_funcs.saturating_mul(4)),
+        view.slice_at_rva(read_u32_le(table, 32), n_names.saturating_mul(4)),
+        view.slice_at_rva(read_u32_le(table, 36), n_names.saturating_mul(2)),
     ) else {
-        return exports;
+        return;
     };
     for i in 0..n_names as usize {
-        let Ok(name) = addon.cstr_at_rva(read_u32_le(names, i * 4)) else {
+        let Ok(name) = view.cstr_at_rva(read_u32_le(names, i * 4)) else {
             continue;
         };
         let ord = read_u16_le(ords, i * 2) as usize;
@@ -1412,17 +1525,174 @@ fn find_exports(addon: &AddonView, rva_base: u32, image_size: u32) -> LinkedExpo
             continue;
         }
         let fn_rva = read_u32_le(funcs, ord * 4);
-        if fn_rva == 0 || fn_rva >= image_size {
-            continue;
+        if fn_rva != 0 && fn_rva < view.opt.size_of_image {
+            f(name, fn_rva);
         }
-        let slot = match name {
-            b"napi_register_module_v1" => &mut exports.register,
-            b"node_api_module_get_api_version_v1" => &mut exports.api_version,
-            _ => continue,
-        };
-        *slot = rva_base + fn_rva;
     }
-    exports
+}
+
+/// Rebases the addon's exception-directory entries to bun.exe RVAs and rewrites the unwind infos
+/// they reference (chained entries rebased, exception handlers redirected to `trampoline`).
+/// `None`: malformed, or the addon needs handlers and there is no trampoline; do not merge.
+fn collect_function_table(
+    addon: &AddonView,
+    image: &mut [u8],
+    rva_base: u32,
+    trampoline: u32,
+) -> Option<(Vec<u8>, Vec<HandlerRedirect>)> {
+    let dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
+    if dir.size == 0 {
+        return Some((Vec::new(), Vec::new()));
+    }
+    let arm64 = addon.pe.machine == IMAGE_FILE_MACHINE_ARM64;
+    let entry_size = function_table_entry_size(addon.pe.machine);
+    let start = dir.virtual_address as usize;
+    let end = start.checked_add(dir.size as usize)?;
+    if !(dir.size as usize).is_multiple_of(entry_size) || end > image.len() {
+        return None;
+    }
+    let mut patcher = UnwindPatcher {
+        rva_base,
+        trampoline,
+        handlers: Vec::new(),
+        patched: Vec::new(),
+    };
+    let mut table: Vec<u8> = Vec::with_capacity(dir.size as usize);
+    let mut previous_begin: Option<u32> = None;
+    for off in (start..end).step_by(entry_size) {
+        let begin = read_u32_le(image, off);
+        // Windows binary-searches the table, and this one ends up inside bun.exe's own.
+        if previous_begin.is_some_and(|previous| begin <= previous) || begin >= image.len() as u32 {
+            return None;
+        }
+        previous_begin = Some(begin);
+        table.extend_from_slice(&(begin + rva_base).to_le_bytes());
+        if arm64 {
+            let unwind = read_u32_le(image, off + 4);
+            if unwind & 3 != 0 {
+                // Packed unwind data: encoded in place, nothing else to rebase.
+                table.extend_from_slice(&unwind.to_le_bytes());
+            } else {
+                patcher.patch_arm64(image, unwind)?;
+                table.extend_from_slice(&(unwind + rva_base).to_le_bytes());
+            }
+        } else {
+            let function_end = read_u32_le(image, off + 4);
+            let unwind = read_u32_le(image, off + 8);
+            // Bit 0 marks an indirect entry (UnwindData names another RUNTIME_FUNCTION): unused by
+            // current toolchains, so not supported rather than reasoned about.
+            if function_end <= begin || function_end > image.len() as u32 || unwind & 1 != 0 {
+                return None;
+            }
+            patcher.patch_x64(image, unwind)?;
+            table.extend_from_slice(&(function_end + rva_base).to_le_bytes());
+            table.extend_from_slice(&(unwind + rva_base).to_le_bytes());
+        }
+    }
+    patcher.handlers.sort_unstable_by_key(|h| h.unwind_info);
+    Some((table, patcher.handlers))
+}
+
+struct UnwindPatcher {
+    rva_base: u32,
+    trampoline: u32,
+    handlers: Vec<HandlerRedirect>,
+    /// Addon RVAs of the unwind infos already rewritten (many entries share one), kept sorted.
+    patched: Vec<u32>,
+}
+
+impl UnwindPatcher {
+    /// True if `unwind_rva` was already handled; otherwise records it.
+    fn seen(&mut self, unwind_rva: u32) -> bool {
+        match self.patched.binary_search(&unwind_rva) {
+            Ok(_) => true,
+            Err(i) => {
+                self.patched.insert(i, unwind_rva);
+                false
+            }
+        }
+    }
+
+    fn redirect(&mut self, image: &mut [u8], field: usize, unwind_rva: u32) -> Option<()> {
+        let handler = read_u32_le(image.get(field..field + 4)?, 0);
+        if handler >= image.len() as u32 || self.trampoline == 0 {
+            return None;
+        }
+        self.handlers.push(HandlerRedirect {
+            unwind_info: unwind_rva + self.rva_base,
+            handler: handler + self.rva_base,
+        });
+        image[field..field + 4].copy_from_slice(&self.trampoline.to_le_bytes());
+        Some(())
+    }
+
+    /// x64 UNWIND_INFO: version:3/flags:5, prolog size, code count, frame register, then the codes
+    /// (padded to an even count), then either the chained RUNTIME_FUNCTION or the handler RVA.
+    fn patch_x64(&mut self, image: &mut [u8], unwind_rva: u32) -> Option<()> {
+        const UNW_FLAG_EHANDLER: u8 = 1;
+        const UNW_FLAG_UHANDLER: u8 = 2;
+        const UNW_FLAG_CHAININFO: u8 = 4;
+        if self.seen(unwind_rva) {
+            return Some(());
+        }
+        let at = unwind_rva as usize;
+        let head = image.get(at..at + 4)?;
+        let (version, flags, code_count) = (head[0] & 7, head[0] >> 3, head[2] as usize);
+        if version != 1 && version != 2 {
+            return None;
+        }
+        let tail = at + 4 + (code_count + (code_count & 1)) * 2;
+        if flags & UNW_FLAG_CHAININFO != 0 {
+            let chained = image.get(tail..tail + 12)?;
+            let (begin, end, unwind) = (
+                read_u32_le(chained, 0),
+                read_u32_le(chained, 4),
+                read_u32_le(chained, 8),
+            );
+            if end <= begin || end > image.len() as u32 || unwind & 1 != 0 {
+                return None;
+            }
+            self.patch_x64(image, unwind)?;
+            for (i, value) in [begin, end, unwind].into_iter().enumerate() {
+                let field = tail + i * 4;
+                image[field..field + 4].copy_from_slice(&(value + self.rva_base).to_le_bytes());
+            }
+        } else if flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER) != 0 {
+            self.redirect(image, tail, unwind_rva)?;
+        }
+        Some(())
+    }
+
+    /// ARM64 .xdata: header word (X at bit 20, E at bit 21, epilog count and code words above),
+    /// optional extension word, epilog scopes unless E, the code words, then the handler RVA if X.
+    fn patch_arm64(&mut self, image: &mut [u8], xdata_rva: u32) -> Option<()> {
+        if self.seen(xdata_rva) {
+            return Some(());
+        }
+        let at = xdata_rva as usize;
+        let header = read_u32_le(image.get(at..at + 4)?, 0);
+        if (header >> 18) & 3 != 0 {
+            return None; // unknown version
+        }
+        let has_handler = (header >> 20) & 1 != 0;
+        let single_epilog = (header >> 21) & 1 != 0;
+        let (mut epilog_count, mut code_words) = ((header >> 22) & 0x1F, header >> 27);
+        let mut pos = at + 4;
+        if epilog_count == 0 && code_words == 0 {
+            let extension = read_u32_le(image.get(pos..pos + 4)?, 0);
+            epilog_count = extension & 0xFFFF;
+            code_words = (extension >> 16) & 0xFF;
+            pos += 4;
+        }
+        if !single_epilog {
+            pos += epilog_count as usize * 4;
+        }
+        pos += code_words as usize * 4;
+        if has_handler {
+            self.redirect(image, pos, xdata_rva)?;
+        }
+        Some(())
+    }
 }
 
 /// `.bn0`, `.bn1`, ... (the section cap keeps the index to two digits).
@@ -1434,55 +1704,79 @@ fn addon_section_name(index: u32) -> [u8; 8] {
     name
 }
 
-/// `.bunL` layout: LE fixed-width integers and length-prefixed strings, read by LinkedNodeModule.rs.
 pub const LINKED_MAGIC: u32 = 0x4B4E_4C42; // 'BLNK'
-pub const LINKED_VERSION: u32 = 1;
+pub const LINKED_VERSION: u32 = 2;
+/// Bytes per addon in the handler index that follows the blob header.
+pub const LINKED_INDEX_ENTRY_SIZE: usize = 16;
 
+/// `.bunL` blob, read back by LinkedNodeModule.rs. All integers little-endian, strings u32-length
+/// prefixed:
+///   header      magic, version, addon count
+///   index       per addon: rva_base, image_size, blob offset of its handler list, handler count
+///               (fixed size, so the exception trampoline can search it without parsing the rest)
+///   records     per addon: name, rva_base, image_size, entry_point, preferred_base (u64),
+///               export_register, export_api_version, sections (count, then rva/size/protect),
+///               relocs (as a string), imports (count, then name, is_host byte, entries of
+///               iat_rva, u16 ordinal, name)
+///   handlers    per addon: `HandlerRedirect` pairs
 pub fn serialize_linked_addons(addons: &[LinkedAddon]) -> Vec<u8> {
     fn w_u32(b: &mut Vec<u8>, v: u32) {
-        b.extend_from_slice(&v.to_le_bytes());
-    }
-    fn w_u64(b: &mut Vec<u8>, v: u64) {
         b.extend_from_slice(&v.to_le_bytes());
     }
     fn w_str(b: &mut Vec<u8>, s: &[u8]) {
         w_u32(b, u32::try_from(s.len()).expect("int cast"));
         b.extend_from_slice(s);
     }
+    fn w_len(b: &mut Vec<u8>, n: usize) {
+        w_u32(b, u32::try_from(n).expect("int cast"));
+    }
+
+    let mut records: Vec<u8> = Vec::new();
+    for a in addons {
+        w_str(&mut records, &a.name);
+        w_u32(&mut records, a.rva_base);
+        w_u32(&mut records, a.image_size);
+        w_u32(&mut records, a.entry_point);
+        records.extend_from_slice(&a.preferred_base.to_le_bytes());
+        w_u32(&mut records, a.export_register);
+        w_u32(&mut records, a.export_api_version);
+        w_len(&mut records, a.sections.len());
+        for s in &a.sections {
+            w_u32(&mut records, s.rva);
+            w_u32(&mut records, s.size);
+            w_u32(&mut records, s.final_protect);
+        }
+        w_str(&mut records, &a.relocs);
+        w_len(&mut records, a.imports.len());
+        for lib in &a.imports {
+            w_str(&mut records, &lib.name);
+            records.push(lib.is_host as u8);
+            w_len(&mut records, lib.entries.len());
+            for e in &lib.entries {
+                w_u32(&mut records, e.iat_rva);
+                records.extend_from_slice(&e.ordinal.to_le_bytes());
+                w_str(&mut records, &e.name);
+            }
+        }
+    }
+
     let mut buf: Vec<u8> = Vec::new();
     w_u32(&mut buf, LINKED_MAGIC);
     w_u32(&mut buf, LINKED_VERSION);
-    w_u32(&mut buf, u32::try_from(addons.len()).expect("int cast"));
+    w_len(&mut buf, addons.len());
+    let mut handlers_offset = buf.len() + addons.len() * LINKED_INDEX_ENTRY_SIZE + records.len();
     for a in addons {
-        w_str(&mut buf, &a.name);
         w_u32(&mut buf, a.rva_base);
         w_u32(&mut buf, a.image_size);
-        w_u32(&mut buf, a.entry_point);
-        w_u64(&mut buf, a.preferred_base);
-        w_u32(&mut buf, a.pdata_rva);
-        w_u32(&mut buf, a.pdata_count);
-        w_u32(&mut buf, a.export_register);
-        w_u32(&mut buf, a.export_api_version);
-        w_u32(&mut buf, u32::try_from(a.sections.len()).expect("int cast"));
-        for s in &a.sections {
-            w_u32(&mut buf, s.rva);
-            w_u32(&mut buf, s.size);
-            w_u32(&mut buf, s.final_protect);
-        }
-        w_str(&mut buf, &a.relocs);
-        w_u32(&mut buf, u32::try_from(a.imports.len()).expect("int cast"));
-        for lib in &a.imports {
-            w_str(&mut buf, &lib.name);
-            buf.push(lib.is_host as u8);
-            w_u32(
-                &mut buf,
-                u32::try_from(lib.entries.len()).expect("int cast"),
-            );
-            for e in &lib.entries {
-                w_u32(&mut buf, e.iat_rva);
-                buf.extend_from_slice(&e.ordinal.to_le_bytes());
-                w_str(&mut buf, &e.name);
-            }
+        w_len(&mut buf, handlers_offset);
+        w_len(&mut buf, a.handlers.len());
+        handlers_offset += a.handlers.len() * 8;
+    }
+    buf.extend_from_slice(&records);
+    for a in addons {
+        for h in &a.handlers {
+            w_u32(&mut buf, h.unwind_info);
+            w_u32(&mut buf, h.handler);
         }
     }
     buf

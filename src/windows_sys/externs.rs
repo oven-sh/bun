@@ -903,12 +903,6 @@ pub mod kernel32 {
             lpBaseAddress: LPCVOID,
             dwSize: usize,
         ) -> BOOL;
-        /// `winnt.h`; RUNTIME_FUNCTION differs per arch, hence untyped. Returns BOOLEAN, not BOOL.
-        pub fn RtlAddFunctionTable(
-            FunctionTable: *const c_void,
-            EntryCount: DWORD,
-            BaseAddress: u64,
-        ) -> BOOLEAN;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

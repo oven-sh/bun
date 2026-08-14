@@ -167,15 +167,65 @@ function makeAddon(mutate?: Mutator): Buffer {
   return buf;
 }
 
-function sections(pe: Buffer): string[] {
+function sectionHeaders(pe: Buffer): { name: string; va: number; rawPtr: number; rawSize: number }[] {
   const peOff = pe.readUInt32LE(0x3c);
   const n = pe.readUInt16LE(peOff + 6);
   const sh = peOff + 24 + pe.readUInt16LE(peOff + 20);
-  const out: string[] = [];
+  const out = [];
   for (let i = 0; i < n; i++) {
-    const raw = pe.subarray(sh + i * 40, sh + i * 40 + 8);
+    const h = sh + i * 40;
+    const raw = pe.subarray(h, h + 8);
     const z = raw.indexOf(0);
-    out.push(raw.subarray(0, z === -1 ? 8 : z).toString("latin1"));
+    out.push({
+      name: raw.subarray(0, z === -1 ? 8 : z).toString("latin1"),
+      va: pe.readUInt32LE(h + 12),
+      rawPtr: pe.readUInt32LE(h + 20),
+      rawSize: pe.readUInt32LE(h + 16),
+    });
+  }
+  return out;
+}
+
+function sections(pe: Buffer): string[] {
+  return sectionHeaders(pe).map(s => s.name);
+}
+
+// File offset of an RVA in a host produced by the hook (the host's own section table was
+// written by makeHost, so OPTOFF/DDOFF still apply to it).
+function fileOffset(pe: Buffer, rva: number): number {
+  const s = sectionHeaders(pe).find(s => rva >= s.va && rva < s.va + s.rawSize);
+  if (!s) throw new Error(`rva ${rva.toString(16)} is not backed by any section`);
+  return s.rawPtr + (rva - s.va);
+}
+
+// The output's IMAGE_DIRECTORY_ENTRY_EXCEPTION as x64 RUNTIME_FUNCTION triples, or null if unset.
+function exceptionDirectory(pe: Buffer): { begin: number; end: number; unwind: number }[] | null {
+  const rva = pe.readUInt32LE(DDOFF + 3 * 8);
+  const size = pe.readUInt32LE(DDOFF + 3 * 8 + 4);
+  if (rva === 0 && size === 0) return null;
+  expect(size % 12).toBe(0);
+  // The table must live in a .bunL section (the most recent merge's), after its metadata blob.
+  const home = sectionHeaders(pe).find(s => rva >= s.va && rva + size <= s.va + s.rawSize);
+  expect(home?.name).toBe(".bunL");
+  const at = fileOffset(pe, rva);
+  const out = [];
+  for (let p = at; p < at + size; p += 12) {
+    out.push({ begin: pe.readUInt32LE(p), end: pe.readUInt32LE(p + 4), unwind: pe.readUInt32LE(p + 8) });
+  }
+  return out;
+}
+
+// The fixed-size handler index that follows the metadata header, resolved to the pairs it points at.
+function handlerIndex(m: Buffer): { rvaBase: number; imageSize: number; handlers: [number, number][] }[] {
+  const count = m.readUInt32LE(8);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const rec = 12 + i * 16;
+    const pos = m.readUInt32LE(rec + 8);
+    const n = m.readUInt32LE(rec + 12);
+    const handlers: [number, number][] = [];
+    for (let j = 0; j < n; j++) handlers.push([m.readUInt32LE(pos + j * 8), m.readUInt32LE(pos + j * 8 + 4)]);
+    out.push({ rvaBase: m.readUInt32LE(rec), imageSize: m.readUInt32LE(rec + 4), handlers });
   }
   return out;
 }
@@ -215,11 +265,13 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(expectSafe(res)).toBe("merged");
     // rvaBase lands after the host's single section, section-aligned.
     expect(res.rvaBase).toBe(2 * SECT_ALIGN);
-    // Metadata starts with 'BLNK' magic + version 1 + count 1.
+    // Metadata: 'BLNK' magic, version, count, then the handler index (this addon has no
+    // exception directory, so no handlers) and the addon record.
     const m = Buffer.from(res.metadata!);
-    expect(m.readUInt32LE(0)).toBe(0x4b4e4c42);
-    expect(m.readUInt32LE(4)).toBe(1);
-    expect(m.readUInt32LE(8)).toBe(1);
+    expect([m.readUInt32LE(0), m.readUInt32LE(4), m.readUInt32LE(8)]).toEqual([0x4b4e4c42, 2, 1]);
+    expect(handlerIndex(m)).toEqual([{ rvaBase: 2 * SECT_ALIGN, imageSize: 2 * SECT_ALIGN, handlers: [] }]);
+    // The host had no exception directory and the addon contributed nothing, so none was created.
+    expect(exceptionDirectory(Buffer.from(res.output!))).toBeNull();
   });
 
   test("non-PE junk is skipped without touching the host", () => {
@@ -603,6 +655,202 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeHost(),
       makeAddon(b => b.writeUInt32LE(0x7fff0000, OPTOFF + 56)),
       "x",
+    );
+    expect(expectSafe(r)).toBe("skipped");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exception directory merging. Windows only looks at the exception directory of
+// the image that contains a pc, so the addon's RUNTIME_FUNCTIONs have to end up
+// in the host's directory, rebased, and every handler they name has to be
+// replaced with the host's trampoline (whose RVA the hook takes as a 4th arg).
+// ---------------------------------------------------------------------------
+
+const TEXT_RVA = SECT_ALIGN;
+const BODY = FILE_ALIGN; // file offset of the addon's section body
+// Free space in makeAddon's section, after the offsets it uses itself.
+const UNWIND_A = 0x140; // UNWIND_INFO with an exception handler
+const UNWIND_B = 0x150; // UNWIND_INFO chained to the function described by UNWIND_A
+const PDATA = 0x180;
+const HANDLER = 0x004; // any RVA inside the image will do as the "real" handler
+const TRAMPOLINE = 0x1234; // pretend RVA of the host's exported trampoline
+const RVA_BASE = 2 * SECT_ALIGN; // where makeHost places the addon (see the baseline test)
+
+type Entry = [begin: number, end: number, unwind: number];
+
+// Writes UNWIND_A (handler-bearing), UNWIND_B (chained to UNWIND_A) and a .pdata
+// table of `entries`, then points the exception directory at the table.
+function withPdata(entries: Entry[], size = entries.length * 12): (b: Buffer) => void {
+  return b => {
+    const body = b.subarray(BODY);
+    body[UNWIND_A] = 0x01 | (1 << 3); // version 1, UNW_FLAG_EHANDLER, no codes
+    body.writeUInt32LE(TEXT_RVA + HANDLER, UNWIND_A + 4);
+    body[UNWIND_B] = 0x01 | (4 << 3); // version 1, UNW_FLAG_CHAININFO
+    body.writeUInt32LE(TEXT_RVA + 0, UNWIND_B + 4);
+    body.writeUInt32LE(TEXT_RVA + 8, UNWIND_B + 8);
+    body.writeUInt32LE(TEXT_RVA + UNWIND_A, UNWIND_B + 12);
+    entries.forEach(([begin, end, unwind], i) => {
+      body.writeUInt32LE(begin, PDATA + i * 12);
+      body.writeUInt32LE(end, PDATA + i * 12 + 4);
+      body.writeUInt32LE(unwind, PDATA + i * 12 + 8);
+    });
+    b.writeUInt32LE(TEXT_RVA + PDATA, DDOFF + 3 * 8);
+    b.writeUInt32LE(size, DDOFF + 3 * 8 + 4);
+  };
+}
+
+const functionA: Entry = [TEXT_RVA + 0, TEXT_RVA + 8, TEXT_RVA + UNWIND_A];
+const functionB: Entry = [TEXT_RVA + 8, TEXT_RVA + 16, TEXT_RVA + UNWIND_B];
+
+// The addon image is copied into .bn0 starting at RVA 0, so an addon RVA is also
+// an offset into .bn0's raw data.
+function bn0Bytes(output: Buffer, addonRva: number, length: number): number[] {
+  const bn0 = sectionHeaders(output).find(s => s.name === ".bn0")!;
+  const at = bn0.rawPtr + addonRva;
+  return [...output.subarray(at, at + length)];
+}
+
+function u32s(values: number[]): number[] {
+  return [...Buffer.from(new Uint32Array(values).buffer)];
+}
+
+describe("pe.addLinkedAddon exception directory", () => {
+  test("entries are rebased into the host directory and the handler is redirected", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionA])), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("merged");
+    const output = Buffer.from(r.output!);
+    expect(exceptionDirectory(output)).toEqual([
+      { begin: RVA_BASE + TEXT_RVA, end: RVA_BASE + TEXT_RVA + 8, unwind: RVA_BASE + TEXT_RVA + UNWIND_A },
+    ]);
+    // The unwind info inside the merged image now names the trampoline...
+    expect(bn0Bytes(output, TEXT_RVA + UNWIND_A, 8)).toEqual([0x09, 0, 0, 0, ...u32s([TRAMPOLINE])]);
+    // ...and the metadata tells the trampoline where the real handler went.
+    expect(handlerIndex(Buffer.from(r.metadata!))).toEqual([
+      {
+        rvaBase: RVA_BASE,
+        imageSize: 2 * SECT_ALIGN,
+        handlers: [[RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER]],
+      },
+    ]);
+  });
+
+  test("chained unwind info is rebased and its primary's handler redirected once", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionA, functionB])), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("merged");
+    const output = Buffer.from(r.output!);
+    expect(exceptionDirectory(output)!.map(e => e.begin)).toEqual([RVA_BASE + TEXT_RVA, RVA_BASE + TEXT_RVA + 8]);
+    // The RUNTIME_FUNCTION embedded in UNWIND_B was rebased in place.
+    expect(bn0Bytes(output, TEXT_RVA + UNWIND_B + 4, 12)).toEqual(
+      u32s([RVA_BASE + TEXT_RVA, RVA_BASE + TEXT_RVA + 8, RVA_BASE + TEXT_RVA + UNWIND_A]),
+    );
+    expect(bn0Bytes(output, TEXT_RVA + UNWIND_A + 4, 4)).toEqual(u32s([TRAMPOLINE]));
+    // UNWIND_A is reachable from both entries but is recorded exactly once.
+    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([
+      [RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER],
+    ]);
+  });
+
+  test("an addon whose code has handlers is skipped when the host has no trampoline", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionA])), "x");
+    expect(expectSafe(r)).toBe("skipped");
+  });
+
+  test("handler-free unwind info merges without a trampoline", () => {
+    const plain: Entry = [TEXT_RVA + 0, TEXT_RVA + 8, TEXT_RVA + UNWIND_A];
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        withPdata([plain])(b);
+        b[BODY + UNWIND_A] = 0x01; // version 1, no flags: the handler field is not part of it
+      }),
+      "x",
+    );
+    expect(expectSafe(r)).toBe("merged");
+    expect(exceptionDirectory(Buffer.from(r.output!))).toHaveLength(1);
+    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([]);
+  });
+
+  test("a host directory is preserved ahead of the addon's entries", () => {
+    const host = makeHost(b => {
+      // One RUNTIME_FUNCTION for the host's own .text, stored in .text's raw data.
+      const textRaw = 0x1000; // PointerToRawData of makeHost's .text
+      b.writeUInt32LE(SECT_ALIGN, textRaw);
+      b.writeUInt32LE(SECT_ALIGN + 0x10, textRaw + 4);
+      b.writeUInt32LE(SECT_ALIGN + 0x20, textRaw + 8);
+      b.writeUInt32LE(SECT_ALIGN, DDOFF + 3 * 8);
+      b.writeUInt32LE(12, DDOFF + 3 * 8 + 4);
+    });
+    const r = peLinkAddon(host, makeAddon(withPdata([functionA])), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("merged");
+    expect(exceptionDirectory(Buffer.from(r.output!))).toEqual([
+      { begin: SECT_ALIGN, end: SECT_ALIGN + 0x10, unwind: SECT_ALIGN + 0x20 },
+      { begin: RVA_BASE + TEXT_RVA, end: RVA_BASE + TEXT_RVA + 8, unwind: RVA_BASE + TEXT_RVA + UNWIND_A },
+    ]);
+  });
+
+  test("a second addon appends after the first one's entries", () => {
+    const first = peLinkAddon(makeHost(), makeAddon(withPdata([functionA])), "a", TRAMPOLINE);
+    expect(expectSafe(first)).toBe("merged");
+    const second = peLinkAddon(Buffer.from(first.output!), makeAddon(withPdata([functionA])), "b", TRAMPOLINE);
+    expect(expectSafe(second)).toBe("merged");
+    const begins = exceptionDirectory(Buffer.from(second.output!))!.map(e => e.begin);
+    expect(begins).toEqual([first.rvaBase! + TEXT_RVA, second.rvaBase! + TEXT_RVA]);
+  });
+
+  test.each<[string, Entry[], number | undefined]>([
+    ["unsorted entries", [functionB, functionA], undefined],
+    ["function end before its start", [[TEXT_RVA + 8, TEXT_RVA + 8, TEXT_RVA + UNWIND_A]], undefined],
+    ["function end past the image", [[TEXT_RVA, 0x7000_0000, TEXT_RVA + UNWIND_A]], undefined],
+    ["unwind info past the image", [[TEXT_RVA, TEXT_RVA + 8, 0x7000_0000]], undefined],
+    ["indirect entry (low bit set)", [[TEXT_RVA, TEXT_RVA + 8, TEXT_RVA + UNWIND_A + 1]], undefined],
+    ["directory size not a multiple of the entry size", [functionA], 13],
+    ["directory running past the image", [functionA], 0x1000],
+  ])("%s is skipped, leaving the host untouched", (_name, entries, size) => {
+    const r = peLinkAddon(makeHost(), makeAddon(withPdata(entries, size)), "x", TRAMPOLINE);
+    expect(expectSafe(r)).toBe("skipped");
+  });
+
+  test("a chained entry whose target is malformed is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        withPdata([functionB])(b);
+        b.writeUInt32LE(0x7000_0000, BODY + UNWIND_B + 12); // chained unwind info past the image
+      }),
+      "x",
+      TRAMPOLINE,
+    );
+    expect(expectSafe(r)).toBe("skipped");
+  });
+
+  test("random single-byte mutations of the unwind data are always merged / skipped / error", () => {
+    const host = makeHost();
+    const seed = makeAddon(withPdata([functionA, functionB]));
+    let state = 0xc0ffee >>> 0;
+    const rnd = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state;
+    };
+    for (let i = 0; i < 256; i++) {
+      const a = Buffer.from(seed);
+      // Aim at the unwind infos and the table rather than the whole file.
+      a[BODY + UNWIND_A + (rnd() % (PDATA + 24 - UNWIND_A))] = rnd() & 0xff;
+      // A merge must still yield a sorted, in-bounds directory: validate() inside the hook
+      // turns anything else into an error, and expectSafe accepts all three outcomes.
+      expect(["merged", "skipped", "error"]).toContain(expectSafe(peLinkAddon(host, a, "x", TRAMPOLINE)));
+    }
+  });
+
+  test("unwind info with an unknown version is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        withPdata([functionA])(b);
+        b[BODY + UNWIND_A] = 0x03 | (1 << 3);
+      }),
+      "x",
+      TRAMPOLINE,
     );
     expect(expectSafe(r)).toBe("skipped");
   });

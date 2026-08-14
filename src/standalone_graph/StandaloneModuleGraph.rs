@@ -1184,6 +1184,10 @@ fn link_native_addons_for_windows(
     {
         return Ok(());
     }
+    // A template without the trampoline predates the merge; leave its addons to the tempfile path.
+    let Some(exception_handler) = pe_file.export_rva(bun_pe::LINKED_ADDON_EXCEPTION_HANDLER) else {
+        return Ok(());
+    };
 
     let mut addons: Vec<bun_pe::LinkedAddon> = Vec::new();
     let mut idx: u32 = 0;
@@ -1209,7 +1213,7 @@ fn link_native_addons_for_windows(
         #[cfg(windows)]
         path::resolve_path::platform_to_posix_in_place::<u8>(&mut vpath[module_prefix.len()..]);
 
-        let linked = match pe_file.add_linked_addon(contents, idx, &vpath) {
+        let linked = match pe_file.add_linked_addon(contents, idx, &vpath, exception_handler) {
             // Out of section headers: the remaining addons extract at runtime instead.
             Err(bun_pe::Error::InsufficientHeaderSpace | bun_pe::Error::TooManySections) => break,
             Err(e) => return Err(e),
@@ -1225,7 +1229,7 @@ fn link_native_addons_for_windows(
     }
 
     // add_linked_addon reserved the headers for `.bunL` and `.bun`, so this cannot run out of room.
-    pe_file.add_linked_addon_section(&bun_pe::serialize_linked_addons(&addons))
+    pe_file.add_linked_addon_section(&addons)
 }
 
 pub(crate) fn inject(

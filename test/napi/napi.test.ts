@@ -278,6 +278,63 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  const unwindFixture = join(__dirname, "napi-app/unwind-fixture.js");
+  const unwindExpectedStdout = (isWindows ? "seh: caught" : "seh: unsupported") + "\nlongjmp: 3\n";
+
+  // Baseline for the --compile test below: the addon loaded as a regular DLL.
+  it("unwind_addon: SEH and longjmp across addon frames work when loaded normally", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), unwindFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: unwindExpectedStdout, stderr: "", exitCode: 0 });
+  });
+
+  // A merged addon's code lives inside bun.exe's own image instead of a module
+  // of its own, so the OS only finds its unwind info if the merge makes it
+  // reachable. `__except` dispatch and longjmp (RtlUnwindEx on MSVC) both walk
+  // addon frames and crash the process without it. The second run forces the
+  // extract-to-tempfile + LoadLibrary path on the same exe as a control.
+  it.skipIf(!isWindows)(
+    "unwind_addon: SEH and longjmp work inside a statically merged --compile exe",
+    async () => {
+      await using dir = tempDir("napi-unwind-compile", {});
+      const exe = join(dir, "unwind.exe");
+      const build = spawnSync({
+        cmd: [bunExe(), "build", "--compile", unwindFixture, "--outfile", exe],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(build.success).toBeTrue();
+      expect(
+        peHasSection(exe, ".bunL"),
+        "unwind_addon.node was not merged into the exe, so this would only test the tempfile fallback",
+      ).toBeTrue();
+
+      for (const [mode, env] of [
+        ["merged", bunEnv],
+        ["tempfile fallback", { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" }],
+      ] as const) {
+        const result = spawnSync({
+          cmd: [exe],
+          env,
+          stdin: "inherit",
+          stderr: "inherit",
+          stdout: "pipe",
+        });
+        expect(result.stdout.toString(), mode).toBe("seh: caught\nlongjmp: 3\n");
+        expect(result.success, mode).toBeTrue();
+      }
+    },
+    // Same --compile workload as the tests above; see the timeout note there.
+    30 * 1000,
+  );
+
   describe("issue_7685", () => {
     it("works", async () => {
       const args = [...Array(20).keys()];

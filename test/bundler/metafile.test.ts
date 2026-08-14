@@ -458,6 +458,40 @@ describe("bundler metafile", () => {
     expect(outputPaths).toContain(dynamicImport!.path);
   });
 
+  test("metafile tracks css @import imports as import-rule, with or without import conditions", async () => {
+    using dir = tempDir("metafile-css-import-rule-test", {
+      // Reached through a JS entry because a CSS entrypoint currently contributes nothing to metafile.inputs.
+      "entry.js": `import "./styles.css";`,
+      "styles.css": `
+        @import "./plain.css";
+        @import "./conditional.css" supports(display: grid);
+        @import "./media.css" screen;
+        @import "./layered.css" layer(base) supports(display: grid) screen;
+        .foo { color: red; }
+      `,
+      "plain.css": `.plain { color: blue; }`,
+      "conditional.css": `.conditional { display: grid; }`,
+      "media.css": `.media { color: green; }`,
+      "layered.css": `.layered { color: black; }`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    const inputs = (result.metafile as Metafile).inputs;
+    const stylesKey = Object.keys(inputs).find(path => path.endsWith("styles.css"))!;
+    expect(stylesKey).toBeDefined();
+    expect(inputs[stylesKey].imports.map(({ kind, original }) => ({ kind, original }))).toEqual([
+      { kind: "import-rule", original: "./plain.css" },
+      { kind: "import-rule", original: "./conditional.css" },
+      { kind: "import-rule", original: "./media.css" },
+      { kind: "import-rule", original: "./layered.css" },
+    ]);
+  });
+
   test("metafile includes cssBundle for CSS outputs", async () => {
     using dir = tempDir("metafile-css-bundle-test", {
       "entry.js": `import "./styles.css"; console.log("styled");`,

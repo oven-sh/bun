@@ -214,6 +214,53 @@ describe("Bun.build", () => {
     }
   });
 
+  test("css @import resolve errors report importKind 'import-rule' with and without import conditions", async () => {
+    using dir = tempDir("bun-build-api-css-import-kind", {
+      "entry.css": `
+        @import "./missing-plain.css";
+        @import "./missing-conditional.css" supports(display: grid);
+        @import "bun:sqlite";
+        @import "bun:sqlite" supports(display: grid);
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      target: "browser",
+      throw: false,
+    });
+
+    expect(build.success).toBe(false);
+    for (const log of build.logs) expect(log).toBeInstanceOf(ResolveMessage);
+    const logs = (build.logs as ResolveMessage[]).toSorted((a, b) => a.position!.line - b.position!.line);
+    expect(logs.map(({ specifier, importKind, message }) => ({ specifier, importKind, message }))).toEqual([
+      {
+        specifier: "./missing-plain.css",
+        importKind: "import-rule",
+        message: 'Could not resolve: "./missing-plain.css"',
+      },
+      {
+        specifier: "./missing-conditional.css",
+        importKind: "import-rule",
+        message: 'Could not resolve: "./missing-conditional.css"',
+      },
+      {
+        specifier: "bun:sqlite",
+        importKind: "import-rule",
+        message: `Browser build cannot @import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+      },
+      {
+        specifier: "bun:sqlite",
+        importKind: "import-rule",
+        message: `Browser build cannot @import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+      },
+    ]);
+    expect(JSON.parse(JSON.stringify(logs[1]))).toMatchObject({
+      specifier: "./missing-conditional.css",
+      importKind: "import-rule",
+    });
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({

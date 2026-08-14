@@ -75,7 +75,7 @@ enum Backend {
 pub struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
-    /// `nativeTransformReleaseState` via `__destroy`), plus 1 per in-flight
+    /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
     /// `CompressionAsyncCtx`. VM teardown (`lastChanceToFinalize`) runs the
     /// cell's finalizer even while a pool thread is inside `transform` — the
     /// ctx's reference is what keeps the coder alive through that.
@@ -746,10 +746,10 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
     let slice = if input.is_null() {
         &[][..]
     } else {
-        // SAFETY: as in `__transform`.
+        // SAFETY: as in `CompressionStreamCoder__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // SAFETY: as in `__transform`.
+    // SAFETY: as in `CompressionStreamCoder__transform`.
     match unsafe { (*this).transform(slice, finish) } {
         Ok(()) => {
             // SAFETY: as above; the sink copies before returning.
@@ -798,8 +798,8 @@ unsafe extern "C" {
 /// One large `CompressionStream`/`DecompressionStream` chunk transformed off
 /// the JS thread.
 pub struct CompressionAsyncCtx {
-    /// Holds one coder reference (taken in `__transformAsync`, released by
-    /// `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
+    /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
+    /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
     /// serializes writes, so nothing else touches it while the pool has it.
     coder: *mut CompressionStreamCoder,
     input: AsyncInput,
@@ -809,9 +809,9 @@ pub struct CompressionAsyncCtx {
 
 impl Drop for CompressionAsyncCtx {
     fn drop(&mut self) {
-        // SAFETY: `coder` was ref'd in `__transformAsync`; this ctx owns that
+        // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
         // reference and drops it exactly once (in `then`, or when the job is
-        // released unrun / its off-thread part finishes after the VM is gone).
+        // released unrun).
         unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
     }
 }
@@ -834,11 +834,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     type OffThread = Self;
     type Js = CompressionAsyncJs;
 
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
         this.error = unsafe { (*this.coder).transform(this.input.slice(), this.finish) }.err();
@@ -855,7 +851,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
             None => {
                 // SAFETY: `this` holds a coder reference until it drops at the
                 // end of this fn, so `coder` (and its `out` buffer) stay live
-                // while `deliverAsync` copies.
+                // while `Bun__CompressionStream__deliverAsync` copies.
                 let coder = unsafe { &*this.coder };
                 (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }

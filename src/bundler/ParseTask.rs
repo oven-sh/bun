@@ -607,7 +607,8 @@ pub mod parse_worker {
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
+                .ok_or(AnyError::ParserError)?,
         );
         ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
             bump.alloc(bun_css::BundlerStyleSheet::empty()),
@@ -626,7 +627,8 @@ pub mod parse_worker {
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
+                .ok_or(AnyError::ParserError)?,
         ))
     }
 
@@ -763,7 +765,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Toml => {
@@ -786,7 +788,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -812,7 +814,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -834,7 +836,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -865,7 +867,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -889,7 +891,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
@@ -930,7 +932,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
@@ -1059,7 +1061,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Napi => {
@@ -1128,7 +1130,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Html => {
@@ -1154,7 +1156,7 @@ pub mod parse_worker {
                     source,
                     b"",
                 )?
-                .unwrap();
+                .ok_or(AnyError::ParserError)?;
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
@@ -1280,7 +1282,7 @@ pub mod parse_worker {
                     symbols,
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
-                let mut ast = JSAst::init(lazy?.unwrap());
+                let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
@@ -1349,7 +1351,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
@@ -2208,7 +2210,7 @@ pub mod parse_worker {
         // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
         // bundle pass.
         let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // errdefer transpiler.resetStore() — reshaped: call on the err
+        // errdefer transpiler.reset_store() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
@@ -2272,7 +2274,7 @@ pub mod parse_worker {
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.resetStore()` and
+        // Error-path cleanup (`transpiler.reset_store()` and
         // `if (.fd) entry.deinit(arena)`) is reshaped into the
         // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
         // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that

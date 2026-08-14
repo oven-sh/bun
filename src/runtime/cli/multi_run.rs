@@ -9,9 +9,9 @@ use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
+use bun_paths as path;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
@@ -924,36 +924,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
-        let filter_instance = if ctx.workspaces {
-            FilterArg::FilterSet::init::<&[u8]>(&[b"*"], cwd)?
-        } else {
-            FilterArg::FilterSet::init(&ctx.filters, cwd)?
-        };
-        let mut patterns: Vec<Box<[u8]>> = Vec::new();
+        let selected = FilterArg::select_packages(&*ctx, &mut this_transpiler.resolver, cwd)?;
+        let resolve_root: &[u8] = &selected.root_dir;
 
-        let mut root_buf = PathBuffer::uninit();
-        let resolve_root = FilterArg::get_candidate_package_patterns(
-            // SAFETY: single-threaded CLI path; the returned `&mut Log` is the only live borrow
-            // of the process-static log for the duration of this call.
-            unsafe { ctx.log_mut() },
-            &mut patterns,
-            cwd,
-            &mut root_buf,
-        )?;
-
-        let mut package_json_iter =
-            FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
-        // Drop handles deinit
-
-        // Phase 1: Collect matching packages (filesystem order is nondeterministic)
-        //
-        // `scripts` owns its bytes (`OwnedScriptsMap`): the `ScriptsMap` values
-        // parsed from each package.json borrow that package's `source_contents`,
-        // which is freed when the standalone `PackageJSON` drops at the end of
-        // each loop iteration below. Storing the borrowed map here would dangle
-        // (heap-use-after-free, #31636) — unlike the single-package path, whose
-        // package.json is kept alive by the process-lifetime DirInfo cache — so
-        // we deep-copy keys and values into owned storage before `pkgjson` drops.
+        // Phase 1: collect packages; `scripts` is deep-copied so MatchedPackage sorts independently of `selected`.
         struct MatchedPackage {
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
@@ -962,35 +936,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
 
-        while let Some(package_json_path) = package_json_iter.next()? {
-            let dirpath: Box<[u8]> =
-                Box::from(bun_core::dirname(&package_json_path).unwrap_or_else(|| Global::crash()));
-            let pkg_path = strings::without_trailing_slash(&dirpath);
-
-            // When using --workspaces, skip the root package to prevent recursion
-            if ctx.workspaces && pkg_path == resolve_root {
-                continue;
-            }
-
-            let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
-                &mut this_transpiler.resolver,
-                &dirpath,
-                bun_sys::Fd::INVALID,
-                None,
-                IncludeScripts::IncludeScripts,
-            ) else {
+        for package in &selected.packages {
+            let Some(pkg_scripts) = &package.json.scripts else {
                 continue;
             };
-
-            if !filter_instance.matches(pkg_path, &pkgjson.name) {
-                continue;
-            }
-
-            let Some(pkg_scripts) = &pkgjson.scripts else {
-                continue;
-            };
-            // Deep-copy the scripts map while `pkgjson` (and the `source_contents`
-            // the borrowed `&'static [u8]` values point into) is still alive.
             let mut owned_scripts = OwnedScriptsMap::with_capacity(pkg_scripts.count());
             for (key, value) in pkg_scripts.iter() {
                 owned_scripts
@@ -1001,25 +950,25 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             let run_in_bun = ctx.debug.run_in_bun;
             let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
                 ctx,
-                &dirpath,
+                &package.dir,
                 this_transpiler,
                 None,
-                &dirpath,
+                &package.dir,
                 run_in_bun,
             )?;
-            let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
-                Box::<[u8]>::from(&pkgjson.name[..])
+            let pkg_name: Box<[u8]> = if !package.json.name.is_empty() {
+                Box::<[u8]>::from(&package.json.name[..])
             } else {
                 // Fallback: use relative path from workspace root
                 Box::from(bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Posix,
                     false,
-                >(resolve_root, pkg_path))
+                >(resolve_root, &package.dir))
             };
 
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
-                dirpath,
+                dirpath: package.dir.clone(),
                 scripts: owned_scripts,
                 path: pkg_path_env.into(),
             });
@@ -1089,7 +1038,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     "<r><red>error<r>: No workspace packages have matching scripts"
                 );
             } else {
-                bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
+                let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+                Output::err_generic(
+                    "{}",
+                    (bstr::BStr::new(&workspace_selection::unmatched_message(
+                        &patterns,
+                    )),),
+                );
             }
             Global::exit(1);
         }

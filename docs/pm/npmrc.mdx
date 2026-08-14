@@ -5,6 +5,18 @@ description:
 
 Bun loads configuration options from [`.npmrc`](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) files, so you can reuse your existing registry and scope configuration.
 
+Configuration is loaded in this order, with later sources overriding earlier ones:
+
+1. `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc`)
+2. `./.npmrc`
+3. `bunfig.toml` (global, then project)
+4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables
+5. Command-line flags such as `--registry`
+
+Credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) are matched to registries by host and path, even if the registry URL itself was set in `bunfig.toml`.
+
+Values may reference environment variables: `${NAME}` is replaced with the variable's value (left as-is if unset), and `${NAME?}` becomes an empty string if unset.
+
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.

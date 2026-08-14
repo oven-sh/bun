@@ -487,7 +487,7 @@ impl BunTestRoot {
         // `bun_test_then_or_catch` when the promise settles — which it now
         // never will (the VM is going away). Release each orphan ourselves;
         // any reaction that is still queued is dropped wholesale by
-        // `destructOnExit`.
+        // `Zig__GlobalObject__destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
             // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
@@ -754,7 +754,7 @@ impl BunTest {
 
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
-        // and round-tripped via `asPromisePtr`; we adopt the +1 it carried.
+        // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
         let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
         // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {
@@ -914,7 +914,7 @@ impl BunTest {
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
             // `this` was `heap::into_raw`'d above (always non-null) and is
             // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap()).map_err(Into::into)
+            RunTestsTask::call(NonNull::new(this).unwrap())
         }
         // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
         let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
@@ -1513,7 +1513,7 @@ pub struct RefData {
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
+// `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
 pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
 impl RefData {
     /// `RefCounted` destructor — last ref dropped.
@@ -1557,6 +1557,10 @@ impl RunTestsTask {
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
+            // A termination is the tick's to fold, not a test failure.
+            if this.global_this.has_pending_termination_exception() {
+                return Err(e);
+            }
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();

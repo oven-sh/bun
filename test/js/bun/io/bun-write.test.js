@@ -944,3 +944,106 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// A Bun.write() that goes through the work pool (a Blob source always does; the
+// sync fast path only takes strings and views under 256 KiB) carries the promise
+// it will settle. When the worker that started it stops first, the job is
+// released instead of completed, on one of three paths; each of them used to
+// leak the promise (LSan: a direct leak allocated in
+// write_file_with_source_destination). The write is started from an immediate
+// because test/leaksan.supp suppresses everything allocated while a module is
+// being evaluated.
+describe.skipIf(!isASAN || isWindows)("Bun.write() released by the teardown of the worker that started it", () => {
+  const writeThen = rest => `
+    const { workerData, parentPort } = require("node:worker_threads");
+    setImmediate(() => {
+      Bun.write(workerData.out, new Blob(["x"]));
+      ${rest}
+    });
+  `;
+  // Holds the worker's JS thread until the pool has written the byte, so the
+  // completion the pool posts right after is still queued when the thread stops.
+  const WAIT_FOR_THE_BYTE = `
+    const fs = require("node:fs");
+    const tick = new Int32Array(new SharedArrayBuffer(4));
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !(fs.existsSync(workerData.out) && fs.statSync(workerData.out).size === 1)) {
+      Atomics.wait(tick, 0, 0, 1);
+    }
+  `;
+  const rows = [
+    {
+      name: "completion refused: the worker exited before the pool posted it",
+      // The gate parks the pool's post until the worker's VM handle has closed.
+      env: { BUN_DEBUG_TEST_WORKER_REFUSAL_GATE: "1" },
+      worker: writeThen(`setImmediate(() => setImmediate(() => process.exit(0)));`),
+      refused: true,
+      workerExitCode: 0,
+    },
+    {
+      name: "completion queued: process.exit() with the completion undispatched",
+      worker: writeThen(WAIT_FOR_THE_BYTE + `process.exit(0);`),
+      refused: false,
+      workerExitCode: 0,
+    },
+    {
+      name: "completion queued: worker.terminate() with the completion undispatched",
+      // Parks until the parent has called terminate() (the parent releases it).
+      worker: writeThen(WAIT_FOR_THE_BYTE + `parentPort.postMessage("armed"); Atomics.wait(workerData.ctl, 0, 0);`),
+      parent: `w.once("message", () => { w.terminate(); Atomics.store(ctl, 0, 1); Atomics.notify(ctl, 0); });`,
+      refused: false,
+      workerExitCode: 1,
+    },
+  ];
+
+  for (const row of rows) {
+    test.concurrent(
+      row.name,
+      async () => {
+        using dir = tempDir("bun-write-worker-teardown", {});
+        const host = `
+          const { Worker } = require("node:worker_threads");
+          const out = ${JSON.stringify(join(String(dir), "out.bin"))};
+          const ctl = new Int32Array(new SharedArrayBuffer(4));
+          const w = new Worker(${JSON.stringify(row.worker)}, { eval: true, workerData: { out, ctl } });
+          w.on("error", e => { console.error("worker error:", e); });
+          // The file's content is the proof that the pool ran the write at all.
+          w.on("exit", code => console.log("worker exit", code, require("node:fs").readFileSync(out, "utf8")));
+          ${row.parent ?? ""}
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", host],
+          env: {
+            ...bunEnv,
+            ...row.env,
+            // Tear the main thread's VM down too, so LSan sees only what the worker left behind.
+            BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+            LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The refusal gate names what it refused on stderr; anything else there (an LSan report) is a failure.
+        const refusals = stderr.split("\n").filter(line => line.startsWith("[vm_handle] refused "));
+        expect({
+          stdout,
+          stderr: stderr
+            .split("\n")
+            .filter(line => line && !line.startsWith("[vm_handle] refused "))
+            .join("\n"),
+          refusedTheWrite: refusals.some(line => line.includes("blob::write_file::WriteFile")),
+          exitCode,
+        }).toEqual({
+          stdout: `worker exit ${row.workerExitCode} x\n`,
+          stderr: "",
+          refusedTheWrite: row.refused,
+          exitCode: 0,
+        });
+      },
+      // Symbolizing an LSan report on the debug binary takes well over the default timeout.
+      60_000,
+    );
+  }
+});

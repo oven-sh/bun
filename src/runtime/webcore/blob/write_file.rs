@@ -24,30 +24,34 @@ use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
-// A tagged result-or-error union. Modeled
-// as a plain Rust enum: it only ever travels through the Rust fn-pointer
-// callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
-// layout is unconstrained.
-pub enum WriteFileResultType {
-    Result(SizeType),
-    Err(Box<SystemError>),
-}
-
-pub type WriteFileOnWriteFileCallback =
-    fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
-
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// SAFETY: the two blobs are native values holding store refs (atomic counts);
-// io-loop registration state and an opaque completion ctx that only the
-// JS-thread completion dereferences — nothing used off-thread is thread-affine.
+/// Settle the `Bun.write()` promise with what the write produced. JS thread;
+/// the `WriteFile`/`WriteFileWindows` that did the writing is already freed.
+fn settle(
+    mut promise: jsc::JSPromiseStrong,
+    global: &JSGlobalObject,
+    result: Result<SizeType, SystemError>,
+) -> Result<(), JsTerminated> {
+    match result {
+        Ok(wrote) => promise.resolve(global, JSValue::js_number_from_uint64(wrote as u64)),
+        Err(err) => promise.reject_with_async_stack(global, Ok(err.to_error_instance(global))),
+    }
+}
+
+// SAFETY: the two blobs are native values holding store refs (atomic counts)
+// plus io-loop registration state — nothing thread-affine. The promise the
+// write settles lives in the job's JS side, never here.
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {
     type OffThread = Self;
-    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
-    type Js = ();
+    /// The `Bun.write()` promise: settled by `then`, or released by the VM's
+    /// teardown on the JS thread if the write is still out by then. Nothing
+    /// else in the job needs that thread, so the `WriteFile` a stopped VM
+    /// refuses or releases unrun is freed wherever that happens.
+    type Js = jsc::JSPromiseStrong;
     fn run(
         this: &mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
@@ -57,16 +61,20 @@ impl bun_jsc::JobContext for WriteFile {
         this.run(done);
         None
     }
-    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(WriteFile::then(this, cx.global())?)
+    fn then(
+        this: Self,
+        promise: jsc::JSPromiseStrong,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        Ok(WriteFile::then(this, promise, cx.global())?)
     }
 }
 
 impl WriteFile {
-    /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
-    /// its one heap allocation).
-    pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, ());
+    /// JS thread: hand a prepared `WriteFile` and the promise it settles to the
+    /// work pool (the job is its one heap allocation).
+    pub fn schedule(this: WriteFile, promise: jsc::JSPromiseStrong, global: &JSGlobalObject) {
+        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, promise);
     }
 }
 
@@ -85,8 +93,6 @@ pub struct WriteFile {
     pub(crate) io_request: io::Request,
     pub(crate) state: AtomicU8, // ClosingState
 
-    pub(crate) on_complete_ctx: *mut c_void,
-    pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
@@ -230,11 +236,9 @@ impl WriteFile {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create_with_ctx(
+    pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
-        on_write_file_context: *mut c_void,
-        on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
@@ -251,8 +255,6 @@ impl WriteFile {
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete_ctx: on_write_file_context,
-            on_complete_callback,
             total_written: 0,
             could_block: false,
             close_after_io: false,
@@ -262,26 +264,6 @@ impl WriteFile {
         // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
         // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
         Ok(write_file)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create<C>(
-        file_blob: Blob,
-        bytes_blob: Blob,
-        context: *mut C,
-        callback: WriteFileOnWriteFileCallback,
-        mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        // The caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
-        // so this is just a `.cast()` on `context`.
-        WriteFile::create_with_ctx(
-            file_blob,
-            bytes_blob,
-            context.cast::<c_void>(),
-            callback,
-            mkdirp_if_not_exists,
-        )
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -327,11 +309,15 @@ impl WriteFile {
         true
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        let cb = this.on_complete_callback;
-        let cb_ctx = this.on_complete_ctx;
-        let system_error = this.system_error.take();
-        let total_written = this.total_written;
+    pub(crate) fn then(
+        mut this: WriteFile,
+        promise: jsc::JSPromiseStrong,
+        global: &JSGlobalObject,
+    ) -> Result<(), JsTerminated> {
+        let result = match this.system_error.take() {
+            Some(err) => Err(err),
+            None => Ok(this.total_written as SizeType),
+        };
         // Cleanup is RAII: dropping the `Box` runs `WriteFile`'s field-drop
         // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
         // StoreRef>` → `Store::deref()` — exactly one deref each.
@@ -341,16 +327,7 @@ impl WriteFile {
         // not an unbalanced ref.)
         drop(this);
 
-        if let Some(err) = system_error {
-            cb(cb_ctx, WriteFileResultType::Err(Box::new(err)))?;
-            return Ok(());
-        }
-
-        cb(
-            cb_ctx,
-            WriteFileResultType::Result(total_written as SizeType),
-        )?;
-        Ok(())
+        settle(promise, global, result)
     }
 
     pub(crate) fn run(&mut self, task: WriteFileTask) {
@@ -572,8 +549,8 @@ mod windows_impl {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
         pub(crate) bytes_blob: Blob,
-        pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
-        pub(crate) on_complete_ctx: *mut c_void,
+        /// The `Bun.write()` promise, settled by `run_from_js_thread`.
+        pub(crate) promise: jsc::JSPromiseStrong,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -611,12 +588,13 @@ mod windows_impl {
     }
 
     impl WriteFileWindows {
-        pub(crate) fn create_with_ctx(
+        /// Starts the write. The promise is settled from the libuv completion,
+        /// or already by the time this returns `Err` (a synchronous failure).
+        pub(crate) fn create(
+            event_loop: *mut EventLoop,
             file_blob: Blob,
             bytes_blob: Blob,
-            event_loop: *mut EventLoop,
-            on_write_file_context: *mut c_void,
-            on_complete_callback: WriteFileOnWriteFileCallback,
+            promise: jsc::JSPromiseStrong,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
@@ -632,8 +610,7 @@ mod windows_impl {
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
-                on_complete_ctx: on_write_file_context,
-                on_complete_callback,
+                promise,
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -1049,28 +1026,27 @@ mod windows_impl {
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
         /// On return, `*this` has been freed and must not be accessed again.
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
-            // SAFETY: caller contract — `this` is live; copy out everything we
-            // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            // SAFETY: caller contract — `this` is live; take out everything the
+            // settle needs before `deinit` frees the allocation (`global_ref` is
+            // `'static`: the global outlives its event loop).
+            let (promise, global, result) = unsafe {
+                let result = match (*this).to_system_error() {
+                    Some(err) => Err(err),
+                    None => Ok((*this).total_written as SizeType),
+                };
+                (
+                    (*this).promise.take(),
+                    (*(*this).event_loop).global_ref(),
+                    result,
+                )
+            };
+            // SAFETY: caller contract — `this` is live; consumed here.
+            unsafe { Self::deinit(this) };
 
-            // SAFETY: caller contract — `this` is live.
-            if let Some(err) = unsafe { (*this).to_system_error() } {
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
-                    return e.into();
-                }
-            } else {
-                // SAFETY: caller contract — `this` is live.
-                let wrote = unsafe { (*this).total_written };
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
-                    return e.into();
-                }
+            match settle(promise, global, result) {
+                Ok(()) => WriteFileWindowsError::WriteFileWindowsDeinitialized,
+                Err(terminated) => terminated.into(),
             }
-
-            WriteFileWindowsError::WriteFileWindowsDeinitialized
         }
 
         /// # Safety
@@ -1200,7 +1176,7 @@ mod windows_impl {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
                 // The store derefs happen via `StoreRef::drop` when the Box is
-                // reclaimed below (paired with the RAII note in `create_with_ctx`).
+                // reclaimed below (paired with the RAII note in `create`).
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.
@@ -1209,74 +1185,6 @@ mod windows_impl {
                 drop(bun_core::heap::take(this));
             }
         }
-
-        pub(crate) fn create<C>(
-            event_loop: *mut EventLoop,
-            file_blob: Blob,
-            bytes_blob: Blob,
-            context: *mut C,
-            callback: WriteFileOnWriteFileCallback,
-            mkdirp_if_not_exists: bool,
-        ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
-            // see `WriteFile::create` — caller supplies an erased
-            // `*mut c_void` callback directly; `context` is just `.cast()`ed.
-            WriteFileWindows::create_with_ctx(
-                file_blob,
-                bytes_blob,
-                event_loop,
-                context.cast::<c_void>(),
-                callback,
-                mkdirp_if_not_exists,
-            )
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct WriteFilePromise {
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub global_this: *const JSGlobalObject,
-}
-
-impl WriteFilePromise {
-    pub(crate) fn run(
-        handler: *mut c_void,
-        count: WriteFileResultType,
-    ) -> Result<(), JsTerminated> {
-        let handler = handler.cast::<Self>();
-        // SAFETY: handler is the Box-allocated WriteFilePromise created in
-        // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
-        // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
-        // which stays valid past `drop(heap::take(handler))`.
-        let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
-            let h = &mut *handler;
-            let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
-            let global_this = &*h.global_this;
-            drop(bun_core::heap::take(handler));
-            (promise, global_this)
-        };
-        // SAFETY: GC-owned cell (kept alive below); scoped shared access.
-        let value = unsafe { (*promise).to_js() };
-        value.ensure_still_alive();
-        match count {
-            WriteFileResultType::Err(err) => {
-                // SAFETY: GC-owned cell; the error build's shared borrow ends before the
-                // scoped exclusive `reject` borrow.
-                unsafe {
-                    let err_js = err.to_error_instance_with_async_stack(global_this, &*promise);
-                    (*promise).reject(global_this, Ok(err_js))?;
-                }
-            }
-            WriteFileResultType::Result(wrote) => {
-                // SAFETY: GC-owned cell; exclusive borrow scoped to the call.
-                unsafe {
-                    (*promise)
-                        .resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
-                }
-            }
-        }
-        Ok(())
     }
 }
 

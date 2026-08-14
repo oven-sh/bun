@@ -4746,3 +4746,45 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+describe("Buffer.prototype.parent and Buffer.prototype.offset", () => {
+  // Node defines both legacy getters with ObjectDefineProperty(Buffer.prototype, name, { enumerable: true, get() {...} }),
+  // so they are enumerable and, like every defineProperty default, non-configurable.
+  it.each(["parent", "offset"])("%s is an enumerable, non-configurable getter", name => {
+    const desc = Object.getOwnPropertyDescriptor(Buffer.prototype, name);
+    expect({ ...desc, get: typeof desc.get }).toEqual({
+      get: "function",
+      set: undefined,
+      enumerable: true,
+      configurable: false,
+    });
+
+    expect(Reflect.deleteProperty(Buffer.prototype, name)).toBe(false);
+    // This file is an ES module, so this `delete` runs in strict mode and must throw rather than remove the property.
+    expect(() => delete Buffer.prototype[name]).toThrow(TypeError);
+    expect(Object.getOwnPropertyDescriptor(Buffer.prototype, name)).toEqual(desc);
+  });
+
+  it("are listed by for...in and Object.keys(Buffer.prototype)", () => {
+    const forInKeys = [];
+    for (const key in Buffer.alloc(2)) forInKeys.push(key);
+    expect(forInKeys.filter(key => key === "parent" || key === "offset").sort()).toEqual(["offset", "parent"]);
+    expect(Object.keys(Buffer.prototype)).toEqual(expect.arrayContaining(["parent", "offset"]));
+  });
+
+  it("still resolve to buffer/byteOffset on a Buffer and to undefined on a plain Uint8Array", () => {
+    const buf = Buffer.from(new ArrayBuffer(8), 2, 4);
+    expect(buf.parent).toBe(buf.buffer);
+    expect(buf.offset).toBe(2);
+
+    const { get: getParent } = Object.getOwnPropertyDescriptor(Buffer.prototype, "parent");
+    const { get: getOffset } = Object.getOwnPropertyDescriptor(Buffer.prototype, "offset");
+    const u8 = new Uint8Array(new ArrayBuffer(8), 2, 4);
+    expect([
+      getParent.call(u8),
+      getOffset.call(u8),
+      getParent.call(Buffer.prototype),
+      getOffset.call(Buffer.prototype),
+    ]).toEqual([undefined, undefined, undefined, undefined]);
+  });
+});

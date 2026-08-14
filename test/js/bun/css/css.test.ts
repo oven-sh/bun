@@ -7536,6 +7536,167 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+
+    // Merging adjacent rules (same-query @media, same-selector style rules)
+    // re-minifies the already minified block, so the fallback vars emitted by
+    // the first pass come back through the handler. Each pass must produce the
+    // same output rather than adding another copy of the vars (and of the
+    // generated dark-mode rule's declarations).
+    prefix_test(
+      `
+      @media (min-width: 1px) { .foo { color-scheme: light dark; } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      @media (min-width: 1px) { .baz { color: green; } }
+      `,
+      `@media (min-width: 1px) {
+          .foo {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            .foo {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
+
+          .bar {
+            color: red;
+          }
+
+          .baz {
+            color: green;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `
+      @media (min-width: 1px) { .foo { color-scheme: dark; } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      `,
+      `@media (min-width: 1px) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+
+          .bar {
+            color: red;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `
+      @media (min-width: 1px) { .foo { color-scheme: light !important; } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      `,
+      `@media (min-width: 1px) {
+          .foo {
+            --buncss-light: initial !important;
+            --buncss-dark: !important;
+            color-scheme: light !important;
+          }
+
+          .bar {
+            color: red;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `
+      .foo { color: red; }
+      .foo { color-scheme: light dark; }
+      `,
+      `.foo {
+          color: red;
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light dark;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `
+      .foo { color-scheme: dark; }
+      .foo { color: red; }
+      `,
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+          color: red;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    // A var set after color-scheme overrides the emitted one, so it has to stay
+    // after color-scheme when the block is re-minified; a var set before it is
+    // overridden by the emitted one and is replaced in place.
+    prefix_test(
+      `
+      .foo { color-scheme: dark; --buncss-light: keep; }
+      .foo { color: red; }
+      `,
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+          --buncss-light: keep;
+          color: red;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `
+      .foo { --buncss-light: dead; color-scheme: dark; }
+      .foo { color: red; }
+      `,
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+          color: red;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    // Targets that support light-dark() emit no vars; a re-minified block
+    // must stay untouched.
+    prefix_test(
+      `
+      @media (min-width: 1px) { .foo { color-scheme: light dark; } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      `,
+      `@media (width >= 1px) {
+          .foo {
+            color-scheme: light dark;
+          }
+
+          .bar {
+            color: red;
+          }
+        }
+        `,
+      { firefox: Some(120 << 16) },
+    );
   });
 
   describe("page", () => {

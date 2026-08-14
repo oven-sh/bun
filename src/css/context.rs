@@ -72,7 +72,11 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 
     pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
-        self.dark.push(property);
+        // A merged block is re-run through the handlers before its staged rules
+        // are collected (see `flush_pending_style_merge`), staging these again.
+        if !self.dark.iter().any(|staged| staged.eql(&property)) {
+            self.dark.push(property);
+        }
     }
 
     pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {

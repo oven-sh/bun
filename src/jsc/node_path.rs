@@ -11,7 +11,7 @@ use bun_core::{SliceWithUnderlyingString, ZigStringSlice};
 use bun_ptr::cow_slice::CowSlice;
 use bun_sys::Fd;
 
-use crate::array_buffer::MarkedArrayBuffer;
+use crate::array_buffer::{MarkedArrayBuffer, PinnedArrayBuffer};
 
 // ──────────────────────────────────────────────────────────────────────────
 // RAII for `protect()`/`unprotect()` pairs taken by `to_thread_safe()`.
@@ -25,8 +25,7 @@ use crate::array_buffer::MarkedArrayBuffer;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Undo the `JSValue::protect()` calls taken by an `args::*` type's
-/// `to_thread_safe` (e.g. `StringOrBuffer`, which keeps JS-backed data
-/// buffers zero-copy).
+/// `to_thread_safe` (e.g. `StringOrBuffer::Buffer`).
 ///
 /// Implementations release **only** the JS-GC protect refcount — owned Rust
 /// payloads (Vec, `SliceWithUnderlyingString`, …) are freed by the type's own
@@ -101,7 +100,15 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 /// `node.PathLike`.
 pub enum PathLike {
     String(CowSlice<u8>),
+    /// A JS buffer borrowed for the duration of one call: the argument keeps
+    /// the cell alive and the pin keeps its storage in place. Anything held
+    /// past the call goes through [`PathLike::to_thread_safe`] first.
     Buffer(MarkedArrayBuffer),
+    /// A `Buffer` after `to_thread_safe`: the same bytes, kept by a ref + pin
+    /// on the backing `JSC::ArrayBuffer` instead of by the JS cell, so it can
+    /// be released from a GC finalizer (a `Blob` store's path) as well as
+    /// from an async op's completion.
+    PinnedBuffer(PinnedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
     EncodedSlice(ZigStringSlice),
@@ -134,6 +141,7 @@ impl Clone for PathLike {
                 owns_buffer: false,
                 pinned: false,
             }),
+            Self::PinnedBuffer(b) => Self::PinnedBuffer(b.clone()),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
                 // cloned PathLike would then return b"" from `slice()`. Clone
@@ -172,9 +180,8 @@ impl Drop for PathLike {
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();
             }
-            // `ZigStringSlice` releases its WTF ref / owned buffer in its own
-            // `Drop`.
-            Self::EncodedSlice(_) => {}
+            // `PinnedArrayBuffer` / `ZigStringSlice` release in their own `Drop`.
+            Self::PinnedBuffer(_) | Self::EncodedSlice(_) => {}
         }
     }
 }
@@ -190,6 +197,7 @@ impl PathLike {
         match self {
             Self::String(s) => s.slice(),
             Self::Buffer(b) => b.slice(),
+            Self::PinnedBuffer(b) => b.slice(),
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.slice(),
             Self::EncodedSlice(s) => s.slice(),
         }
@@ -199,19 +207,18 @@ impl PathLike {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
+            Self::PinnedBuffer(b) => b.slice().len(),
             Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => 0,
             Self::EncodedSlice(s) => s.slice().len(),
         }
     }
 
-    /// Promote any borrowed-JS payload to a representation that references
-    /// no JS heap cell, so the path may be read from another thread and
-    /// dropped anywhere — including off-thread or inside a GC finalizer
-    /// (a `Blob` store holds its path for the cell's lifetime).
-    ///
-    /// A `Buffer` is copied into an owned `String` and its pin released here,
-    /// on the JS thread: a path is at most `MAX_PATH_BYTES`, and a snapshot
-    /// also means later JS writes to the buffer can't tear the path mid-read.
+    /// Promote any payload that is only valid for the current call into one
+    /// that can be held past it, read from a work-pool thread, and released on
+    /// the JS thread wherever the holder happens to die — an async op's
+    /// completion, or a `Blob` store dropped from its cell's GC finalizer.
+    /// Zero-copy: a `Buffer` keeps borrowing the same bytes, now owned via the
+    /// backing store (`PinnedBuffer`) rather than the JS object.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::SliceWithUnderlyingString(s) => {
@@ -220,18 +227,25 @@ impl PathLike {
                 *self = Self::ThreadsafeString(owned);
             }
             Self::Buffer(b) => {
-                let owned = bun_core::handle_oom(CowSlice::init_dupe(b.slice()));
-                // Drops the `Buffer` arm, which unpins.
-                *self = Self::String(owned);
+                // Dropping the `Buffer` arm afterwards releases its own pin.
+                *self = match PinnedArrayBuffer::retain(b.buffer.value, b.slice()) {
+                    Some(pinned) => Self::PinnedBuffer(pinned),
+                    // Detached / no backing store: there are no bytes to keep.
+                    None => Self::default(),
+                };
             }
-            Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
+            Self::String(_)
+            | Self::PinnedBuffer(_)
+            | Self::ThreadsafeString(_)
+            | Self::EncodedSlice(_) => {}
         }
     }
 }
 
 impl Unprotect for PathLike {
-    /// Nothing to release: [`Self::to_thread_safe`] copies rather than
-    /// `protect()`s. Kept so container `args::*` types can forward uniformly.
+    /// Nothing to release: [`Self::to_thread_safe`] holds the backing store,
+    /// not a `protect()`ed cell. Kept so container `args::*` types can forward
+    /// uniformly.
     #[inline]
     fn unprotect(&mut self) {}
 }

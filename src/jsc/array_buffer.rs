@@ -1057,6 +1057,61 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
     }
 }
 
+unsafe extern "C" {
+    safe fn JSC__JSValue__retainPinnedArrayBuffer(value: JSValue) -> *mut JSCArrayBuffer;
+    safe fn JSC__ArrayBuffer__retainPinned(self_: &JSCArrayBuffer);
+    safe fn JSC__ArrayBuffer__releasePinned(self_: &JSCArrayBuffer);
+}
+
+/// A byte range of a JS buffer, kept alive and in place by one ref + one pin
+/// held directly on its `JSC::ArrayBuffer` — the refcounted owner of the
+/// storage, not a GC cell. The typed array / `ArrayBuffer` object may be
+/// collected while this lives. Dropping touches no `JSCell`, so it may run
+/// inside a GC finalizer; JS thread only (the refcount is not atomic).
+pub struct PinnedArrayBuffer {
+    owner: ptr::NonNull<JSCArrayBuffer>,
+    ptr: *const u8,
+    len: usize,
+}
+
+impl PinnedArrayBuffer {
+    /// Ref + pin the `ArrayBuffer` behind `value` (a `JSArrayBuffer` or view)
+    /// and expose `bytes`, which must lie inside it (e.g. the same value's
+    /// `MarkedArrayBuffer::slice()`). `None` if `value` has no backing store.
+    pub fn retain(value: JSValue, bytes: &[u8]) -> Option<Self> {
+        let owner = ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(value))?;
+        Some(Self {
+            owner,
+            ptr: bytes.as_ptr(),
+            len: bytes.len(),
+        })
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        // SAFETY: `ptr[..len]` lies inside the storage `owner` keeps allocated
+        // (ref) and undetachable (pin) until `Drop`.
+        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl Clone for PinnedArrayBuffer {
+    fn clone(&self) -> Self {
+        JSC__ArrayBuffer__retainPinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
+        Self {
+            owner: self.owner,
+            ptr: self.ptr,
+            len: self.len,
+        }
+    }
+}
+
+impl Drop for PinnedArrayBuffer {
+    fn drop(&mut self) {
+        JSC__ArrayBuffer__releasePinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
+    }
+}
+
 impl JSCArrayBuffer {
     pub fn as_array_buffer(&mut self) -> ArrayBuffer {
         let mut out = core::mem::MaybeUninit::<ArrayBuffer>::uninit();

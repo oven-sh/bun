@@ -146,8 +146,8 @@ impl StoreExt for Store {
         mut pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error> {
-        // A Store is shared across threads and dropped from the Blob cell's
-        // GC finalizer, so it must never hold a JS-backed path.
+        // A Store is read from other threads and dropped from the Blob cell's
+        // GC finalizer, so it must not hold a call-scoped `PathLike::Buffer`.
         pathlike.to_thread_safe();
 
         // Compute the extension-derived fallback before moving `pathlike` into

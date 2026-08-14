@@ -3527,6 +3527,31 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     }
 }
 
+// Hold the backing store itself rather than the JS object: one ref + one pin on
+// the `JSC::ArrayBuffer` (refcounted, not a GC cell). The wrapper may then be
+// collected while the bytes stay allocated and in place, and releasing touches
+// no JSCell — so a native holder that is destroyed from a GC finalizer (a Blob
+// store) can release inline. JS thread only: the refcount is not atomic.
+CPP_DECL void JSC__ArrayBuffer__retainPinned(JSC::ArrayBuffer* buf)
+{
+    buf->ref();
+    if (!buf->isShared())
+        buf->pin();
+}
+CPP_DECL JSC::ArrayBuffer* JSC__JSValue__retainPinnedArrayBuffer(JSC::EncodedJSValue v)
+{
+    auto* buf = arrayBufferImpl(JSC::JSValue::decode(v));
+    if (buf)
+        JSC__ArrayBuffer__retainPinned(buf);
+    return buf;
+}
+CPP_DECL void JSC__ArrayBuffer__releasePinned(JSC::ArrayBuffer* buf)
+{
+    if (!buf->isShared())
+        buf->unpin();
+    buf->deref();
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data

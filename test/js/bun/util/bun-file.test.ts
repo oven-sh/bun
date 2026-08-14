@@ -111,28 +111,36 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
 });
 
 test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async () => {
-  // The file store used to keep the JS buffer pinned for the Blob's lifetime
-  // and unpin it from the Blob's GC destructor, touching a JS cell mid-sweep.
+  // The file store used to protect() the path's JS buffer and never release
+  // it, and unpinned it from the Blob's GC destructor (touching a JS cell
+  // mid-sweep). Now it holds the backing store directly: the blobs and the
+  // buffers are both collectable, and reads still see the path.
   await using dir = tempDir("bun-file-buffer-path-gc", {
     "hello.txt": "hello",
     "run.js": `
       const { join } = require("path");
+      const { heapStats } = require("bun:jsc");
       const existing = join(process.argv[2], "hello.txt");
+      const protectedBefore = heapStats().protectedObjectCount;
       for (let i = 0; i < 2000; i++) {
         Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
+        Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-ab-" + i)).buffer);
       }
-      const keep = [Bun.file(Buffer.from(existing)), Bun.file(new TextEncoder().encode(existing))];
-      const pathBuf = Buffer.from(existing);
-      const fromMutated = Bun.file(pathBuf);
-      pathBuf.fill(0x78); // later writes to the buffer must not change the file's path
+      const keep = [
+        Bun.file(Buffer.from(existing)),
+        Bun.file(new TextEncoder().encode(existing)),
+        Bun.file(new TextEncoder().encode(existing).buffer),
+      ];
       Bun.gc(true);
       Bun.gc(true);
+      const stats = heapStats();
       console.log(JSON.stringify({
         exists: await Promise.all(keep.map(f => f.exists())),
         text: await Promise.all(keep.map(f => f.text())),
-        fromMutated: await fromMutated.text(),
         missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
+        leakedProtects: stats.protectedObjectCount - protectedBefore > 100,
+        leakedBuffers: (stats.objectTypeCounts.Uint8Array ?? 0) > 100,
       }));
     `,
   });
@@ -147,10 +155,11 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
-    exists: [true, true],
-    text: ["hello", "hello"],
-    fromMutated: "hello",
+    exists: [true, true, true],
+    text: ["hello", "hello", "hello"],
     missing: false,
+    leakedProtects: false,
+    leakedBuffers: false,
   });
   expect(exitCode).toBe(0);
 });

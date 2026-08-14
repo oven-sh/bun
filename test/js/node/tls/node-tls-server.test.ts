@@ -2080,6 +2080,28 @@ it("adopts a socket that was still connecting when wrapped as the server side", 
   }
 });
 
+it("releases a connecting socket whose server wrap was destroyed before it connected", async () => {
+  // Destroying the wrap mid-connect must tear the connection down once it
+  // connects; otherwise it stays open and refed with no owner.
+  const rawServer = net.createServer(() => {});
+  let outgoing: net.Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    rawServer.once("error", listening.reject);
+    rawServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    outgoing = connectLater((rawServer.address() as AddressInfo).port);
+    const outgoingClosed = once(outgoing, "close");
+    const wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
+    wrapped.destroy();
+    await outgoingClosed;
+    expect(outgoing.destroyed).toBe(true);
+  } finally {
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
 it("closes a server wrap whose connecting socket fails to connect", async () => {
   // Node closes the wrap, without an error of its own, when the wrapped
   // socket fails; the failure itself is reported on that socket.

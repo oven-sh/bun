@@ -1093,13 +1093,9 @@ impl WebWorker {
         // process.exit() from an exit handler does not re-arm the trap.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
+            // From an immediate this runs before the turn's poll; the wake is what ends it.
             // SAFETY: this thread's live VM.
-            unsafe {
-                // As for a parent's terminate(): nothing more may enter script
-                // (Node's `Stop(env)` on the worker's own exit).
-                (*vm_ptr).handle_ref().stop();
-                (*vm_ptr).jsc_vm().notify_need_termination();
-            }
+            unsafe { (*vm_ptr).handle_ref().request_termination() };
         }
     }
 
@@ -1251,20 +1247,8 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, arm the JSC termination trap so any further JS halts at the
-    // next safepoint, and let the stack unwind normally back to `spin()`,
-    // whose loop observes `requested_terminate` and reaches the single
-    // `shutdown()` call at its bottom with no live JSC frames above it. The
-    // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
-    // `uncaught_exception` returns `handled == false`, so `spin()` calls
-    // `return self.shutdown()` directly — same observable ordering.
-    // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
-    // `global_object`); `notify_need_termination` is documented thread-safe
-    // (VMTraps). The gate closes with it, as for exit()/terminate(): the
-    // native→JS entries still reached this tick refuse rather than run into
-    // the pending termination.
-    vm.handle_ref().stop();
-    vm.jsc_vm().notify_need_termination();
+    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
+    vm.handle_ref().request_termination();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

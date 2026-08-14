@@ -425,4 +425,35 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  // The blank template and the react templates spawn the nested `bun install`
+  // from different places; both used to drop its exit status, so `bun init`
+  // exited 0 (and the react templates printed the success banner) after the
+  // install had failed.
+  test.each(["-y", "--react"])("bun init %s exits non-zero when the nested `bun install` fails", async flag => {
+    using registry = Bun.serve({
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    await using temp = tempDir(`bun-init-install-fails${flag.replace(/[^a-z]+/g, "-")}`, {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", flag],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...initEnv,
+        BUN_CONFIG_REGISTRY: String(registry.url),
+        BUN_INSTALL_CACHE_DIR: path.join(temp, ".bun-cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The scaffold is written before the install runs and stays on disk.
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(false);
+    expect(stderr).toContain("failed to resolve");
+    expect(stdout).not.toContain("New project configured!");
+    expect(exitCode).toBe(1);
+  });
 });

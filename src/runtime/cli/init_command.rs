@@ -937,7 +937,9 @@ impl InitCommand {
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
                     let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    if !bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?.is_ok() {
+                        Global::exit(1);
+                    }
                 }
             }
             _ => {}
@@ -1674,7 +1676,9 @@ impl Template {
         Output::flush();
 
         let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        if !bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?.is_ok() {
+            Global::exit(1);
+        }
 
         bun_core::prettyln!(
             "\n\

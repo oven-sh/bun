@@ -2374,7 +2374,10 @@ describe("bundler", () => {
   // reached through import() gets wrapped in `__esm(() => { ... })`, and the
   // linker hoists the module's top-level declarations out of that closure so
   // the export getters and the static importers can reach them. The ones that
-  // were moved into the try block have to end up hoisted as well.
+  // were moved into the try block have to end up hoisted as well. The fixture
+  // covers each way a declaration ends up in there: exported and local
+  // let/const, the `using` itself, a destructuring pattern, a declaration
+  // without an initializer, and the variable `export default <expr>` becomes.
   const loweredTopLevelUsing = {
     Using: `using handle = { val: 42, [Symbol.dispose]() { state.disposed = true; } };`,
     AwaitUsing: `await using handle = { val: 42, async [Symbol.asyncDispose]() { state.disposed = true; } };`,
@@ -2389,6 +2392,7 @@ describe("bundler", () => {
     export function internals() {
       return [val, assignedLater];
     }
+    export default { tag: "default", val };
   `;
   const loweredTopLevelUsingInEsmWrapper = (
     kind: keyof typeof loweredTopLevelUsing,
@@ -2397,10 +2401,10 @@ describe("bundler", () => {
     target,
     files: {
       "/entry.js": /* js */ `
-        import { result, state, internals } from "./lazy.js";
-        console.log(JSON.stringify(["static", result, state.disposed, internals()]));
+        import def, { result, state, internals } from "./lazy.js";
+        console.log(JSON.stringify(["static", result, state.disposed, internals(), def]));
         const mod = await import("./lazy.js");
-        console.log(JSON.stringify(["dynamic", mod.result, mod.state.disposed, mod.internals()]));
+        console.log(JSON.stringify(["dynamic", mod.result, mod.state.disposed, mod.internals(), mod.default]));
       `,
       "/lazy.js": loweredTopLevelUsingModule(kind),
     },
@@ -2410,12 +2414,12 @@ describe("bundler", () => {
       expect(out).toContain("__callDispose(");
       // Everything the module declares at its top level is hoisted out of the
       // wrapper in one declaration; the try block only keeps the assignments.
-      expect(out).toMatch(/^var __stack, state, handle, result, val, assignedLater;$/m);
+      expect(out).toMatch(/^var __stack, state, handle, result, val, assignedLater, lazy_default;$/m);
     },
     run: {
       stdout: `
-        ["static",42,true,[42,43]]
-        ["dynamic",42,true,[42,43]]
+        ["static",42,true,[42,43],{"tag":"default","val":42}]
+        ["dynamic",42,true,[42,43],{"tag":"default","val":42}]
       `,
     },
   });
@@ -2435,8 +2439,8 @@ describe("bundler", () => {
   const loweredTopLevelUsingInlined = (kind: keyof typeof loweredTopLevelUsing): BundlerTestInput => ({
     files: {
       "/entry.js": /* js */ `
-        import { result, state, internals } from "./lazy.js";
-        console.log(JSON.stringify([result, state.disposed, internals()]));
+        import def, { result, state, internals } from "./lazy.js";
+        console.log(JSON.stringify([result, state.disposed, internals(), def]));
       `,
       "/lazy.js": loweredTopLevelUsingModule(kind),
     },
@@ -2445,7 +2449,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("__callDispose(");
     },
     run: {
-      stdout: "[42,true,[42,43]]",
+      stdout: '[42,true,[42,43],{"tag":"default","val":42}]',
     },
   });
   itBundled("edgecase/LoweredTopLevelUsingInlined", loweredTopLevelUsingInlined("Using"));

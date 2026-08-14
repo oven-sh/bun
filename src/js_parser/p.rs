@@ -8961,8 +8961,8 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
-        // The linker's `__esm` wrapper hoists declarations by scanning top-level statements only.
-        let relocate_vars = p.options.bundle && p.current_scope == p.module_scope;
+        // The linker's `__esm` wrapper and the REPL transform hoist only top-level declarations.
+        let relocate_module_vars = p.current_scope == p.module_scope;
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
             let mut stmt = stmts[i];
@@ -9035,7 +9035,7 @@ impl LowerUsingDeclarationsContext {
                         }
                     }
 
-                    if relocate_vars && local.kind == js_ast::s::Kind::KVar {
+                    if relocate_module_vars && local.kind == js_ast::s::Kind::KVar {
                         match p.relocate_vars_to_top_level(
                             local.decls.slice(),
                             RelocateVarsMode::Normal,

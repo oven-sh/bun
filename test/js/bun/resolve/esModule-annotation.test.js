@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
 import * as WithTypeModuleExportEsModuleAnnotationNoDefault from "./with-type-module/export-esModule-annotation-no-default.cjs";
 import * as WithTypeModuleExportEsModuleAnnotation from "./with-type-module/export-esModule-annotation.cjs";
@@ -65,4 +67,87 @@ describe('with type: "module"', () => {
     });
     expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
   });
+});
+
+// https://github.com/oven-sh/bun/issues/6747
+describe.concurrent("accessor properties on module.exports", () => {
+  const fixtures = join(import.meta.dir, "without-type-module");
+
+  test("without __esModule, getters are not invoked or exposed as named exports", async () => {
+    const src = `
+      import colors, * as ns from ${JSON.stringify(join(fixtures, "export-with-getter.cjs"))};
+      process.stdout.write("imported\\n");
+      process.stdout.write("keys=" + Object.keys(ns).sort().join(",") + "\\n");
+      process.stdout.write("red=" + ns.red + "\\n");
+      delete colors.lightBlue;
+      process.stdout.write("afterDelete=" + colors.lightBlue + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("imported\nkeys=default,red\nred=#f00\nafterDelete=undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("without __esModule, the getter remains on the default export and still works", async () => {
+    const src = `
+      import colors from ${JSON.stringify(join(fixtures, "export-with-getter.cjs"))};
+      process.stdout.write("imported\\n");
+      process.stdout.write("value=" + colors.lightBlue + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("imported\nGETTER:lightBlue\nvalue=#0ff\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("without __esModule, a named import of an accessor-backed property is a link-time error", async () => {
+    const src = `
+      import { lightBlue } from ${JSON.stringify(join(fixtures, "export-with-getter.cjs"))};
+      console.log(lightBlue);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("SyntaxError");
+    expect(stderr).toContain("'lightBlue'");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  for (const dir of ["without-type-module", "with-type-module"]) {
+    test(`with __esModule (${dir}), getters are still invoked for named exports`, async () => {
+      const src = `
+        import * as ns from ${JSON.stringify(join(import.meta.dir, dir, "export-esModule-with-getter.cjs"))};
+        process.stdout.write("imported\\n");
+        process.stdout.write("lightBlue=" + ns.lightBlue + "\\n");
+        process.stdout.write("hasKey=" + Object.keys(ns).includes("lightBlue") + "\\n");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--input-type=module", "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("GETTER:lightBlue\nimported\nlightBlue=#0ff\nhasKey=true\n");
+      expect(exitCode).toBe(0);
+    });
+  }
 });

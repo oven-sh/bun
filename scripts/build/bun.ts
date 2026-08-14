@@ -45,6 +45,7 @@ import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
+import { emitVerifyBaselineStatic } from "./verify-baseline-static.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -152,6 +153,13 @@ export interface BunOutput {
   objects: string[];
   /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
   uploadStamps?: string[];
+  /**
+   * The static ISA scanner built for the CI verify-baseline step (see
+   * verify-baseline-static.ts). Only when `cfg.verifyBaselineStatic` is on and
+   * the mode builds from source (full / archive-link); configure.ts adds it to
+   * the default targets and ci.ts uploads it.
+   */
+  verifyBaselineStatic?: string | undefined;
 }
 
 /**
@@ -511,7 +519,24 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+  // ─── Step 8: the verify-baseline step's scanner (CI lanes that get one) ───
+  // Nothing links against it; it is sequenced behind the cargo step (see
+  // emitVerifyBaselineStatic) and otherwise runs whenever a slot is free.
+  const verifyBaselineStatic = cfg.verifyBaselineStatic
+    ? emitVerifyBaselineStatic(n, cfg, sources, rustObjects)
+    : undefined;
+
+  return {
+    exe,
+    strippedExe,
+    dsym,
+    deps,
+    codegen,
+    rustObjects,
+    objects: allObjects,
+    uploadStamps,
+    verifyBaselineStatic,
+  };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {

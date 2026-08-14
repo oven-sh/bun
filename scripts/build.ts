@@ -445,6 +445,7 @@ function parseArgs(argv: string[]): CliArgs {
     "valgrind",
     "fuzzilli",
     "socketFaultInjection",
+    "verifyBaselineStatic",
     "unifiedSources",
     "archiveDeps",
     "timeTrace",

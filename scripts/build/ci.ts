@@ -30,6 +30,7 @@ import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { VERIFY_BASELINE_STATIC_NAME } from "./verify-baseline-static.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -355,11 +356,17 @@ function upload(paths: string[], cwd: string): void {
 //           ├── bun-asan
 //           └── features.json
 //
+//   verify-baseline-static[.exe] (only with --verify-baseline-static=on)
+//     The static ISA scanner, built for the verify-baseline step's host
+//     (verify-baseline-static.ts). Deliberately not a zip: test shards
+//     download '*.zip' and must not pick it up.
+//
 // bunTriplet = bun-${os}-${arch}[-musl][-baseline]
 //
-// Test steps (runner.node.mjs) download '**' from build-bun and pick any
-// bun*.zip; baseline-verification step downloads ${triplet}.zip specifically
-// and expects ${triplet}/bun inside.
+// Test steps (runner.node.mjs) download '*.zip' from build-bun and pick any
+// bun*.zip; the verify-baseline step (getVerifyBaselineStep in ci.mjs)
+// downloads ${bunTriplet}-profile.zip and verify-baseline-static[.exe] by
+// exact name and expects ${bunTriplet}-profile/bun-profile inside the zip.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -466,9 +473,27 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     run(["buildkite-agent", "meta-data", "set", `binary-size:${bunTriplet}`, String(bytes)], buildDir);
   }
 
+  // ─── verify-baseline-static ───
+  // Copied to the top of buildDir so the artifact is the bare name the
+  // verify-baseline step downloads (artifact names are buildDir-relative
+  // paths); cargo's own output sits under deps/<name>/<triple>/release/.
+  if (output.verifyBaselineStatic !== undefined) {
+    const artifact = verifyBaselineStaticArtifact(cfg);
+    cpSync(output.verifyBaselineStatic, resolve(buildDir, artifact));
+    zipPaths.push(artifact);
+  }
+
   // ─── Upload ───
-  console.log(`Uploading ${zipPaths.length} zips...`);
+  console.log(`Uploading ${zipPaths.length} artifacts...`);
   upload(zipPaths, buildDir);
+}
+
+/**
+ * Artifact name of the scanner built by verify-baseline-static.ts. Must match
+ * the name getVerifyBaselineStep() in .buildkite/ci.mjs downloads.
+ */
+export function verifyBaselineStaticArtifact(cfg: Config): string {
+  return `${VERIFY_BASELINE_STATIC_NAME}${cfg.exeSuffix}`;
 }
 
 /**

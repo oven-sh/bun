@@ -92,6 +92,18 @@ const patterns = {
       "rust-toolchain.toml",
     ],
   },
+  /**
+   * `scripts/verify-baseline-static` — its own cargo workspace, built by the
+   * edge in build/verify-baseline-static.ts (implicit inputs, so an edit
+   * re-invokes cargo). Not part of the workspace `rust` list above.
+   */
+  verifyBaselineStatic: {
+    paths: [
+      "scripts/verify-baseline-static/Cargo.toml",
+      "scripts/verify-baseline-static/Cargo.lock",
+      "scripts/verify-baseline-static/src/**/*.rs",
+    ],
+  },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {
     paths: [

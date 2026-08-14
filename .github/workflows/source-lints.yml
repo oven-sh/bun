@@ -16,6 +16,8 @@ on:
       - "src/jsc/bindings/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
+      # verify-baseline-static-build.test.ts checks the artifact contract between scripts/build/ci.ts and this file.
+      - ".buildkite/ci.mjs"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
@@ -28,6 +30,8 @@ on:
       - "src/jsc/bindings/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
+      # verify-baseline-static-build.test.ts checks the artifact contract between scripts/build/ci.ts and this file.
+      - ".buildkite/ci.mjs"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"

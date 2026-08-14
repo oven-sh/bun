@@ -8,6 +8,12 @@
 // Usage:
 //   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
 //   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
+//
+// The static scan (phase 0) runs scripts/verify-baseline-static. CI passes
+// --static-checker with the executable the build-bun step uploaded (see
+// getVerifyBaselineStep in .buildkite/ci.mjs); without the flag, a locally
+// `cargo build --release`-built one is used if present and the scan is
+// skipped otherwise.
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -25,6 +31,7 @@ const { values } = parseArgs({
     // fallback for local dev.
     arch: { type: "string" },
     emulator: { type: "string" },
+    "static-checker": { type: "string" },
     "jit-stress": { type: "boolean", default: false },
     "skip-emulation": { type: "boolean", default: false },
   },
@@ -184,9 +191,19 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
 // Phase 0: Static instruction scan (no emulation — disassembles the binary).
 // Catches instructions in code paths the emulator test below never executes.
-// Soft-skipped if the checker isn't built (dev without cargo).
+// An explicit --static-checker must exist: in CI a missing one means the
+// build-bun artifact is gone, and silently skipping the scan would turn that
+// into a green step. The implicit local path is soft-skipped if it isn't built
+// (dev without cargo).
 const staticCheckerExe = isWindows ? "verify-baseline-static.exe" : "verify-baseline-static";
-const staticChecker = join(scriptDir, "verify-baseline-static", "target", "release", staticCheckerExe);
+const explicitStaticChecker = values["static-checker"];
+const staticChecker =
+  explicitStaticChecker !== undefined
+    ? resolve(explicitStaticChecker)
+    : join(scriptDir, "verify-baseline-static", "target", "release", staticCheckerExe);
+if (explicitStaticChecker !== undefined && !(await Bun.file(staticChecker).exists())) {
+  throw new Error(`--static-checker not found: ${staticChecker}`);
+}
 const staticAllowlistName = isWindows
   ? "allowlist-x64-windows.txt"
   : isAarch64

@@ -1952,17 +1952,22 @@ impl QuicSession {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let mut parsed = Ok(());
+        let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
             let options = frame.arguments_as_array::<1>()[0];
             if options.is_object() {
                 // Node's Destroy with close options. JS has already latched
                 // `inner.destroying` and finished its half before reaching
-                // here, so teardown() MUST run; a parse failure is thrown once
-                // it has.
-                parsed = self.close_with_options(global, options);
-                if let Some(endpoint) = self.endpoint_ref() {
-                    endpoint.drive_engines_once();
+                // here, so teardown() MUST run; a parse failure is taken off
+                // the VM (teardown reaches JS) and re-thrown once it has. No
+                // close was applied then, so the engines are not driven.
+                match self.close_with_options(global, options) {
+                    Ok(()) => {
+                        if let Some(endpoint) = self.endpoint_ref() {
+                            endpoint.drive_engines_once();
+                        }
+                    }
+                    Err(err) => parse_error = Some(global.take_exception(err)),
                 }
             } else if let Some(c) = self.conn() {
                 // Node's server acks the packet that triggered the destroying
@@ -1979,7 +1984,9 @@ impl QuicSession {
             self.schedule_process();
         }
         self.teardown(global);
-        parsed?;
+        if let Some(err) = parse_error {
+            return Err(global.throw_value(err));
+        }
         Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn open_stream(

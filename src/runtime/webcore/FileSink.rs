@@ -451,7 +451,7 @@ impl FileSink {
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
-                src.ready(None, None)?;
+                settled = src.ready(None, None);
             }
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
@@ -463,11 +463,11 @@ impl FileSink {
             }
 
             if status == WriteStatus::EndOfFile {
+                FileSink::clear_keep_alive_ref(this);
                 if settled.is_ok() {
                     let mut src = *(*this).source.get();
-                    src.close(None)?;
+                    settled = src.close(None);
                 }
-                FileSink::clear_keep_alive_ref(this);
             }
             settled
         }

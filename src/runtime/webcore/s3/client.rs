@@ -477,7 +477,7 @@ pub(crate) fn writable_stream(
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
-        let _ = NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
+        crate::webcore::streams::settled_from_native(NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed));
     }
 
     let proxy_url = proxy.unwrap_or(b"");
@@ -625,7 +625,7 @@ impl S3UploadStreamWrapper {
         }
         if let Some(sink) = self_.sink_mut() {
             // Fires `source.ready()` so the upstream pump resumes.
-            let _ = NetworkSink::on_writable(task, sink, flushed);
+            crate::webcore::streams::settled_from_native(NetworkSink::on_writable(task, sink, flushed));
         }
     }
 

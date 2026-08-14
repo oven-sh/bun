@@ -1621,7 +1621,15 @@ fn connect_finish<const IS_SSL: bool>(
     }
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
-    if socket_ref.do_connect().is_err() {
+    let connected = socket_ref.do_connect();
+    // An already-open fd socket runs its `open` handler synchronously; what it
+    // (and then `error`) threw is pending, and is not a connect failure: the
+    // socket is live, so finish as for a started connection and throw it.
+    let opened_err = match connected {
+        Err(crate::Error::Js(err)) => Some(err),
+        _ => None,
+    };
+    if opened_err.is_none() && connected.is_err() {
         // Winsock sets WSAGetLastError, not the CRT `_errno()` that
         // `last_errno()` reads.
         #[cfg(windows)]
@@ -1689,6 +1697,9 @@ fn connect_finish<const IS_SSL: bool>(
             .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     }
 
+    if let Some(err) = opened_err {
+        return Err(err);
+    }
     Ok(promise_value)
 }
 

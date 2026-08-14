@@ -84,9 +84,9 @@ impl Handler {
         error_value: JSValue,
     ) -> JsResult<()> {
         // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        // cleared; it is the caller's `Err`, not an error to hand to `error`.
         if global_object.has_exception() {
-            return Ok(());
+            return Err(bun_jsc::JsError::Thrown);
         }
         if !on_error.is_empty_or_undefined_or_null() {
             on_error.call(global_object, JSValue::UNDEFINED, &[error_value])?;

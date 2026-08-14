@@ -233,8 +233,6 @@ impl FSWatchTaskPosix {
                     }
                     self.count = (i + 1) as u8;
                     rest.enqueue();
-                    // A closed watcher takes no more tasks; free what it declined.
-                    rest.clean_entries();
                 }
                 return Err(err);
             }

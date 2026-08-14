@@ -723,10 +723,9 @@ impl ServerWebSocket {
         let vm = handler.vm();
 
         // on_open's error branch closes the socket, landing here with the
-        // termination from its handler still pending. Both branches below
-        // enter JS, which trips assertNoException().
+        // termination from its handler still pending: it is the caller's `Err`.
         if handler.global_object().has_exception() {
-            return Ok(());
+            return Err(bun_jsc::JsError::Thrown);
         }
 
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC

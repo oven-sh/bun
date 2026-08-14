@@ -285,19 +285,6 @@ impl Default for WebSocketBehavior {
     }
 }
 
-/// User-data type stored on a uWS WebSocket.
-///
-/// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
-/// the corresponding C callback `null`.
-///
-/// Noalias re-entrancy: the `on_*` methods take `this: *mut Self`,
-/// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
-/// promise callbacks…); JS can call back into this same socket via the wrapper
-/// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live
-/// `noalias` `&mut Self` argument carried through the dispatch frame would
-/// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
-/// the re-entrant write. Implementors materialise short-lived `&mut *this`
-/// reborrows only — none spanning a JS callback.
 /// A handler that entered JS returns the exception it left pending.
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
 
@@ -322,6 +309,20 @@ fn fold(handled: JsResult<()>) {
     }
 }
 
+/// User-data type stored on a uWS WebSocket.
+///
+/// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
+/// the corresponding C callback `null`.
+///
+/// Noalias re-entrancy: the `on_*` methods take `this: *mut Self`,
+/// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
+/// promise callbacks…); JS can call back into this same socket via the wrapper
+/// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live
+/// `noalias` `&mut Self` argument carried through the dispatch frame would
+/// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
+/// the re-entrant write. Implementors materialise short-lived `&mut *this`
+/// reborrows only — none spanning a JS callback.
+///
 /// Every handler returns the exception it left pending and never reports it;
 /// [`Wrap`] — the one trampoline from uWS into these — folds it.
 pub trait WebSocketHandler: Sized + 'static {

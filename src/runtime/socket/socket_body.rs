@@ -910,7 +910,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
             let global = handlers.global_object;
-            let scope = handlers.enter();
+            let scope = ScopeExit {
+                socket: this,
+                scope: Some(handlers.enter()),
+            };
             let this_value = this.get_this_value(&global);
             let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
@@ -923,7 +926,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }
-            this.exit_scope(scope);
+            drop(scope);
             return Ok(());
         }
         #[cfg(windows)]
@@ -939,14 +942,17 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -982,14 +988,17 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -1519,7 +1528,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
         let result = match callback.call(&global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1570,7 +1582,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        this.exit_scope(scope);
+        drop(scope);
         opened
     }
 
@@ -1648,14 +1660,17 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -1806,7 +1821,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1841,7 +1859,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
                     Ok(v) => v,
                     Err(e) => {
-                        this.exit_scope(scope);
+                        drop(scope);
                         if reject_unauthorized {
                             this.reject_unauthorized_connection();
                         }
@@ -1863,7 +1881,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         if reject_unauthorized {
             this.reject_unauthorized_connection();
         }
@@ -1948,13 +1966,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             return Ok(());
         }
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         let buffer = match Self::create_dispatch_buffer(&global, session.len()) {
             Ok(b) => b,
             Err(e) => {
-                this.exit_scope(scope);
+                drop(scope);
                 return Err(e);
             }
         };
@@ -1972,7 +1993,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -1995,13 +2016,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             return Ok(());
         }
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         let buffer = match Self::create_dispatch_buffer(&global, line.len()) {
             Ok(b) => b,
             Err(e) => {
-                this.exit_scope(scope);
+                drop(scope);
                 return Err(e);
             }
         };
@@ -2019,7 +2043,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -2059,16 +2083,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        if let Some(raw) = this.twin.with_mut(|t| t.take()) {
+        let twin_closed = match this.twin.with_mut(|t| t.take()) {
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `IntrusiveRc::drop`
             // release it a second time.
-            Self::on_close(raw.into_this_ptr(), socket, err, reason)?;
-        }
+            Some(raw) => Self::on_close(raw.into_this_ptr(), socket, err, reason),
+            None => Ok(()),
+        };
         let cleanup = CloseTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
         };
+        // What the twin's close/error handlers left pending is this close's
+        // `Err` too, once our own teardown is armed.
+        twin_closed?;
 
         if this.flags.get().contains(Flags::FINALIZING) {
             drop(cleanup);
@@ -2086,15 +2114,18 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // An earlier callback in this dispatch may have left a termination
         // pending — on_open's error branch closes the socket from
-        // mark_inactive(), landing here. Entering JS trips assertNoException().
+        // mark_inactive(), landing here. It is the caller's `Err`.
         if handlers.global_object.has_exception() {
             drop(cleanup);
-            return Ok(());
+            return Err(jsc::JsError::Thrown);
         }
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -2118,7 +2149,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         drop(cleanup);
         Ok(())
     }
@@ -2172,13 +2203,16 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = handlers.enter();
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        this.exit_scope(scope);
+        drop(scope);
         Ok(())
     }
 
@@ -3711,7 +3745,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
-        let opened = TLSSocket::on_open(tls, tls.socket.get());
+        // What the new socket's `open` (and then `error`) handler threw surfaces
+        // from `upgradeTLS()`; the handshake, which re-enters JS, is not started
+        // over it.
+        TLSSocket::on_open(tls, tls.socket.get())?;
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).start_tls_handshake();
         // The socket being wrapped may have had its readable interest off (an
         // accepted socket nobody was reading yet — its ClientHello is still in
@@ -3728,9 +3765,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;
         array.put_index(global, 1, tls_js_value)?;
-        // What the new socket's `open` handler threw surfaces from `upgradeTLS()`,
-        // once the handshake has been started and the pair built.
-        opened?;
         Ok(array)
     }
 

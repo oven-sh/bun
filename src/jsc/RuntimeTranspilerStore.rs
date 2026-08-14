@@ -279,6 +279,7 @@ impl RuntimeTranspilerStore {
                 let drained =
                     unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
                 if let Err(stopped) = drained {
+                    self.requeue(job, &mut iter);
                     return Err(stopped.throw(global));
                 }
             }
@@ -287,15 +288,25 @@ impl RuntimeTranspilerStore {
             let fulfilled = unsafe { (*job).run_from_js_thread() };
             job = iter.next();
             if let Err(err) = fulfilled {
-                while let Some(rest) = NonNull::new(job) {
-                    job = iter.next();
-                    self.queue.push(rest);
-                }
+                self.requeue(job, &mut iter);
                 return Err(err);
             }
         }
         // immediately after this is called, the microtasks will be drained again.
         Ok(())
+    }
+
+    /// Put `job` and the rest of a popped batch back: each still has its posted
+    /// task (or the teardown release) to pick it up.
+    fn requeue(
+        &mut self,
+        mut job: *mut TranspilerJob,
+        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
+    ) {
+        while let Some(unrun) = NonNull::new(job) {
+            job = iter.next();
+            self.queue.push(unrun);
+        }
     }
 
     pub fn transpile(

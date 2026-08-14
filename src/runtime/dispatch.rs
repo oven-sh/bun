@@ -576,12 +576,10 @@ mod run_impls {
     impl RunTask for crate::shell::dispatch_tasks::ShellAsyncTask {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            // SAFETY: tag identifies pointee; `interp` set at enqueue and
-            // outlives the task.
-            let t = unsafe { &mut *this };
-            // SAFETY: the interpreter outlives its queued async tasks.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
+            // SAFETY: tag identifies pointee; `interp` set at enqueue and the
+            // interpreter outlives its queued async tasks.
+            let (interp, node) = unsafe { (&*(*this).interp, (*this).node) };
+            ShellAsync::run_from_main_thread(interp, node);
             Ok(())
         }
     }

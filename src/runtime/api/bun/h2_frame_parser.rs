@@ -5892,6 +5892,13 @@ impl H2FrameParser {
 
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
+    /// A frame callback left an exception pending (a value it could not build, or the
+    /// termination): no later frame in this batch is dispatched over it; `read()` throws it and
+    /// `on_native_read` returns it to the socket dispatch.
+    fn should_stop(&self) -> bool {
+        self.handlers.get().global().has_exception()
+    }
+
     fn on_frame_counters(&self, received: u64, sent: u64) {
         self.engine_frames_received.set(received);
         self.engine_frames_sent.set(sent);
@@ -5959,8 +5966,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                // Left pending: the parser stops dispatching behind a pending
-                // exception (`read_bytes`) and `read()`/`on_native_read` return it.
+                // Left pending: the engine stops before the next frame
+                // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
                 if custom
                     .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
                     .is_err()
@@ -6020,8 +6027,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.remote_custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                // Left pending: the parser stops dispatching behind a pending
-                // exception (`read_bytes`) and `read()`/`on_native_read` return it.
+                // Left pending: the engine stops before the next frame
+                // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
                 if custom
                     .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
                     .is_err()
@@ -6246,7 +6253,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let tuple = match tuple {
             Ok(v) => v,
             // Materialization threw (OOM): drop the block; the exception stays
-            // pending for `read()`/`on_native_read` (see `read_bytes`).
+            // pending for `read()`/`on_native_read` (see `Sink::should_stop`).
             Err(_) => return,
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
@@ -9666,7 +9673,7 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
-        // What a frame callback left pending stopped the parser (`read_bytes`);
+        // What a frame callback left pending stopped the engine (`should_stop`);
         // it belongs to the socket dispatch that delivered these bytes.
         if self.handlers.get().global().has_exception() {
             return Err(bun_jsc::JsError::Thrown);

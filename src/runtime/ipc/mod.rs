@@ -218,11 +218,12 @@ pub enum IPCDecodeError {
     /// Format could not be recognized. Report an error and close the socket.
     #[error("InvalidFormat")]
     InvalidFormat,
+    /// The decode ran under a VM that is stopping (loop-level; not an exception).
+    #[error("Stopped")]
+    Stopped,
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("Stopped")]
-    Stopped,
     #[error("OutOfMemory")]
     OutOfMemory,
 }

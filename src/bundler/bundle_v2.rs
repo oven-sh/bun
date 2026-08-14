@@ -6084,9 +6084,8 @@ pub mod bv2_impl {
                     }
                 }
 
-                // By default, we treat .sqlite files as external; the Bun runtime opens
-                // them. For other targets the record falls through to the parse task,
-                // which reports that the sqlite loader requires target "bun".
+                // External for target bun, where the runtime opens the database. Other
+                // targets fall through to the parse task, which reports the target error.
                 if import_record.loader == Some(Loader::Sqlite) && ctx.target.is_bun() {
                     import_record
                         .flags

@@ -96,12 +96,8 @@ pub mod argon2 {
     #[derive(Copy, Clone, Default)]
     pub(crate) struct VerifyOptions;
 
-    /// rust-argon2 allocates its block matrix infallibly (`vec![Block::zero(); n]`
-    /// in `Memory::new`), so a memory cost the system cannot satisfy would abort
-    /// the process. Probe the same amount (`m` KiB, the crate rounds down to a
-    /// multiple of `4 * lanes` blocks) with a fallible reservation first and
-    /// report failure as `OutOfMemory`, the error the JS caller gets. The probe
-    /// is freed before the crate allocates for real.
+    /// rust-argon2 allocates its `m` KiB block matrix infallibly (`Memory::new`), so
+    /// reserve that much fallibly first and report `OutOfMemory` instead of aborting.
     fn check_memory_is_allocatable(mem_cost_kib: u32) -> Result<(), Error> {
         let bytes = (mem_cost_kib as usize)
             .checked_mul(1024)
@@ -269,9 +265,7 @@ pub mod argon2 {
                 }
             }
         }
-        // The decoder only accepts strings with exactly one `m=`, so this is the
-        // cost `verify_encoded` would allocate for; anything else it rejects
-        // before allocating.
+        // Strings without exactly one `m=` fail to decode below, before allocating.
         if let Some(memory_cost) = memory_cost {
             check_memory_is_allocatable(memory_cost)?;
         }

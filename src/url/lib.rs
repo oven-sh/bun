@@ -390,7 +390,9 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
+    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`, or
+    /// `<displayProtocol>://<displayHost>/` when the pathname is `/`, so the
+    /// result always ends in exactly one slash.
     ///
     /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
     /// `Display`); the other two pieces are raw byte slices, so we assemble
@@ -407,8 +409,10 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
     }
 

@@ -880,8 +880,7 @@ impl Lockfile {
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
                 debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
                 for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
-                    // The root's `workspaces` rows precede its package.json entries and are not editable;
-                    // a request binds to the entry that spells its name.
+                    // The root's implicit `workspaces` rows are not package.json entries; bind to the entry naming the package.
                     if dep.behavior.is_workspace() {
                         continue;
                     }

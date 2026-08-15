@@ -1336,8 +1336,7 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` keeps a `catalog:` reference or a `workspace:` range as written, in both passes:
-            // before the install so neither --latest nor `<pkg>@<range>` replaces it; `bun add` still replaces it.
+            // `bun update <pkg>` keeps a `catalog:` reference or a `workspace:` range as written; `bun add` still replaces them.
             if manager.subcommand == Subcommand::Update
                 && matches!(
                     dependency::Tag::infer(e_string.data.slice()),
@@ -1455,8 +1454,7 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                // A range or dist-tag that linked a workspace member has nothing to move to: `bun update <name>`
-                // leaves it as written, like the bare update does. `workspace:*` is what `bun add` writes.
+                // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
                 resolution::Tag::Workspace => b"workspace:*",
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),

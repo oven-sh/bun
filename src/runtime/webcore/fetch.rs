@@ -1649,6 +1649,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
+    // Captured before the body is prepared: the sendfile decision below needs
+    // to know whether hop 0 connects to the origin directly, and a proxy from
+    // the environment (which may be https://, i.e. TLS to the proxy) is only
+    // visible through this. `ProxySettings` owns copies of the env values, so a
+    // later `process.env.HTTP_PROXY = ...` cannot invalidate them mid-request;
+    // the HTTP thread re-resolves them against every redirect hop.
+    let proxy_settings: Option<Box<http::ProxySettings>> = match &proxy {
+        Some(proxy_) if !proxy_.is_empty() => {
+            http::ProxySettings::from_explicit(proxy_.href, vm.transpiler.env())
+        }
+        // proxy: "" means explicitly no proxy (direct connection)
+        Some(_) => None,
+        None => http::ProxySettings::from_env(vm.transpiler.env()),
+    };
+
     // `body` is mutated in place for the sendfile/readfile paths and then
     // *moved* into `FetchOptions`.
 
@@ -1722,10 +1737,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 Ok(fd) => fd,
             };
 
+            // sendfile(2) writes the file straight to the socket, so it needs hop 0
+            // to be a plain connection to the origin itself: an https:// proxy
+            // (explicit or from the environment) puts TLS in between, and the HTTP
+            // client has no fallback for a Sendfile body on a TLS socket.
+            let connects_directly = proxy_settings
+                .as_deref()
+                .is_none_or(|settings| settings.resolve(&url).is_none());
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            if connects_directly && compress.is_none() && http::SendFile::is_eligible(&url) {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,
@@ -1991,25 +2013,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         // `defer result.deinit()` → Drop.
 
-        if let Some(proxy_) = &proxy {
-            // proxy and url are in the same buffer lets replace it
-            let old_buffer = core::mem::take(&mut url_proxy_buffer);
-            // `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
-            let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
-            buffer[0..result.url.len()].copy_from_slice(&result.url);
-            buffer[result.url.len()..].copy_from_slice(proxy_.href);
-            url_proxy_buffer = buffer;
-
-            url = parse_url_detached!(&url_proxy_buffer[0..result.url.len()]);
-            proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
-            drop(old_buffer);
-        } else {
-            // replace headers and url of the request
-            // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-            url_proxy_buffer = core::mem::take(&mut result.url).into();
-            url = parse_url_detached!(&url_proxy_buffer[..]);
-            // result.url = ""; — fetch now owns this (mem::take above)
-        }
+        // Replace the url of the request with the signed one. The explicit
+        // proxy that shared the old buffer is already captured in
+        // `proxy_settings`, so `proxy` is not re-parsed (and not used) past here.
+        // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
+        url_proxy_buffer = core::mem::take(&mut result.url).into();
+        url = parse_url_detached!(&url_proxy_buffer[..]);
 
         let content_type = headers.as_ref().and_then(|h| h.get_content_type());
         let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
@@ -2042,31 +2051,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    // `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
-    // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
+    // `FetchOptions.url` is a `ZigURL<'static>` borrowing the
+    // `url_proxy_buffer: Box<[u8]>` stored alongside it — a self-referential
     // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
-    // proxy-string path above triggers this), so the existing `url`/`proxy`
-    // slices may dangle after the conversion. Convert to `Box<[u8]>` first
-    // (stable heap address), then re-parse the URLs from the boxed buffer.
+    // proxy-string path above triggers this), so the existing `url` slice may
+    // dangle after the conversion. Convert to `Box<[u8]>` first (stable heap
+    // address), then re-parse the URL from the boxed buffer. The explicit proxy
+    // href that may follow it in the buffer was consumed into `proxy_settings`.
     let url_len = url.href.len(); // fat-pointer len read; no deref
-    let has_proxy = proxy.is_some();
     let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
-    // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
-    // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
-    // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
+    // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URL
+    // that borrows it; `FetchTasklet` keeps the buffer alive for as long as the
+    // URL is read. Erase the borrow to a raw slice so borrowck doesn't tie
     // `url_static` to the local `url_proxy_boxed` binding.
     let buf_ptr: *const [u8] = &raw const *url_proxy_boxed;
     // SAFETY: `buf_ptr` points into `url_proxy_boxed` which the FetchTasklet
-    // keeps alive for the lifetime of the parsed URLs (see comment above).
+    // keeps alive for the lifetime of the parsed URL (see comment above).
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
     let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(&buf[url_len..]))
-    } else {
-        None
-    };
     let fetch_options = FetchOptions {
         method,
         url: url_static,
@@ -2080,7 +2084,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         reject_unauthorized,
         redirect_type,
         verbose,
-        proxy: proxy_static,
+        proxy_settings,
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),

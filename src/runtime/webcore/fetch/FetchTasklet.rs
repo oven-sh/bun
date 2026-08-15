@@ -1957,25 +1957,11 @@ impl FetchTasklet {
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
-        // Capture the proxy env so the HTTP thread can re-resolve per redirect
-        // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
-        // owns copies of the env values, so a later `process.env.HTTP_PROXY =
-        // ...` on the JS thread cannot invalidate them mid-request.
-        let proxy_settings: Option<Box<http::ProxySettings>> =
-            if let Some(proxy_opt) = &fetch_options.proxy {
-                if !proxy_opt.is_empty() {
-                    http::ProxySettings::from_explicit(proxy_opt.href, env)
-                } else {
-                    // proxy: "" means explicitly no proxy (direct connection)
-                    None
-                }
-            } else {
-                http::ProxySettings::from_env(env)
-            };
+        let proxy_settings = fetch_options.proxy_settings;
         // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
         // moved into `AsyncHTTP::init` below and lives on `client` for the
-        // lifetime of the request.
+        // lifetime of the request; later hops re-resolve it there
+        // (`HTTPClient::reevaluate_proxy_for_redirect`).
         let proxy: Option<ZigURL> = proxy_settings.as_deref().and_then(|s| {
             let href: *const [u8] = s.resolve(&url)?;
             // SAFETY: see block comment above.
@@ -2026,9 +2012,10 @@ impl FetchTasklet {
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
-        // `url` is moved into `AsyncHTTP::init`; capture the one
-        // post-move query (`is_http()`, debug-assert only) up front.
+        // `url` and `proxy` are moved into `AsyncHTTP::init`; capture the
+        // post-move queries (debug-assert only) up front.
         let url_is_http = url.is_http();
+        let hop0_is_direct = proxy.is_none();
 
         fetch_tasklet.http = Some(Box::new(AsyncHTTP::init(
             fetch_options.method,
@@ -2111,8 +2098,10 @@ impl FetchTasklet {
             .store(true, Ordering::Relaxed);
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
+            // `fetch()` only builds a Sendfile body for a plain connection straight
+            // to the origin; the HTTP client panics on a Sendfile body over TLS.
             debug_assert!(url_is_http);
-            debug_assert!(fetch_options.proxy.is_none());
+            debug_assert!(hop0_is_direct);
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }
@@ -2670,7 +2659,11 @@ pub struct FetchOptions {
     pub(crate) url: ZigURL<'static>,
     pub(crate) verbose: http::HTTPVerboseLevel,
     pub(crate) redirect_type: FetchRedirect,
-    pub(crate) proxy: Option<ZigURL<'static>>,
+    /// The explicit `proxy` option or the proxy environment, captured by
+    /// `fetch()` on the JS thread; `None` means every hop connects directly.
+    /// `fetch()` has already used it for the sendfile decision, so hop 0 is
+    /// resolved from the same settings here.
+    pub(crate) proxy_settings: Option<Box<http::ProxySettings>>,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
     pub(crate) signal: Option<*mut AbortSignal>,
@@ -2704,7 +2697,7 @@ impl Default for FetchOptions {
             url: ZigURL::default(),
             verbose: http::HTTPVerboseLevel::None,
             redirect_type: FetchRedirect::Follow,
-            proxy: None,
+            proxy_settings: None,
             proxy_headers: None,
             url_proxy_buffer: Box::default(),
             signal: None,

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, tls as tlsCert, withoutAggressiveGC } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import tls from "node:tls";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -219,6 +222,106 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
+  });
+});
+
+// A Bun.file() body of 32 KiB or more going to an http:// URL is uploaded with
+// sendfile(2), which only works on a plain socket straight to the origin. The
+// decision used to look at the explicit `proxy` option only; a proxy from the
+// environment was applied afterwards, so http_proxy=https://... made the HTTP
+// client hit "sendfile is only supported without SSL" and abort the process.
+describe("Bun.file() upload through a proxy", () => {
+  const fileSize = 64 * 1024;
+  const fileBytes = Buffer.alloc(fileSize, "a");
+  const fileSha256 = Bun.CryptoHasher.hash("sha256", fileBytes, "hex");
+  const PROXY_ENV_KEYS = ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"];
+
+  // Absolute-form forward proxy (the shape an http:// request takes through a
+  // proxy): rewrites the request line to origin-form and pipes the rest through.
+  async function startProxy(secure: boolean) {
+    const onClient = (client: net.Socket) => {
+      client.on("error", () => {});
+      client.once("data", head => {
+        // Hold the rest of the request until the upstream connection is up;
+        // pipe() below resumes the socket and flushes what was held.
+        client.pause();
+        const text = head.toString("latin1");
+        const eol = text.indexOf("\r\n");
+        const [method, target, version] = text.slice(0, eol).split(" ");
+        const url = new URL(target);
+        const upstream = net.connect(Number(url.port), url.hostname, () => {
+          upstream.write(`${method} ${url.pathname}${url.search} ${version}\r\n`);
+          upstream.write(head.subarray(eol + 2));
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        upstream.on("error", () => client.destroy());
+        client.on("close", () => upstream.destroy());
+      });
+    };
+    const server = secure ? tls.createServer({ ...tlsCert }, onClient) : net.createServer(onClient);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    return {
+      url: `${secure ? "https" : "http"}://127.0.0.1:${port}`,
+      async [Symbol.asyncDispose]() {
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  // The proxy environment is read by the process doing the fetch, so the
+  // upload runs in a child with exactly the proxy variables under test.
+  async function uploadFromChild(proxyEnv: Record<string, string>, fetchInit: Record<string, unknown>) {
+    using dir = tempDir("fetch-file-upload-proxy", { "body.bin": fileBytes });
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      maxRequestBodySize: fileSize * 2,
+      async fetch(req) {
+        return new Response(Bun.CryptoHasher.hash("sha256", await req.bytes(), "hex"));
+      },
+    });
+    const env = { ...bunEnv };
+    for (const key of PROXY_ENV_KEYS) delete env[key];
+    const init = { ...fetchInit, method: "POST", tls: { rejectUnauthorized: false } };
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const res = await fetch(${JSON.stringify(String(origin.url))}, {
+          ...${JSON.stringify(init)},
+          body: Bun.file(${JSON.stringify(join(String(dir), "body.bin"))}),
+        });
+        console.log(res.status, await res.text());`,
+      ],
+      env: { ...env, ...proxyEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const uploaded = { stdout: `200 ${fileSha256}\n`, stderr: "", exitCode: 0 };
+
+  for (const envKey of ["http_proxy", "HTTP_PROXY"]) {
+    test.concurrent(`${envKey}=https://... (TLS to the proxy)`, async () => {
+      await using proxy = await startProxy(true);
+      expect(await uploadFromChild({ [envKey]: proxy.url }, {})).toEqual(uploaded);
+    });
+  }
+
+  test.concurrent("http_proxy=http://...", async () => {
+    await using proxy = await startProxy(false);
+    expect(await uploadFromChild({ http_proxy: proxy.url }, {})).toEqual(uploaded);
+  });
+
+  test.concurrent("proxy option pointing at an https:// proxy", async () => {
+    await using proxy = await startProxy(true);
+    expect(await uploadFromChild({}, { proxy: proxy.url })).toEqual(uploaded);
   });
 });
 

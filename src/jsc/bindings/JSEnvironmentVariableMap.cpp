@@ -924,6 +924,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     // Founding a new tree. processEnvObject() forces the lazy init so the OS
     // environment is captured before the swap below.
     JSObject* envObject = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!envObject->staticPropertiesReified()) {
         envObject->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -979,7 +980,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
+JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -998,7 +999,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
 #else
     auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
@@ -1078,9 +1079,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
-                    RETURN_IF_EXCEPTION(scope, {});
+                    RETURN_IF_EXCEPTION(scope, nullptr);
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
-                    RETURN_IF_EXCEPTION(scope, {});
+                    RETURN_IF_EXCEPTION(scope, nullptr);
                 }
                 continue;
             }
@@ -1135,25 +1136,20 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSC::MarkedArgumentBuffer args;
     args.append(object);
     args.append(keyArray);
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
-        return jsUndefined();
-    }
-
-    RELEASE_AND_RETURN(scope, result);
+    // Entering JS here fails with a RangeError when process.env is first read
+    // close to the stack limit; leave it pending for processEnvObject()'s caller.
+    JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // windowsEnv returns `new Proxy(...)`, so a normal return is always an object.
+    return asObject(result);
 #else
     return object;
 #endif

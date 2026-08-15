@@ -356,7 +356,10 @@ public:
     void forbidExecution();
 
     Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
-    JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
+    // Builds process.env on first use. On Windows that runs a JS builtin, which can
+    // throw (stack overflow, clobbered globals); then this returns nullptr with the
+    // exception pending and caches nothing, so the next access tries again.
+    JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
     uint8_t drainMicrotasks();
@@ -563,7 +566,7 @@ public:
                                                                                                              \
     V(public, Bun::JSMockModule, mockModule)                                                                 \
                                                                                                              \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
+    V(public, WriteBarrier<JSObject>, m_processEnvObject)                                                    \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \

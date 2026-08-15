@@ -2541,11 +2541,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
         });
 
-    m_processEnvObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
-        });
-
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::Process>::Initializer& init) {
             auto* globalObject = defaultGlobalObject(init.owner);
@@ -3084,6 +3079,25 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
         JSC::PropertyName))
 {
     return JSC::JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
+}
+
+JSC::JSObject* GlobalObject::processEnvObject()
+{
+    if (JSObject* env = m_processEnvObject.get())
+        return env;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = Bun::createEnvironmentVariablesMap(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // The Windows builtin assigns onto an ordinary object, so user code (an
+    // Object.prototype setter) can run inside the build and read process.env;
+    // if that built one first, keep it so process.env, Bun.env and
+    // import.meta.env stay the same object.
+    if (JSObject* existing = m_processEnvObject.get())
+        return existing;
+    m_processEnvObject.set(vm, this, env);
+    return env;
 }
 
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)

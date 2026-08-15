@@ -2636,7 +2636,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     };
 
     auto constructEnvironmentVariables = [&]() -> JSC::JSValue {
-        return globalObject->processEnvObject();
+        JSC::JSObject* env = globalObject->processEnvObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return env;
     };
 
     auto constructCpus = [&]() -> JSC::JSValue {
@@ -3217,15 +3219,13 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue env = globalObject->processEnvObject();
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    // Returning empty with the exception pending makes the read throw and
+    // leaves `env` unreified, so the next read builds it (same as Bun.$ and
+    // Bun.env). Clearing and returning undefined would pin process.env to
+    // undefined for the rest of the process after one failed build.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
     return env;
 }
 

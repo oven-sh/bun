@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1437,6 +1437,131 @@ describe.concurrent(() => {
       } finally {
         delete process.env.BUN_TEST_ENV_PROXY;
       }
+    });
+
+    // Windows finishes building process.env by calling the windowsEnv JS
+    // builtin (POSIX builds the map without entering JS), so a first read with
+    // almost no stack left throws a RangeError out of the builder. That used to
+    // hit the RELEASE_ASSERT in the LazyProperty initializer holding the env,
+    // which on Windows exits with STATUS_STACK_BUFFER_OVERRUN (0xC0000409) and
+    // prints nothing; Bun.$ reads process.env and bun:sql reads Bun.env while
+    // being created, so first-touching them died the same way. The read has to
+    // throw and the next one has to build the real env, so the child retries the
+    // entry point at every depth while unwinding and then checks the env.
+    async function firstReadNearStackLimitBuildsRealEnv(entryPoint) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const entryPoint = process.argv[1];
+           let reached = false;
+           const readers = {
+             "process.env": () => { reached = true; return process.env; },
+             "Bun.env": () => { reached = true; return Bun.env; },
+             "import.meta.env": () => { reached = true; return import.meta.env; },
+             "Bun.$": () => { reached = true; return Bun.$; },
+             "Bun.sql": () => { reached = true; return Bun.sql; },
+           };
+           const read = readers[entryPoint];
+           let value;
+           let readThrew = 0;
+           function recurse() {
+             try {
+               recurse();
+             } catch {}
+             if (value !== undefined) return;
+             reached = false;
+             try {
+               value = read();
+             } catch {
+               // Only count throws from the read itself, not from failing to
+               // enter the reader at the very bottom of the stack.
+               if (reached) readThrew++;
+             }
+           }
+           recurse();
+           const result = {
+             retried: readThrew > 0,
+             type: typeof value,
+             envIntact: process.env.BUN_TEST_LAZY_ENV === "lazy-env-value",
+             sameObject: Bun.env === process.env && import.meta.env === process.env,
+           };
+           if (entryPoint.endsWith("env")) result.isEnv = value === process.env;
+           if (entryPoint === "Bun.$") result.echo = (await value({ raw: ["echo $BUN_TEST_LAZY_ENV"] }).text()).trim();
+           console.log(JSON.stringify(result));`,
+          entryPoint,
+        ],
+        env: { ...bunEnv, BUN_TEST_LAZY_ENV: "lazy-env-value" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const expected = { retried: true, envIntact: true, sameObject: true };
+      if (entryPoint.endsWith("env")) Object.assign(expected, { type: "object", isEnv: true });
+      else if (entryPoint === "Bun.$") Object.assign(expected, { type: "function", echo: "lazy-env-value" });
+      else Object.assign(expected, { type: "function" });
+      expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        result: expected,
+      });
+    }
+
+    it.each(["process.env", "import.meta.env"])(
+      "%s first read near the stack limit throws and the next read builds the real env",
+      firstReadNearStackLimitBuildsRealEnv,
+    );
+
+    // These three are looked up on the Bun object, and the env builder reifies
+    // Bun.inspect (transitioning Bun) before the point where it can throw, so
+    // assertion builds trip the stale-structure ASSERT in Structure::storedPrototype
+    // that the WebKit change in #37001 removes. Release builds (what CI runs on
+    // Windows) are unaffected.
+    it.skipIf(isDebug).each(["Bun.env", "Bun.$", "Bun.sql"])(
+      "%s first read near the stack limit throws and the next read builds the real env",
+      firstReadNearStackLimitBuildsRealEnv,
+    );
+
+    // The windowsEnv builtin assigns toJSON onto an ordinary object, so a setter
+    // on Object.prototype runs user code in the middle of the env build and can
+    // read process.env, re-entering it. The inner read used to come back empty
+    // without an exception, which is another RELEASE_ASSERT ("did not produce a
+    // property") and the same 0xC0000409 exit. Now the inner read builds the env
+    // and the outer one adopts it instead of installing a second object.
+    it("env build re-entered from user code yields one env object", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let inner;
+           Object.defineProperty(Object.prototype, "toJSON", {
+             configurable: true,
+             set(fn) {
+               // Remove the trap first: the inner build assigns toJSON too.
+               delete Object.prototype.toJSON;
+               inner = process.env;
+               Object.defineProperty(this, "toJSON", { value: fn, writable: true, configurable: true, enumerable: true });
+             },
+           });
+           const outer = Bun.env;
+           console.log(JSON.stringify({
+             reentered: inner !== undefined,
+             oneObject: outer === inner && process.env === inner && import.meta.env === inner,
+             envIntact: inner.BUN_TEST_LAZY_ENV,
+             json: JSON.parse(JSON.stringify(process.env)).BUN_TEST_LAZY_ENV,
+           }));`,
+        ],
+        env: { ...bunEnv, BUN_TEST_LAZY_ENV: "lazy-env-value" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        result: { reentered: true, oneObject: true, envIntact: "lazy-env-value", json: "lazy-env-value" },
+      });
     });
   }
 

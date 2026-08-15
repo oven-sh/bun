@@ -108,7 +108,10 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return env;
 }
 
 JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)

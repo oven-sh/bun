@@ -1,6 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { rm } from "node:fs/promises";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -2351,6 +2352,231 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).toContain("bugfix-package@1.0.0");
       expect(lockfile).toContain("@scope/scoped-package@1.5.0");
+    });
+  });
+
+  // A required peer that nothing in the tree provides and that no published
+  // version satisfies only warns and stays unresolved (bun-lock.test.ts, "peer
+  // no published version satisfies"). A peer whose only satisfying versions
+  // are blocked by the age gate has to end up the same way, on every path that
+  // can report the blocked lookup.
+  describe("peer dependencies", () => {
+    const AGE_GATE = 3 * SECONDS_PER_DAY;
+    const blockedPeerWarning = (range: string, name = "gated") =>
+      `warn: No version matching "${range}" found for peer dependency "${name}" (blocked by minimum-release-age: ${AGE_GATE} seconds)`;
+
+    // gated@2.0.0 is the only version the peers below accept and it is inside
+    // the age window; every version of `fresh` is inside it.
+    const registryPackages: Record<
+      string,
+      { time: Record<string, string>; peerDependencies?: Record<string, string> }
+    > = {
+      gated: { time: { "1.0.0": daysAgo(30), "2.0.0": daysAgo(1) } },
+      fresh: { time: { "1.0.0": daysAgo(1) } },
+      "needs-gated": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { gated: "^2.0.0" } },
+    };
+
+    function serveRegistry() {
+      const requests: string[] = [];
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { origin, pathname } = new URL(req.url);
+          requests.push(pathname);
+          const tarball = pathname.match(/^\/([^/]+)\/-\/\1-(\d+\.\d+\.\d+)\.tgz$/);
+          if (tarball) return new Response(createTarball(tarball[1], tarball[2]));
+          const name = pathname.slice(1);
+          const pkg = registryPackages[name];
+          if (!pkg) return new Response("Not Found", { status: 404 });
+          const versions: Record<string, unknown> = {};
+          for (const version of Object.keys(pkg.time)) {
+            versions[version] = {
+              name,
+              version,
+              dist: { tarball: `${origin}/${name}/-/${name}-${version}.tgz` },
+              peerDependencies: pkg.peerDependencies,
+            };
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: Object.keys(pkg.time).at(-1) },
+            versions,
+            time: pkg.time,
+          });
+        },
+      });
+      return {
+        origin: server.url.origin,
+        requests,
+        [Symbol.dispose]() {
+          server.stop(true);
+        },
+      };
+    }
+
+    function createProject(registryOrigin: string, files: Record<string, string>) {
+      return tempDir("age-gated-peer", { ...files, ".npmrc": `registry=${registryOrigin}` });
+    }
+
+    async function install(dir: string, { args = [] as string[], env = {} as Record<string, string> } = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${AGE_GATE}`, ...args],
+        cwd: dir,
+        // One manifest/tarball cache per project, so the second install of a
+        // test sees exactly what its first install cached.
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache`, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    async function reResolve(dir: string) {
+      await rm(`${dir}/bun.lock`, { force: true });
+      await rm(`${dir}/node_modules`, { recursive: true, force: true });
+    }
+
+    test.concurrent("declared by a registry package", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "needs-gated": "1.0.0" } }),
+      });
+
+      let { stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain(blockedPeerWarning("^2.0.0"));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/node_modules/needs-gated/package.json`).exists()).toBeTrue();
+      expect(await Bun.file(`${dir}/node_modules/gated/package.json`).exists()).toBeFalse();
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile.replaceAll(registry.origin, "<registry>")).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 1,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "app",
+              "dependencies": {
+                "needs-gated": "1.0.0",
+              },
+            },
+          },
+          "packages": {
+            "needs-gated": ["needs-gated@1.0.0", "<registry>/needs-gated/-/needs-gated-1.0.0.tgz", { "peerDependencies": { "gated": "^2.0.0" } }, ""],
+          }
+        }
+        "
+      `);
+
+      ({ stderr, exitCode } = await install(String(dir), { args: ["--frozen-lockfile"] }));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+    });
+
+    test.concurrent("declared by the root package and a workspace (range, exact pin, dist-tag)", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          peerDependencies: { gated: "^2.0.0", fresh: "latest" },
+        }),
+        "packages/ws/package.json": JSON.stringify({ name: "ws", peerDependencies: { gated: "2.0.0" } }),
+      });
+
+      let { stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain(blockedPeerWarning("^2.0.0"));
+      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+      expect(stderr).toContain(blockedPeerWarning("latest", "fresh"));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 2,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "app",
+              "peerDependencies": {
+                "fresh": "latest",
+                "gated": "^2.0.0",
+              },
+            },
+            "packages/ws": {
+              "name": "ws",
+              "peerDependencies": {
+                "gated": "2.0.0",
+              },
+            },
+          },
+          "packages": {
+            "ws": ["ws@workspace:packages/ws"],
+          }
+        }
+        "
+      `);
+
+      ({ stderr, exitCode } = await install(String(dir), { args: ["--frozen-lockfile"] }));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+    });
+
+    test.concurrent("exact pin answered from an expired cached manifest", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({ name: "app", peerDependencies: { gated: "2.0.0" } }),
+      });
+      // Keeps writing manifests to the cache but treats every cached one as
+      // expired, which is how an exact pin ends up being answered from the
+      // stale manifest instead of from a fresh lookup.
+      const staleManifests = { env: { BUN_MANIFEST_CACHE: "1" } };
+
+      let { stderr, exitCode } = await install(String(dir), staleManifests);
+      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+      expect(exitCode).toBe(0);
+      expect(registry.requests).toEqual(["/gated"]);
+
+      await reResolve(String(dir));
+      registry.requests.length = 0;
+      ({ stderr, exitCode } = await install(String(dir), staleManifests));
+      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(registry.requests).toEqual([]);
+    });
+
+    test.concurrent("bound to the version already in the tree, with and without a warm manifest cache", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { gated: "^1.0.0", "needs-gated": "1.0.0" },
+        }),
+      });
+
+      const expectBoundToInstalledVersion = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => {
+        expect(stderr).toContain('warn: incorrect peer dependency "gated@1.0.0"');
+        expect(stderr).not.toContain("blocked by minimum-release-age");
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      };
+
+      expectBoundToInstalledVersion(await install(String(dir)));
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain('"gated@1.0.0"');
+
+      // With both manifests in the cache the peer is looked up synchronously
+      // while regular dependencies are still being resolved, before the pass
+      // that binds peers to what the tree contains.
+      await reResolve(String(dir));
+      registry.requests.length = 0;
+      expectBoundToInstalledVersion(await install(String(dir)));
+      expect(registry.requests).toEqual([]);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
     });
   });
 

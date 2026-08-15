@@ -1107,9 +1107,7 @@ impl Tree {
             }
         }
 
-        // This is the hoist root of a bundled dependency's subtree. Placing here puts the package
-        // in front of everything that resolves this name through this tree to something above,
-        // so if that is a different package, nest next to the dependent like any other conflict.
+        // a bundle's dependency stops here, but must not shadow what resolves through here
         if !AS_DEFINED
             && this.id == hoist_root_id
             && Tree::hoist_root_resolves_elsewhere(
@@ -1129,16 +1127,11 @@ impl Tree {
         })) // 2
     }
 
-    /// `hoist_root` is the node_modules of a package with bundled dependencies. The bundle's
-    /// dependencies hoist no further than it, but the package itself, and the regular dependencies
-    /// it nests there (and theirs, and so on), resolve through it to whatever is above it, and a
-    /// loaded `bun.lock` rebinds them by walking up the saved paths. So `package_id` may only be
-    /// placed there if every one of their edges for `name_hash` already resolves to it; this returns
-    /// true if one doesn't.
+    /// The bundling package and the regular dependencies nested under `hoist_root` resolve
+    /// `name_hash` through it, and a loaded `bun.lock` rebinds their edges by walking up the saved
+    /// paths, so `package_id` can only go there if those edges already resolve to it.
     ///
-    /// An unbound optional peer (`package_id` invalid) places nothing a path walk can find. If it
-    /// gets bound during this pass, `Lockfile::resolve` hoists again with the binding known and the
-    /// bound package is checked like any other.
+    /// An unbound optional peer saves no path; once bound, `Lockfile::resolve` hoists again.
     fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
         hoist_root: Id,
         package_id: PackageID,
@@ -1174,9 +1167,7 @@ impl Tree {
             return true;
         }
 
-        // The trees whose contents resolve through `hoist_root`, each with the package whose
-        // node_modules it is. A tree is appended after its parent, so one pass in id order finds
-        // every tree of a regular dependency nested inside one already in the scope.
+        // (tree, package whose node_modules it is); children are appended after their parent
         let mut scope: Vec<(Id, PackageID)> = vec![(hoist_root, owner)];
         for (id, tree) in trees.iter().enumerate().skip(hoist_root as usize + 1) {
             let Some(&(_, parent_owner)) =

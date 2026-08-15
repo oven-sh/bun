@@ -25,6 +25,21 @@ function entryStoreName(link: string): string {
   return link.slice(link.lastIndexOf("links") + "links".length + 1);
 }
 
+// Every copy of `name` in the tree bun.lock saves, keyed by the node_modules
+// path it is written at, e.g. `{ "no-deps": "no-deps@1.0.1", "nd11": "no-deps@1.1.0" }`.
+// The peer tests below depend on the shape of this tree, not just on which
+// versions were resolved, so they assert it before looking at the store.
+async function savedTreeCopiesOf(packageDir: string, name: string): Promise<Record<string, string>> {
+  const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+    packages: Record<string, [string, ...unknown[]]>;
+  };
+  return Object.fromEntries(
+    Object.entries(packages)
+      .filter(([, [resolution]]) => resolution.startsWith(`${name}@`))
+      .map(([path, [resolution]]) => [path, resolution]),
+  );
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -1170,13 +1185,19 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
   // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // of the saved tree) and no-deps@1.1.0 (exact pin via the `nd11` alias). The
+  // fresh resolve binds the peer edge to the highest satisfying version (1.1.0)
+  // in its deferred-peer phase; reloading bun.lock used to re-derive the edge
   // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
   // That silently changed the runtime dependency tree on the second install
   // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
   // warm install.
+  //
+  // Both copies are exact pins so that the graph does not depend on whether
+  // the resolver dedupes a range like two-range-deps' `no-deps@^1.0.0` onto
+  // the 1.0.1 pin. Today that depends on which manifest the registry answers
+  // first: the range only adds 1.1.0 when it is resolved before 1.0.1 is
+  // appended.
   const { packageJson, packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
@@ -1188,12 +1209,20 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
       dependencies: {
         "peer-deps-fixed": "1.0.0",
         "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
       },
     }),
   );
 
   await runBunInstall(bunEnv, packageDir);
+
+  // 1.0.1 holds the `no-deps` path the peer edge resolves through; the
+  // edge itself gets no path of its own, which is what made the load-time
+  // path walk rebind it.
+  expect(await savedTreeCopiesOf(packageDir, "no-deps")).toEqual({
+    "nd11": "no-deps@1.1.0",
+    "no-deps": "no-deps@1.0.1",
+  });
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
@@ -1229,7 +1258,7 @@ test("aliased peer dependency binds to its real package across installs from bun
         workspaces: ["packages/*"],
         dependencies: {
           "normal-dep-and-dev-dep": "1.0.0",
-          "two-range-deps": "1.0.0",
+          "nd11": "npm:no-deps@1.1.0",
         },
       }),
       "packages/m/package.json": JSON.stringify({
@@ -1241,6 +1270,12 @@ test("aliased peer dependency binds to its real package across installs from bun
   });
 
   await runBunInstall(bunEnv, packageDir);
+  // no-deps@1.1.0 is the decoy: the only real no-deps version that satisfies
+  // ^1.0.2, so a lookup under the alias name would rebind the edge to it
+  expect(Object.values(await savedTreeCopiesOf(packageDir, "no-deps")).sort()).toEqual([
+    "no-deps@1.0.1",
+    "no-deps@1.1.0",
+  ]);
   const aliasLink = join(packageDir, "packages", "m", "node_modules", "no-deps", "package.json");
   const fresh = await file(aliasLink).json();
   expect(fresh).toMatchObject({ name: "a-dep" });
@@ -1271,12 +1306,19 @@ test("optional ranged peer keeps its hoisted-tree binding across installs from b
       dependencies: {
         "one-optional-peer-dep": "1.0.2",
         "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
       },
     }),
   );
 
   await runBunInstall(bunEnv, packageDir);
+
+  // 1.0.1 is the hoisted sibling the optional peer was bound to; 1.1.0 is
+  // the higher version a version scan on load would pick instead
+  expect(await savedTreeCopiesOf(packageDir, "no-deps")).toEqual({
+    "nd11": "no-deps@1.1.0",
+    "no-deps": "no-deps@1.0.1",
+  });
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));

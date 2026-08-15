@@ -76,9 +76,7 @@ struct SuperLowering<'r> {
     is_static: bool,
 }
 
-/// Static blocks and static initializers emitted after the class: `this` is the class and
-/// `super.x` is a static `super` access. Every site that moves such code out of the body
-/// goes through `rewrite_relocated_static_*`.
+/// Static code emitted after the class. Every relocation site uses `rewrite_relocated_static_*`.
 #[derive(Clone, Copy)]
 struct RelocatedStatic<'r> {
     home: &'r Cell<Option<Ref>>,
@@ -87,8 +85,7 @@ struct RelocatedStatic<'r> {
 }
 
 impl<'r> RelocatedStatic<'r> {
-    /// `LowerSuper` first: the `this` receivers it emits are replaced together with the
-    /// user's own `this` by the class binding, which class decorators may have reassigned.
+    /// `LowerSuper` first, so the `this` receivers it emits are replaced along with the user's own.
     fn kinds(self) -> [RewriteKind<'r>; 2] {
         [
             RewriteKind::LowerSuper(SuperLowering {

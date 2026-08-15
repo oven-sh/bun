@@ -90,9 +90,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
 
     let _unbuffered = Output::disable_buffering_scope();
 
-    // The spawn does no $PATH search of its own: a bare command name is resolved
-    // here and passed as the exec path, and a path containing a slash is
-    // resolved against `cwd` by the spawn.
+    // The spawn itself does no $PATH search.
     let mut exec_path_buf = bun_paths::path_buffer_pool::get();
     let exec_path: Option<&bun_core::ZStr> = if is_bun_task {
         match bun_core::self_exe_path() {

@@ -42,7 +42,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::resolve_path::relative_normalized_spill;
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -197,6 +197,7 @@ pub(crate) fn write<W: Write + ?Sized>(
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
+    let mut relative_spill: Vec<u8> = Vec::new();
 
     for ch in chunks.iter() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -253,7 +254,8 @@ pub(crate) fn write<W: Write + ?Sized>(
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = relative_normalized_spill::<bun_paths::platform::Posix>(
+                    &mut relative_spill,
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
                 );
@@ -308,7 +310,8 @@ pub(crate) fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = relative_normalized_spill::<bun_paths::platform::Posix>(
+                    &mut relative_spill,
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );

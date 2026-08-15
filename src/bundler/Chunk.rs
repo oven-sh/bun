@@ -689,8 +689,8 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
-        let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let mut relative_spill: Vec<u8> = Vec::new();
+        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -808,11 +808,10 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
+                                        &mut relative_spill, from_chunk_dir, file_path
                                     )
                                 },
                             );
@@ -978,28 +977,26 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
+                            // normalize windows paths to '/', in a scratch copy: the
+                            // source slices are only reachable through `&Graph` /
+                            // `&[Chunk]` here, so they cannot be normalized in place.
                             let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
+                                        &mut relative_spill, from_chunk_dir, file_path
                                     )
                                 },
                             );

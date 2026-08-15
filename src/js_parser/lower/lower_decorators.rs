@@ -165,11 +165,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_runtime(l, name, list)
     }
 
-    /// A generated symbol that is not a binding of the scope being lowered into:
-    /// the parameter of a synthesized setter, `arguments` in a synthesized
-    /// constructor. Everything the lowering declares in that scope is a
-    /// temporary and goes through `new_temp`; the `'static` name and the
-    /// assertion keep the two apart.
+    /// For the few generated symbols that are not declared in the scope being
+    /// lowered into (a synthesized setter's parameter, `arguments`). Anything
+    /// declared there is a temporary and goes through `new_temp`.
     fn new_fixed_name_sym(&mut self, kind: js_ast::symbol::Kind, name: &'static [u8]) -> Ref {
         debug_assert!(
             !name.starts_with(b"_"),
@@ -180,17 +178,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// A lowering temporary (`_init`, `_dec`, the `_name` WeakMap of a lowered
-    /// member, ...). The lowering declares it with `var` (or `let`, for the
-    /// inner class binding) in the statement list it is lowering into, which
-    /// makes it a binding of the enclosing var-hoisting scope, and it is
-    /// registered there like any other declaration so the bundler's renamers
-    /// rename it (`declare_generated_binding`).
-    ///
-    /// Without a renamer (the runtime transpiler, `bun build --no-bundle`),
-    /// symbols print under their original names, so there `base` is only a
-    /// request: `name_decorator_temps` picks the final name once the whole file
-    /// has been visited.
+    /// A temporary (`_init`, `_dec`, a member's `_name` WeakMap, ...) that the
+    /// lowering declares in the statement list it is lowering into, i.e. a
+    /// binding of the enclosing var-hoisting scope. The bundler's renamers
+    /// rename it from there; without a renamer, symbols print under their
+    /// original names, so `base` is only a request and `name_decorator_temps`
+    /// picks the final name once the whole file has been visited.
     fn new_temp(&mut self, base: &'a [u8]) -> Ref {
         debug_assert!(
             base.starts_with(b"_"),
@@ -205,29 +198,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// Gives every temporary created by `new_temp` a name no other symbol in the
-    /// file has. Runs after the visit pass, because that is when the set of
-    /// identifiers the file uses is complete: references to undeclared globals
-    /// only get a symbol when the visit reaches them (`find_symbol`).
-    ///
-    /// Every symbol in the file is reserved, not just the ones declared in the
-    /// scope a temporary hoists to: the temporary is read from code nested
-    /// inside that scope (constructors, the generated getters and setters, the
-    /// class's own methods), so a same-named binding in any of those nested
-    /// scopes, such as a method parameter `_value` next to a `#value` field,
-    /// would shadow it there.
-    ///
-    /// Same convention as the renamer: the first temporary asking for a base
-    /// name keeps it, later ones get `base2`, `base3`, ...; names the file
-    /// itself uses are skipped. Every base starts with `_`, so only the file's
-    /// `_`-prefixed identifiers need to be reserved.
+    /// Gives every `new_temp` temporary a name no other symbol in the file has:
+    /// the first request for a base keeps it, later ones get `base2`, `base3`,
+    /// ... (the renamer's convention). It runs after the visit pass because
+    /// references to undeclared globals only get a symbol when the visit
+    /// reaches them, and it reserves the symbols of every scope, not just the
+    /// one a temporary hoists to, because the temporary is read from code
+    /// nested in that scope, where a method parameter `_value` would shadow
+    /// the `_value` WeakMap of a `#value` field.
     pub(crate) fn name_decorator_temps(&mut self) {
         if self.decorator_temp_refs.is_empty() {
             return;
         }
 
-        // Clear the temporaries' names first so the reservation pass below only
-        // sees the names the rest of the file uses.
+        // Cleared first so that the reservation pass below doesn't see the bases.
         let temps = core::mem::replace(&mut self.decorator_temp_refs, BumpVec::new_in(self.arena));
         let mut bases = BumpVec::<&'a [u8]>::with_capacity_in(temps.len(), self.arena);
         for temp in temps.iter() {
@@ -236,9 +220,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbol.original_name = js_ast::StoreStr::EMPTY;
         }
 
-        // name -> highest numeric suffix handed out for it (1 = the bare name),
-        // so repeated requests for one base don't rescan the suffixes already
-        // taken.
+        // name -> last suffix handed out for it (1 = the bare name). Every base
+        // starts with `_` (asserted by `new_temp`), so other names can't collide.
         let mut taken: HashMap<&'a [u8], usize> = HashMap::default();
         for symbol in self.symbols.iter() {
             let name: &'a [u8] = symbol.original_name.slice();
@@ -886,9 +869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
                                 }
                                 _ => {
-                                    // Declared by `drain_capture_temp_decls`: with the
-                                    // class's other temporaries, or at the top of the
-                                    // function body being rewritten.
+                                    // Declared by `drain_capture_temp_decls`.
                                     let tmp_ref = self.new_temp(b"_obj");
                                     self.temp_refs_to_declare.push(TempRef {
                                         r#ref: tmp_ref,
@@ -1262,10 +1243,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(name) = name_from_context
                     && can_be_class_binding_name(name)
                 {
-                    // Not a temporary: this is the class's own binding (it
-                    // becomes `.name`) and lives in the class scope. It goes
-                    // into `generated` only so that the minifier assigns it a
-                    // slot like any other symbol of a nested scope.
+                    // The class's own binding (it becomes `.name`), not a
+                    // temporary; `generated` only gets it a minifier slot.
                     let name_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
                     VecExt::append(&mut p.current_scope_mut().generated, name_ref);
                     class.class_name = Some(js_ast::LocRef {
@@ -1352,10 +1331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut prop_dec_refs: HashMap<usize, Ref> = HashMap::default();
         let mut computed_key_refs: HashMap<usize, Ref> = HashMap::default();
-        // In expression mode the bindings declared by `pre_eval_stmts` are
-        // added to `expr_var_decls` when the statements are folded into the
-        // comma expression (Phase 8), so the temporaries created in this loop
-        // must not be pushed there a second time.
+        // Phase 8 adds the bindings these statements declare to `expr_var_decls`.
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
 
         let props_slice: &mut [Property] = class.properties.slice_mut();

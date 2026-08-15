@@ -536,9 +536,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
-    /// Temporaries created by the standard decorator lowering, in creation
-    /// order. Their final names are picked once the whole file has been visited;
-    /// see `name_decorator_temps` in lower/lower_decorators.rs.
+    /// Standard decorator lowering temporaries still to be named by
+    /// `name_decorator_temps` after the visit pass.
     pub(crate) decorator_temp_refs: List<'a, Ref>,
 
     // When bundling, hoisted top-level local variables declared with "var" in
@@ -7474,13 +7473,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         scope
     }
 
-    /// Registers a generated symbol that a lowering declares with a statement it
-    /// emits into `scope`, so the renamers treat it like a user declaration.
-    /// Both lists are needed: the renamers rename nested scopes from
-    /// `scope.generated`, but the top level of a file is renamed (and, when
-    /// minifying, given its slot) from `Part.declared_symbols` only, so a
-    /// module-level temporary that is merely in `generated` keeps its original
-    /// name and collides with whatever else has it.
+    /// Registers a generated symbol that a lowering declares in `scope` so the
+    /// renamers rename it like a user declaration. Nested scopes are renamed
+    /// from `scope.generated`; the top level of a file only from
+    /// `Part.declared_symbols`, so a symbol missing from the latter keeps its
+    /// original name.
     pub(crate) fn declare_generated_binding(
         &mut self,
         mut scope: js_ast::StoreRef<Scope>,

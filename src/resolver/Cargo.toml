@@ -43,6 +43,5 @@ bun_sys.workspace = true
 bun_threading.workspace = true
 bun_watcher.workspace = true
 bun_url.workspace = true
-bun_wyhash.workspace = true
 bun_hash.workspace = true
 bun_zstd.workspace = true

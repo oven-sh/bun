@@ -1537,7 +1537,6 @@ dependencies = [
  "bun_threading",
  "bun_url",
  "bun_watcher",
- "bun_wyhash",
  "bun_zstd",
  "const_format",
  "enum-map",

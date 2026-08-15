@@ -128,14 +128,7 @@ pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
 #[derive(Clone)]
-pub struct FileOperation {
-    // Owned copy so the field has a single, obvious lifetime.
-    pub pathname: Box<[u8]>,
-}
-
-#[derive(Clone)]
 pub enum Value {
-    Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
     Saved(SavedFile),
@@ -173,8 +166,8 @@ impl Value {
                     noop,
                 )
             }
-            Value::Copy(_) | Value::Saved(_) => {
-                bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
+            Value::Saved(_) => {
+                bun_core::todo_panic!("to_bun_string_ref: Saved")
             }
         }
     }
@@ -248,21 +241,17 @@ impl OutputFile {
         }
     }
 
-    pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
+    /// `dest_path` is relative to `root_dir`.
+    pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}
             Value::Saved(_) => {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let mut rel_path: &[u8] = &self.dest_path;
-                if self.dest_path.len() > root_dir_path.len() {
-                    rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                    // `dirname` returns `b""` when there's no separator.
-                    let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() {
-                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
-                    }
+                let parent = resolve_path::dirname::<platform::Auto>(&self.dest_path);
+                if !parent.is_empty() && parent != b"." {
+                    bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
                 let mut path_buf = PathBuffer::uninit();
@@ -273,44 +262,12 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(rel_path),
+                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
                     },
                 )?;
             }
-            Value::Copy(value) => {
-                self.copy_to(root_dir_path, &value.pathname, root_dir)?;
-            }
         }
         Ok(())
-    }
-
-    pub(crate) fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
-        let fd_out = bun_sys::openat(
-            dir,
-            resolve_path::z(rel_path, &mut out_buf),
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o644,
-        )?;
-        let mut in_buf = PathBuffer::uninit();
-        let fd_in = bun_sys::openat(
-            Fd::cwd(),
-            resolve_path::z(self.src_path.text, &mut in_buf),
-            bun_sys::O::RDONLY,
-            0,
-        )?;
-
-        #[cfg(windows)]
-        {
-            let _ = (fd_out, fd_in);
-            // use paths instead of bun.getFdPathW()
-            panic!("TODO windows");
-        }
-        #[cfg(not(windows))]
-        {
-            bun_sys::copy_file(fd_in, fd_out)?;
-            Ok(())
-        }
     }
 }
 

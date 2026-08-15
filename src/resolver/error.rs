@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("Unusable")]
-    Unusable,
     #[error("InvalidDataURL")]
     InvalidDataURL,
     #[error("MissingResolveDir")]
@@ -28,7 +26,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Unusable => "Unusable",
             Self::InvalidDataURL => "InvalidDataURL",
             Self::MissingResolveDir => "MissingResolveDir",
             Self::InvalidResolveDir => "InvalidResolveDir",

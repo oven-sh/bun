@@ -67,31 +67,6 @@ impl OutputFileJsc for OutputFile {
         let mime = self.loader.to_mime_type(&[mime_hint]);
 
         match value {
-            OutputFileValue::Copy(copy) => {
-                let file_blob = match BlobStore::init_file(
-                    PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref())),
-                    Some(mime),
-                ) {
-                    Ok(b) => b,
-                    Err(err) => Output::panic(format_args!(
-                        "error: Unable to create file blob: \"{}\"",
-                        err.name()
-                    )),
-                };
-
-                let build_output = Box::new(BuildArtifact {
-                    blob: Blob::init_with_store(file_blob, global_object),
-                    hash: self.hash,
-                    loader: self.input_loader,
-                    output_kind: self.output_kind,
-                    path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                });
-
-                // Ownership transfers to the JS `BuildArtifact` wrapper
-                // (`finalize` reclaims it). Typed `Box`-taking entry point —
-                // the leak/from_raw pair lives once in the `#[js_class]` shim.
-                BuildArtifact::to_js_boxed(build_output, global_object)
-            }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
@@ -124,7 +99,6 @@ impl OutputFileJsc for OutputFile {
                     path: Box::<[u8]>::from(path_to_use),
                 });
 
-                // See `Copy` arm.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Buffer { bytes } => {
@@ -146,7 +120,6 @@ impl OutputFileJsc for OutputFile {
                     path,
                 });
 
-                // See `Copy` arm.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Noop => {
@@ -173,13 +146,6 @@ impl OutputFileJsc for OutputFile {
             .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
 
         match value {
-            OutputFileValue::Copy(copy) => {
-                let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref())),
-                    Some(mime),
-                )?;
-                Ok(Blob::init_with_store(file_blob, global_this))
-            }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
                     PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text)),

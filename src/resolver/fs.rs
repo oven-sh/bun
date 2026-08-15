@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
-use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -659,54 +658,6 @@ impl DirEntry {
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment
 // on `DirEntry::dir`). Body would be empty, so no `impl Drop`.
-
-#[derive(Default, Clone, Copy)]
-pub struct ModKey {
-    pub(crate) size: u64,
-    pub(crate) mtime: i128,
-}
-
-impl ModKey {
-    /// Writes `basename` + `-` + the hex hash into `out` and returns the
-    /// written prefix.
-    pub fn hash_name<'out>(
-        &self,
-        basename: &[u8],
-        out: &'out mut [u8],
-    ) -> crate::CrateResult<&'out [u8]> {
-        let hex_int = self.hash();
-
-        let len = out.len();
-        let mut cursor = &mut out[..];
-        // `BStr`'s `Display` would
-        // lossily emit U+FFFD for non-UTF-8 bytes (and 1→3 expand), so write
-        // the basename verbatim via raw `io::Write`.
-        cursor
-            .write_all(basename)
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        cursor
-            .write_all(b"-")
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        write!(&mut cursor, "{:x}", hex_int)
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        let written = len - cursor.len();
-        Ok(&out[..written])
-    }
-
-    pub(crate) fn hash(&self) -> u64 {
-        let mut hash_bytes = [0u8; 32];
-        // We shouldn't just read the contents of the ModKey into memory
-        // The hash should be deterministic across computers and operating systems.
-        // inode is non-deterministic across volumes within the same compuiter
-        // so if we're not going to do a full content hash, we should use mtime and size.
-        // even mtime is debatable.
-        hash_bytes[0..8].copy_from_slice(&self.size.to_le_bytes());
-        hash_bytes[8..24].copy_from_slice(&self.mtime.to_le_bytes());
-        debug_assert!(hash_bytes[24..].len() == 8);
-        hash_bytes[24..32].copy_from_slice(&0u64.to_ne_bytes());
-        bun_wyhash::hash(&hash_bytes)
-    }
-}
 
 // SAFETY: ARENA — `Entry` lives in the `BSSList` singleton; `*mut Entry` raw
 // pointers are the only !Send/!Sync field. All access is serialized through

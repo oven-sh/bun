@@ -2492,7 +2492,7 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun link", "bun link <package>"],
+      "examples": ["bun link", "bun link <package>", "bun link --save <package>"],
       "usage": "Usage: bun link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}

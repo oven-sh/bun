@@ -212,6 +212,16 @@ describe("bun", () => {
           /^ {2}Add to the workspace catalog instead of pinning a version\n {2}bun add --catalog react\n {2}bun add --catalog=testing vitest$/m,
         ],
       ],
+      // The bare form only installs the symlink; package.json is written with --save (see the --save
+      // flag row), so the examples must say which form does what.
+      [
+        "bun link --help",
+        ["link"],
+        [
+          /^ {2}Link a previously-registered linkable package into the current project's node_modules\.\n {2}bun link <package>$/m,
+          /^ {2}Also add it to the current project's package\.json as a link: dependency\.\n {2}bun link --save <package>$/m,
+        ],
+      ],
       [
         "bun audit --help",
         ["audit"],

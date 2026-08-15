@@ -930,8 +930,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
   <d>Directory should contain a package.json.<r>
   <b><green>bun link<r>
 
-  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
+  <d>Link a previously-registered linkable package into the current project's node_modules.<r>
   <b><green>bun link<r> <blue>\<package\><r>
+
+  <d>Also add it to the current project's package.json as a link: dependency.<r>
+  <b><green>bun link<r> <cyan>--save<r> <blue>\<package\><r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";

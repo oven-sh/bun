@@ -214,7 +214,7 @@ rm -rf node_modules pnpm-lock.yaml
 bun install --linker isolated
 ```
 
-The main difference is that Bun uses symlinks in `node_modules` while pnpm uses a global store with symlinks.
+The main difference is that Bun keeps its store inside the project's `node_modules/.bun/` by default, while pnpm uses a global store with symlinks. With [`install.globalStore`](#global-virtual-store) enabled, Bun uses a global store as well.
 
 ## When to use isolated installs
 

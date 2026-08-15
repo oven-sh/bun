@@ -118,7 +118,7 @@ import.meta.hot.accept(newModule => {
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import { count } from "./foo";
 
-import.meta.hot.accept("./foo", () => {
+import.meta.hot.accept("./foo", newModule => {
   if (!newModule) return;
 
   console.log("updated: count is now ", count);

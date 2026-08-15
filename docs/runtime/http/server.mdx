@@ -577,9 +577,9 @@ interface Server extends Disposable {
 
   /**
    * Update handlers without restarting the server.
-   * Only fetch and error handlers can be updated.
+   * Only fetch, error, routes, and websocket can be updated.
    */
-  reload(options: Serve): void;
+  reload(options: Serve.Options<undefined>): Server;
 
   /**
    * Make a request to the running server.
@@ -685,7 +685,7 @@ interface WebSocketHandler<T = undefined> {
   /** Send ping frames to keep connection alive */
   sendPings?: boolean;
 
-  /** Whether server receives its own published messages */
+  /** Whether ws.publish() also sends the message to the socket that published it, if subscribed */
   publishToSelf?: boolean;
 
   /** Called when connection opened */

@@ -5525,9 +5525,14 @@ restart:
             }
             auto* prop = entry.key();
 
-            if (prop == propertyNames->constructor
-                || prop == propertyNames->underscoreProto
+            if (prop == propertyNames->underscoreProto
                 || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
+                return true;
+
+            // Hide the `constructor` back-reference every prototype carries (non-enumerable,
+            // or reached by walking the prototype chain). An enumerable own `constructor`
+            // is ordinary user data, so it prints like any other key.
+            if (prop == propertyNames->constructor && (objectToUse != object || (entry.attributes() & PropertyAttribute::DontEnum) != 0))
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5616,8 +5621,11 @@ restart:
                 if (property.isNull()) [[unlikely]]
                     continue;
 
-                // ignore constructor
-                if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
+                if (builtinNames.bunNativePtrPrivateName() == property)
+                    continue;
+
+                // Same rule as the fast path above: only an enumerable own `constructor` is shown.
+                if (property == propertyNames->constructor && iterating != object)
                     continue;
 
                 if constexpr (nonIndexedOnly) {
@@ -5633,7 +5641,8 @@ restart:
                 CLEAR_IF_EXCEPTION(scope);
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == propertyNames->underscoreProto
+                    if (property == propertyNames->constructor
+                        || property == propertyNames->underscoreProto
                         || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
@@ -5785,8 +5794,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         if (property.isNull()) [[unlikely]]
             continue;
 
-        // ignore constructor
-        if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
+        if (clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
@@ -5796,8 +5804,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             continue;
         }
 
+        // A non-enumerable `constructor` is the back-reference every prototype carries;
+        // an enumerable one is user data that deepEquals compares, so it has to show up in diffs.
         if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if (property == vm.propertyNames->underscoreProto
+            if (property == vm.propertyNames->constructor
+                || property == vm.propertyNames->underscoreProto
                 || property == vm.propertyNames->toStringTagSymbol)
                 continue;
         }

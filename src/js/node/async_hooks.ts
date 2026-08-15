@@ -22,10 +22,8 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-// The one other key that can appear is bun:test's AsyncContextRef (src/runtime/test_runner/AsyncContextRef.rs),
-// which the test runner adds while a test or hook callback runs; it is stored as both key and value and
-// is only ever looked up from native code, so everything in here just carries it along like any other
-// pair it does not own.
+// The one other key that can appear is bun:test's AsyncContextRef (stored as both key and value, only
+// read from native code; see src/runtime/test_runner/AsyncContextRef.rs). Nothing in here touches it.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);

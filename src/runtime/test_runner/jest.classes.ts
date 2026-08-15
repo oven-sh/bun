@@ -803,10 +803,7 @@ export default [
     klass: {},
     proto: {},
   }),
-  // Never reaches user code: lives in the async context array while a test or
-  // hook callback runs (see AsyncContextRef.rs). The values are the array
-  // Bun__AsyncContextRef__enter installed and the value it replaced, so that
-  // __leave can put the latter back when the callback left the slot untouched.
+  // Internal to the runner (AsyncContextRef.rs); the values belong to Bun__AsyncContextRef__enter/__leave.
   define({
     name: "AsyncContextRef",
     construct: false,

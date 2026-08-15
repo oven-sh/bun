@@ -664,8 +664,7 @@ pub(crate) fn parse_arguments(
     };
     let (description, callback, options) = (items.description, items.callback, items.options);
 
-    // The function itself; it picks up the async context it was registered under
-    // when it is stored (`bun_test::keep_registration_async_context`).
+    // Unwrapped; `bun_test::keep_registration_async_context` applies when it is stored.
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {

@@ -188,8 +188,7 @@ impl Expect {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
-        // An abandoned invocation's sequence has already been reported (and may be
-        // running a retry by now); its late expect() calls only count towards the total.
+        // An abandoned invocation's late calls only count towards the total.
         let sequence = if parent.abandoned.get() { None } else { parent.phase.sequence(buntest) };
         if let Some(sequence) = sequence {
             // found active sequence
@@ -625,15 +624,12 @@ impl Expect {
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         if parent.abandoned.get() {
-            // The runner gave up on the test this expect() belongs to (see
-            // AsyncContextRef.rs); whatever entry is running now is not it.
             return Err(crate::Error::TestNotActive);
         }
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let execution_entry = match &parent.phase {
-            // `entry()` is None once the runner has advanced past the entry that was
-            // running when this expect() was created.
+            // None once the runner advanced past the entry this expect() was created in.
             bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
                 parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
             }
@@ -1220,8 +1216,7 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
-                // Attribution errors first: the test file this expect() belongs to
-                // may already be gone.
+                // These need no test file; the one this expect() belongs to may be gone.
                 match err {
                     crate::Error::SnapshotInConcurrentGroup => {
                         return Err(global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests")));
@@ -1683,8 +1678,7 @@ impl Expect {
         })
     }
 
-    /// Runs `f` on the sequence that `expect.assertions()` / `expect.hasAssertions()`,
-    /// called by the JS running right now, applies to.
+    /// Runs `f` on the sequence an `expect.assertions()`-style call made right now applies to.
     fn with_caller_sequence(
         global_this: &JSGlobalObject,
         f: impl FnOnce(&mut super::execution::ExecutionSequence),

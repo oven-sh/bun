@@ -52,14 +52,10 @@ fn strong_create(value: JSValue) -> Strong {
     Strong::create(value, global)
 }
 
-/// A callback handed to `test()`, `describe()` or a hook runs later, from the
-/// runner, and like any other deferred callback it keeps the async context
-/// (AsyncLocalStorage) it was registered under. Applied where the callback is
-/// stored rather than when the arguments are parsed: registration still needs
-/// the function itself (its `length` decides whether it takes `done`, `.each`
-/// binds arguments to it), and the wrapper is not a function.
+/// Applied when a test/describe/hook callback is stored, not when the arguments
+/// are parsed: registration reads `.length` and `.bind()`s the function itself,
+/// and the wrapper is not a function.
 pub(crate) fn keep_registration_async_context(callback: JSValue) -> JSValue {
-    // Same per-thread global as `strong_create`: `ExecutionEntry::create` has none in scope.
     callback.with_async_context_if_needed(VirtualMachine::get().global())
 }
 
@@ -68,12 +64,9 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-/// Where an `expect()`-family call made by the JS running right now belongs:
-/// the entry the runner is executing, unless the caller is the remainder of an
-/// invocation the runner already abandoned (see AsyncContextRef.rs), in which
-/// case it is that invocation, so that what it does late is rejected instead
-/// of being charged to the entry that is running now. `None` outside `bun test`.
-/// Returns an owned `+1`.
+/// What an `expect()`-family call made right now belongs to: the entry being
+/// executed, or the abandoned invocation the caller descends from (AsyncContextRef.rs).
+/// `None` outside `bun test`. Returns an owned `+1`.
 pub(crate) fn caller_ref(global: &JSGlobalObject) -> Option<RefDataPtr> {
     if let Some(abandoned) = AsyncContextRef::abandoned_caller(global) {
         return Some(abandoned);
@@ -1147,9 +1140,8 @@ impl BunTest {
 
     /// if sync, the result is returned. if async, None is returned.
     ///
-    /// `invocation_ref` (a `+1`, consumed) is the `RefData` a test or hook
-    /// invocation runs under (see AsyncContextRef.rs); describe callbacks pass
-    /// `None` and run as they are.
+    /// `invocation_ref` (a `+1`, consumed) is what the callback runs under
+    /// (AsyncContextRef.rs); describe callbacks pass `None`.
     pub(crate) fn run_test_callback(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
@@ -1194,8 +1186,7 @@ impl BunTest {
                     entered_ref = entered.ref_js;
                 }
                 Err(e) => {
-                    // Out of memory building the context. Charge it to this entry and
-                    // still run the callback, as with a done callback that failed to bind.
+                    // OOM: charge it to this entry and still run the callback, as for `done` above.
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
                     unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
                 }
@@ -1206,13 +1197,8 @@ impl BunTest {
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
 
-        // `JSValue::call`, then the ref comes back out, then microtasks are drained:
-        // the same order as `run_callback_with_result_and_forcefully_drain_microtasks`,
-        // with the context restored at the point a wrapped callback's would be.
-        // A failure anywhere is charged to this entry; the callback's own exception
-        // is taken before `leave` so that `leave` does not mistake it for its own.
-        // `Some` once something failed; the inner `None` is a termination (nothing
-        // to print), which is what `on_uncaught_exception` takes.
+        // Call, leave, then drain microtasks. The callback's exception is taken
+        // before `leave` runs. `Some(None)` is a termination (nothing to print).
         let mut failure: Option<Option<JSValue>> = None;
         let mut result: JSValue = JSValue::UNDEFINED;
         if !global_this.has_exception() {
@@ -1226,7 +1212,6 @@ impl BunTest {
         }
         if !entered_ref.is_empty() {
             if let Err(e) = AsyncContextRef::leave(global_this, entered_ref) {
-                // Out of memory; the callback's own failure, if any, is the one worth reporting.
                 let exception = global_this.take_exception(e);
                 if failure.is_none() {
                     failure = Some(Some(exception));
@@ -1588,10 +1573,8 @@ impl fmt::Display for RefDataValue {
 pub struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
-    /// Set when `phase` is an invocation the runner moved on from while its
-    /// callback was still running (timed out, or failed by an unhandled error
-    /// while awaiting). Only ever set on the `RefData` an `AsyncContextRef`
-    /// carries; read by [`caller_ref`].
+    /// The runner moved on while this invocation's callback was still running
+    /// (set through `ExecutionSequence::executing_ref`, read by [`caller_ref`]).
     pub(crate) abandoned: core::cell::Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }

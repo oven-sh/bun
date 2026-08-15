@@ -167,11 +167,8 @@ pub struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
-    /// The `RefData` bound into the async context of the callback this sequence
-    /// is executing right now (see AsyncContextRef.rs), so the runner can mark it
-    /// abandoned if it has to move on before that callback completes. Owned
-    /// `+1`, released by `advance_sequence` (or `Drop`, for a file torn down
-    /// mid-callback).
+    /// The `RefData` the callback being executed runs under (AsyncContextRef.rs).
+    /// Owned `+1`, released by `advance_sequence` or `Drop`.
     pub(crate) executing_ref: Option<RefDataPtr>,
 }
 
@@ -199,9 +196,7 @@ impl ExecutionSequence {
         }
     }
 
-    /// The runner is moving on from the callback this sequence is executing
-    /// even though that callback has not completed: whatever the callback still
-    /// does belongs to it, not to the entries that run next.
+    /// Called when the runner moves on before the executing callback completed.
     pub(crate) fn abandon_executing_callback(&self) {
         if let Some(executing_ref) = &self.executing_ref {
             executing_ref.abandoned.set(true);
@@ -1003,7 +998,6 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
-            // The callback is still running; it is the runner that is moving on.
             sequence.abandon_executing_callback();
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
@@ -1043,9 +1037,7 @@ fn step_sequence_one(
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
-        // One RefData per invocation, shared between the sequence (which marks it
-        // abandoned if the runner moves on before the callback completes) and
-        // the async context the callback runs under (how late callers find it).
+        // Shared by the sequence (to mark it abandoned) and the callback's async context.
         let invocation_ref: RefDataPtr = BunTest::ref_(buntest_strong, callback_data.clone());
         debug_assert!(sequence.executing_ref.is_none());
         sequence.executing_ref = Some(invocation_ref.dupe_ref());

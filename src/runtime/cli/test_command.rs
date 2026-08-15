@@ -3276,9 +3276,7 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Every test and hook callback runs under an async context (see
-            // AsyncContextRef.rs); this must be on before the file (or a preload)
-            // can create a node:vm context, which copies the flag.
+            // Before the file loads: node:vm contexts copy this flag when they are created.
             jsc::cpp::Bun__AsyncContextRef__enableTracking(vm.global());
             let promise = vm.load_entry_point_for_test_runner(file_path)?;
             // Only count the file once, not once per repeat

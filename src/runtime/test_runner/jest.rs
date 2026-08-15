@@ -615,8 +615,7 @@ pub(crate) mod on_unhandled_rejection {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     } else {
-                        // `add_result` below moves the runner past this test while
-                        // its callback may still be awaiting.
+                        // `add_result` below moves past this test while its callback may still be awaiting.
                         sequence.abandon_executing_callback();
                     }
                 }

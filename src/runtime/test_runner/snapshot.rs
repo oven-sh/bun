@@ -144,10 +144,8 @@ impl Snapshots {
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
         self.total += 1;
-        // Resolve the name before touching the file system: an expect() that no
-        // longer belongs to a running test must not create the snapshot directory
-        // or file. The count is taken after `get_snapshot_file`, which resets the
-        // counts when it switches to this test file's snapshot file.
+        // Name first, so a rejected expect() creates no snapshot file; count after
+        // `get_snapshot_file`, which resets the counts when it switches files.
         let name = expect.get_snapshot_name(hint)?;
 
         let buntest_strong = expect

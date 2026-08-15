@@ -1818,9 +1818,8 @@ impl<T> PkgMap<T> {
 }
 
 impl PkgMap<PackageID> {
-    /// Whether one of the folders `pkg_path` is nested in holds `pkg_id` as well.
-    /// Every folder on the way down to a package is a key of its own; a prefix cut
-    /// inside a scoped name is not a key and does not match anything.
+    /// Whether a folder on the way down to `pkg_path` holds `pkg_id` too. Each of those
+    /// folders is a key of its own; a prefix ending inside a scoped name matches nothing.
     fn is_below_copy_of(&self, pkg_path: &[u8], pkg_id: PackageID) -> bool {
         let mut end: usize = 0;
         while let Some(i) = strings::index_of_char_usize(&pkg_path[end..], b'/') {
@@ -3247,10 +3246,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 continue;
             }
 
-            // `Tree::process_subtree` gives a copy nested below another copy of the same
-            // package no node_modules of its own, so from this path its dependencies walk
-            // to whatever versions the copy happens to sit under. The copy above, which the
-            // tree was built from, binds them; this row is only a folder.
+            // A copy below another copy of its package has no node_modules of its own
+            // (`Tree::process_subtree`), so walking up from it finds the versions it sits
+            // under rather than the package's resolutions; the copy above binds those.
             if pkg_map.is_below_copy_of(pkg_path, pkg_id) {
                 continue;
             }

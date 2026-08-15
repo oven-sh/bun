@@ -649,15 +649,10 @@ impl Tree {
             return Ok(());
         }
 
-        // A copy of a package nested somewhere below another copy of itself only exists
-        // because a different version of its name shadows the copy above; its
-        // dependencies were all placed when that copy was processed. Laying them out again
-        // here would nest whichever of them the levels in between shadow, and in a cycle
-        // through two versions of the same names (a@1 -> b@1 -> a@2 -> b@2 -> a@1 ...)
-        // that shadows the next one in turn, so the copies never end. This is the point at
-        // which npm links back to the copy above; the copy stays as is here, and its
-        // dependencies resolve to whatever is on the path. bun.lock skips these copies when
-        // it binds dependencies from the tree, so this check and that one have to agree.
+        // Below another copy of itself, a package's dependencies are already placed; laying
+        // them out again only re-nests what the levels in between shadow, which for a cycle
+        // through two versions (a@1 -> b@1 -> a@2 -> b@2 -> a@1 ...) never ends. npm stops
+        // here as well (linking to the copy above); bun.lock.rs skips these copies to match.
         {
             let trees = builder.list.items_tree();
             let mut ancestor_id = self.id;
@@ -1129,11 +1124,9 @@ impl Tree {
             }
         }
 
-        // The package this node_modules belongs to is itself resolvable from everything
-        // inside it. The walk stops at a bundled root before reaching the folder that holds
-        // it, so a bundled dependency depending back on the package bundling it would copy
-        // that package into its own node_modules, and processing the copy bundles the
-        // dependency again, without end.
+        // A bundled root's walk ends below the folder holding the bundling package, which is
+        // resolvable from inside it; a bundled dependency depending back on it would otherwise
+        // copy it into itself, and the copy's bundled dependencies bring it back, forever.
         if (this.dependency_id as usize) < deps.len()
             && builder.resolutions[this.dependency_id as usize] == package_id
             && deps[this.dependency_id as usize].name_hash == target_name_hash

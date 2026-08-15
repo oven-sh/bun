@@ -125,6 +125,18 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
+    /// Manifest tasks only: a request for the extended document has been issued
+    /// for this task id. See `PackageManager::has_created_manifest_task`.
+    pub(crate) is_extended_manifest: bool,
+    /// Manifest tasks only: a request for the abbreviated document has been
+    /// issued as well, so the dependencies that wanted the extended one can fall
+    /// back to it if the extended request fails (`extended_manifest_failed`).
+    pub(crate) has_abbreviated_manifest_request: bool,
+    /// Manifest tasks only: the extended request failed while an abbreviated one
+    /// was issued. Every dependency on the package now resolves from the
+    /// abbreviated document (`PackageManager::needs_extended_manifest`), which
+    /// is the pre-libc behavior for this one package.
+    pub(crate) extended_manifest_failed: bool,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.

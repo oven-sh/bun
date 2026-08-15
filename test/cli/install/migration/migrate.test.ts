@@ -692,6 +692,90 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
 
+// `libc` is carried over for registry packages like `os`/`cpu` are, and like them is dropped
+// for a `file:` dependency, which a fresh resolve installs unconditionally. Nothing is installed
+// (port 1 refuses connections), only the lockfile is migrated.
+describe.each([
+  [
+    "package-lock.json",
+    {
+      "package-lock.json": JSON.stringify({
+        name: "repro",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "repro", dependencies: { "native-musl": "1.0.0", a: "file:vendor/a" } },
+          "node_modules/native-musl": {
+            version: "1.0.0",
+            resolved: "http://localhost:1/native-musl/-/native-musl-1.0.0.tgz",
+            integrity:
+              "sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q==",
+            os: ["linux"],
+            libc: ["musl"],
+          },
+          "node_modules/a": { resolved: "vendor/a", link: true },
+          // npm copies the field as written in package.json, which may be a bare string.
+          "vendor/a": { version: "1.0.0", libc: "musl" },
+        },
+      }),
+    },
+  ],
+  [
+    "pnpm-lock.yaml",
+    {
+      "pnpm-lock.yaml": [
+        "lockfileVersion: '9.0'",
+        "",
+        "importers:",
+        "",
+        "  .:",
+        "    dependencies:",
+        "      a:",
+        "        specifier: file:vendor/a",
+        "        version: file:vendor/a",
+        "      native-musl:",
+        "        specifier: 1.0.0",
+        "        version: 1.0.0",
+        "",
+        "packages:",
+        "",
+        "  a@file:vendor/a:",
+        "    resolution: {directory: vendor/a, type: directory}",
+        "    libc: [musl]",
+        "    version: 1.0.0",
+        "",
+        "  native-musl@1.0.0:",
+        "    resolution: {integrity: sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q==}",
+        "    os: [linux]",
+        "    libc: [musl]",
+        "",
+        "snapshots:",
+        "",
+        "  a@file:vendor/a: {}",
+        "",
+        "  native-musl@1.0.0: {}",
+        "",
+      ].join("\n"),
+    },
+  ],
+])("%s migration keeps the libc of registry packages", (_lockfile, lockfileFiles) => {
+  test.concurrent("bun.lock records it", async () => {
+    await using testDir = tempDir("migrate-libc", {
+      "package.json": JSON.stringify({ name: "repro", dependencies: { "native-musl": "1.0.0", a: "file:vendor/a" } }),
+      "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", libc: ["musl"] }),
+      "bunfig.toml": '[install]\nregistry = "http://localhost:1/"\n',
+      ...lockfileFiles,
+    });
+
+    const { exitCode } = await install(testDir, "--lockfile-only");
+    expect(exitCode).toBe(0);
+
+    const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());
+    expect(lines.find(line => line.startsWith('"native-musl": ['))).toContain(`{ "os": "linux", "libc": "musl" }`);
+    expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", {}],');
+  });
+});
+
 describe("package-lock.json migration fixes", () => {
   const ARBORIST = join(import.meta.dir, "npm-arborist");
   const arboristFixtures: { name: string; root?: string }[] = JSON.parse(

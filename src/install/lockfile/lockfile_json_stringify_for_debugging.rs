@@ -385,6 +385,13 @@ where
                 let _ = w.end_array();
             }
 
+            if let Some(libc) = pkg.meta.libc.single_name() {
+                w.object_field(b"libc")?;
+                w.begin_array()?;
+                w.write(libc)?;
+                let _ = w.end_array();
+            }
+
             w.object_field(b"integrity")?;
             if pkg.meta.integrity.tag != IntegrityTag::UNKNOWN {
                 w.print(format_args!("\"{}\"", pkg.meta.integrity))?;

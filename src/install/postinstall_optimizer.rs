@@ -94,9 +94,13 @@ impl PostinstallOptimizer {
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
+        target_libc: npm::Libc,
     ) -> Option<PackageID> {
         // Loop through the list of optional dependencies with platform-specific constraints
-        // Find a matching target-specific dependency.
+        // Find a matching target-specific dependency. The glibc and musl variants of a
+        // package share os/cpu, and only the one that gets installed may be linked to;
+        // these are optional dependencies, which is exactly where libc is enforced
+        // (`Libc::for_dependency`), so checking it here agrees with what is installed.
         for &resolution in resolutions {
             if (resolution as usize) >= metas.len() {
                 continue;
@@ -105,7 +109,10 @@ impl PostinstallOptimizer {
             if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
                 continue;
             }
-            if meta.arch.is_match(target_cpu) && meta.os.is_match(target_os) {
+            if meta.arch.is_match(target_cpu)
+                && meta.os.is_match(target_os)
+                && meta.libc.is_match(target_libc)
+            {
                 return Some(resolution);
             }
         }
@@ -171,6 +178,7 @@ impl List {
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
+        target_libc: npm::Libc,
     ) -> bool {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
@@ -198,6 +206,7 @@ impl List {
                     metas,
                     target_cpu,
                     target_os,
+                    target_libc,
                 )
                 .is_some()
             }

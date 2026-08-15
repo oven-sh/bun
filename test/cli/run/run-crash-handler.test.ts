@@ -1,6 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -125,6 +126,46 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// POSIX-only: Windows refuses to remove a directory that is any process's cwd.
+describe.if(isPosix)("cwd deleted before startup", () => {
+  test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {
+    using dir = tempDir("cwd-unlinked", {});
+    const gone = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" '${cmd}'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("The current working directory was deleted"),
+      exitCode: 1,
+    });
+    expect(stderr).not.toContain("Bun could not find a file");
+  });
+
+  test.concurrent("bun -e boots via the exe-dir fallback instead", async () => {
+    using dir = tempDir("cwd-unlinked-run", {});
+    const gone = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" -e 'console.log(1)'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -507,3 +548,55 @@ describe("automatic crash reporter", () => {
     });
   }
 });
+
+test.if(isWindows)(
+  "Windows: crash report upload runs the system PowerShell, not a powershell.exe in the working directory",
+  async () => {
+    let sent = false;
+    const acked = Promise.withResolvers<void>();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        expect(request.url).toEndWith("/ack");
+        sent = true;
+        acked.resolve();
+        return new Response("OK");
+      },
+    });
+
+    // Not `using`: the crash reporter's PowerShell child inherits this cwd
+    // and can outlive the crashed process, so a scoped delete races it.
+    const dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
+    try {
+      await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+        cwd: String(dir),
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
+      await Promise.race([acked.promise, Bun.sleep(2000)]);
+
+      expect(stderr).toContain(server.url.toString());
+      expect(sent).toBe(true);
+      expect(exitCode).not.toBe(0);
+    } finally {
+      try {
+        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch {}
+    }
+  },
+);

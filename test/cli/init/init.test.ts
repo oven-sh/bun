@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -28,7 +28,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 240_000);
 
   test("bun init works", async () => {
-    const temp = tempDirWithFiles("bun-init-works", {});
+    await using temp = tempDir("bun-init-works", {});
 
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "-y"],
@@ -64,7 +64,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 30_000);
 
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
-    const temp = tempDirWithFiles("bun-init-no-tty", {});
+    await using temp = tempDir("bun-init-no-tty", {});
 
     // stdin is a pipe we never write to. Previously this hung at the template
     // menu waiting for a keystroke that never arrives.
@@ -91,7 +91,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 30_000);
 
   test("bun init in folder", async () => {
-    const temp = tempDirWithFiles("bun-init-in-folder", {
+    await using temp = tempDir("bun-init-in-folder", {
       "mydir": {
         "index.ts": "// mydir/index.ts",
         "README.md": "// mydir/README.md",
@@ -122,7 +122,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   });
 
   test("bun init error rather than overwriting file", async () => {
-    const temp = tempDirWithFiles("bun-init-error-rather-than-overwriting-file", {
+    await using temp = tempDir("bun-init-error-rather-than-overwriting-file", {
       "mydir": "don't delete me!!!",
     });
     const { exited } = Bun.spawn({
@@ -137,7 +137,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   });
 
   test("bun init utf-8", async () => {
-    const temp = tempDirWithFiles("bun-init-utf-8", {});
+    await using temp = tempDir("bun-init-utf-8", {});
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "-y", "u t f ∞™/subpath"],
       cwd: temp,
@@ -161,7 +161,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   });
 
   test("bun init twice", async () => {
-    const temp = tempDirWithFiles("bun-init-twice", {});
+    await using temp = tempDir("bun-init-twice", {});
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
@@ -238,7 +238,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   });
 
   test("bun init --react works", async () => {
-    const temp = tempDirWithFiles("bun-init--react-works", {});
+    await using temp = tempDir("bun-init--react-works", {});
 
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "--react"],
@@ -262,7 +262,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 30_000);
 
   test("bun init --react=tailwind works", async () => {
-    const temp = tempDirWithFiles("bun-init--react=tailwind-works", {});
+    await using temp = tempDir("bun-init--react=tailwind-works", {});
 
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "--react=tailwind"],
@@ -286,7 +286,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
-    const temp = tempDirWithFiles("bun-init--react=shadcn-works", {});
+    await using temp = tempDir("bun-init--react=shadcn-works", {});
 
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "--react=shadcn"],
@@ -318,7 +318,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
     "bun init %s installs TypeScript 6, typechecks, and builds",
     async flag => {
-      const temp = tempDirWithFiles(`bun-init-ts6${flag.replace(/[^a-z]+/g, "-")}`, {});
+      await using temp = tempDir(`bun-init-ts6${flag.replace(/[^a-z]+/g, "-")}`, {});
 
       await using init = Bun.spawn({
         cmd: [bunExe(), "init", flag],
@@ -375,7 +375,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     // inherit stdout/stderr so its output reaches the parent's pipe — a
     // previous regression left the child with closed fds 1/2 and the install
     // output was silently dropped.
-    const temp = tempDirWithFiles("bun-init-inherits-install-output", {});
+    await using temp = tempDir("bun-init-inherits-install-output", {});
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "init", "-y"],
@@ -399,7 +399,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {
     // Regression test for https://github.com/oven-sh/bun/issues/26050
     // --minimal should not create .cursor/, CLAUDE.md, .gitignore, or README.md
-    const temp = tempDirWithFiles("bun-init-minimal", {});
+    await using temp = tempDir("bun-init-minimal", {});
 
     const { exited } = Bun.spawn({
       cmd: [bunExe(), "init", "--minimal", "-y"],

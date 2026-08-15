@@ -26,12 +26,6 @@ pub enum Error {
     SyntaxError,
     #[error("FmtError")]
     FmtError,
-    #[error("StreamAlreadyUsed")]
-    StreamAlreadyUsed,
-    #[error("InvalidStream")]
-    InvalidStream,
-    #[error("UnsupportedStreamType")]
-    UnsupportedStreamType,
     #[error("JSError")]
     JSError,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
@@ -194,8 +188,6 @@ pub enum Error {
     InvalidSessionToken,
     #[error("SignError")]
     SignError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -368,8 +360,6 @@ pub enum Error {
     WatchFailed,
     #[error("Unsupported")]
     Unsupported,
-    #[error("ExceptionOcurred")]
-    ExceptionOcurred,
     #[error("EscapeCalledTwice")]
     EscapeCalledTwice,
     #[error("UnsupportedAlgorithm")]
@@ -471,8 +461,6 @@ pub enum Error {
     StandaloneGraph(#[from] bun_standalone_graph::Error),
     #[error(transparent)]
     TerminalInit(crate::api::bun_terminal_body::InitError),
-    #[error(transparent)]
-    DirIterator(#[from] crate::node::dir_iterator::IteratorError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -536,13 +524,6 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     }
 }
 
-impl From<bun_jsc::JsTerminated> for Error {
-    #[inline]
-    fn from(_: bun_jsc::JsTerminated) -> Self {
-        Self::JSTerminated
-    }
-}
-
 impl From<Error> for bun_jsc::JsError {
     #[inline]
     fn from(e: Error) -> Self {
@@ -600,9 +581,6 @@ impl Error {
             Self::SnapshotInConcurrentGroup => "SnapshotInConcurrentGroup",
             Self::SyntaxError => "SyntaxError",
             Self::FmtError => "FmtError",
-            Self::StreamAlreadyUsed => "StreamAlreadyUsed",
-            Self::InvalidStream => "InvalidStream",
-            Self::UnsupportedStreamType => "UnsupportedStreamType",
             Self::JSError => "JSError",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
@@ -686,7 +664,6 @@ impl Error {
             Self::InvalidEndpoint => "InvalidEndpoint",
             Self::InvalidSessionToken => "InvalidSessionToken",
             Self::SignError => "SignError",
-            Self::JSTerminated => "JSTerminated",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",
@@ -775,7 +752,6 @@ impl Error {
             Self::ChromeNotFound => "ChromeNotFound",
             Self::WatchFailed => "WatchFailed",
             Self::Unsupported => "Unsupported",
-            Self::ExceptionOcurred => "ExceptionOcurred",
             Self::EscapeCalledTwice => "EscapeCalledTwice",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",
@@ -826,7 +802,6 @@ impl Error {
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
             Self::TerminalInit(e) => <&'static str>::from(e),
-            Self::DirIterator(e) => <&'static str>::from(e),
             Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }

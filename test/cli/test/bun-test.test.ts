@@ -641,6 +641,69 @@ describe("bun test", () => {
         /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
       );
     });
+    test("should percent-encode metacharacters in the annotation file property", () => {
+      const stderr = runTest({
+        input: [
+          {
+            filename: "odd,name%path.test.ts",
+            contents: `
+              import { test } from "bun:test";
+              test("fail", () => {
+                throw new Error("boom");
+              });
+            `,
+          },
+        ],
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=(.*[\\/])?odd%2Cname%25path\.test\.ts,line=\d+,col=\d+,title=error: boom::/,
+      );
+    });
+    test("should percent-encode metacharacters in the annotation title", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            const err = new Error("alpha: one, two 100%\\nbeta: three, four");
+            err.name = "Odd:Name,With%Chars";
+            throw err;
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=Odd%3AName%2CWith%25Chars: alpha%3A one%2C two 100%25::beta: three, four%0A {6}at /,
+      );
+    });
+    test("should keep a function name containing a newline on the annotation line", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          function inner() {
+            throw new Error("boom");
+          }
+          Object.defineProperty(inner, "name", { value: "odd\\nname" });
+          test("fail", () => {
+            inner();
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: boom::/);
+      expect(annotation).toContain("%0A      at odd%0Aname (");
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `
@@ -1155,6 +1218,56 @@ describe("bun test", () => {
         expect(stderr).toContain("First user: Alice with tag: admin");
       });
 
+      test("surfaces a throwing custom formatter in the interpolated value as a test error", () => {
+        // The declaration throw aborts module evaluation, so each variant
+        // needs its own file to be verified independently.
+        const throwing = (message: string) =>
+          `({ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error(${JSON.stringify(message)}); } })`;
+        const stderr = runTest({
+          args: [],
+          expectExitCode: 1,
+          input: [
+            {
+              filename: "test-each-path.test.ts",
+              contents: `
+                import { test } from "bun:test";
+                test.each([{ a: { b: ${throwing("boom from test.each $path")} } }])("case $a.b", () => {});
+              `,
+            },
+            {
+              filename: "test-each-p.test.ts",
+              contents: `
+                import { test } from "bun:test";
+                test.each([[${throwing("boom from test.each %p")}]])("case %p", () => {});
+              `,
+            },
+            {
+              filename: "describe-each-path.test.ts",
+              contents: `
+                import { test, describe } from "bun:test";
+                describe.each([{ a: { b: ${throwing("boom from describe.each $path")} } }])("suite $a.b", () => {
+                  test("inner", () => {});
+                });
+              `,
+            },
+            {
+              filename: "describe-each-p.test.ts",
+              contents: `
+                import { test, describe } from "bun:test";
+                describe.each([[${throwing("boom from describe.each %p")}]])("suite %p", () => {
+                  test("inner", () => {});
+                });
+              `,
+            },
+          ],
+        });
+
+        expect(stderr).toContain("boom from test.each $path");
+        expect(stderr).toContain("boom from test.each %p");
+        expect(stderr).toContain("boom from describe.each $path");
+        expect(stderr).toContain("boom from describe.each %p");
+      });
+
       test("handles missing properties gracefully", () => {
         const cases = [{ a: 1 }];
 
@@ -1325,7 +1438,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works", () => {
-    const dir = tempDirWithFiles("test-tsconfig-override", {
+    using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `
         import { describe, test, expect } from "bun:test";
         import { add } from "@utils/math";
@@ -1391,7 +1504,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works with monorepo spec tsconfig", () => {
-    const dir = tempDirWithFiles("test-tsconfig-monorepo", {
+    using dir = tempDir("test-tsconfig-monorepo", {
       "packages/app/src/index.ts": `
         export function getMessage() {
           return "Hello from app";
@@ -1457,49 +1570,183 @@ describe("bun test", () => {
     expect(output).toContain("app message");
   });
 
-  test("runs process.on('exit') handlers", async () => {
-    using dir = tempDir("bun-test-exit-handler", {
-      "exit.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => console.log("exit handler ran"));
-        test("a test", () => {});
-      `,
+  // jest and vitest never run a test file's process.on('exit') listeners; node's test harness asserts from them.
+  describe.concurrent("process.on('exit') listeners", () => {
+    async function runFiles(files: Record<string, string>, ...args: string[]) {
+      using dir = tempDir("bun-test-exit-listener", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    function runFile(name: string, contents: string) {
+      return runFiles({ [name]: contents }, name);
+    }
+
+    const bunTestFile = (n: number) => `
+      import { test } from "bun:test";
+      process.on("exit", () => {
+        console.log("exit listener ${n} ran");
+        process.exit(1);
+      });
+      test("test ${n}", () => {});
+    `;
+    const nodeTestFile = (n: number) => `
+      import { test } from "node:test";
+      process.on("exit", () => process.exit(1));
+      test("test ${n}", () => {});
+    `;
+
+    test("are not run for a bun:test file", async () => {
+      const { stdout, stderr, exitCode } = await runFile("exit.test.ts", bunTestFile(1));
+      expect(stdout).not.toContain("exit listener");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("are not run for a file that registers globals-style tests", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "globals.test.ts",
+        `
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("exit handler ran");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
-  });
-
-  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
-    using dir = tempDir("bun-test-exit-handler-code", {
-      "exit-code.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => process.exit(1));
-        test("a passing test", () => {});
-      `,
+    test("are not run when node:test is only imported", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-import-only.test.ts",
+        `
+          import { test } from "bun:test";
+          import { mock } from "node:test";
+          void mock;
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit-code.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("are not run when only a Worker uses node:test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "worker-uses-node-test.test.ts": `
+            import { test } from "bun:test";
+            process.on("exit", () => {
+              console.log("exit listener ran");
+              process.exit(1);
+            });
+            test("a Worker uses node:test", async () => {
+              const worker = new Worker(new URL("./worker.ts", import.meta.url));
+              await new Promise((resolve, reject) => {
+                worker.addEventListener("message", resolve, { once: true });
+                worker.addEventListener("error", e => reject(e.error ?? new Error(e.message)), { once: true });
+              });
+              worker.terminate();
+            });
+          `,
+          "worker.ts": `
+            import { mock } from "node:test";
+            mock.fn(() => {});
+            postMessage("used");
+          `,
+        },
+        "worker-uses-node-test.test.ts",
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
-    expect(stdout).not.toContain("pass");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(1);
+    test("still run when the file itself calls process.exit()", async () => {
+      const { stdout, exitCode } = await runFile(
+        "explicit-exit.test.ts",
+        `
+          import { test } from "bun:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("exits", () => process.exit(3));
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 3");
+      expect(exitCode).toBe(3);
+    });
+
+    test("run once a node:test API registers a test", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 0");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
+      const { stderr, exitCode } = await runFile("node-exit-code.test.ts", nodeTestFile(1));
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
+      using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "drain.test.ts"],
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("exit listener 1 ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("are not run in --parallel workers for bun:test files", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      // Worker output is relayed on the coordinator's stderr.
+      expect(stdout + stderr).not.toContain("exit listener");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    // --parallel implies --isolate, and a file's listeners are torn down with its global before the worker exits.
+    test("--parallel workers exit cleanly after node:test files; listeners do not reach the run's exit code", async () => {
+      const { stderr, exitCode } = await runFiles(
+        { "a.test.ts": nodeTestFile(1), "b.test.ts": nodeTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(stderr).not.toContain("worker crashed");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

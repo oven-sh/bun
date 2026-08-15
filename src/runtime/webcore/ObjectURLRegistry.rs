@@ -38,7 +38,7 @@ const _: fn() = || {
 };
 
 impl Entry {
-    pub fn init(blob: &Blob) -> Box<Entry> {
+    pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {
             blob: blob.dupe_with_content_type(true),
         })
@@ -53,7 +53,7 @@ impl Drop for Entry {
 }
 
 impl ObjectURLRegistry {
-    pub fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
+    pub(crate) fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
         let uuid = vm.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
@@ -61,19 +61,19 @@ impl ObjectURLRegistry {
         uuid
     }
 
-    pub fn singleton() -> &'static ObjectURLRegistry {
+    pub(crate) fn singleton() -> &'static ObjectURLRegistry {
         static REGISTRY: OnceLock<ObjectURLRegistry> = OnceLock::new();
         REGISTRY.get_or_init(ObjectURLRegistry::default)
     }
 
-    pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
+    pub(crate) fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
         map.get(&uuid.bytes)
             .map(|e| e.blob.dupe_with_content_type(true))
     }
 
-    pub fn resolve_and_dupe_to_js(
+    pub(crate) fn resolve_and_dupe_to_js(
         &self,
         pathname: &[u8],
         global_object: &JSGlobalObject,
@@ -83,7 +83,7 @@ impl ObjectURLRegistry {
         Some(unsafe { (*blob).to_js(global_object) })
     }
 
-    pub fn revoke(&self, pathname: &[u8]) {
+    pub(crate) fn revoke(&self, pathname: &[u8]) {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return;
         };
@@ -91,7 +91,7 @@ impl ObjectURLRegistry {
         let _ = self.map.lock().remove(&uuid.bytes);
     }
 
-    pub fn has(&self, pathname: &[u8]) -> bool {
+    pub(crate) fn has(&self, pathname: &[u8]) -> bool {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return false;
         };
@@ -104,7 +104,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
 }
 
 #[bun_jsc::host_fn(export = "Bun__createObjectURL")]
-pub(crate) fn bun_create_object_url(
+fn bun_create_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -128,7 +128,7 @@ pub(crate) fn bun_create_object_url(
 }
 
 #[bun_jsc::host_fn(export = "Bun__revokeObjectURL")]
-pub(crate) fn bun_revoke_object_url(
+fn bun_revoke_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -147,8 +147,9 @@ pub(crate) fn bun_revoke_object_url(
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()`.
-    let str =
-        bun_core::OwnedString::new(url_arg.to_bun_string(global_object).expect("unreachable"));
+    // `is_string()` is `is_string_like()` and admits `StringObject`, so
+    // `to_bun_string` can still observe a user `toString` that throws.
+    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
     if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
@@ -165,7 +166,7 @@ pub(crate) fn bun_revoke_object_url(
 }
 
 #[bun_jsc::host_fn(export = "jsFunctionResolveObjectURL")]
-pub(crate) fn js_function_resolve_object_url(
+fn js_function_resolve_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -197,7 +198,7 @@ pub(crate) fn js_function_resolve_object_url(
     Ok(blob.unwrap_or(JSValue::UNDEFINED))
 }
 
-pub(crate) const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
+const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
 
 pub(crate) fn is_blob_url(url: &[u8]) -> bool {
     url.len() >= SPECIFIER_LEN && strings::has_prefix_comptime(url, b"blob:")

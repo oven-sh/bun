@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "549170099226f816a4b204ea1d8fa102fb79eefa";
+export const WEBKIT_VERSION = "f0f60fd2324817dae9656d8bf2fcae25ceaccc37";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -105,6 +105,11 @@ function prebuiltDestDir(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
+
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
 
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {

@@ -6940,11 +6940,7 @@ pub mod bv2_impl {
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
             if parse_result.external.function.is_some() {
-                let source = match &parse_result.value {
-                    parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                    parse_task::ResultValue::Err(data) => data.source_index.get(),
-                    parse_task::ResultValue::Success(val) => val.source.index.0,
-                };
+                let source = parse_result.value.source_index();
                 let loader: Loader = this.graph.input_files.items_loader()[source as usize];
                 // `InputFile.arena` column dropped in the Rust port;
                 // stash the finalizer regardless so plugin-owned bytes are freed.
@@ -6974,11 +6970,7 @@ pub mod bv2_impl {
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = match &parse_result.value {
-                        parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                        parse_task::ResultValue::Err(data) => data.source_index.get(),
-                        parse_task::ResultValue::Success(val) => val.source.index.0,
-                    };
+                    let source_index = parse_result.value.source_index();
                     // borrowck — read source path/loader before
                     // `should_add_watcher(&self)` so the column borrow is released.
                     let source_path = this.graph.input_files.items_source()[source_index as usize]

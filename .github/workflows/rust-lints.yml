@@ -14,7 +14,6 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
-      - "scripts/rust-mordant.ts"
       - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -178,4 +177,15 @@ jobs:
           key: dylint-lib-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
 
       - name: mordant
-        run: bun run rust:mordant
+        env:
+          # Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s
+          # of lints added since then are unknown to it.
+          DYLINT_RUSTFLAGS: "-A unknown_lints"
+        run: |
+          rm -f target/mordant/over-baseline.txt
+          cargo dylint --all --workspace -- --keep-going
+
+      - name: Fail on findings over the baseline
+        # In baseline mode mordant reports findings over mordant-baseline.toml
+        # as warnings and lists them in this file; absent or empty means clean.
+        run: test ! -s target/mordant/over-baseline.txt

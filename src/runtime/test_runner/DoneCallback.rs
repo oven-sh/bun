@@ -8,8 +8,7 @@ pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub(crate) r#ref: Option<RefDataPtr>,
     pub(crate) called: bool, // = false
-    /// The file and entry this `done` was created for; `done(err)` and node:test's
-    /// `t.skip()`/`t.todo()` are charged to it no matter when they fire.
+    /// Entry this `done` was created for; `done(err)` and node:test skip/todo are charged to it.
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) owner: RefDataValue,
 }

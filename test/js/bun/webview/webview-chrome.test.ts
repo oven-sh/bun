@@ -7,7 +7,15 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, chmodSync, constants as fsConstants, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -195,20 +203,21 @@ async function newPooledPage(): Promise<Bun.WebView> {
 
 type PageBody = (page: Bun.WebView, url: string) => void | Promise<void>;
 async function onPooledPage(pageHtml: string, fn: PageBody): Promise<void> {
-  // pageLane admits at most POOL_SIZE borrowers, so an idle page is always there.
-  let page = idlePages.pop()!;
+  // pageLane admits at most POOL_SIZE borrowers, so the pool only runs short
+  // when an earlier borrower's tab was retired below.
+  const page = idlePages.pop() ?? (await newPooledPage());
+  let passed = false;
   try {
     const url = html(pageHtml);
     await page.navigate(url);
     await fn(page, url);
-  } catch (error) {
-    // A failed test may leave an operation pending on the tab, which would
-    // make the next borrower fail too. Retire it and replace it.
-    page.close();
-    page = await newPooledPage();
-    throw error;
+    passed = true;
   } finally {
-    idlePages.push(page);
+    // A failed test may leave an operation pending on the tab, which would
+    // make the next borrower fail too: retire the tab instead of returning
+    // it, and the next borrower opens a fresh one.
+    if (passed) idlePages.push(page);
+    else page.close();
   }
 }
 
@@ -345,6 +354,16 @@ test.each<[string, Bun.WebView.ConstructorOptions, ErrorShape]>([
     connectAndSpawn,
   ],
   [
+    "console: 42",
+    { backend: chrome, console: 42 as any },
+    invalidType("console must be globalThis.console or a function"),
+  ],
+  [
+    "console: {}",
+    { backend: chrome, console: {} as any },
+    invalidType("console must be globalThis.console or a function"),
+  ],
+  [
     "width: 0",
     { backend: chrome, width: 0 },
     {
@@ -355,12 +374,6 @@ test.each<[string, Bun.WebView.ConstructorOptions, ErrorShape]>([
   ],
 ])("constructor rejects %s", (_label, options, error) => {
   expect(thrown(() => new Bun.WebView(options))).toEqual(error);
-});
-
-it("chrome: console option validates", () => {
-  const error = invalidType("console must be globalThis.console or a function");
-  expect(thrown(() => new Bun.WebView({ backend: chrome, console: 42 } as any))).toEqual(error);
-  expect(thrown(() => new Bun.WebView({ backend: chrome, console: {} } as any))).toEqual(error);
 });
 
 // --- One Chrome per bun process -----------------------------------------------------
@@ -419,9 +432,11 @@ function observeSharedChild(): Promise<SharedChild> {
       timeout: 60_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const chromeArgv = readFileSync(join(String(dir), "argv.txt"), "utf8")
-      .trimEnd()
-      .split("\n");
+    // No argv.txt means the launcher never ran; the child's stderr and exit
+    // code (in the console and closeAll tests' diffs) say why, so don't let
+    // an ENOENT here hide them.
+    const argvFile = join(String(dir), "argv.txt");
+    const chromeArgv = existsSync(argvFile) ? readFileSync(argvFile, "utf8").trimEnd().split("\n") : [];
     return { stdoutLines: stdout.split("\n"), stderr, exitCode, chromeArgv };
   })());
 }
@@ -1239,7 +1254,9 @@ itAlone("chrome: close() during the attach chain stops the chain", async () => {
   // when the Target.createTarget reply arrives nothing continues the chain
   // (attachToTarget → Page.enable → Page.navigate). If something did, the
   // tab would show up attached, navigate to our URL and fire onNavigated on
-  // a closed view. The pool is idle by now; its first tab is the probe.
+  // a closed view. The pool is idle by now, so one of its tabs is the probe
+  // (a fresh one only if failing tests retired them all).
+  if (idlePages.length === 0) idlePages.push(await newPooledPage());
   const probe = idlePages[0];
   const before = new Set((await pageTargets(probe)).map(t => t.targetId));
 

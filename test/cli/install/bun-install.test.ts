@@ -900,15 +900,22 @@ describe.concurrent("bun-install", () => {
 
   // Shadow `git` with a shim that records its argv and fails, so the https clone
   // attempt falls through to the ssh fallback and the test can assert the exact
-  // ssh:// URL bun hands to git.
+  // ssh:// URL bun hands to git. A URL that parses as-is must be passed through
+  // untouched; only one that does not gets its scp-style `host:path` colon
+  // rewritten to a slash.
   it.skipIf(isWindows).each([
-    // #36931: a port is not the scp-style host:path colon; it must not become a
-    // path segment (ssh://git@localhost/52626/user/repo.git).
+    // #36931: the port used to become a path segment (ssh://git@localhost/52626/...).
     ["git+ssh://git@localhost:52626/user/repo.git#v1.0.0", "ssh://git@localhost:52626/user/repo.git"],
-    // scp-style colons inside an ssh:// URL are still rewritten to a slash...
+    ["git+ssh://git@[::1]:2222/user/repo.git", "ssh://git@[::1]:2222/user/repo.git"],
+    ["git+ssh://git@localhost:2222/\u00fcser/repo.git", "ssh://git@localhost:2222/\u00fcser/repo.git"],
+    // A colon in the path is not an scp-style separator either.
+    ["git+ssh://git@localhost/user/re:po.git", "ssh://git@localhost/user/re:po.git"],
+    // Without userinfo, the colon of the scheme itself used to be rewritten (ssh///localhost/...).
+    ["git+ssh://localhost/user/repo.git", "ssh://localhost/user/repo.git"],
+    // scp-style colons are still rewritten, whatever the path starts with.
     ["git+ssh://git@localhost:user/repo.git", "ssh://git@localhost/user/repo.git"],
-    // ...including when the path happens to start with a digit.
     ["git+ssh://git@localhost:1user/repo.git", "ssh://git@localhost/1user/repo.git"],
+    ["git+ssh://git@h\u00f6st:user/repo.git", "ssh://git@h\u00f6st/user/repo.git"],
   ])("ssh fallback clone URL for %s", async (dependency, expectedCloneUrl) => {
     using dir = tempDir("git-ssh-port", {
       "package.json": JSON.stringify({
@@ -937,7 +944,7 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(1);
 
     const gitArgs = (await file(join(String(dir), "git-args.log")).text()).split(/\s+/);
-    expect(gitArgs.filter(arg => arg.startsWith("ssh://"))).toEqual([expectedCloneUrl]);
+    expect(gitArgs.filter(arg => arg.startsWith("ssh"))).toEqual([expectedCloneUrl]);
   });
 
   it("should handle empty string in dependencies", async () => {

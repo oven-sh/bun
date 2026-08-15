@@ -39,7 +39,7 @@ You can provide a test implementation.
 import { test, expect } from "bun:test";
 
 test.todo("unimplemented feature", () => {
-  expect(Bun.isAwesome()).toBe(true);
+  expect(1 + 1).toBe(2);
 });
 ```
 
@@ -59,6 +59,7 @@ test.test.ts:
  0 pass
  1 fail
  1 expect() calls
+Ran 1 test across 1 file. [16.00ms]
 $ echo $?
 1 # this is the exit code of the previous command
 ```

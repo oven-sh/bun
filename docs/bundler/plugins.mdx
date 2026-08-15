@@ -234,7 +234,8 @@ import type { BunPlugin } from "bun";
 const envPlugin: BunPlugin = {
   name: "env plugin",
   setup(build) {
-    build.onLoad({ filter: /env/, namespace: "file" }, args => {
+    build.onResolve({ filter: /^env$/ }, () => ({ path: "env", namespace: "env" }));
+    build.onLoad({ filter: /.*/, namespace: "env" }, args => {
       return {
         contents: `export default ${JSON.stringify(process.env)}`,
         loader: "js",

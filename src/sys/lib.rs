@@ -749,11 +749,9 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
-        /// Filesystems that do not fill in `d_type` (FUSE, NFS, XFS with `ftype=0`)
-        /// report every entry as `Unknown`. When set, `next()` resolves those with
-        /// `lstat` (a symlink stays a symlink, as with `d_type`); an entry that
-        /// cannot be stat'ed stays `Unknown`. Off by default: the resolver and glob
-        /// only want the kind of the few entries they end up using.
+        /// `lstat` entries whose kind the filesystem did not report (`Unknown`:
+        /// FUSE, NFS, XFS with `ftype=0`), so that, as with `d_type`, a symlink is
+        /// still a symlink. Entries that cannot be stat'ed stay `Unknown`.
         pub resolve_unknown_entry_types: bool,
     }
     impl WrappedIterator {

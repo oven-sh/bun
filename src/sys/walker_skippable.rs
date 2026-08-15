@@ -77,8 +77,7 @@ impl Walker {
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
-            // Callers set the flag after `walk()` has already created the root
-            // iterator, so pass it down per call rather than at construction.
+            // Per call: callers set the flag after `walk()` built the root iterator.
             self.stack[top_idx].iter.resolve_unknown_entry_types = self.resolve_unknown_entry_types;
             let Some(base) = self.stack[top_idx].iter.next()? else {
                 let item = self.stack.pop().unwrap();

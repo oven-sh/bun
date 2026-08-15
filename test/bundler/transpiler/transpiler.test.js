@@ -3038,6 +3038,29 @@ console.log(resolve.length)
           `export const foo = require.resolve("my-module")`,
         );
       });
+
+      it("require.resolve() keeps every segment of a folded string concatenation", () => {
+        // "./fo" + "o" is folded into a rope; the import record must hold the whole string, not its head.
+        expectPrinted_(
+          `export const foo = require.resolve('./fo' + 'o')`,
+          `export const foo = require.resolve("./foo")`,
+        );
+        expectPrinted_(
+          `export const foo = require.resolve('./a' + '/b' + '/c')`,
+          `export const foo = require.resolve("./a/b/c")`,
+        );
+        expectPrinted_(
+          `export const foo = require.resolve(x ? './fo' + 'o' : './ba' + 'r')`,
+          `export const foo = x ? require.resolve("./foo") : require.resolve("./bar")`,
+        );
+        // require() and import() of the same argument already behaved this way.
+        expectPrinted_(`export const foo = require('./fo' + 'o')`, `export const foo = require("./foo")`);
+        expectPrinted_(`export const foo = import('./fo' + 'o')`, `export const foo = import("./foo")`);
+        expect(transpiler.scan(`require.resolve("./fo" + "o"); import("./ba" + "r");`).imports).toEqual([
+          { kind: "require-resolve", path: "./foo" },
+          { kind: "dynamic-import", path: "./bar" },
+        ]);
+      });
     });
 
     it("define", () => {

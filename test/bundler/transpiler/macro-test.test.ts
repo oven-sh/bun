@@ -182,6 +182,30 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+test("object destructuring of a macro result matches a computed key built from folded string literals", async () => {
+  // ["a" + "b"] is folded into a rope; matching it against the macro result must use the whole
+  // string, or the `ab` property is dropped from the inlined object.
+  using dir = tempDir("macro-destructure-folded-key", {
+    "m.ts": `export function m() {\n  return { ab: 1, c: 2 };\n}\n`,
+    "index.ts": [
+      `import { m } from "./m.ts" with { type: "macro" };`,
+      `const { ["a" + "b"]: x, c } = m();`,
+      `console.log(JSON.stringify([x, c]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[1,2]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

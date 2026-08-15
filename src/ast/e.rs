@@ -1911,7 +1911,15 @@ impl EString {
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
     /// The transcode allocates via the global arena then copies into `bump`.
+    ///
+    /// Reads `data` only: a string that went through the visit pass may be a
+    /// rope (`fold_string_addition`), of which this is just the first segment.
+    /// Use `slice` (or `resolve_rope_if_needed` first) on those.
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+        debug_assert!(
+            self.next.is_none(),
+            "EString::string() called on an unresolved rope; use slice()"
+        );
         if self.is_utf8() {
             // `self.data` is arena-owned with the same lifetime as `bump`;
             // StoreStr re-borrows under that contract.

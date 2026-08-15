@@ -259,6 +259,28 @@ it("file url in require.resolve resolves", async () => {
   expect(stdout.toString("utf8")).toBe(`${dir}${sep}index.js\n`);
 });
 
+it("require.resolve of a folded string concatenation resolves the whole specifier", async () => {
+  // "./fo" + "o" is constant-folded by the transpiler; it used to record only "./fo".
+  await using dir = tempDir("require-resolve-folded", {
+    "foo.js": "module.exports = 'foo';",
+    "bar.js": "module.exports = 'bar';",
+    "test.js": `
+      console.log(require.resolve("./fo" + "o"));
+      console.log(require.resolve(process.argv.length > 100 ? "./fo" + "o" : "./ba" + "r"));
+      console.log(require("./fo" + "o"));
+    `,
+  });
+
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  expect(stderr.toString("utf8")).toBe("");
+  expect(stdout.toString("utf8")).toBe(`${dir}${sep}foo.js\n${dir}${sep}bar.js\nfoo\n`);
+  expect(exitCode).toBe(0);
+});
+
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
   await using dir = tempDir("file url", {

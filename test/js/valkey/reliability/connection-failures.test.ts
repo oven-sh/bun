@@ -667,13 +667,15 @@ describe("Valkey: Recovering After fail()", () => {
       // Each SET is flushed as soon as it is queued; once two flushes in a row
       // hand nothing at all to the socket, the kernel buffers on both ends are
       // full and the socket is stuck behind its undelivered ciphertext.
-      for (let stuckFlushes = 0; stuckFlushes < 2; ) {
+      let stuckFlushes = 0;
+      while (stuckFlushes < 2 && pending.length < 256) {
         const before = client.bufferedAmount;
         pending.push(client.set("key", value).catch(() => {}));
         await new Promise(resolve => setImmediate(resolve));
         const added = client.bufferedAmount - before;
         stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
       }
+      expect(stuckFlushes).toBe(2);
       const lastSet = client.set("key", "last");
       fake.sockets[0].write("\x01\r\n");
       await expect(lastSet).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
@@ -775,6 +777,7 @@ describe("Valkey: Recovering After fail()", () => {
         });
       } finally {
         client.close();
+        await first.close();
         await second.close();
       }
     },
@@ -829,6 +832,7 @@ describe("Valkey: Recovering After fail()", () => {
         });
       } finally {
         client.close();
+        await first.close();
         await second.close();
       }
     },
@@ -853,6 +857,7 @@ describe("Valkey: Recovering After fail()", () => {
       expect({ first: first.connections, second: second.connections }).toEqual({ first: 1, second: 1 });
     } finally {
       client.close();
+      await first.close();
       await second.close();
     }
   });
@@ -883,6 +888,7 @@ describe("Valkey: Recovering After fail()", () => {
         await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
       } finally {
         client.close();
+        await fake.close();
       }
     },
   );

@@ -453,12 +453,7 @@ impl EventLoopDelayMonitor {
         crate::jsc_hooks::timer_all()
     }
 
-    fn enable(
-        &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-        histogram: JSValue,
-        resolution_ms: i32,
-    ) {
+    fn enable(&mut self, histogram: JSValue, resolution_ms: i32) {
         if self.enabled {
             return;
         }
@@ -479,7 +474,7 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    fn disable(&mut self) {
         if !self.enabled {
             return;
         }

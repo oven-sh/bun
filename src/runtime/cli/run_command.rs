@@ -957,9 +957,37 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             ..Default::default()
         })?;
-        // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
-        let vm = unsafe { &mut *vm_ptr };
+        // SAFETY: `init` returned the VM it just created and installed for this
+        // thread. Nothing reaches it through `VirtualMachine::get()` until
+        // `Run::start` runs code, so this exclusive borrow, which ends when
+        // `configure_vm` returns, is the only access during configuration.
+        let run_entry = Self::configure_vm(unsafe { &mut *vm_ptr }, ctx, entry_path, loader);
 
+        // `init` installed the VM it returned as this thread's VM, so from
+        // here on it is driven through the same accessor everything else uses.
+        debug_assert!(::core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+        Run {
+            ctx,
+            vm: VirtualMachine::get(),
+            entry_path: run_entry,
+        }
+        .start()
+    }
+
+    /// Everything `boot` does to the freshly created VM before `Run::start`:
+    /// CLI state hand-off, `--eval`/cron entry synthesis, transpiler options,
+    /// `$TZ`, env, preconnects. Returns the path `Run::start` loads.
+    ///
+    /// Takes the VM exclusively because this is the one window where that is
+    /// true: no JS has run yet, so nothing re-derives the VM through its
+    /// thread-local. `Run::start` runs JS and therefore holds only a shared
+    /// reference.
+    fn configure_vm(
+        vm: &mut VirtualMachine,
+        ctx: &mut ContextData,
+        entry_path: Box<[u8]>,
+        loader: Option<Loader>,
+    ) -> &'static [u8] {
         // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
@@ -1093,12 +1121,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // from `self.ctx` to drive the hot-reloader enable.
         vm.hot_reload = ctx.debug.hot_reload;
 
-        Run {
-            ctx,
-            vm,
-            entry_path: run_entry,
-        }
-        .start()
+        run_entry
     }
 
     /// Entry point for
@@ -1153,10 +1176,28 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         })?;
-        // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
-        // on this thread.
-        let vm = unsafe { &mut *vm_ptr };
+        // SAFETY: as in `boot`: the VM was just created for this thread and
+        // nothing else reaches it until `Run::start`; the borrow ends when
+        // `configure_standalone_vm` returns.
+        let entry = Self::configure_standalone_vm(unsafe { &mut *vm_ptr }, ctx, entry_path, graph);
 
+        debug_assert!(::core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+        Run {
+            ctx,
+            vm: VirtualMachine::get(),
+            entry_path: entry,
+        }
+        .start()
+    }
+
+    /// Standalone counterpart of [`Self::configure_vm`]; same exclusivity
+    /// argument. Returns the entry path `Run::start` loads.
+    fn configure_standalone_vm(
+        vm: &mut VirtualMachine,
+        ctx: &mut ContextData,
+        entry_path: Box<[u8]>,
+        graph: &bun_standalone_graph::Graph,
+    ) -> &'static [u8] {
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
@@ -1204,12 +1245,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        Run {
-            ctx,
-            vm,
-            entry_path: entry,
-        }
-        .start()
+        entry
     }
 }
 
@@ -1223,7 +1259,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 /// `RunCommand::boot` / `boot_standalone`.
 pub struct Run<'a> {
     ctx: &'a ContextData,
-    vm: &'a mut VirtualMachine,
+    /// Shared, not `&mut`: `start` runs JS, and everything JS calls back into
+    /// reaches this same VM through `VirtualMachine::get()`, so an exclusive
+    /// borrow held across `load_entry_point`/`tick`/`on_exit` would be
+    /// aliased by every one of those accesses. The `&mut self` VM methods are
+    /// called through `as_mut()`, which mints a borrow that lasts for that
+    /// one call, the same way `WebWorker::spin` drives a worker's VM.
+    vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
@@ -1280,8 +1322,8 @@ impl Run<'_> {
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
-        vm.hot_reload = ctx.debug.hot_reload;
-        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.as_mut().hot_reload = ctx.debug.hot_reload;
+        vm.as_mut().on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
@@ -1291,7 +1333,7 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            vm.as_mut().cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
                 name,
                 dir,
                 md_format: opts.md_format,
@@ -1311,11 +1353,12 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
-                text_format: opts.text_format,
-            });
+            vm.as_mut().heap_profiler_config =
+                Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+                    name,
+                    dir,
+                    text_format: opts.text_format,
+                });
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1373,23 +1416,25 @@ impl Run<'_> {
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
+        // The reloader stores a back-reference it later writes through, so it
+        // gets the thread-local `*mut` (the pointer every other mutation of
+        // this VM derives from), not a pointer cast from the shared `vm`.
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
+                // SAFETY: the main-thread VM is process-lifetime; it outlives
+                // the leaked reloader.
                 unsafe {
                     bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
+                        VirtualMachine::get_mut_ptr(),
                         Some(entry),
                     )
                 }
             }
             cli::command::HotReload::Watch => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
+                // SAFETY: as above.
                 unsafe {
                     bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
+                        VirtualMachine::get_mut_ptr(),
                         Some(entry),
                     )
                 }
@@ -1409,39 +1454,35 @@ impl Run<'_> {
             }
         }
 
-        match vm.load_entry_point(entry) {
+        match vm.as_mut().load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
-                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    let global = vm.global;
+                    let result = promise.result(vm.jsc_vm());
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
                     let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    let handled = vm
+                        .as_mut()
+                        .uncaught_exception(vm.global(), result, is_rejection);
                     promise.set_handled();
-                    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                    vm.as_mut().pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     // The core run-loop below does the actual waiting.
                     if vm.hot_reload != cli::command::HotReload::None || handled {
-                        vm.add_main_to_watcher_if_needed();
-                        // SAFETY: `event_loop` is a self-pointer into this VM;
-                        // uniquely accessed here.
-                        vm.event_loop_ref().tick();
+                        vm.as_mut().add_main_to_watcher_if_needed();
+                        vm.as_mut().tick();
                     } else {
                         exit_with_unhandled_note(vm);
                     }
                 }
 
-                // SAFETY: `vm.jsc_vm` set in `init`.
-                let _ = promise.result(unsafe { &mut *vm.jsc_vm });
+                let _ = promise.result(vm.jsc_vm());
 
                 if log_has_msgs(vm) {
                     dump_build_error(vm);
@@ -1457,7 +1498,7 @@ impl Run<'_> {
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
-            vm.tick();
+            vm.as_mut().tick();
         }
 
         // Initial synchronous evaluation of the entrypoint is done (TLA may
@@ -1470,24 +1511,25 @@ impl Run<'_> {
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
-            vm.report_exception_in_hot_reloaded_module_if_needed();
+            vm.as_mut()
+                .report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
-                    vm.tick();
-                    vm.report_exception_in_hot_reloaded_module_if_needed();
-                    vm.auto_tick_active();
+                    vm.as_mut().tick();
+                    vm.as_mut()
+                        .report_exception_in_hot_reloaded_module_if_needed();
+                    vm.as_mut().auto_tick_active();
                 }
-                vm.on_before_exit();
-                vm.report_exception_in_hot_reloaded_module_if_needed();
-                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-                // accessed here. Watcher arm keeps the process alive across
-                // reloads.
+                vm.as_mut().on_before_exit();
+                vm.as_mut()
+                    .report_exception_in_hot_reloaded_module_if_needed();
+                // Watcher arm keeps the process alive across reloads.
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
             while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
+                vm.as_mut().tick();
+                vm.as_mut().auto_tick_active();
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1510,11 +1552,11 @@ impl Run<'_> {
                                     crate::generated_host_exports::Bun__onResolveEntryPointResult,
                                     crate::generated_host_exports::Bun__onRejectEntryPointResult,
                                 );
-                                vm.tick();
-                                vm.auto_tick_active();
+                                vm.as_mut().tick();
+                                vm.as_mut().auto_tick_active();
                                 while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
+                                    vm.as_mut().tick();
+                                    vm.as_mut().auto_tick_active();
                                 }
                                 break 'brk result;
                             }
@@ -1537,7 +1579,7 @@ impl Run<'_> {
                 }
             }
 
-            vm.on_before_exit();
+            vm.as_mut().on_before_exit();
         }
 
         if log_has_msgs(vm) {
@@ -1545,9 +1587,9 @@ impl Run<'_> {
             Output::flush();
         }
 
-        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.as_mut().on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         vm.global().handle_rejected_promises();
-        vm.on_exit();
+        vm.as_mut().on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
             print_unhandled_version_note(vm);
@@ -1563,7 +1605,7 @@ impl Run<'_> {
         crate::napi::fix_dead_code_elimination();
         crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
-        vm.global_exit();
+        vm.as_mut().global_exit();
     }
 }
 
@@ -1578,7 +1620,7 @@ fn log_has_msgs(vm: &VirtualMachine) -> bool {
 }
 
 #[inline]
-fn log_clear_msgs(vm: &mut VirtualMachine) {
+fn log_clear_msgs(vm: &VirtualMachine) {
     if let Some(p) = vm.log {
         // SAFETY: see `log_has_msgs`.
         unsafe { (*p.as_ptr()).msgs.clear() };
@@ -1591,7 +1633,7 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn dump_build_error(vm: &mut VirtualMachine) {
+fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
@@ -1614,14 +1656,17 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
-    vm.exit_handler.exit_code = 1;
-    vm.on_exit();
+fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
+    vm.as_mut().exit_handler.exit_code = 1;
+    // Runs the user's 'exit' listeners; `process.exitCode = n` in one of them
+    // lands in `Bun__setExitCode` with its own `&mut` to this VM, so the borrow
+    // that set the code above must not still be live here.
+    vm.as_mut().on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
         pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
     }
-    vm.global_exit();
+    vm.as_mut().global_exit();
 }
 
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
@@ -1631,7 +1676,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1653,8 +1698,8 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note(vm: &VirtualMachine) {
+    vm.as_mut().exit_handler.exit_code = 1;
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

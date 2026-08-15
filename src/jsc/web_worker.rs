@@ -702,24 +702,22 @@ impl WebWorker {
                 ..Default::default()
             },
         )?;
-        // Scoped `&mut VirtualMachine` for the worker-specific fields; ends
-        // before anything else on this thread re-derives access to the VM.
-        {
-            // SAFETY: init_worker returns a valid heap-allocated VM ptr;
-            // not yet published, so this `&mut` is exclusive.
-            let vm_ref = unsafe { &mut *vm };
+        // SAFETY: init_worker returns a valid heap-allocated VM ptr; not yet
+        // published, so nothing else can reach it. Per-field writes through the
+        // raw pointer, like the rest of this function (and `VirtualMachine::init`).
+        unsafe {
             // arena initialised above; worker-thread only field. `with_mut`
             // scopes a `&mut Option<Arena>` to the closure; we extract the raw
             // address (escaping as `*mut`, no borrow) for the VM backref.
-            vm_ref.arena = self
+            (*vm).arena = self
                 .arena
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
-            *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
+            *(*vm).proxy_env_storage.lock() = proxy_env_slots;
 
-            vm_ref.is_main_thread = false;
+            (*vm).is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
-            vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+            (*vm).on_unhandled_rejection = on_unhandled_rejection;
         }
 
         // Publish now (rather than at the end of startVM) so that:
@@ -1002,12 +1000,17 @@ impl WebWorker {
         // ---- 2. User exit handlers -----------------------------------------
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
-            // only ever held its handle) — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
-            vm.on_exit();
-            exit_code = i32::from(vm.exit_handler.exit_code);
+            // SAFETY: vm_ptr is this thread's live VM; no other thread holds a
+            // pointer to it (they only ever held its handle). `on_exit` runs
+            // the user's 'exit' listeners, which reach the VM again through its
+            // thread-local (e.g. `process.exitCode = n` writes the field read
+            // right after), so each access here is its own statement-scoped
+            // borrow rather than one `&mut` held across the call.
+            unsafe {
+                (*vm_ptr).is_shutting_down = true;
+                (*vm_ptr).on_exit();
+                exit_code = i32::from((*vm_ptr).exit_handler.exit_code);
+            }
             log!(
                 "[{}] shutdown: exit handlers done",
                 self.execution_context_id

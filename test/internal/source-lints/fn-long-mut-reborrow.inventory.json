@@ -1,0 +1,324 @@
+{
+  "src/bundler/BundleThread.rs": [
+    "completion"
+  ],
+  "src/bundler/LinkerContext.rs": [
+    "chunk",
+    "chunk"
+  ],
+  "src/bundler/ParseTask.rs": [
+    "args",
+    "result",
+    "result_ptr"
+  ],
+  "src/bundler/bundle_v2.rs": [
+    "chunks",
+    "load",
+    "resolve",
+    "transpiler_ptr",
+    "value"
+  ],
+  "src/bundler/linker_context/generateCompileResultForJSChunk.rs": [
+    "c_ptr",
+    "chunk_ptr"
+  ],
+  "src/bunfig/arguments.rs": [
+    "log"
+  ],
+  "src/bunfig/bunfig.rs": [
+    "log_ptr"
+  ],
+  "src/css/css_parser.rs": [
+    "references_ptr"
+  ],
+  "src/css_jsc/css_internals.rs": [
+    "log_ptr"
+  ],
+  "src/event_loop/MiniEventLoop.rs": [
+    "global_ptr"
+  ],
+  "src/exe_format/pe.rs": [
+    "optional_header",
+    "pe_header"
+  ],
+  "src/http/AsyncHTTP.rs": [
+    "async_http"
+  ],
+  "src/http/HTTPThread.rs": [
+    "cloned_ptr"
+  ],
+  "src/install/NetworkTask.rs": [
+    "async_http"
+  ],
+  "src/install/PackageInstaller.rs": [
+    "subpath_buf_ptr"
+  ],
+  "src/install/PackageManager.rs": [
+    "ctx_ptr",
+    "manager_ptr",
+    "manager_ptr",
+    "manager_ptr",
+    "uws_loop"
+  ],
+  "src/install/PackageManager/PackageJSONEditor.rs": [
+    "e_string"
+  ],
+  "src/install/PackageManager/PopulateManifestCache.rs": [
+    "manager_ptr",
+    "net_ptr"
+  ],
+  "src/install/PackageManager/runTasks.rs": [
+    "extract_ptr",
+    "manager_ptr",
+    "net_ptr",
+    "network_task",
+    "patch_task",
+    "task_ptr",
+    "task_ptr",
+    "task_ptr"
+  ],
+  "src/install/PackageManager/updatePackageJSONAndInstall.rs": [
+    "current_package_json_ptr",
+    "root_package_json_ptr"
+  ],
+  "src/install/PackageManagerTask.rs": [
+    "this_raw"
+  ],
+  "src/install/auto_installer.rs": [
+    "pm"
+  ],
+  "src/install/hoisted_install.rs": [
+    "mgr_ptr",
+    "mgr_ptr",
+    "mgr_ptr",
+    "mgr_ptr",
+    "mgr_ptr"
+  ],
+  "src/install/isolated_install.rs": [
+    "lockfile",
+    "progress"
+  ],
+  "src/install/isolated_install/Installer.rs": [
+    "list"
+  ],
+  "src/install/lockfile/Package.rs": [
+    "common_raw"
+  ],
+  "src/io/PipeWriter.rs": [
+    "file_raw",
+    "file_raw"
+  ],
+  "src/io/lib.rs": [
+    "request_ptr",
+    "request_ptr"
+  ],
+  "src/jsc/VirtualMachine.rs": [
+    "jsc_vm_ptr",
+    "jsc_vm_ptr",
+    "vm",
+    "vm"
+  ],
+  "src/jsc_macros/lib.rs": [
+    "__this"
+  ],
+  "src/parsers/toml.rs": [
+    "cur",
+    "cur",
+    "obj"
+  ],
+  "src/resolver/fs.rs": [
+    "existing_ptr",
+    "stored"
+  ],
+  "src/resolver/resolver.rs": [
+    "info",
+    "merged_config",
+    "parent_config_ptr"
+  ],
+  "src/runtime/api/Archive.rs": [
+    "blob_ptr"
+  ],
+  "src/runtime/api/BunObject.rs": [
+    "server"
+  ],
+  "src/runtime/api/JSBundler.rs": [
+    "plugin",
+    "resolve"
+  ],
+  "src/runtime/api/bun/h2_frame_parser.rs": [
+    "signal_ptr",
+    "stream",
+    "stream",
+    "stream",
+    "stream",
+    "stream",
+    "stream",
+    "stream",
+    "stream_ptr",
+    "stream_ptr",
+    "stream_ptr",
+    "stream_ptr",
+    "stream_ptr",
+    "stream_ptr",
+    "stream_ptr"
+  ],
+  "src/runtime/api/bun/js_bun_spawn_bindings.rs": [
+    "jsc_vm_ptr",
+    "subprocess_ptr"
+  ],
+  "src/runtime/api/standalone_graph_jsc.rs": [
+    "store_ptr"
+  ],
+  "src/runtime/bake/DevServer.rs": [
+    "dev_ptr",
+    "dev_ptr",
+    "request_ptr"
+  ],
+  "src/runtime/bake/dev_server/hmr_socket.rs": [
+    "s"
+  ],
+  "src/runtime/bake/dev_server/mod.rs": [
+    "dev"
+  ],
+  "src/runtime/bake/production.rs": [
+    "vm_ptr",
+    "vm_ptr"
+  ],
+  "src/runtime/cli/build_command.rs": [
+    "log"
+  ],
+  "src/runtime/cli/create_command.rs": [
+    "filesystem",
+    "node"
+  ],
+  "src/runtime/cli/exec_command.rs": [
+    "mini"
+  ],
+  "src/runtime/cli/filter_run.rs": [
+    "dep",
+    "dependent",
+    "env_ptr",
+    "process"
+  ],
+  "src/runtime/cli/mod.rs": [
+    "graph"
+  ],
+  "src/runtime/cli/multi_run.rs": [
+    "dependent",
+    "dependent",
+    "env_ptr",
+    "process"
+  ],
+  "src/runtime/cli/outdated_command.rs": [
+    "log_ptr"
+  ],
+  "src/runtime/cli/package_manager_command.rs": [
+    "pm_ptr",
+    "pm_ptr"
+  ],
+  "src/runtime/cli/pm_trusted_command.rs": [
+    "pm_raw"
+  ],
+  "src/runtime/cli/run_command.rs": [
+    "mini",
+    "mini",
+    "promise"
+  ],
+  "src/runtime/cli/test/parallel/Coordinator.rs": [
+    "v_ptr"
+  ],
+  "src/runtime/cli/test/parallel/Worker.rs": [
+    "process_ptr"
+  ],
+  "src/runtime/cli/test/parallel/runner.rs": [
+    "cmds_ptr"
+  ],
+  "src/runtime/dispatch.rs": [
+    "poll"
+  ],
+  "src/runtime/dns_jsc/dns_sd.rs": [
+    "poll_ptr"
+  ],
+  "src/runtime/image/Image.rs": [
+    "blob"
+  ],
+  "src/runtime/node/path_watcher.rs": [
+    "owner_watcher"
+  ],
+  "src/runtime/server/NodeHTTPResponse.rs": [
+    "has_body"
+  ],
+  "src/runtime/server/RequestContext.rs": [
+    "pair",
+    "response_ptr",
+    "response_ptr",
+    "value"
+  ],
+  "src/runtime/shell/Builtin.rs": [
+    "body"
+  ],
+  "src/runtime/shell/states/Cmd.rs": [
+    "child"
+  ],
+  "src/runtime/test_runner/Collection.rs": [
+    "bun_test_root"
+  ],
+  "src/runtime/test_runner/Order.rs": [
+    "current",
+    "last"
+  ],
+  "src/runtime/test_runner/bun_test.rs": [
+    "scope_ptr",
+    "scope_ptr"
+  ],
+  "src/runtime/test_runner/pretty_format.rs": [
+    "blob",
+    "request",
+    "response"
+  ],
+  "src/runtime/timer/mod.rs": [
+    "timer"
+  ],
+  "src/runtime/webcore/BakeResponse.rs": [
+    "bake_ssr_has_jsx"
+  ],
+  "src/runtime/webcore/Body.rs": [
+    "blob_ptr",
+    "blob_ptr"
+  ],
+  "src/runtime/webcore/FileReader.rs": [
+    "remaining"
+  ],
+  "src/runtime/webcore/ReadableStream.rs": [
+    "blobby"
+  ],
+  "src/runtime/webcore/Request.rs": [
+    "response"
+  ],
+  "src/runtime/webcore/blob/copy_file.rs": [
+    "result"
+  ],
+  "src/runtime/webcore/blob/read_file.rs": [
+    "promise"
+  ],
+  "src/runtime/webcore/fetch/FetchTasklet.rs": [
+    "body",
+    "fetch_tasklet_ptr"
+  ],
+  "src/runtime/webcore/s3/client.rs": [
+    "ctx_ptr",
+    "reader",
+    "response_stream",
+    "task_ptr",
+    "task_ptr"
+  ],
+  "src/sql_jsc/mysql/MySQLConnection.rs": [
+    "new_socket"
+  ],
+  "src/sql_jsc/mysql/MySQLQuery.rs": [
+    "statement"
+  ],
+  "src/sql_jsc/postgres/PostgresSQLConnection.rs": [
+    "new_socket"
+  ]
+}

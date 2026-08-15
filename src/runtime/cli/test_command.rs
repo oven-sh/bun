@@ -1618,7 +1618,7 @@ impl CommandLineReporter {
 
     pub(crate) fn render_lcov(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
     ) -> Option<Vec<u8>> {
         let map = ByteRangeMapping::map()?;

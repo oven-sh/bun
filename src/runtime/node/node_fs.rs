@@ -2024,7 +2024,7 @@ mod _async_tasks {
             let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
 
             #[cfg(target_os = "macos")]
-            {
+            'try_with_clonefile: {
                 // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
                 // mirror the O_NOFOLLOW directory open below instead of dereferencing.
                 if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
@@ -2034,6 +2034,11 @@ mod _async_tasks {
                 ) {
                     match err.get_errno() {
                         E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
+                            if matches!(err.get_errno(), E::EACCES | E::EPERM)
+                                && this_ref.args.flags.force
+                            {
+                                break 'try_with_clonefile;
+                            }
                             // `errno_sys_p`
                             // already boxed `src.as_bytes()` into `err.path`, so just forward.
                             return err;

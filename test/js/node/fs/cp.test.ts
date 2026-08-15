@@ -301,6 +301,25 @@ for (const [name, copy] of impls) {
       });
     });
 
+    // root reads through mode 000, so there is nothing to refuse.
+    test.skipIf(isWindows || process.getuid?.() === 0)(
+      "recursive - an unreadable file inside the tree is reported by its own path",
+      async () => {
+        await using basename = tempDir("cp", {
+          "from/a.txt": "a",
+          "from/sub/secret.txt": "s",
+        });
+        const secret = join(basename, "from", "sub", "secret.txt");
+        fs.chmodSync(secret, 0o000);
+        try {
+          const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+          expect({ code: e.code, path: e.path }).toEqual({ code: "EACCES", path: secret });
+        } finally {
+          fs.chmodSync(secret, 0o600);
+        }
+      },
+    );
+
     test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

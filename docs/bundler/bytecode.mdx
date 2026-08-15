@@ -65,7 +65,7 @@ The performance improvement scales with your codebase size:
 | Application size          | Typical startup improvement |
 | ------------------------- | --------------------------- |
 | Small CLI (< 100 KB)      | 1.5-2x faster               |
-| Medium-large app (> 5 MB) | 2.5x-4x faster              |
+| Medium-large app (> 5 MB) | 2-4x faster                 |
 
 Larger applications benefit more because they have more code to parse.
 
@@ -372,7 +372,7 @@ Using `--minify` before bytecode generation helps:
 - Constant folding → fewer constants in the pool
 
 **The tradeoff**:
-You're trading 2-4x larger files for 2-4x faster startup. For CLIs, this is usually worth it. For long-running servers where a few megabytes of disk space don't matter, it's even less of an issue.
+You're trading 2-8x larger files for 2-4x faster startup. For CLIs, this is usually worth it. For long-running servers where a few megabytes of disk space don't matter, it's even less of an issue.
 
 ## Versioning and portability
 

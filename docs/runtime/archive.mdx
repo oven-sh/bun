@@ -229,7 +229,7 @@ try {
 
 Common error scenarios:
 
-- **Corrupted/truncated archives** - `new Archive()` loads the archive data; Bun may defer errors until read/extract operations
+- **Corrupted/truncated archives** - `new Bun.Archive()` loads the archive data; Bun may defer errors until read/extract operations
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
@@ -283,7 +283,7 @@ const jsonFiles = await archive.files("**/*.json");
 const codeFiles = await archive.files(["**/*.ts", "**/*.js"]);
 ```
 
-Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
+Supported glob patterns (subset of [Bun.Glob](/runtime/glob) syntax):
 
 - `*` - Match any characters except `/`
 - `**` - Match any characters including `/`
@@ -292,7 +292,7 @@ Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
 - `{a,b}` - Match alternatives
 - `!pattern` - Exclude files matching pattern (negation). When you pass only negative patterns, Bun includes all files not matching them.
 
-See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
+See [Bun.Glob](/runtime/glob) for the full glob syntax including escaping and advanced patterns.
 
 ## Compression
 

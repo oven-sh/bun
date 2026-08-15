@@ -83,7 +83,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
         let state = &mut *((*(*this).handle).state as *mut State);
-        let _ = state.read_chunk(&mut *this, chunk);
+        let _ = state.read_chunk(&mut *this, &chunk);
         true
     };
     on_reader_done  = |this| {

@@ -3099,7 +3099,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
-                    if dep.behavior.contains(Behavior::OPTIONAL) {
+                    if may_stay_unresolved(dep) {
                         continue;
                     }
                     dependency_resolution_failure(
@@ -3184,7 +3184,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
+                        if may_stay_unresolved(dep) {
                             continue;
                         }
                         dependency_resolution_failure(
@@ -3273,7 +3273,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                if may_stay_unresolved(dep) {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(
@@ -3301,11 +3301,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        if let Err(err) = lockfile.resolve(log) {
-            return Err(match err {
-                tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
-                tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
-            });
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+            return Err(ParseError::OutOfMemory);
         }
     }
 
@@ -3465,6 +3462,11 @@ fn map_dep_to_pkg(
             };
         }
     }
+}
+
+/// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
+fn may_stay_unresolved(dep: &Dependency) -> bool {
+    dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 
 fn dependency_resolution_failure(

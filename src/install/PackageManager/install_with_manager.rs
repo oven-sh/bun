@@ -811,7 +811,7 @@ pub fn install_with_manager(
                     if bun_core::handle_oom(Lockfile::eql(
                         &manager.lockfile,
                         &lockfile_before_clean,
-                        packages_len_before_install,
+                        lockfile_before_clean.loaded_package_count as usize,
                     )) {
                         break 'frozen_lockfile;
                     }
@@ -944,7 +944,10 @@ pub fn install_with_manager(
         // If the lockfile was frozen, we already checked it
         !manager.options.enable.frozen_lockfile()
             && if load_result.loaded_from_text_lockfile() {
-                !manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)?
+                !manager.lockfile.eql(
+                    &lockfile_before_clean,
+                    lockfile_before_clean.loaded_package_count as usize,
+                )?
             } else {
                 manager.lockfile.has_meta_hash_changed(
                     PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),

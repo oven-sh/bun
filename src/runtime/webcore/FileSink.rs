@@ -1,10 +1,12 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
@@ -34,6 +36,10 @@ pub struct FileSink {
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
+    /// `Some(n)` only while a `Bun.write` pipe is counting the UTF-8 bytes the
+    /// write fns accept (each chunk once; `written` can double-count). `None`
+    /// for every other sink, which skips the per-chunk length passes.
+    received_bytes: Cell<Option<u64>>,
     pub(crate) pending: JsCell<streams::WritablePending>,
     pub(crate) source: JsCell<streams::SourceHandle>,
     pub(crate) done: Cell<bool>,
@@ -70,9 +76,26 @@ pub struct FileSink {
 
 /// RAII owner of one intrusive ref on a `FileSink`. Drops the ref (and frees
 /// the allocation if it was the last) on scope exit, without borrowing `self`.
-struct FileSinkRef(*mut FileSink);
+pub(crate) struct FileSinkRef(*mut FileSink);
+
+impl core::ops::Deref for FileSinkRef {
+    type Target = FileSink;
+    #[inline]
+    fn deref(&self) -> &FileSink {
+        // SAFETY: constructor contract — the guard owns a ref, so `self.0` is
+        // live for as long as the guard is.
+        unsafe { &*self.0 }
+    }
+}
 
 impl FileSinkRef {
+    /// The pointer for FFI calls; the guard keeps ownership of the ref.
+    #[inline]
+    pub(crate) fn as_ptr(&self) -> NonNull<FileSink> {
+        // SAFETY: constructor contract — `self.0` is non-null.
+        unsafe { NonNull::new_unchecked(self.0) }
+    }
+
     /// Take a fresh ref on `this` for the guard's lifetime.
     ///
     /// # Safety
@@ -94,7 +117,7 @@ impl FileSinkRef {
     /// `this` must point to a live `FileSink` and the caller must own one
     /// outstanding ref that is being transferred to this guard.
     #[inline]
-    unsafe fn adopt(this: *mut FileSink) -> Self {
+    pub(crate) unsafe fn adopt(this: *mut FileSink) -> Self {
         Self(this)
     }
 }
@@ -191,6 +214,8 @@ bun_io::impl_streaming_writer_parent! {
 
 pub struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
+    /// `O_TRUNC` on open. Default `false` (in-place overwrite); `Bun.write` opts in.
+    pub(crate) truncate: bool,
     pub close: bool,
     pub(crate) mode: bun_sys::Mode,
 }
@@ -199,6 +224,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
+            truncate: false,
             close: false,
             mode: 0o664,
         }
@@ -207,8 +233,11 @@ impl Default for Options {
 
 impl Options {
     pub(crate) fn flags(&self) -> i32 {
-        let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        bun_sys::O::NONBLOCK
+            | bun_sys::O::CLOEXEC
+            | bun_sys::O::CREAT
+            | bun_sys::O::WRONLY
+            | if self.truncate { bun_sys::O::TRUNC } else { 0 }
     }
 }
 
@@ -1015,6 +1044,27 @@ impl FileSink {
         this
     }
 
+    /// Opt this sink into `received_bytes` accounting (`Bun.write` pipes only).
+    pub(crate) fn start_counting_received(&self) {
+        self.received_bytes.set(Some(0));
+    }
+
+    /// Bytes credited so far; 0 for a sink that never opted in.
+    pub(crate) fn received_count(&self) -> u64 {
+        self.received_bytes.get().unwrap_or(0)
+    }
+
+    /// Credit one accepted chunk. `emitted_len` only runs while counting, so
+    /// sinks that never opted in skip the string length passes entirely.
+    /// `Done(n)` credits nothing: its `n` can include already-credited bytes.
+    fn count_received(&self, rc: &WriteResult, emitted_len: impl FnOnce() -> usize) {
+        if let Some(total) = self.received_bytes.get() {
+            if matches!(rc, WriteResult::Wrote(_) | WriteResult::Pending(_)) {
+                self.received_bytes.set(Some(total + emitted_len() as u64));
+            }
+        }
+    }
+
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
@@ -1022,6 +1072,7 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
+        self.count_received(&rc, || data.slice().len());
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1033,6 +1084,7 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        self.count_received(&rc, || simdutf::length::utf8::from::latin1(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1044,6 +1096,10 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        // `le_with_replacement`: lone surrogates emit U+FFFD (3 bytes), not 2.
+        self.count_received(&rc, || {
+            simdutf::length::utf8::from::utf16::le_with_replacement(data.slice16())
+        });
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1413,6 +1469,7 @@ impl FileSink {
             // SAFETY: sentinel only; never dispatched (overwritten before use).
             event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: Cell::new(0),
+            received_bytes: Cell::new(None),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
                 ..Default::default()

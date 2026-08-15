@@ -2642,6 +2642,11 @@ impl FetchTasklet {
             }
 
             if let BodyValue::Locked(locked) = body {
+                if locked.on_receive_value.is_some() {
+                    // Scenario 2b: a consumer (e.g. `Bun.write`) is waiting on
+                    // `resolve()`, so keep `native_response` reachable.
+                    return;
+                }
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.

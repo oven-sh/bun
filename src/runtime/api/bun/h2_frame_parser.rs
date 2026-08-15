@@ -1133,6 +1133,7 @@ enum BatchSegment {
 }
 
 /// Flags for one `H2FrameParser::send_data` call.
+#[derive(Clone, Copy)]
 struct SendDataOptions {
     /// End the stream after the payload: END_STREAM on the last DATA frame, or, while the
     /// stream is waiting for trailers, an onWantTrailers dispatch instead.

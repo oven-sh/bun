@@ -5177,12 +5177,7 @@ pub mod formatter {
                                 continue;
                             }
 
-                            // Up to five props share the tag's line; each one after that
-                            // goes on its own line:
-                            //   <input type="text" value="foo" />
-                            //   <input a="1" b="2" c="3" d="4" e="5"
-                            //     f="6"
-                            //     g="7" />
+                            // Five props fit on the tag's line; the rest go one per line.
                             if !self.single_line && printed_props >= 5 {
                                 writer.write_all(b"\n");
                                 write_indent_n(self.indent, writer.ctx).expect("unreachable");

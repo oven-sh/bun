@@ -894,8 +894,6 @@ test("error snapshots", () => {
     try {
       expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
     } catch (e) {
-      // The matcher error is colored only when this process has colors enabled
-      // (CI runs tests with FORCE_COLOR=1, a piped `bun test` run does not).
       (e as Error).message = Bun.stripANSI((e as Error).message);
       throw e;
     }

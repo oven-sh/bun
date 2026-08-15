@@ -512,10 +512,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         ticket.post(ConcurrentTask::create(Task::init(this)));
     }
 
-    /// VM teardown, JS thread, heap alive: a completion that was queued but
-    /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
-    ///
-    /// # Safety
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
     fn unpin_pending_buffers(this: &T, this_value: JSValue) {
         let pinned = this.pinned_buffers().replace(0);
@@ -531,6 +527,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
     }
 
+    /// VM teardown, JS thread, heap alive: a completion that was queued but
+    /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
+    ///
+    /// # Safety
     /// As [`run_from_js_thread`](Self::run_from_js_thread).
     pub(crate) unsafe fn release_unrun(this_ptr: *mut T) {
         let this = ParentRef::from(NonNull::new(this_ptr).expect("release_unrun: this"));

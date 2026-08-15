@@ -71,6 +71,35 @@ describe("Bun.build", () => {
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
+  test("reactFastRefresh signature hashes the whole folded string literal", async () => {
+    // minify.syntax folds "a" + "b" into a rope; the hook signature must cover
+    // every segment, otherwise "a" + "b" and "a" + "c" get the same signature.
+    using dir = tempDir("bun-build-api-refresh-sig", {
+      "ab.tsx": `import { useState } from "react"; export function C() { const [v] = useState("ab"); return <b>{v}</b>; }`,
+      "a-b.tsx": `import { useState } from "react"; export function C() { const [v] = useState("a" + "b"); return <b>{v}</b>; }`,
+      "a-c.tsx": `import { useState } from "react"; export function C() { const [v] = useState("a" + "c"); return <b>{v}</b>; }`,
+    });
+    const signatureOf = async (file: string) => {
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), file)],
+        reactFastRefresh: true,
+        minify: { syntax: true },
+        external: ["react"],
+      });
+      const output = await build.outputs[0].text();
+      const match = output.match(/_s\w*\(C, "([^"]+)"\)/);
+      if (!match) throw new Error(`no refresh signature in ${file}:\n${output}`);
+      return match[1];
+    };
+    const [ab, aPlusB, aPlusC] = await Promise.all([
+      signatureOf("ab.tsx"),
+      signatureOf("a-b.tsx"),
+      signatureOf("a-c.tsx"),
+    ]);
+    expect(aPlusB).toBe(ab);
+    expect(aPlusC).not.toBe(ab);
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

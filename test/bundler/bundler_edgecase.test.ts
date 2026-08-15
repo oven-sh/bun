@@ -2913,6 +2913,24 @@ describe("bundler", () => {
     },
     run: { stdout: "true 1" },
   });
+  // require() arguments are constant-folded even without minifySyntax, so the
+  // index here is a rope ("fo" -> "o"). Rewriting ns[...] to an import binding
+  // has to use the whole name: it used to bind the `fo` export instead of `foo`.
+  itBundled("edgecase/FoldedStringIndexOnNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./ns.js";
+        console.log(require(ns["fo" + "o"] === "yes" ? "./yes.js" : "./no.js"));
+      `,
+      "/ns.js": /* js */ `
+        export const foo = "yes";
+        export const fo = "no";
+      `,
+      "/yes.js": `module.exports = "took yes";`,
+      "/no.js": `module.exports = "took no";`,
+    },
+    run: { stdout: "took yes" },
+  });
   // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
   // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints
   // as `__require` / `__require.main` / `__require.resolve`.

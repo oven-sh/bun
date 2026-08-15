@@ -1859,11 +1859,13 @@ impl EString {
     }
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
-        if self.is_utf8() {
-            strings::eql_long(&self.data, other, true)
-        } else {
-            strings::utf16_eql_string(self.slice16(), other)
+        if !self.is_utf8() {
+            return strings::utf16_eql_string(self.slice16(), other);
         }
+        if self.next.is_none() {
+            return strings::eql_long(&self.data, other, true);
+        }
+        self.eql8_rope(other)
     }
 
     pub fn eql_comptime(&self, value: &'static [u8]) -> bool {
@@ -2446,7 +2448,7 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    pub fn import_record_loader(&self) -> Option<crate::Loader> {
+    pub fn import_record_loader(&self, bump: &Bump) -> Option<crate::Loader> {
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
@@ -2454,7 +2456,10 @@ impl Import {
         let crate::ExprData::EObject(with_obj) = &with.data else {
             return None;
         };
-        let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        let mut str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        // The options object is visited with constant folding forced on, so
+        // `"js" + "on"` arrives here as a rope.
+        str_.resolve_rope_if_needed(bump);
 
         if !str_.is_utf16 {
             if let Some(loader) = crate::Loader::from_string(&str_.data) {

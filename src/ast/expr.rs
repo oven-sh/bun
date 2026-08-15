@@ -2306,12 +2306,16 @@ impl Data {
                 hasher.update(&e.value);
             }
             Data::EString(e) => {
-                // Only the *first* rope segment is hashed.
-                let current: &E::String = e;
-                if current.is_utf8() {
-                    hasher.update(&current.data);
+                if e.is_utf8() {
+                    // Hashing the segments back to back gives a folded
+                    // `"a" + "b"` the same hash as `"ab"`.
+                    let mut segment: Option<&E::String> = Some(e.get());
+                    while let Some(current) = segment {
+                        hasher.update(&current.data);
+                        segment = current.next.as_deref();
+                    }
                 } else {
-                    hasher.update(bytemuck::cast_slice::<u16, u8>(current.slice16()));
+                    hasher.update(bytemuck::cast_slice::<u16, u8>(e.slice16()));
                 }
                 hasher.update(b"\x00");
             }

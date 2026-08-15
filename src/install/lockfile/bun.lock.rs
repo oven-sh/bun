@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{DynamicBitSet, HashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -3357,6 +3357,28 @@ pub(crate) fn resolve_peer_dep_version_based(
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
 ) -> Option<PackageID> {
+    resolve_peer_dep_version_based_among(
+        dep,
+        catalogs,
+        package_index,
+        overrides,
+        pkg_resolutions,
+        string_buf,
+        |_| true,
+    )
+}
+
+/// `resolve_peer_dep_version_based` over the candidates `is_candidate` accepts, for callers
+/// whose lockfile holds packages a reload will not see (`rebind_peers_to_printed_packages`).
+pub(crate) fn resolve_peer_dep_version_based_among(
+    dep: &Dependency,
+    catalogs: &CatalogMap,
+    package_index: &PackageIndexMap,
+    overrides: &OverrideMap,
+    pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+    is_candidate: impl Fn(PackageID) -> bool,
+) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
     // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
     let name_hash = match range.tag {
@@ -3402,28 +3424,95 @@ pub(crate) fn resolve_peer_dep_version_based(
         PackageIndexEntry::Ids(ids) => ids.as_slice(),
     };
 
+    let mut first: Option<PackageID> = None;
     for &id in candidates {
-        if (id as usize) < pkg_resolutions.len()
-            && pkg_resolutions[id as usize]
-                .satisfies_dependency_version(range, string_buf, string_buf)
+        if (id as usize) >= pkg_resolutions.len() || !is_candidate(id) {
+            continue;
+        }
+        if pkg_resolutions[id as usize].satisfies_dependency_version(range, string_buf, string_buf)
         {
             return Some(id);
         }
-    }
-
-    let &first = candidates.first()?;
-    if (first as usize) < pkg_resolutions.len() {
-        let res_tag = pkg_resolutions[first as usize].tag;
-        let ver_tag = range.tag;
-        if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
-            || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
-            || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)
-        {
-            return Some(first);
+        if first.is_none() {
+            first = Some(id);
         }
     }
 
+    let first = first?;
+    let res_tag = pkg_resolutions[first as usize].tag;
+    let ver_tag = range.tag;
+    if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
+        || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
+        || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)
+    {
+        return Some(first);
+    }
+
     None
+}
+
+/// Call after hoisting. The printed tree is the lockfile's only record of which packages
+/// exist, and a package whose incoming edges are all ranged peers that `Tree::hoist_dependency`
+/// deduped onto another version of the same name is in no tree at all (pnpm's auto-installed
+/// peers arrive like this from pnpm-lock.yaml; adding a pinned version of a package that was
+/// only auto-installed for a peer creates the same shape). `resolve_peer_dep_version_based`
+/// therefore binds such edges to another package on reload, and the install that wrote the
+/// lockfile links something different from every install that reads it. Binding them here over
+/// the packages the print will contain makes the writing install match its readers.
+///
+/// Every edge rebound here was deduped during hoisting, so it is not in `hoisted_dependencies`
+/// and the tree stays valid; the old target is dropped by the next `clean_with_logger`.
+pub(crate) fn rebind_peers_to_printed_packages(
+    lockfile: &mut BinaryLockfile,
+) -> Result<(), bun_alloc::AllocError> {
+    let pkg_resolutions: &[Resolution] = lockfile.packages.items_resolution();
+    let package_index = &lockfile.package_index;
+    let catalogs = &lockfile.catalogs;
+    let overrides = &lockfile.overrides;
+    let super::Buffers {
+        hoisted_dependencies,
+        resolutions,
+        dependencies,
+        string_bytes,
+        ..
+    } = &mut lockfile.buffers;
+    let string_buf: &[u8] = string_bytes.as_slice();
+
+    // Root and workspaces are printed from the `workspaces` section, everything else from the tree.
+    let mut printed = DynamicBitSet::init_empty(pkg_resolutions.len())?;
+    for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+        if matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+            printed.set(pkg_id);
+        }
+    }
+    for &dep_id in hoisted_dependencies.iter() {
+        let pkg_id = resolutions[dep_id as usize];
+        if (pkg_id as usize) < pkg_resolutions.len() {
+            printed.set(pkg_id as usize);
+        }
+    }
+
+    for (dep, target) in dependencies.iter().zip(resolutions.iter_mut()) {
+        if (*target as usize) >= pkg_resolutions.len()
+            || printed.is_set(*target as usize)
+            || !dep.behavior.is_peer()
+        {
+            continue;
+        }
+        if let Some(printed_target) = resolve_peer_dep_version_based_among(
+            dep,
+            catalogs,
+            package_index,
+            overrides,
+            pkg_resolutions,
+            string_buf,
+            |id| printed.is_set(id as usize),
+        ) {
+            *target = printed_target;
+        }
+    }
+
+    Ok(())
 }
 
 // Taking `&mut BinaryLockfile` plus a `&mut Dependency` that

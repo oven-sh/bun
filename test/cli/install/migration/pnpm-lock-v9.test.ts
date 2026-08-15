@@ -65,6 +65,8 @@ const NO_DEPS_1_0_0_INTEGRITY =
   "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
 const NO_DEPS_1_0_1_INTEGRITY =
   "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==";
+const NO_DEPS_1_1_0_INTEGRITY =
+  "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==";
 const NO_DEPS_2_0_0_INTEGRITY =
   "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==";
 const ONE_DEP_1_0_0_INTEGRITY =
@@ -1625,6 +1627,90 @@ ${variants}`;
         peerDepsDirs.push(peerDepsDir);
       }
       expect(peerDepsDirs[0]).not.toBe(peerDepsDirs[1]);
+    });
+
+    test("the migrating install links the peer version its bun.lock reloads with the isolated linker", async () => {
+      // pnpm auto-installed no-deps@1.1.0 for peer-deps-fixed's `no-deps: ^1.0.0` while one-dep pins
+      // no-deps@1.0.1, so 1.1.0 is only reachable through the peer edge. The hoisted tree dedupes that
+      // edge onto 1.0.1, bun.lock never records 1.1.0, and reloading binds the edge to 1.0.1. The
+      // migrating install has to link the same binding, or the next install relinks the entry.
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "v9-auto-installed-peer",
+            dependencies: { "one-dep": "1.0.0", "peer-deps-fixed": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      peer-deps-fixed:
+        specifier: 1.0.0
+        version: 1.0.0(no-deps@1.1.0)
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@1.1.0:
+    resolution: {integrity: ${NO_DEPS_1_1_0_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  no-deps@1.1.0: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps-fixed@1.0.0(no-deps@1.1.0):
+    dependencies:
+      no-deps: 1.1.0
+`,
+        },
+      });
+
+      const migrating = await run(packageDir, "install");
+
+      expect(migrating.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(migrating.stderr).not.toContain("error:");
+      expect(migrating.exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("no-deps@1.1.0");
+
+      const storeDir = join(packageDir, "node_modules", ".bun");
+      const peerDepsFixedDir = realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"));
+      expect((await Bun.file(join(dirname(peerDepsFixedDir), "no-deps", "package.json")).json()).version).toBe("1.0.1");
+      const store = readdirSync(storeDir).sort();
+      expect(store).not.toContain("no-deps@1.1.0");
+
+      const reinstall = await run(packageDir, "install");
+
+      expect(reinstall.stderr).not.toContain("error:");
+      expect(reinstall.stdout).toContain("(no changes)");
+      expect(reinstall.exitCode).toBe(0);
+      expect(readdirSync(storeDir).sort()).toEqual(store);
+      expect(realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"))).toBe(peerDepsFixedDir);
+      expect(await bunLockOf(packageDir)).toBe(bunLock);
     });
 
     test("a peer met in one importer and unmet in another is bound from the met variant", async () => {

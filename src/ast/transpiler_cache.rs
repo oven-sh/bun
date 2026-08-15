@@ -11,6 +11,7 @@
 //! `bun_bundler::cache` and are stored here type-erased as `*mut ()`).
 
 use crate::{ExportsKind, Source};
+use bun_core::strings::EncodingNonAscii;
 use core::ptr::NonNull;
 
 pub struct RuntimeTranspilerCache {
@@ -52,7 +53,7 @@ impl Default for RuntimeTranspilerCache {
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
         fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
-        fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
+        fn put(output_code: &[u8], output_encoding: EncodingNonAscii, sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }
 }
@@ -83,10 +84,21 @@ impl RuntimeTranspilerCache {
         }
     }
 
+    /// `output_code` is the printer's buffer in the width it ended up in
+    /// (`Latin1` bytes or native-endian `Utf16` units); the entry is stored and
+    /// later loaded in that same width.
     #[inline]
-    pub fn put(&mut self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+    pub fn put(
+        &mut self,
+        output_code: &[u8],
+        output_encoding: EncodingNonAscii,
+        sourcemap: &[u8],
+        esm_record: &[u8],
+    ) {
         match self.r#impl {
-            Some(k) => Self::handle(k, self).put(output_code, sourcemap, esm_record),
+            Some(k) => {
+                Self::handle(k, self).put(output_code, output_encoding, sourcemap, esm_record)
+            }
             None => {
                 if self.input_hash.is_none() {
                     return;

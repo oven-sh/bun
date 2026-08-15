@@ -1035,10 +1035,12 @@ pub(crate) fn to_bytes(
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
             // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
+            // zero-copy ExternalStringImpl. The printer escapes identifiers and
+            // string literals for server-side JS, but regex and raw template
+            // text, preserved comments, `--banner`/`--footer`/hashbang and
+            // client-side (target=browser) chunks are written as UTF-8, so
+            // verify the final bytes before committing to Latin1 (#38771 is
+            // about storing the rest in their final width too).
             encoding: match output_file.loader {
                 Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
                     if strings::first_non_ascii(buf_bytes).is_none() =>

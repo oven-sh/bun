@@ -8,6 +8,7 @@ use bstr::ByteSlice;
 use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
+use bun_core::strings::EncodingNonAscii;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
@@ -53,6 +54,9 @@ struct Entry {
     /// Post-transpile text; `None` when the module never transpiled
     /// successfully (parse error) — mirrors Node's "not initialized" state.
     code: Option<Box<[u8]>>,
+    /// Width of `code` (the printer's buffer, Latin-1 or UTF-16), which the
+    /// bytecode generator must decode the same way the loader did.
+    code_encoding: EncodingNonAscii,
     /// Deserialized bytecode blob handed to JSC (the cache was accepted).
     /// Kept alive for the process — `ZigSourceProvider` wraps it, no copy.
     blob: Option<AlignedBlob>,
@@ -541,8 +545,15 @@ pub fn get_dir() -> Option<Vec<u8>> {
 
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-
-/// transpile text). The pointer stays valid for the process (entry map owns it).
-pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usize)> {
+/// transpile text, in the width given by `code_encoding`; a transpiler cache
+/// hit hands over the same bytes the print path did, so both hash alike). The
+/// pointer stays valid for the process (entry map owns it).
+pub fn fetch(
+    filename: &[u8],
+    is_cjs: bool,
+    code: &[u8],
+    code_encoding: EncodingNonAscii,
+) -> Option<(*mut u8, usize)> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
@@ -568,6 +579,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
         code_hash,
         code_size,
         code: None,
+        code_encoding,
         blob: None,
         persisted: false,
     };
@@ -618,6 +630,7 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
         code_hash: [0u8; HASH_SIZE],
         code_size: 0,
         code: None,
+        code_encoding: EncodingNonAscii::Latin1,
         blob: None,
         persisted: false,
     };
@@ -863,11 +876,17 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
 struct GenJob {
     format: Format,
     code: Box<[u8]>,
+    code_encoding: EncodingNonAscii,
     url: Box<[u8]>,
     resp: std::sync::mpsc::SyncSender<Option<Box<[u8]>>>,
 }
 
-fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]>> {
+fn generate_bytecode(
+    format: Format,
+    code: &[u8],
+    code_encoding: EncodingNonAscii,
+    url: &[u8],
+) -> Option<Box<[u8]>> {
     use std::sync::mpsc;
     static WORKER: Mutex<Option<mpsc::Sender<GenJob>>> = Mutex::new(None);
 
@@ -884,7 +903,10 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                     for job in rx {
                         let mut url = BunString::clone_utf8(&job.url);
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &mut url,
+                            job.format,
+                            &job.code,
+                            job.code_encoding,
+                            &mut url,
                         );
                         url.deref();
                         let _ = job.resp.send(result);
@@ -900,6 +922,7 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
             .send(GenJob {
                 format,
                 code: code.into(),
+                code_encoding,
                 url: url.into(),
                 resp: resp_tx,
             })
@@ -918,6 +941,7 @@ struct PersistJob {
     key: u64,
     format: Format,
     code: Box<[u8]>,
+    code_encoding: EncodingNonAscii,
     filename: Box<[u8]>,
     is_cjs: bool,
     code_size: u32,
@@ -961,6 +985,7 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
                 Format::Esm
             },
             code,
+            code_encoding: entry.code_encoding,
             filename: entry.filename.clone(),
             is_cjs: entry.is_cjs,
             code_size: entry.code_size,
@@ -1086,7 +1111,7 @@ fn persist_pass() {
     // Phase 2: generate bytecode, unlocked.
     let mut generated: Vec<(PersistJob, Option<Box<[u8]>>)> = Vec::with_capacity(jobs.len());
     for job in jobs {
-        let blob = generate_bytecode(job.format, &job.code, &job.filename);
+        let blob = generate_bytecode(job.format, &job.code, job.code_encoding, &job.filename);
         if blob.is_none() {
             cclog!(
                 "[compile cache] generating cache for {} {} failed, skipping\n",

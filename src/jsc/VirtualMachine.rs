@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_core::strings::EncodingNonAscii;
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -3080,11 +3081,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
-        // TODO: do we need to %-encode the path?
-        let source_url_len = source.path.text.len();
-        const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
-        let prefix_len =
-            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
             .put_mappings(source, chunk.buffer)
@@ -3102,39 +3098,26 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
+        // Appended through the writer rather than straight into its byte
+        // buffer, since the buffer may be holding UTF-16 by now. The module's
+        // URL is the provider's; no `//# sourceURL=` directive is needed.
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
-        printer
-            .ctx
-            .buffer
-            .grow_if_needed(encode_len + prefix_len + 2)?;
-        printer.ctx.buffer.append_assume_capacity(b"\n");
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
+        printer.ctx.write_all(b"\n")?;
+        printer.ctx.write_all(SOURCE_MAP_URL_PREFIX_START)?;
         {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
+            let region = printer.ctx.reserve_next(encode_len as u64)?;
+            // SAFETY: `reserve_next` returned room for `encode_len` bytes, which
+            // `encode` fills (`wrote <= encode_len`) before `advance_by` commits
+            // exactly that many.
             let wrote = unsafe {
                 bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
+                    core::slice::from_raw_parts_mut(region, encode_len),
                     temp_json_buffer.list.as_slice(),
                 )
             };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
+            printer.ctx.advance_by(wrote as u64);
         }
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAPPING_URL);
-        // TODO: do we need to %-encode the path?
-        printer.ctx.buffer.append_assume_capacity(source.path.text);
-        printer.ctx.buffer.append(b"\n")?;
+        printer.ctx.write_all(b"\n")?;
         Ok(())
     }
 }
@@ -3276,7 +3259,7 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
 
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
-        let writer = bun_js_printer::BufferWriter::init();
+        let writer = bun_js_printer::BufferWriter::init_latin1();
         let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         printer.ctx.append_null_byte = false;
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
@@ -4057,9 +4040,13 @@ impl VirtualMachine {
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
+    ///
+    /// `code` is the printer's buffer and `encoding` the width it ended up in;
+    /// the interned copy keeps that width, so JSC reads it in place.
     pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>(
         &mut self,
         code: &[u8],
+        encoding: EncodingNonAscii,
         specifier: bun_core::String,
         source_url: &[u8],
         hash_: Option<u32>,
@@ -4074,11 +4061,12 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
+        let mut was_new = false;
         // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
         let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string::<false>(code, hash_)
+            self.ref_counted_string_with_was_new::<false>(&mut was_new, code, encoding, hash_)
         } else {
-            self.ref_counted_string::<true>(code, hash_)
+            self.ref_counted_string_with_was_new::<true>(&mut was_new, code, encoding, hash_)
         };
         // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
         // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
@@ -4099,17 +4087,25 @@ impl VirtualMachine {
         }
     }
 
+    /// `input_` holds native-endian code units when `encoding` is `Utf16` and
+    /// 8-bit characters when it is `Latin1`.
     fn ref_counted_string_with_was_new<const DUPE: bool>(
         &mut self,
         new: &mut bool,
         input_: &[u8],
+        encoding: EncodingNonAscii,
         hash_: Option<u32>,
     ) -> *mut crate::ref_string::RefString {
-        use crate::ref_string::RefString;
+        use crate::ref_string::{Buffer, RefString};
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
-        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
+        debug_assert!(encoding != EncodingNonAscii::Utf8);
+        let utf16 = encoding == EncodingNonAscii::Utf16;
+        // A UTF-16 buffer is re-allocated as `[u16]` below, so it cannot adopt
+        // the caller's bytes.
+        debug_assert!(DUPE || !utf16);
+        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_, utf16));
         // RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
@@ -4123,18 +4119,39 @@ impl VirtualMachine {
                 *o.get()
             }
             Entry::Vacant(v) => {
-                // Dupe the input bytes when `DUPE`, otherwise
-                // adopt the caller's allocation (caller transferred ownership).
-                let (ptr, len) = if DUPE {
+                // Dupe the input when `DUPE` (as `[u16]` for a UTF-16 buffer,
+                // so the units are aligned), otherwise adopt the caller's
+                // allocation (caller transferred ownership).
+                let buffer = if utf16 {
+                    let units: Box<[u16]> = match bytemuck::try_cast_slice::<u8, u16>(input_) {
+                        Ok(units) => Box::from(units),
+                        Err(_) => input_
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|&pair| u16::from_ne_bytes(pair))
+                            .collect(),
+                    };
+                    let len = units.len();
+                    Buffer::Utf16 {
+                        ptr: bun_core::heap::into_raw(units).cast::<u16>().cast_const(),
+                        len,
+                    }
+                } else if DUPE {
                     let buf = Box::<[u8]>::from(input_);
                     let len = buf.len();
-                    (bun_core::heap::into_raw(buf).cast::<u8>().cast_const(), len)
+                    Buffer::Latin1 {
+                        ptr: bun_core::heap::into_raw(buf).cast::<u8>().cast_const(),
+                        len,
+                    }
                 } else {
-                    (input_.as_ptr(), input_.len())
+                    Buffer::Latin1 {
+                        ptr: input_.as_ptr(),
+                        len: input_.len(),
+                    }
                 };
                 let ref_ = bun_core::heap::into_raw(Box::new(RefString {
-                    ptr,
-                    len,
+                    buffer,
                     hash,
                     // Filled in just below — `create_external` needs the
                     // `*mut RefString` ctx pointer first.
@@ -4143,16 +4160,30 @@ impl VirtualMachine {
                     on_before_deinit: Some(VirtualMachine::clear_ref_string),
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
-                // boxed); `(ptr, len)` is its owned latin-1 buffer. The
+                // boxed) and `buffer` is its owned, live allocation, so the
+                // slices below are valid for the duration of the call. The
                 // external-string finalizer (`free_ref_string`) is called by
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
-                let s = bun_core::String::create_external::<*mut RefString>(
-                    unsafe { bun_core::ffi::slice(ptr, len) },
-                    true,
-                    ref_,
-                    free_ref_string,
-                );
+                let s = unsafe {
+                    match (*ref_).buffer {
+                        Buffer::Utf16 { ptr, len } => {
+                            bun_core::String::create_external_utf16::<*mut RefString>(
+                                bun_core::ffi::slice(ptr, len),
+                                ref_,
+                                free_ref_string,
+                            )
+                        }
+                        Buffer::Latin1 { ptr, len } => {
+                            bun_core::String::create_external::<*mut RefString>(
+                                bun_core::ffi::slice(ptr, len),
+                                true,
+                                ref_,
+                                free_ref_string,
+                            )
+                        }
+                    }
+                };
                 // SAFETY: see above.
                 unsafe { (*ref_).impl_ = s.leak_wtf_impl() };
                 v.insert(ref_);
@@ -4162,7 +4193,8 @@ impl VirtualMachine {
         }
     }
 
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
+    /// Interns the 8-bit string `input_` in the VM's ref-string map and returns
+    /// the ref-counted entry.
     pub fn ref_counted_string<const DUPE: bool>(
         &mut self,
         input_: &[u8],
@@ -4170,7 +4202,12 @@ impl VirtualMachine {
     ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
+        self.ref_counted_string_with_was_new::<DUPE>(
+            &mut was_new,
+            input_,
+            EncodingNonAscii::Latin1,
+            hash_,
+        )
     }
 
     // Note: `flags` is a runtime arg —

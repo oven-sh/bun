@@ -19,9 +19,16 @@ pub type Map =
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
+/// The interned text, owned, in the width the external string reads it in.
+pub(crate) enum Buffer {
+    /// 8-bit characters; a `Box<[u8]>` of `len`.
+    Latin1 { ptr: *const u8, len: usize },
+    /// Native-endian code units; a `Box<[u16]>` of `len`, so they are aligned.
+    Utf16 { ptr: *const u16, len: usize },
+}
+
 pub struct RefString {
-    pub ptr: *const u8,
-    pub(crate) len: usize,
+    pub(crate) buffer: Buffer,
     pub(crate) hash: Hash,
     // `impl` is a Rust keyword — renamed to `impl_`.
     pub(crate) impl_: WTFStringImpl,
@@ -34,8 +41,11 @@ pub struct RefString {
 }
 
 impl RefString {
-    pub(crate) fn compute_hash(input: &[u8]) -> u32 {
-        bun_hash::XxHash32::hash(0, input)
+    /// The map is keyed by this hash alone, so the width goes into the seed:
+    /// the same bytes read as 8-bit characters and as UTF-16 units are
+    /// different strings.
+    pub(crate) fn compute_hash(input: &[u8], utf16: bool) -> u32 {
+        bun_hash::XxHash32::hash(u32::from(utf16), input)
     }
 
     /// Single audited deref of the set-once `impl_` backref so `ref_` /
@@ -53,10 +63,19 @@ impl RefString {
         self.wtf_impl().r#ref();
     }
 
+    /// The text as bytes; the callers that read it as text only ever intern
+    /// 8-bit strings (UTF-16 text comes back as its raw unit bytes).
     pub fn leak(&self) -> &[u8] {
-        // SAFETY: `ptr` points to a live allocation of `len` bytes for the
-        // lifetime of `self` (freed only in `destroy`).
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        // SAFETY: `buffer` points to a live allocation of `len` elements for
+        // the lifetime of `self` (freed only in `destroy`).
+        unsafe {
+            match self.buffer {
+                Buffer::Latin1 { ptr, len } => bun_core::ffi::slice(ptr, len),
+                Buffer::Utf16 { ptr, len } => {
+                    bun_core::slice_as_bytes(bun_core::ffi::slice(ptr, len))
+                }
+            }
+        }
     }
 
     pub fn deref(&self) {
@@ -75,9 +94,9 @@ impl RefString {
     /// call `this` is dangling.
     pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
-        // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
-        // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls
-        // below operate on those owned allocations.
+        // `Box<RefString>`-allocated value whose `buffer` describes a boxed
+        // slice of the matching element type. All raw derefs and `from_raw`
+        // calls below operate on those owned allocations.
         unsafe {
             if let Some(on_before_deinit) = (*this).on_before_deinit {
                 // Caller guarantees `ctx` is set
@@ -85,15 +104,20 @@ impl RefString {
                 on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
             }
 
-            // `allocator.free(this.leak())` — reconstitute the owned byte slice
-            // and drop it. Build the fat `*mut [u8]` as a raw pointer (no `&mut`
-            // materialized — the WTF::StringImpl finalizer may still hold a
-            // shared view at this instant, so forming `&mut [u8]` would assert
-            // exclusivity we cannot prove).
-            drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
-                (*this).ptr.cast_mut(),
-                (*this).len,
-            )));
+            // `allocator.free(this.leak())` — reconstitute the owned slice, in
+            // the element type it was allocated with, and drop it. Build the
+            // fat pointer as a raw pointer (no `&mut` materialized — the
+            // WTF::StringImpl finalizer may still hold a shared view at this
+            // instant, so forming `&mut [_]` would assert exclusivity we cannot
+            // prove).
+            match (*this).buffer {
+                Buffer::Latin1 { ptr, len } => drop(bun_core::heap::take(
+                    core::ptr::slice_from_raw_parts_mut(ptr.cast_mut(), len),
+                )),
+                Buffer::Utf16 { ptr, len } => drop(bun_core::heap::take(
+                    core::ptr::slice_from_raw_parts_mut(ptr.cast_mut(), len),
+                )),
+            }
             // `allocator.destroy(this)`
             drop(bun_core::heap::take(this));
         }

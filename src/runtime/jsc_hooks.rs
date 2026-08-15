@@ -21,6 +21,7 @@
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
+use bun_core::strings::EncodingNonAscii;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -3001,7 +3002,7 @@ fn transpile_source_code_inner(
                 // `JSC_PARSER_CACHE_VTABLE.get`.
                 if let Some(entry_ptr) = cache.entry.take() {
                     use bun_jsc::runtime_transpiler_cache::{
-                        Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
+                        Entry as CacheEntry, ModuleType as CacheModuleType,
                     };
                     // SAFETY: `entry_ptr` was produced by `heap::into_raw(Box<CacheEntry>)`
                     // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
@@ -3035,30 +3036,24 @@ fn transpile_source_code_inner(
                         core::ptr::null_mut()
                     };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
-                    // Node compile cache hook (transpiler-cache-hit path); must
-                    // read `output_code` before it is consumed below. UTF-16
-                    // output would hash differently than the print path — skip.
+                    // Node compile cache hook (transpiler-cache-hit path). The
+                    // entry holds the printer's buffer in its original width,
+                    // so its bytes hash exactly as they did on the print path.
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && source.path.is_file()
                         && loader.is_java_script_like()
-                        && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
                     {
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
                             is_commonjs_module,
                             entry.output_code.byte_slice(),
+                            entry.metadata.output_width(),
                         )
                     } else {
                         None
                     };
-                    let source_code = match &mut entry.output_code {
-                        OutputCode::String(s) => *s,
-                        OutputCode::Utf8(utf8) => {
-                            let result = bun_core::String::clone_utf8(utf8);
-                            *utf8 = Box::default();
-                            result
-                        }
-                    };
+                    // Takes over the entry's ref.
+                    let source_code = core::mem::take(&mut entry.output_code);
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
@@ -3296,11 +3291,17 @@ fn transpile_source_code_inner(
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
                     let written = printer.ctx.get_written();
+                    let encoding = printer.ctx.output_encoding();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                        bun_jsc::node_compile_cache::fetch(
+                            path.text,
+                            is_commonjs_module,
+                            written,
+                            encoding,
+                        )
                     } else {
                         None
                     };
@@ -3309,6 +3310,7 @@ fn transpile_source_code_inner(
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source::<false>(
                             written,
+                            encoding,
                             input_specifier.dupe_ref(),
                             path.text,
                             None,
@@ -3380,13 +3382,19 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
+                let encoding = printer.ctx.output_encoding();
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
-                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                    bun_jsc::node_compile_cache::fetch(
+                        path.text,
+                        is_commonjs_module,
+                        written,
+                        encoding,
+                    )
                 } else {
                     None
                 };
@@ -3396,15 +3404,18 @@ fn transpile_source_code_inner(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                // Already in the width JSC wants; a copy, not a transcode.
+                debug_assert!(encoding != EncodingNonAscii::Utf8);
+                let source_code = printer.ctx.clone_written_as_string();
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer
                 // (same shape as RuntimeTranspilerStore).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
-                    *printer =
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                    *printer = bun_js_printer::BufferPrinter::init(
+                        bun_js_printer::BufferWriter::init_latin1(),
+                    );
                     printer.ctx.append_null_byte = false;
                 }
 
@@ -4680,7 +4691,7 @@ unsafe fn transpile_file(
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
         let mut p = cell.get();
         if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
+            let writer = bun_js_printer::BufferWriter::init_latin1();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
             p = bun_core::heap::into_raw(bp);
@@ -4869,7 +4880,7 @@ unsafe fn transpile_virtual_module(
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
         let mut p = cell.get();
         if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
+            let writer = bun_js_printer::BufferWriter::init_latin1();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
             p = bun_core::heap::into_raw(bp);

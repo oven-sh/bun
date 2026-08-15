@@ -138,6 +138,33 @@ describe("bundler", () => {
     },
   });
 
+  // Non-ASCII regex and tagged template text is printed as written, so the
+  // bytecode has to be generated from the same decoding of the output the
+  // loader uses, or JSC silently ignores it.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`compile/BytecodeNonAsciiRegexAndRawTemplate+${format}`, {
+      compile: true,
+      bytecode: true,
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+          const r = /café-中-🐰/u;
+          const raw = String.raw\`é中🐰\`;
+          console.log(JSON.stringify([r.source, r.source.length, raw, raw.length]));
+        `,
+      },
+      run: {
+        stdout: JSON.stringify(["café-中-🐰", "café-中-🐰".length, "é中🐰", "é中🐰".length]),
+        env: {
+          BUN_JSC_verboseDiskCache: "1",
+        },
+        validate({ stderr }) {
+          expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+        },
+      },
+    });
+  }
+
   // `import defer * as ns from "..."` must not break bytecode generation.
   // The bundler inlines the deferred module into the entry chunk (documented
   // out-of-scope limitation — same as esbuild), so the defer semantics are

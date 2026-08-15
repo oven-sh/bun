@@ -624,7 +624,10 @@ test("source text has the expected length", () => {
   expect(covered()).toBe(${2 * coverageTextUnits});
 });
 `;
+// `units` must be a multiple of `piece.length` (in code units), or the result
+// would end in a partial repetition of the piece.
 function repeatUnits(piece: string, units: number) {
+  expect(units % piece.length).toBe(0);
   return Buffer.alloc((Buffer.byteLength(piece) * units) / piece.length, piece).toString();
 }
 
@@ -672,4 +675,19 @@ test("a non-ASCII preserved comment does not shift coverage lines", async () => 
   expect(ascii).toContain("\nDA:7,0\n");
   expect(ascii).toContain("\nDA:10,0\n");
   expect(legalComment).toBe(ascii);
+});
+
+// Regex and raw template text is transpiled as written, so the module text
+// JSC holds is 8-bit with characters above 0x7F for Latin-1 range text and
+// UTF-16 beyond it; the line table has to agree with it in both cases.
+test("non-ASCII regex and raw template text does not shift coverage lines", async () => {
+  const asciiBanner = repeatUnits("x", coverageBannerUnits);
+  const [ascii, latin1, utf16] = await coverageRecords({
+    ascii: coverageDemo(asciiBanner, repeatUnits("x", coverageTextUnits)),
+    latin1: coverageDemo(asciiBanner, repeatUnits("é", coverageTextUnits)),
+    utf16: coverageDemo(asciiBanner, repeatUnits("é中🐰", coverageTextUnits)),
+  });
+  expect(ascii).toContain("\nDA:7,0\n");
+  expect(ascii).toContain("\nDA:10,0\n");
+  expect({ latin1, utf16 }).toEqual({ latin1: ascii, utf16: ascii });
 });

@@ -715,6 +715,35 @@ test.concurrent("a member's parked row does not hold wants on another instance o
   expect(check.exitCode).toBe(0);
 });
 
+// `--latest -r` bumps the catalog definition itself before resolving, so the catalog row is
+// modeled by its rewritten range (never the `latest` dist-tag) and every edge converges on 2.0.0.
+test.concurrent("`bun update --latest -r` with a catalog pin converges with dedupe", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("update-latest-catalog-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], catalog: { leaf: "1.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "catalog:", parent: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "--latest", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

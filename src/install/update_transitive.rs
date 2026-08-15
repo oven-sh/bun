@@ -1424,9 +1424,11 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
             }
             continue;
         }
-        // Mirrors `latest_for_target`; named rows reach plan_edges via the --latest-only path.
-        let latest =
-            to_latest && (!bare || in_targets) && !overridden_row(&manager.lockfile, row.dep_id);
+        // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never by `latest`); named rows reach plan_edges via the --latest-only path.
+        let latest = to_latest
+            && (!bare || in_targets)
+            && !row.catalog
+            && !overridden_row(&manager.lockfile, row.dep_id);
         direct[row.inst as usize].push((row.dep_id, latest));
     }
     InstanceEdges { followers, direct }

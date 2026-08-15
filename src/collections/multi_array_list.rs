@@ -991,28 +991,40 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Remove the specified item from the list, swapping the last
     /// item in the list into its position. Fast, but does not
     /// retain list ordering.
-    pub fn swap_remove(&mut self, index: usize) {
+    ///
+    /// Returns the removed element, whose fields the caller now owns (as with
+    /// [`pop`](Self::pop)). Nothing else ever runs a removed row's destructor:
+    /// `Drop` for this list is slab-only and
+    /// [`drop_elements`](Self::drop_elements) only sees rows still in the list.
+    pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::swap_remove: index out of bounds"
         );
         let last = self.len - 1;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(last, index, 1);
         self.len -= 1;
+        removed
     }
 
     /// Remove the specified item from the list, shifting items
     /// after it to preserve order.
-    pub fn ordered_remove(&mut self, index: usize) {
+    ///
+    /// Returns the removed element; ownership semantics as in
+    /// [`swap_remove`](Self::swap_remove).
+    pub fn ordered_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::ordered_remove: index out of bounds"
         );
         let tail = self.len - 1 - index;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(index + 1, index, tail);
         self.len -= 1;
+        removed
     }
 
     /// Attempt to reduce allocated capacity to `new_len`.
@@ -1422,10 +1434,50 @@ mod tests {
             .unwrap();
         }
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
-        list.ordered_remove(2);
+        assert_eq!(list.ordered_remove(2), Foo { a: 2, b: 2, c: 2 });
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 3, 4, 5]);
-        list.swap_remove(1);
+        assert_eq!(list.swap_remove(1), Foo { a: 1, b: 1, c: 1 });
         assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
+        assert_eq!(list.items::<"c", u64>(), &[0, 5, 3, 4]);
+        // Removing the last row swaps it with itself.
+        assert_eq!(list.swap_remove(3), Foo { a: 4, b: 4, c: 4 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3]);
+    }
+
+    struct Owning {
+        name: Box<[u8]>,
+        n: u32,
+    }
+
+    // Under Miri (`bun run rust:miri`) this also checks that a removed row's
+    // heap payload is freed exactly once: by the caller dropping the returned
+    // element, not again by `drop_elements`.
+    #[test]
+    fn remove_returns_owned_element() {
+        let mut list = MultiArrayList::<Owning>::default();
+        for i in 0..4u32 {
+            list.push(Owning {
+                name: vec![b'a' + i as u8; 3].into_boxed_slice(),
+                n: i,
+            })
+            .unwrap();
+        }
+
+        let removed = list.swap_remove(1);
+        assert_eq!(&*removed.name, b"bbb");
+        assert_eq!(removed.n, 1);
+        assert_eq!(list.items::<"n", u32>(), &[0, 3, 2]);
+        drop(removed);
+
+        let removed = list.ordered_remove(0);
+        assert_eq!(&*removed.name, b"aaa");
+        assert_eq!(list.items::<"n", u32>(), &[3, 2]);
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[0], b"ddd");
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[1], b"ccc");
+        drop(removed);
+
+        list.drop_elements();
+        assert_eq!(list.len(), 0);
     }
 
     #[test]

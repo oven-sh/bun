@@ -182,4 +182,81 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     60000,
   );
+
+  // Editing dep.js raises an inotify event on lib/, which makes the reloader
+  // evict dep's watchlist entry; the reload then re-adds it with a fresh heap
+  // copy of the path. Eviction used to discard the evicted entry's copy
+  // without freeing it, so every edit leaked one path. The leak is only
+  // observable through LSan (ASAN builds); logLevel=debug makes the reloader
+  // print "Removing file" per eviction, which guards against a reload cycle
+  // that stopped evicting passing this vacuously.
+  test.skipIf(!isLinux || !isASAN)(
+    "evicting watchlist entries does not leak their paths",
+    async () => {
+      const edits = 3;
+      await using dir = tempDir("hot-evict-leak", {
+        "bunfig.toml": `logLevel = "debug"\n`,
+        "lib/dep.js": `export const value = 0;`,
+        "entry.js": `
+          import { lsanDoLeakCheck } from "bun:internal-for-testing";
+          import { value } from "./lib/dep.js";
+          console.log("RELOAD", value);
+          if (value === ${edits}) {
+            lsanDoLeakCheck();
+            console.log("LEAKCHECK");
+          }
+        `,
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "entry.js"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          // Bun's built-in ASAN defaults disable LSan. entry.js runs the check
+          // itself once the edits are done; the process is killed afterwards,
+          // so the at-exit check is not needed.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          // verbosity=1 makes the check announce itself on stderr.
+          LSAN_OPTIONS: "leak_check_at_exit=0:malloc_context_size=30:verbosity=1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderrText = proc.stderr.text();
+
+      const iter = forEachLine(proc.stdout);
+      const waitForLine = async (expected: string) => {
+        while (true) {
+          const { value: line, done } = await iter.next();
+          if (done) throw new Error(`--hot exited before printing "${expected}" (exit ${proc.exitCode})`);
+          if (line === expected) return;
+        }
+      };
+
+      await waitForLine("RELOAD 0");
+      for (let i = 1; i <= edits; i++) {
+        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+        await waitForLine(`RELOAD ${i}`);
+      }
+      await waitForLine("LEAKCHECK");
+      proc.kill();
+      const stderr = await stderrText;
+
+      expect(stderr).toContain("LeakSanitizer: checking for leaks");
+      // One edit can produce more than one directory event, so this is a lower bound.
+      const evictions = stderr.split("\n").filter(line => line.includes("Removing file:")).length;
+      expect(evictions).toBeGreaterThanOrEqual(edits);
+
+      // LSan prints one blank-line-separated block per leaking allocation
+      // stack. A leaked watchlist path is allocated by bun_watcher's append_*
+      // functions; leaks from elsewhere are not this test's concern.
+      const watcherLeaks = stderr
+        .split(/\n\s*\n/)
+        .filter(block => /^(?:Direct|Indirect) leak of /.test(block) && block.includes("bun_watcher::"));
+      expect(watcherLeaks).toEqual([]);
+    },
+    // Debug + ASAN: three reloads plus symbolizing the LSan report take a few seconds.
+    30_000,
+  );
 });

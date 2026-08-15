@@ -103,6 +103,12 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// Parked `mi_heap` recycled between `Bun.{TOML,YAML,JSON5,JSONC,XML}.parse`
+    /// calls on this thread (see `api::with_text_format_source_encoded`).
+    /// Owned here rather than in a `#[thread_local]` so Worker teardown
+    /// destroys it: mimalloc does not free a `mi_heap_t` when the thread that
+    /// created it exits, so a heap parked in TLS leaks with every Worker.
+    pub(crate) text_format_arena: Cell<Option<bun_alloc::Arena>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -237,6 +243,24 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
     unsafe { &(*state).global_dns_data }
+}
+
+/// The slot holding this thread's parked text-format parse arena
+/// ([`RuntimeState::text_format_arena`]), or `None` when no VM state is
+/// installed on this thread (callers then use a throwaway arena). Do not hold
+/// the returned reference across code that can tear the VM down; re-fetch it
+/// instead.
+#[inline]
+pub(crate) fn text_format_arena_slot() -> Option<&'static Cell<Option<bun_alloc::Arena>>> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable until `deinit_runtime_state`, which nulls
+    // `RUNTIME_STATE` before freeing the box, so a non-null `state` here is
+    // never a freed one. Mutation goes through the `Cell`.
+    Some(unsafe { &(*state).text_format_arena })
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
@@ -400,6 +424,7 @@ unsafe fn init_runtime_state(
         },
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
+        text_format_arena: Cell::new(None),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

@@ -114,6 +114,8 @@ struct Migrator<'a> {
     url: Vec<u8>,
     patched: String,
     silent: bool,
+    /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
+    lockfile_name: &'static str,
 }
 
 pub(super) fn migrate_packages(
@@ -122,6 +124,7 @@ pub(super) fn migrate_packages(
     _log: &mut bun_ast::Log,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
+    lockfile_name: &'static str,
 ) -> Result<(), Error> {
     debug_assert!(!packages_properties.is_empty() && packages_properties[0].key.slice().is_empty());
 
@@ -148,6 +151,7 @@ pub(super) fn migrate_packages(
         url: Vec::new(),
         patched: String::new(),
         silent,
+        lockfile_name,
     };
 
     migrator.build_index()?;
@@ -170,8 +174,9 @@ pub(super) fn migrate_packages(
 
     if !migrator.patched.is_empty() {
         bun_core::warn!(
-            "skipped npm patches for {} from package-lock.json",
+            "skipped npm patches for {} from {}",
             migrator.patched,
+            lockfile_name,
         );
         bun_core::note!("bun patch \\<pkg\\>");
     }
@@ -729,9 +734,10 @@ impl<'a> Migrator<'a> {
                 else {
                     if !self.silent {
                         bun_core::warn!(
-                            "skipped \"{}@{}\" from package-lock.json: unsupported version specifier",
+                            "skipped \"{}@{}\" from {}: unsupported version specifier",
                             bstr::BStr::new(name),
                             bstr::BStr::new(spec),
+                            self.lockfile_name,
                         );
                     }
                     continue;
@@ -837,9 +843,10 @@ impl<'a> Migrator<'a> {
             let Some(t) = target else {
                 if !self.silent {
                     bun_core::warn!(
-                        "workspace \"{}\" ({}) is not in package-lock.json; resolving it from package.json",
+                        "workspace \"{}\" ({}) is not in {}; resolving it from package.json",
                         bstr::BStr::new(&ws.name),
                         bstr::BStr::new(path),
+                        self.lockfile_name,
                     );
                 }
                 continue;
@@ -937,8 +944,9 @@ impl<'a> Migrator<'a> {
         self.skipped_external.set(t as usize);
         if !self.silent {
             bun_core::warn!(
-                "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
+                "skipped \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
                 bstr::BStr::new(name),
+                self.lockfile_name,
                 bstr::BStr::new(self.entries[t as usize].key.slice()),
             );
         }
@@ -1001,8 +1009,9 @@ impl<'a> Migrator<'a> {
             let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
-            "skipped {} package-lock.json {} not depended on by any package: {}",
+            "skipped {} {} {} not depended on by any package: {}",
             count,
+            self.lockfile_name,
             if count == 1 { "entry" } else { "entries" },
             list,
         );

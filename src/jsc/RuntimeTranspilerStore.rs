@@ -254,6 +254,11 @@ impl RuntimeTranspilerStore {
         }
     }
 
+    /// Fulfil every completed job's module promise. This drain is a dispatcher:
+    /// each fulfilment is a JS entry of its own, so what one leaves pending is
+    /// folded here and the drain goes on; the VM's termination ends it, with
+    /// the rest of the batch back on the queue (each still has its own posted
+    /// task, or the teardown release, to pick it up).
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
@@ -267,34 +272,44 @@ impl RuntimeTranspilerStore {
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
-        let first = iter.next();
-        if first.is_null() {
-            return;
-        }
-        // we run just one job first to see if there are more
-        // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
-            global.report_uncaught_exception_from_error(err);
-        }
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
+        let mut job = iter.next();
+        let mut first = true;
+        while !job.is_null() {
+            if !first {
+                // if there are more, we need to drain the microtasks from the previous run
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                if drained.is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
-            // if there are more, we need to drain the microtasks from the previous run
-            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
-            {
-                return;
-            }
+            first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
-                global.report_uncaught_exception_from_error(err);
+            let fulfilled = unsafe { (*job).run_from_js_thread() };
+            job = iter.next();
+            if let Err(err) = fulfilled {
+                if crate::task::report_error_or_terminate(global, err).is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
         }
-
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Put `job` and the rest of a popped batch back: each still has its posted
+    /// task (or the teardown release) to pick it up.
+    fn requeue(
+        &mut self,
+        mut job: *mut TranspilerJob,
+        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
+    ) {
+        while let Some(unrun) = NonNull::new(job) {
+            job = iter.next();
+            self.queue.push(unrun);
+        }
     }
 
     pub fn transpile(

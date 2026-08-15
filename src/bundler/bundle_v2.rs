@@ -2658,14 +2658,10 @@ pub mod bv2_impl {
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
-            {
-                let t = self.transpiler_for_target(target);
-                task.jsx.development = match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -2768,14 +2764,10 @@ pub mod bv2_impl {
             task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
-            {
-                let bundler = self.transpiler_for_target(target);
-                task.jsx.development = match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -5520,7 +5512,7 @@ pub mod bv2_impl {
 
             // First is a chunk to contain all JavaScript modules.
             chunks.push(Chunk {
-                entry_point: chunk::EntryPoint::new(0, 0, true, false),
+                entry_point: chunk::EntryPoint::entry_point(0, 0),
                 content: chunk::Content::Javascript(chunk::JavaScriptChunk {
                     files_in_chunk_order: js_reachable_files
                         .iter()
@@ -5539,11 +5531,9 @@ pub mod bv2_impl {
                 let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::new(
+                    entry_point: chunk::EntryPoint::non_entry_point(
                         entry_point.get(),
                         entry_point.get(),
-                        false,
-                        false,
                     ),
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
@@ -5560,11 +5550,9 @@ pub mod bv2_impl {
             // Then all HTML files
             for source_index in html_files.keys() {
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::new(
+                    entry_point: chunk::EntryPoint::non_entry_point(
                         source_index.get(),
                         source_index.get(),
-                        false,
-                        true,
                     ),
                     content: chunk::Content::Html,
                     output_source_map: SourceMap::SourceMapPieces::init(),
@@ -6218,13 +6206,7 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
+                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
@@ -6591,11 +6573,7 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => transpiler.options.jsx.development,
-                };
+                resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
                 resolve_task.tree_shaking = transpiler.options.tree_shaking;
@@ -6911,7 +6889,7 @@ pub mod bv2_impl {
                     // We replace this runtime API call's ref later via .link on the Symbol.
                     b"__jsonParse",
                 )?
-                .unwrap(),
+                .ok_or(Error::ParserError)?,
             );
 
             let fake_input_file = crate::Graph::InputFile {
@@ -6958,11 +6936,7 @@ pub mod bv2_impl {
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
             if parse_result.external.function.is_some() {
-                let source = match &parse_result.value {
-                    parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                    parse_task::ResultValue::Err(data) => data.source_index.get(),
-                    parse_task::ResultValue::Success(val) => val.source.index.0,
-                };
+                let source = parse_result.value.source_index();
                 let loader: Loader = this.graph.input_files.items_loader()[source as usize];
                 // `InputFile.arena` column dropped in the Rust port;
                 // stash the finalizer regardless so plugin-owned bytes are freed.
@@ -6992,11 +6966,7 @@ pub mod bv2_impl {
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = match &parse_result.value {
-                        parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                        parse_task::ResultValue::Err(data) => data.source_index.get(),
-                        parse_task::ResultValue::Success(val) => val.source.index.0,
-                    };
+                    let source_index = parse_result.value.source_index();
                     // borrowck — read source path/loader before
                     // `should_add_watcher(&self)` so the column borrow is released.
                     let source_path = this.graph.input_files.items_source()[source_index as usize]

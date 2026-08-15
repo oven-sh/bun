@@ -28,7 +28,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -199,9 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    wait_group: WaitGroup,
-    /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
-    is_running: AtomicBool,
     stats: PoolStats,
 }
 
@@ -234,8 +231,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            wait_group: WaitGroup::init(),
-            is_running: AtomicBool::new(false),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
                 // measured from pool creation. Skip the syscall when stats are
@@ -319,6 +314,54 @@ impl Drop for ThreadPool {
 pub struct Task {
     pub node: Node,
     pub callback: unsafe fn(*mut Task),
+}
+
+/// A [`Task`] that counts itself out of a caller-owned [`WaitGroup`] when it finishes, so a
+/// caller can schedule a batch on a shared pool and wait for *that batch* — not for the pool
+/// to go idle, which on the runtime pool means waiting for every unrelated fs/crypto/etc.
+/// task too (unboundedly, if one of them blocks). Embed this where you would embed `Task`
+/// (it is `repr(C)` with `task` first, so a `*mut Task` handed to `run` is also the
+/// `*mut CountedTask` and container-of over the embedding field still works), schedule
+/// `&raw mut outer.counted.task` — a raw place projection through the *outer* struct, so the
+/// callback's container-of keeps provenance over its sibling fields — then `wait()` on the group.
+#[repr(C)]
+pub struct CountedTask {
+    pub task: Task,
+    run: unsafe fn(*mut Task),
+    group: *const WaitGroup,
+}
+
+// SAFETY: as `Task` (sent to one worker, never shared); `group` is only touched through
+// `WaitGroup::finish_raw`, which any thread may call.
+unsafe impl Send for CountedTask {}
+
+impl CountedTask {
+    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// returning is that completion).
+    pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
+        Self {
+            task: Task {
+                node: Node::default(),
+                callback: Self::run_and_finish,
+            },
+            run,
+            group: core::ptr::from_ref(group),
+        }
+    }
+
+    unsafe fn run_and_finish(task: *mut Task) {
+        // The cast below and every embedder's container-of over its `CountedTask` field rely on it.
+        const _: () = assert!(core::mem::offset_of!(CountedTask, task) == 0);
+        let this = task.cast::<CountedTask>();
+        // SAFETY: `task` is the `task` field (offset 0) of a live `CountedTask`; read both
+        // fields before `run`, after which the embedding struct is the callee's to consume.
+        let (run, group) = unsafe { ((*this).run, (*this).group) };
+        // SAFETY: the embedder's own callback contract.
+        unsafe { run(task) };
+        // SAFETY: `group` counts this task and is live until this lets `wait()` return; last
+        // access (see `WaitGroup::finish_raw`).
+        unsafe { WaitGroup::finish_raw(group) };
+    }
 }
 
 // SAFETY: `Task` is the unit handed across threads by `ThreadPool::schedule`;
@@ -510,9 +553,9 @@ impl ThreadPool {
 
         #[repr(C)]
         struct RunnerTask<Ctx, V, F> {
-            task: Task,
+            task: CountedTask,
             // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
+            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
             // tasks finish), so this is the canonical `BackRef` invariant.
             ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
@@ -526,7 +569,7 @@ impl ThreadPool {
                 unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
+            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
             // every task finishes); each task owns a distinct index `i`.
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
@@ -539,6 +582,7 @@ impl ThreadPool {
             run_fn,
         };
 
+        let group = WaitGroup::init_with_count(values.len());
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -547,20 +591,17 @@ impl ThreadPool {
             offset -= 1;
             tasks.push(RunnerTask {
                 i: offset,
-                task: Task {
-                    node: Node::default(),
-                    callback: call::<Ctx, V, F>,
-                },
+                task: CountedTask::new(call::<Ctx, V, F>, &group),
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
         // Push to the Vec first (no realloc: capacity reserved), then take
         // stable addresses.
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
+            batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        self.wait_for_all();
+        group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
@@ -577,23 +618,6 @@ impl ThreadPool {
             head: Task::node_of(head.unwrap()),
             tail: Task::node_of(tail.unwrap()),
         };
-
-        // .monotonic access is okay because:
-        //
-        // * If the thread pool hasn't started yet, no thread could concurrently set
-        //   `is_running` to true, because thread pool initialization should only
-        //   happen on one thread.
-        //
-        // * If the thread pool is running, the current thread could be one of the threads
-        //   in the thread pool, but `is_running` was necessarily set to true before the
-        //   thread was created.
-        if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(len);
-        } else {
-            // `&self` precludes `&mut WaitGroup` here, so use the relaxed
-            // atomic add even though the pool isn't running yet.
-            self.wait_group.add(len);
-        }
 
         let current: *mut Thread = 'blk: {
             if !try_current {
@@ -635,11 +659,6 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
-    }
-
-    /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
-    pub fn wait_for_all(&self) {
-        self.wait_group.wait();
     }
 
     fn force_spawn(&self) {
@@ -718,8 +737,7 @@ impl ThreadPool {
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        self.is_running.store(true, Ordering::Relaxed);
-        let target = count.min((self.max_threads & 0x3FFF) as u16);
+        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;
@@ -755,7 +773,6 @@ impl ThreadPool {
 
     #[inline(never)]
     fn notify_slow(&self, is_waking: bool) {
-        self.is_running.store(true, Ordering::Relaxed);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
@@ -1236,7 +1253,6 @@ impl Thread {
                         .fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
                     pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                pool.wait_group.finish();
             }
 
             Output::flush();

@@ -180,6 +180,7 @@ pub mod zig_string;
 pub use self::js_value::{
     CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
     Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
+    TemporalType,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -555,104 +556,37 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
-    Thrown,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated,
-}
-/// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
-/// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
-/// comment justifying the swallow.
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`), defined at
+/// tier 0 (`bun_core`) so every layer names the one type.
+///
+/// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
+/// pending on the VM. There is deliberately no "terminated" variant: a worker being terminated reaches
+/// native code the way it reaches JSC's own host functions -- as a pending TerminationException, i.e.
+/// `Thrown` -- and only the boundary that entered JS asks whether the exception it takes is the
+/// termination one and stands the loop down with [`Stopped`]. Loop-level code that learns of a stop
+/// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
+pub use bun_core::JsError;
+/// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
+/// VM: `?`-propagate it to the frame's dispatcher (which folds it —
+/// [`task::report_error_or_terminate`]), run further JS through
+/// `EventLoop::run_callback`, or `let _ =` with a comment saying whose fold
+/// takes it.
 ///
 /// Note: `#[must_use]` cannot be applied to type aliases; `Result` already
 /// carries it. We instead `#![warn(unused_must_use)]` in every crate that
 /// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
 
-bun_core::oom_from_alloc!(JsError);
-
-impl From<bun_core::JsError> for JsError {
-    #[inline]
-    fn from(e: bun_core::JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            E::Thrown => JsError::Thrown,
-            E::OutOfMemory => JsError::OutOfMemory,
-            E::Terminated => JsError::Terminated,
-        }
-    }
-}
-
-impl From<JsTerminated> for bun_core::JsError {
-    #[inline]
-    fn from(_: JsTerminated) -> Self {
-        bun_core::JsError::Terminated
-    }
-}
-
-impl From<JsError> for bun_core::JsError {
-    #[inline]
-    fn from(e: JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            JsError::Thrown => E::Thrown,
-            JsError::OutOfMemory => E::OutOfMemory,
-            JsError::Terminated => E::Terminated,
-        }
-    }
-}
-
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
 /// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.
 #[inline]
 pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
-        // TODO: this might lose a JSTerminated, causing m_terminationException problems
-        JsError::Terminated => core::fmt::Error,
         // TODO: this might lose a JSError, causing exception check problems
         JsError::Thrown => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
-    }
-}
-
-impl From<JsTerminated> for JsError {
-    fn from(_: JsTerminated) -> Self {
-        JsError::Terminated
-    }
-}
-
-/// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
-/// so the `unused_must_use` lint can be satisfied without `let _ =` at call
-/// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
-/// fire-and-forget callbacks).
-pub trait JsResultExt {
-    /// Consume the result; if `Err`, take the pending exception off `global`
-    /// and route it through the VM's uncaught-exception handler. Returns the
-    /// `Ok` payload (or its `Default`) so callers can chain.
-    ///
-    /// Use this when an error has nowhere left to bubble — never to paper over
-    /// a missing `?`.
-    fn report_unhandled(self, global: &JSGlobalObject);
-}
-
-impl<T> JsResultExt for JsResult<T> {
-    #[inline]
-    fn report_unhandled(self, global: &JSGlobalObject) {
-        if let Err(e) = self {
-            // `Terminated` carries no exception value to report — the VM is
-            // already unwinding. `OutOfMemory`/`Thrown` both leave a pending
-            // exception that `report_uncaught_exception_from_error` will take.
-            if e != JsError::Terminated {
-                global.report_uncaught_exception_from_error(e);
-            }
-        }
     }
 }
 
@@ -694,10 +628,7 @@ impl From<JsError> for crate::CrateError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
-            // `Terminated` (worker shutdown) has no distinct error tag of its
-            // own, so collapse into `JSError` like every other thrown JS
-            // exception.
-            JsError::Thrown | JsError::Terminated => crate::CrateError::JSError,
+            JsError::Thrown => crate::CrateError::JSError,
         }
     }
 }
@@ -1382,9 +1313,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, JsTerminated,
-    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
-    WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
+    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

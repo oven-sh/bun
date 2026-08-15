@@ -1093,13 +1093,9 @@ impl WebWorker {
         // process.exit() from an exit handler does not re-arm the trap.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
+            // From an immediate this runs before the turn's poll; the wake is what ends it.
             // SAFETY: this thread's live VM.
-            unsafe {
-                // As for a parent's terminate(): nothing more may enter script
-                // (Node's `Stop(env)` on the worker's own exit).
-                (*vm_ptr).handle_ref().stop();
-                (*vm_ptr).jsc_vm().notify_need_termination();
-            }
+            unsafe { (*vm_ptr).handle_ref().request_termination() };
         }
     }
 
@@ -1135,11 +1131,10 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // A termination request landed while building the error: as above.
-            Err(JsError::Terminated) => return,
             Err(JsError::Thrown) => {
-                // Building an error from log messages threw: report that instead.
-                global.report_active_exception_as_unhandled(JsError::Thrown);
+                // The worker's start sequence is its outermost frame: building the error from the
+                // log threw, and that is reported here instead (a termination just stands down).
+                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
                 return;
             }
         };
@@ -1148,19 +1143,7 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
         });
         if let Err(e) = dispatch {
-            // `take_exception` on a `JsError` always returns an Exception
-            // cell; None is unreachable. Do not silently drop the error.
-            let exc = global
-                .take_exception(e)
-                .as_exception(global.vm().as_mut_ptr())
-                .expect("takeException returned non-Exception");
-            // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null-ZST deref proof (`exc` is non-null per the
-            // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(
-                global,
-                jsc::Exception::opaque_ref(exc),
-            );
+            let _ = crate::task::report_error_or_terminate(global, e);
         }
     }
 }
@@ -1217,13 +1200,11 @@ fn on_unhandled_rejection(
         },
     );
     if let Err(err) = format_result {
-        match err {
-            JsError::Thrown | JsError::Terminated => {}
-            JsError::OutOfMemory => {
-                let _ = global_object.throw_out_of_memory();
-            }
-        }
-        error_instance = global_object.try_take_exception().unwrap();
+        error_instance = global_object.take_exception(err);
+    }
+    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    if error_instance.is_termination_exception() {
+        return;
     }
     jsc::mark_binding();
     // We RETURN through
@@ -1266,20 +1247,8 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, arm the JSC termination trap so any further JS halts at the
-    // next safepoint, and let the stack unwind normally back to `spin()`,
-    // whose loop observes `requested_terminate` and reaches the single
-    // `shutdown()` call at its bottom with no live JSC frames above it. The
-    // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
-    // `uncaught_exception` returns `handled == false`, so `spin()` calls
-    // `return self.shutdown()` directly — same observable ordering.
-    // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
-    // `global_object`); `notify_need_termination` is documented thread-safe
-    // (VMTraps). The gate closes with it, as for exit()/terminate(): the
-    // native→JS entries still reached this tick refuse rather than run into
-    // the pending termination.
-    vm.handle_ref().stop();
-    vm.jsc_vm().notify_need_termination();
+    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
+    vm.handle_ref().request_termination();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
@@ -1413,7 +1382,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

@@ -548,7 +548,11 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
+                            global_this
+                                .bun_vm()
+                                .as_mut()
+                                .wait_for_promise(promise)
+                                .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
@@ -1611,7 +1615,6 @@ pub mod js_bundler {
                     match err {
                         JsError::OutOfMemory => bun_core::out_of_memory(),
                         JsError::Thrown => {}
-                        JsError::Terminated => {}
                     }
                     panic!("Unexpected: source_code is not a string");
                 }
@@ -1726,8 +1729,11 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+                // A terminated worker runs no onEnd callbacks: keep its termination pending and unwind.
+                Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
+                    return Err(JsError::Thrown);
+                }
                 Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
-                Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets

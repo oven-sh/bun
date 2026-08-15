@@ -110,7 +110,7 @@ Add this folder to `$Env:PATH`: open the Start menu, type "Path", and use the en
 
 ## Extra paths
 
-- WebKit is extracted to `build/debug/cache/webkit/`
+- The build extracts WebKit to `build/debug/cache/webkit/`
 
 ## Tests
 
@@ -138,7 +138,7 @@ You cannot overwrite `bun-debug.exe` while it is open. You likely have a running
 
 ## Cross-compiling from Linux
 
-You can also build Windows binaries (both x64 and arm64) on a Linux host. The build uses the host LLVM's `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` (part of every LLVM distribution), plus an "xwin splat" of the MSVC CRT/STL and Windows SDK for headers and import libraries.
+You can also build Windows binaries (both x64 and arm64) on a Linux host. The build uses the host LLVM's `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` (part of every LLVM distribution). For headers and import libraries, the build also uses an "xwin splat" of the MSVC CRT/STL and Windows SDK.
 
 ### Prerequisites
 
@@ -159,7 +159,7 @@ ln -s include "/opt/winsysroot/Windows Kits/10/Include"
 ln -s lib "/opt/winsysroot/Windows Kits/10/Lib"
 ```
 
-The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>` (a user-writable path also lets configure manage the aliases for you). Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically. If the sysroot is elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>`. A user-writable path also lets configure manage the aliases for you. Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
 
 ### Building
 
@@ -175,7 +175,7 @@ bun run build --profile=windows-arm64-release
 
 Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-aarch64/bun-profile.exe` + `bun.exe`, and so on. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
 
-Cross-compiled executables are not run on the host (the `--revision` smoke test is skipped), so test them on a Windows machine or under Wine.
+The build does not run cross-compiled executables on the host (it skips the `--revision` smoke test), so test them on a Windows machine or under Wine.
 
 ### LTO
 
@@ -185,4 +185,11 @@ x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO. I
 bun run build --profile=windows-x64-release --lto=on
 ```
 
-`--lto=on` compiles Bun's C/C++ with `-flto=thin`, makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`), pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt, and links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode). There is no LTO for arm64 (no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen) or for `--baseline`.
+`--lto=on` does the following:
+
+- compiles Bun's C/C++ with `-flto=thin`
+- makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`)
+- pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt
+- links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
+
+There is no LTO for arm64, because there is no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen. There is also no LTO for `--baseline`.

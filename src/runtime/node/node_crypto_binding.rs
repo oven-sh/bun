@@ -145,17 +145,13 @@ macro_rules! extern_crypto_job {
                     // `runFromJS` never sees the callback, so it cannot run user
                     // JS; free the ctx first, then invoke.
                     drop(this);
-                    match produced {
-                        Ok(()) => {
-                            global.bun_vm().event_loop_mut().run_callback(
-                                callback.get(),
-                                global,
-                                JSValue::UNDEFINED,
-                                args.as_slice(),
-                            );
-                        }
-                        Err(err) => global.report_active_exception_as_unhandled(err),
-                    }
+                    produced?;
+                    global.bun_vm().event_loop_mut().run_callback(
+                        callback.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        args.as_slice(),
+                    );
                     Ok(())
                 }
             }
@@ -1128,8 +1124,7 @@ mod _impl {
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
         // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
-        let out_arraybuffer =
-            JSValue::create_buffer_from_length(global_this, data.length as usize)?;
+        let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length)?;
         let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
             return Err(global_this.throw_out_of_memory());
         };

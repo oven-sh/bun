@@ -74,7 +74,6 @@ bun_jsc::jsc_host_abi! {
                 let _ = global_object.throw_out_of_memory();
                 core::ptr::null_mut()
             }
-            Err(JsError::Terminated) => core::ptr::null_mut(),
         }
     }
 }

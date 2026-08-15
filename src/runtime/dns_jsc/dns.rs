@@ -1915,22 +1915,24 @@ impl DNSLookup {
 pub(crate) enum Outcome {
     Value(JSValue),
     Error(JSValue),
-    Terminated,
+    Stopped,
 }
 
 impl Outcome {
     pub(crate) fn of(global: &JSGlobalObject, result: JsResult<JSValue>) -> Outcome {
         match result {
             Ok(v) => Outcome::Value(v),
-            Err(bun_jsc::JsError::Terminated) => Outcome::Terminated,
             Err(bun_jsc::JsError::OutOfMemory) => {
                 Outcome::Error(global.create_out_of_memory_error())
             }
-            Err(bun_jsc::JsError::Thrown) => match global.try_take_exception() {
-                Some(e) if e.is_termination_exception() => Outcome::Terminated,
-                Some(e) => Outcome::Error(e.to_error().unwrap_or(e)),
-                None => Outcome::Terminated,
-            },
+            Err(bun_jsc::JsError::Thrown) => {
+                let e = global.take_exception(bun_jsc::JsError::Thrown);
+                if e.is_termination_exception() {
+                    Outcome::Stopped
+                } else {
+                    Outcome::Error(e.to_error().unwrap_or(e))
+                }
+            }
         }
     }
 
@@ -1942,13 +1944,17 @@ impl Outcome {
         }
     }
 
+    /// The resolver backends' completion callbacks (c-ares poll, libinfo,
+    /// libuv) land here to settle the lookup's promise with a value built by
+    /// the resolver: this is their fold for what settling leaves pending
+    /// (allocation failure, a terminating VM).
     fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
-        let _ = match self {
+        crate::dispatch::fold(match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
-            Outcome::Terminated => return,
-        };
+            Outcome::Stopped => return,
+        });
     }
 }
 

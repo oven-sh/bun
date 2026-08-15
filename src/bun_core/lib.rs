@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
+#![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
@@ -651,11 +652,22 @@ pub use util::*;
 /// `core::mem::offset_of!` so the field name is type-checked.
 ///
 /// # Safety
-/// - `field` must have been derived from a live `P` via
-///   `addr_of!((*p).field)` / `addr_of_mut!` (or equivalent), so its
-///   provenance covers the entire `P` allocation — a `&mut field` reborrow
-///   does **not** suffice.
-/// - `offset` must equal `offset_of!(P, <that field>)`.
+/// - `field` must point at the `F` field of a live `P`, and
+///   `offset == offset_of!(P, <that field>)`.
+/// - What may be done with the result depends on where `field` came from:
+///   - a raw place projection of a whole-`P` pointer (`&raw mut (*p).field`,
+///     an intrusive node handed back by C): anything the original `p` allowed.
+///   - `ptr::from_mut(field_ref)` for a `&mut F`: reads and writes of `P` are
+///     fine (Tree Borrows initialises out-of-range locations lazily for a
+///     `&mut`-derived tag; LLVM sees the result as based on the argument), for
+///     as long as that `&mut F` could itself be used.
+///   - `ptr::from_ref(field_ref)` for a `&F`: reads of `P` are fine. Writes
+///     (including `Cell::set` on a `P` field) are only defined when `F` is
+///     **not** [`Freeze`](core::marker::Freeze): rustc passes a `&F` to a
+///     `Freeze` `F` as `noalias readonly`, so a store through anything derived
+///     from it is UB that release builds do exploit — the store is deleted.
+///     Use [`impl_field_parent!`]'s `shared` arm instead of open-coding this
+///     case; it rejects `Freeze` children at compile time.
 #[inline(always)]
 pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P {
     // SAFETY: per fn contract — `field` is interior to a `P`; `byte_sub`
@@ -698,8 +710,9 @@ pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
 ///
 /// Type-checked wrapper over [`container_of`]: expands to
 /// `container_of::<Parent, _>(ptr, offset_of!(Parent, field))`. The call is
-/// `unsafe` (caller asserts `ptr` points at `Parent.field` with whole-`Parent`
-/// provenance) and must appear inside an `unsafe` block.
+/// `unsafe` (caller asserts `ptr` points at `Parent.field`; see
+/// [`container_of`] for what the result may be used for depending on how
+/// `ptr` was derived) and must appear inside an `unsafe` block.
 #[macro_export]
 macro_rules! from_field_ptr {
     ($Parent:ty, $field:ident, $ptr:expr $(,)?) => {
@@ -708,107 +721,163 @@ macro_rules! from_field_ptr {
 }
 
 /// Stamp container-of-style back-reference accessors on a child type that
-/// is **only ever constructed as the `$field` field of `$Parent`**.
+/// is **only ever constructed as the `$field` field of `$Parent`** (a port of
+/// Zig's `@fieldParentPtr`).
 ///
-/// Five forms (mix-and-match is not supported; pick the one matching the call
-/// site's receiver/return contract):
 /// ```ignore
-/// // (1) ref + raw-mut pair         (&self -> &P ; &mut self -> *mut P)
-/// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
-///
-/// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-///
-/// // (3) mut-only                   (&mut self -> *mut P)
-/// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
-///
-/// // (4) nonnull                    (&mut self -> NonNull<P>)
-/// bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
-///
-/// // (5) raw                        (&self -> *mut P)
-/// bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
+///     fn parent;             // (&mut self) -> &JSValkeyClient
+///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
+/// }
+/// bun_core::impl_field_parent! { FileReader => Source.context;
+///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze
+///     pub fn raw parent;          // (&self) -> *mut Source — same check
+/// }
 /// ```
 ///
-/// The mut accessor returns `*mut $Parent` (NOT `&mut`) because `self` is a
-/// field of `$Parent` — materializing `&mut $Parent` while `&mut self` is live
-/// would alias. Callers dereference under `unsafe` and must only touch fields
-/// disjoint from `$field`.
+/// Any subset of the four arms, in any order.
+///
+/// ## Why the receivers are what they are
+///
+/// The parent pointer is computed from `self`, so it is only as capable as
+/// the reference it came from:
+///
+/// - From `&mut self` (the plain and `mut` arms) the whole parent may be read
+///   and written for as long as that `&mut self` is usable. Under Tree Borrows
+///   the locations outside `self` are initialised lazily for the `&mut`'s tag,
+///   and LLVM sees the parent pointer as *based on* the argument, so parent
+///   code that comes back and touches `self`'s bytes (through a `JsCell`, say)
+///   is correctly treated as aliasing. This is what makes the container-of
+///   form preferable to a stored back-pointer for `&mut self` methods: a
+///   pointer loaded from a field is *not* based on the argument, and `&mut
+///   self` is `noalias`.
+/// - From `&self` (the `shared` and `raw` arms) the parent may be read and
+///   written only because `$Child` is not [`Freeze`](core::marker::Freeze).
+///   For a `Freeze` child rustc passes `&self` as `noalias readonly` and LLVM
+///   deletes stores made through anything derived from it — refcount bumps,
+///   flag sets — depending purely on inlining. Both arms therefore fail to
+///   compile for a `Freeze` `$Child`. If that assertion fires, do not add a
+///   `Cell` to placate it: move the methods that need the parent onto
+///   `&$Parent`, or take `&mut self`. `shared` gives `&$Parent` (so only its
+///   interior-mutable fields are writable); `raw` gives the pointer for
+///   `&self` methods that must call `&mut $Parent` methods or set plain
+///   fields, under the usual no-other-live-reference rule.
+///
+/// No arm hands out `&mut $Parent`: `self` is inside it, so that would be two
+/// live `&mut` to the same bytes. The pointer-returning arms are dereferenced
+/// at the point of use.
+///
+/// None of this is defined under Stacked Borrows, which is why
+/// `scripts/rust-miri.ts` runs Tree Borrows; `bun_ptr`'s tests exercise both
+/// arms under Miri.
 ///
 /// # Safety
 /// Expanding this macro asserts that **every** `$Child` instance lives at
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
-/// `pub unsafe fn` instead.
+/// `unsafe fn(*mut $Child) -> *mut $Parent` over [`from_field_ptr!`] instead.
 #[macro_export]
 macro_rules! impl_field_parent {
-    // ref + raw-mut pair
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ; $vm:vis fn $mut_name:ident ;) => {
-        impl $Child {
-            #[inline]
-            $v fn $ref_name(&self) -> &$Parent {
-                // SAFETY: macro contract — `self` is the `$field` field of a
-                // live `$Parent`; recovering the parent and reborrowing as `&`
-                // for the lifetime of `&self` is sound.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
-            }
-            #[inline]
-            $vm fn $mut_name(&mut self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only; no
-                // reference is formed here.
-                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
-            }
-        }
+    ($Child:ty => $Parent:ident . $field:ident ; $($arms:tt)+) => {
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($arms)+);
     };
-    // ref-only
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ;) => {
-        impl $Child {
-            #[inline]
-            $v fn $ref_name(&self) -> &$Parent {
-                // SAFETY: macro contract — see two-arm form above.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
-            }
-        }
-    };
-    // mut-only:  (&mut self) -> *mut $Parent
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn mut $name:ident ;) => {
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident]) => {};
+    // (&mut self) -> *mut $Parent
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn mut $name:ident ; $($rest:tt)*) => {
         impl $Child {
             #[inline]
             $v fn $name(&mut self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only.
+                // SAFETY: macro contract — `self` is `$Parent.$field`.
                 unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
-    // nonnull:  (&mut self) -> NonNull<$Parent>
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn nonnull $name:ident ;) => {
+    // (&self) -> &$Parent, `$Child: !Freeze` enforced
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn shared $name:ident ; $($rest:tt)*) => {
+        $crate::assert_not_freeze!($Child, $Parent);
         impl $Child {
             #[inline]
-            $v fn $name(&mut self) -> ::core::ptr::NonNull<$Parent> {
-                // SAFETY: macro contract — `self` is non-null, so the
-                // recovered parent pointer is too.
-                unsafe {
-                    ::core::ptr::NonNull::new_unchecked(
-                        $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)),
-                    )
-                }
+            $v fn $name(&self) -> &$Parent {
+                // SAFETY: macro contract — `self` is `$Parent.$field`; the
+                // assertion above guarantees `&self` carries no `readonly`.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
-    // raw:  (&self) -> *mut $Parent  (read-only receiver, raw out — for FFI
-    // callback shapes that round-trip through `*const Self` but need a
-    // `*mut Parent` without forming an aliased `&mut`)
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn raw $name:ident ;) => {
+    // (&self) -> *mut $Parent, `$Child: !Freeze` enforced. For `&self`
+    // methods that must reach non-cell parent state (`&mut $Parent` methods,
+    // plain fields): going through the `shared` arm's `&$Parent` first would
+    // freeze those bytes, so this hands back the pointer underived.
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn raw $name:ident ; $($rest:tt)*) => {
+        $crate::assert_not_freeze!($Child, $Parent);
         impl $Child {
             #[inline]
             $v fn $name(&self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only; the
-                // returned pointer is not dereferenced here.
+                // SAFETY: macro contract — `self` is `$Parent.$field`.
                 unsafe {
                     $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self).cast_mut())
                 }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
+    // (&mut self) -> &$Parent
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn $name:ident ; $($rest:tt)*) => {
+        impl $Child {
+            #[inline]
+            $v fn $name(&mut self) -> &$Parent {
+                // SAFETY: macro contract — `self` is `$Parent.$field`; the
+                // returned borrow keeps `self` mutably borrowed, so no `&mut`
+                // to any part of `$Parent` is usable while it lives.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
+            }
+        }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
+    };
+}
+
+/// Compile-time `assert!($Child: !Freeze)`, for code that reaches a parent
+/// through a pointer derived from `&$Child` (see [`container_of`]). rustc
+/// passes a `&T` to a [`Freeze`](core::marker::Freeze) `T` as `noalias
+/// readonly`, so any store through such a pointer is deleted in release
+/// builds; this turns "someone removed the last `Cell` from `$Child`" into a
+/// build error at the site that depends on it instead of a heap corruption.
+#[macro_export]
+macro_rules! assert_not_freeze {
+    ($Child:ty, $Parent:ty $(,)?) => {
+        const _: () = {
+            #[allow(unused_imports)]
+            use $crate::__NotFreeze as _;
+            ::core::assert!(
+                !<$crate::__IsFreeze<$Child>>::IS_FREEZE,
+                concat!(
+                    "`",
+                    stringify!($Child),
+                    "` is Freeze, so `&self` is passed `noalias readonly` ",
+                    "and writes to `",
+                    stringify!($Parent),
+                    "` through a pointer derived from it ",
+                    "would be miscompiled. Put the methods that need the parent on `&",
+                    stringify!($Parent),
+                    "` instead, or derive the pointer from `&mut self`."
+                ),
+            );
+        };
+    };
+}
+
+#[doc(hidden)]
+pub struct __IsFreeze<T: ?Sized>(core::marker::PhantomData<T>);
+#[doc(hidden)]
+pub trait __NotFreeze {
+    const IS_FREEZE: bool = false;
+}
+impl<T: ?Sized> __NotFreeze for __IsFreeze<T> {}
+impl<T: ?Sized + core::marker::Freeze> __IsFreeze<T> {
+    // Inherent consts shadow trait consts, so this wins exactly when `T: Freeze`.
+    pub const IS_FREEZE: bool = true;
 }
 
 // ─── IntrusiveField<F> ──────────────────────────────────────────────────────
@@ -893,12 +962,11 @@ pub type OOM = AllocError;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
+    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
+    /// exception): unwind to the native/JS boundary.
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);

@@ -65,7 +65,7 @@ bun run <file or script>
 <ParamField path="--interactive" type="boolean">
   Open the Node.js-compatible REPL (<code>node:repl</code>). When combined with <code>-e</code>, starts the REPL and
   then evaluates the script. Under <code>--interactive</code>, <code>-e</code> is raw JavaScript (matching{" "}
-  <code>node -i -e</code>); use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
+  <code>node -i -e</code>). Use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
   Bun's native REPL.
 </ParamField>
 
@@ -141,7 +141,7 @@ bun run <file or script>
 ### Dependency &amp; Module Resolution
 
 <ParamField path="--preload" type="string">
-  Import a module before other modules are loaded. Alias: <code>-r</code>
+  Import a module before Bun loads other modules. Alias: <code>-r</code>
 </ParamField>
 
 <ParamField path="--require" type="string">
@@ -200,7 +200,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--define" type="string">
-  Substitute K:V while parsing, e.g. <code>--define process.env.NODE_ENV:"development"</code>. Values are parsed as
+  Substitute K:V while parsing, e.g. <code>--define process.env.NODE_ENV:"development"</code>. Bun parses values as
   JSON. Alias: <code>-d</code>
 </ParamField>
 
@@ -215,7 +215,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-macros" type="boolean">
-  Disable macros from being executed in the bundler, transpiler and runtime
+  Disable macro execution in the bundler, transpiler and runtime
 </ParamField>
 
 <ParamField path="--jsx-factory" type="string">
@@ -292,7 +292,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--cwd" type="string">
-  Absolute path to resolve files &amp; entrypoints from. This just changes the process' cwd
+  Absolute path to resolve files &amp; entrypoints from. This only changes the process' cwd
 </ParamField>
 
 <ParamField path="--config" type="string">

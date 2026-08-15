@@ -1547,11 +1547,7 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Invalidates and re-resolves every row `selects`, except `pinned_rows` and rows no package owns any more:
-/// the differ just gave the root a fresh dependency list, so the rows it was loaded with are dead. The resolver
-/// decides how far to trust a row by its owner (`Lockfile::is_workspace_dependency`), so re-resolving a dead
-/// root row is wasted work at best and, for a `file:` path outside the project that nothing overrides any
-/// more, a resolution error.
+/// Re-resolves every row `selects` that a package still owns; the rows the differ orphaned (the root's list from the loaded lockfile) resolve as nobody's, and `pinned_rows` were just resolved by the update plan.
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
@@ -1574,8 +1570,7 @@ fn reresolve_owned_rows(
         }
         owned
     };
-    // Resolving may append packages and grow `buffers.dependencies`, so only the rows present when this pass
-    // started are visited, each copied out before the resolver runs.
+    // Resolving appends rows; the bitset's length bounds the walk to the rows that existed when it was built.
     for dep_id in 0..owned_rows.bit_length() {
         if !owned_rows.is_set(dep_id) || pinned_rows.is_set_allow_out_of_bound(dep_id, false) {
             continue;

@@ -2500,9 +2500,6 @@ impl<'a> Formatter<'a> {
         result
     }
 
-    /// A top-level value that spans several lines is stored as `"\n...\n"` (jest's
-    /// `addExtraLineBreaks`). Unlike an object or array, an element only sometimes does, so it
-    /// is rendered before deciding.
     fn print_jsx<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut W,
@@ -2520,6 +2517,7 @@ impl<'a> Formatter<'a> {
             js_type,
         );
 
+        // jest's addExtraLineBreaks: a multi-line top-level value is stored as "\n...\n".
         let multiline = strings::contains_char(&rendered, b'\n');
         let mut writer = WrappedWriter::new(writer);
         if multiline {

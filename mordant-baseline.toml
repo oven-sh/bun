@@ -9,7 +9,6 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
-"tuple_wants_struct:src/css/values/color.rs" = 5
 
 [bun_install]
 "bare_bool_args:src/install/isolated_install.rs" = 1

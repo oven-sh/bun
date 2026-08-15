@@ -1947,14 +1947,12 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
-    /// Runtime Android detection. Android's app seccomp policy denies
-    /// syscalls outside its allowlist with `SECCOMP_RET_TRAP` — the process
-    /// is killed by SIGSYS instead of seeing ENOSYS — so errno-based
-    /// fallbacks for newer syscalls (`openat2(2)`, `fchmodat2(2)`) never get
-    /// a chance to run. The shipped linux builds run under Termux as plain
-    /// `target_os = "linux"`, so `cfg!(target_os = "android")` alone can't
-    /// catch this; probe the kernel release string (GKI kernels embed
-    /// "android") and the `ANDROID_ROOT`/`ANDROID_DATA` env vars Android
+    /// Runtime Android detection. Android's app seccomp policy kills the
+    /// process with SIGSYS instead of returning ENOSYS for syscalls outside
+    /// its allowlist, so `openat2(2)`/`fchmodat2(2)` must never be issued
+    /// there, not even as a probe. Shipped linux builds run under Termux as
+    /// plain `target_os = "linux"`, hence runtime detection: the kernel
+    /// release string, or the `ANDROID_ROOT`/`ANDROID_DATA` env vars Android
     /// init sets for every process.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn is_android_kernel() -> bool {
@@ -1975,10 +1973,8 @@ mod posix_impl {
         CACHED.store(if detected { 2 } else { 1 }, Ordering::Relaxed);
         detected
     }
-    /// `openat2(RESOLVE_BENEATH)`. Fails with ENOSYS on Android without
-    /// issuing the syscall (seccomp there kills the process instead of
-    /// returning ENOSYS; see [`is_android_kernel`]) so callers take their
-    /// existing fallback paths.
+    /// `openat2(RESOLVE_BENEATH)`; ENOSYS on Android without issuing the
+    /// syscall (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
@@ -1991,8 +1987,7 @@ mod posix_impl {
     /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
     /// if `dir` were `/`. Falls back to plain `openat` on kernels without
     /// `openat2` (or when seccomp blocks it), caching the unavailability.
-    /// On Android the syscall is never issued at all (seccomp there kills
-    /// the process instead of returning ENOSYS; see [`is_android_kernel`]).
+    /// Never issued on Android (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         use core::sync::atomic::{AtomicBool, Ordering};
@@ -2874,10 +2869,8 @@ mod posix_impl {
         {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_android_kernel() {
-                // Android seccomp SIGSYS-kills `fchmodat2(2)` instead of
-                // returning ENOSYS, and libc's `fchmodat(.., AT_SYMLINK_
-                // NOFOLLOW)` emulation (current glibc and musl) tries
-                // `fchmodat2(2)` internally first, so neither may be issued.
+                // libc's `fchmodat(.., AT_SYMLINK_NOFOLLOW)` is no escape
+                // hatch here: current glibc/musl try `fchmodat2(2)` inside it.
                 return lchmod_no_fchmodat2(path, mode);
             }
             const SYS_FCHMODAT2: libc::c_long = 452;
@@ -2906,10 +2899,9 @@ mod posix_impl {
             }
         }
     }
-    /// `lchmod` without touching `fchmodat2(2)`: `AT_SYMLINK_NOFOLLOW`
-    /// emulation via `O_PATH` + `chmod("/proc/self/fd/N")`, the same strategy
-    /// musl's fallback uses. Symlinks are rejected with EOPNOTSUPP (symlink
-    /// modes are meaningless on Linux), matching libc behavior.
+    /// `lchmod` without `fchmodat2(2)`: `O_PATH` + `chmod("/proc/self/fd/N")`,
+    /// musl's own fallback strategy. Symlinks are rejected with EOPNOTSUPP,
+    /// matching libc.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
         let fd = match open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0) {

@@ -39,9 +39,8 @@ use crate::ZStr;
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
-// Set by Android init for every process (Termux shells inherit them). Used to
-// detect an Android kernel at runtime when the `uname -r` release string
-// doesn't carry an "android" marker.
+// Set by Android init for every process; read by bun_sys's runtime Android
+// detection (`is_android_kernel`).
 new!(pub ANDROID_DATA: string, "ANDROID_DATA", {});
 new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });

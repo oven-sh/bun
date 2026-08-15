@@ -222,7 +222,13 @@ new file
     await using p = Bun.spawn({
       cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0"],
       cwd: String(root),
-      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: registry,
+        BUN_CONFIG_REGISTRY: registry,
+        NO_COLOR: undefined,
+        FORCE_COLOR: "1",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

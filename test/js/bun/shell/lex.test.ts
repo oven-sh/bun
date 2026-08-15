@@ -706,6 +706,79 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  describe("end of cmd subst", () => {
+    // Closing a `$(...)` or backtick substitution used to always push a Delimit,
+    // even after tokens that do not end a word (JSObjRef, CloseParen, `;`, or
+    // nothing at all); the parser then took that Delimit as the start of another
+    // command and failed with `expected a command or assignment but got: "CmdSubstEnd"`.
+    const BACKTICK = { raw: "`" };
+    const buffer = new Uint8Array(8);
+    const echoTo = (tail: object[]) => [
+      { Text: "echo" },
+      { Delimit: {} },
+      { CmdSubstBegin: {} },
+      { Text: "echo" },
+      { Delimit: {} },
+      { Text: "hi" },
+      { Delimit: {} },
+      ...tail,
+      { CmdSubstEnd: {} },
+      { Eof: {} },
+    ];
+
+    test("js obj redirect target", () => {
+      const expected = echoTo([{ Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }]);
+      expect(JSON.parse(lex`echo $(echo hi > ${buffer})`)).toEqual(expected);
+      expect(JSON.parse(lex`echo ${BACKTICK}echo hi > ${buffer}${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("subshell", () => {
+      const expected = [
+        { Text: "echo" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        { OpenParen: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "hi" },
+        { Delimit: {} },
+        { CloseParen: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ];
+      expect(JSON.parse(lex`echo $( (echo hi) )`)).toEqual(expected);
+      expect(JSON.parse(lex`echo ${BACKTICK}(echo hi)${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("semicolon", () => {
+      const expected = echoTo([{ Semicolon: {} }]);
+      expect(JSON.parse(lex`echo $(echo hi;)`)).toEqual(expected);
+      expect(JSON.parse(lex`echo ${BACKTICK}echo hi;${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("empty", () => {
+      const expected = [{ Text: "echo" }, { Delimit: {} }, { CmdSubstBegin: {} }, { CmdSubstEnd: {} }, { Eof: {} }];
+      expect(JSON.parse(lex`echo $()`)).toEqual(expected);
+      expect(JSON.parse(lex`echo ${BACKTICK}${BACKTICK}`)).toEqual(expected);
+    });
+
+    test("a trailing word is still delimited", () => {
+      const expected = [
+        { Text: "echo" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "FOO" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ];
+      expect(JSON.parse(lex`echo $(echo $FOO)`)).toEqual(expected);
+      expect(JSON.parse(lex`echo ${BACKTICK}echo $FOO${BACKTICK}`)).toEqual(expected);
+    });
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

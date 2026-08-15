@@ -1734,9 +1734,6 @@ static void checkExternalBufferData(const char* function, const void* data, size
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
 // calls a (data, hint) callback directly instead of routing through
 // NapiEnv::doFinalizer.
-//
-// ownsPlaceholder: `data` is our stand-in for the addon's NULL pointer (see the
-// caller), so it is freed here and the addon's callback still receives NULL.
 class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint, bool ownsPlaceholder)
@@ -1780,8 +1777,7 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    // To JSC a null data pointer means detached, and makeShared() asserts the buffer is not,
-    // so a NULL external_data (byte_length is 0 then) is stood in for by a byte of ours.
+    // A null data pointer is JSC's representation of "detached", which makeShared() asserts against.
     bool usePlaceholder = external_data == nullptr;
     const void* data = usePlaceholder ? fastMalloc(1) : external_data;
     Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint, usePlaceholder));

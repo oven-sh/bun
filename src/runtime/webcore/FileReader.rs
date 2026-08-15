@@ -21,9 +21,9 @@ use crate::webcore::streams;
 
 bun_core::declare_scope!(FileReader, visible);
 
-// `pending_view` and the `Js`/`Temporary` variants below borrow into a
-// JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
-// Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
+// `pending_view` and the `Js` variant below borrow into a JS-owned typed-array
+// buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
+// Represented as unbounded `&mut [u8]` here to keep function bodies
 // readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
@@ -102,18 +102,23 @@ impl Default for FileReader {
 
 pub type IOReader = BufferedReader;
 
+/// What the synchronous read issued by `on_pull` has produced so far. A chunk
+/// handed to `on_read_chunk` is only valid during that call (it is the
+/// reader's scratch, or a heap buffer the reader frees or reuses as soon as
+/// the call returns), so every variant owns or has already copied its bytes.
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
     None,
-    // TODO(refactor): `&'static mut` forge — sibling `static-widen-mut` pattern;
-    // see note on `FileReader::pending_view`.
-    Js(&'static mut [u8]),
-    AmountRead(usize),
-    /// Borrows the reader/JS buffer for the duration of one `on_pull` call
-    /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
-    /// `bun_ptr::Interned` Population-B triage.
-    Temporary(bun_ptr::RawSlice<u8>),
-    UseBuffered(usize),
+    /// Chunks are copied straight into the pull buffer `buffer` (`filled`
+    /// bytes so far) while they fit.
+    // `&'static mut` forge — sibling `static-widen-mut` pattern; see note on
+    // `FileReader::pending_view`.
+    Js {
+        buffer: &'static mut [u8],
+        filled: usize,
+    },
+    /// Everything read so far is in `FileReader::buffered`.
+    UseBuffered,
 }
 
 impl ReadDuringJSOnPullResult {
@@ -756,29 +761,26 @@ impl FileReader {
             // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
             // inside the closure is sound.
             self.read_inside_on_pull.with_mut(|riop| match riop {
-                ReadDuringJSOnPullResult::Js(in_progress) => {
-                    if in_progress.len() >= buf.len() && !has_more {
-                        in_progress[0..buf.len()].copy_from_slice(buf);
-                        let remaining: *mut [u8] = &raw mut in_progress[buf.len()..];
-                        // SAFETY: lifetime laundering — see the `static-widen-mut` note on `ReadDuringJSOnPullResult::Js`.
-                        let remaining = unsafe { &mut *remaining };
-                        *riop = ReadDuringJSOnPullResult::Js(remaining);
-                    } else if !in_progress.is_empty() && !has_more {
-                        // `buf` outlives the `on_pull` call that consumes this
-                        // variant; holder-lifetime, encoded as `RawSlice<u8>`.
-                        *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
-                    } else if has_more && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
-                        self.buffered.with_mut(|b| b.extend_from_slice(buf));
-                        *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
+                ReadDuringJSOnPullResult::Js { buffer, filled } => {
+                    let free = &mut buffer[*filled..];
+                    if !has_more && free.len() >= buf.len() {
+                        free[..buf.len()].copy_from_slice(buf);
+                        *filled += buf.len();
+                    } else {
+                        // `buf` dies with this call, and `on_pull` returns
+                        // either the pull buffer or `buffered`, so anything
+                        // already copied into the former moves along with it.
+                        self.buffered.with_mut(|b| {
+                            b.extend_from_slice(&buffer[..*filled]);
+                            b.extend_from_slice(buf);
+                        });
+                        *riop = ReadDuringJSOnPullResult::UseBuffered;
                     }
                 }
-                ReadDuringJSOnPullResult::UseBuffered(original) => {
-                    let original = *original;
+                ReadDuringJSOnPullResult::UseBuffered => {
                     self.buffered.with_mut(|b| b.extend_from_slice(buf));
-                    *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len() + original);
                 }
                 ReadDuringJSOnPullResult::None => unreachable!(),
-                _ => panic!("Invalid state"),
             });
         } else if self.pending.get().state == streams::PendingState::Pending {
             // Certain readers (such as pipes) may return 0-byte reads even when
@@ -942,12 +944,9 @@ impl FileReader {
         // stdout/stderr writes while the caller only awaits one of them.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && (!self.started.get()
+        let ret = !self.started.get()
             || (self.flowing.get()
-                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark));
+                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark);
         close_if_needed!();
         ret
     }
@@ -1016,8 +1015,12 @@ impl FileReader {
             }
 
             let buffer_len = buffer.len();
+            // `drain()` returned early otherwise. The `Js` arm of `on_read_chunk`
+            // copies into the pull buffer first, which would deliver ahead of
+            // anything still sitting in `buffered`.
+            debug_assert!(self.buffered.get().is_empty());
             self.read_inside_on_pull
-                .set(ReadDuringJSOnPullResult::Js(buffer));
+                .set(ReadDuringJSOnPullResult::Js { buffer, filled: 0 });
             // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
             // the raw re-entrancy-safe entry (its dispatch runs user JS).
             unsafe { IOReader::read(self.reader.get()) };
@@ -1027,45 +1030,33 @@ impl FileReader {
                 .read_inside_on_pull
                 .replace(ReadDuringJSOnPullResult::None);
             match pulled {
-                ReadDuringJSOnPullResult::Js(remaining_buf) => {
-                    let amount_read = buffer_len - remaining_buf.len();
+                ReadDuringJSOnPullResult::Js { buffer, filled } => {
+                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, filled);
 
-                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, amount_read);
-
-                    if amount_read > 0 {
+                    if filled > 0 {
                         if self.reader().is_done() {
                             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                                 value: array,
-                                len: amount_read as u64, // @truncate
+                                len: filled as u64, // @truncate
                             });
                         }
 
                         return streams::Result::IntoArray(streams::IntoArray {
                             value: array,
-                            len: amount_read as u64, // @truncate
+                            len: filled as u64, // @truncate
                         });
                     }
 
                     if self.reader().is_done() {
                         return streams::Result::Done;
                     }
-                    // fallthrough — but `buffer` was moved into read_inside_on_pull.
-                    // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
                     let global = self.parent_global();
                     self.pending_value.with_mut(|p| p.set(&global, array));
-                    self.pending_view.set(remaining_buf);
+                    self.pending_view.set(buffer);
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
                     return streams::Result::Pending(self.pending.as_ptr());
                 }
-                ReadDuringJSOnPullResult::Temporary(buf) => {
-                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
-                    if self.reader().is_done() {
-                        return streams::Result::TemporaryAndDone(buf);
-                    }
-
-                    return streams::Result::Temporary(buf);
-                }
-                ReadDuringJSOnPullResult::UseBuffered(_) => {
+                ReadDuringJSOnPullResult::UseBuffered => {
                     bun_core::scoped_log!(
                         FileReader,
                         "onPull({}) = {}",
@@ -1078,17 +1069,8 @@ impl FileReader {
                     }
                     return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
-                _ => {
-                    // Falls through to set
-                    // `pending_view = buffer`. The only variants reaching this arm
-                    // are `None` (impossible — we just stored `Js(buffer)` above and
-                    // `on_read_chunk` never sets `None`) and `AmountRead` (never
-                    // produced by `on_read_chunk`). Unreachable in the current state
-                    // machine; if that invariant ever changes, the buffer slice must
-                    // be recovered from a captured raw ptr+len before the move.
-                    unreachable!(
-                        "on_read_chunk never yields None/AmountRead while read_inside_on_pull == Js"
-                    );
+                ReadDuringJSOnPullResult::None => {
+                    unreachable!("on_read_chunk never resets read_inside_on_pull to None")
                 }
             }
         }

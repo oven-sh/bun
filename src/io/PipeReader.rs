@@ -74,6 +74,11 @@ pub trait BufferedReaderParent {
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;
 
+    /// `chunk` is valid for this call only: it is either the per-loop scratch
+    /// buffer, refilled by the next read, or a heap buffer the read loop
+    /// clears or frees as soon as this returns. Copy what must outlive the
+    /// call (in particular anything reported back from a read that the
+    /// parent itself issued synchronously, e.g. `FileReader::on_pull`).
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = (this, chunk, has_more);
         // Default: should not be called when HAS_ON_READ_CHUNK == false.

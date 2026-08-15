@@ -173,10 +173,11 @@ pub const fn url_safe_encode_len(source: &[u8]) -> usize {
     simdutf::base64::encode_len(source.len(), true)
 }
 
-// Run under `cargo miri test` (scripts/rust-miri.ts), where reaching simdutf
-// itself fails the test: these check that a too-short destination is rejected
-// before the encoder is handed a buffer it would overflow. One byte encodes to
-// 4 bytes padded and 2 bytes URL-safe; each destination is one byte short.
+// Run under `cargo miri test`, also with `--release` (scripts/rust-miri.ts), where
+// reaching simdutf itself fails the test: a too-short destination has to be
+// rejected before the encoder is handed it, by a check that is still compiled
+// in release builds. One byte encodes to 4 bytes padded and 2 bytes URL-safe;
+// each destination is one byte short.
 #[cfg(test)]
 mod tests {
     use super::*;

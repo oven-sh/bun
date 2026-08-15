@@ -580,6 +580,11 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const base64EncodeProbe = $newRustFunction("runtime/base64_testing.rs", "encodeProbe", 3) as (
+  inputLength: number,
+  destinationLength: number,
+  urlSafe: boolean,
+) => string;
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

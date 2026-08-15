@@ -37,6 +37,7 @@ pub mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub mod api;
+pub mod base64_testing;
 pub mod dispatch;
 pub mod hw_exports;
 pub mod ipc;

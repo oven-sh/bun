@@ -567,9 +567,10 @@ pub mod base64 {
         }
     }
 
-    // Run under `cargo miri test` (scripts/rust-miri.ts), where reaching the
-    // foreign call fails the test: a short buffer has to be rejected before
-    // simdutf is handed it. Exact-fit buffers are covered by every base64
+    // Run under `cargo miri test`, also with `--release` (scripts/rust-miri.ts):
+    // reaching the foreign call fails the test, so a short buffer has to be
+    // rejected before simdutf is handed it, and a `debug_assert!` would only do
+    // that in the non-release run. Exact-fit buffers are covered by every base64
     // encode in the JS suite. One input byte encodes to 4 bytes padded and 2
     // bytes URL-safe; each buffer below is one byte short.
     #[cfg(test)]

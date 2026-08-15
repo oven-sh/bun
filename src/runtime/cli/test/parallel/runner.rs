@@ -580,7 +580,9 @@ impl<'a> WorkerLoop<'a> {
             } else {
                 Global::mimalloc_cleanup(false);
             }
-            self.reporter.jest.default_timeout_override = u32::MAX;
+            self.reporter
+                .jest
+                .reset_default_timeout_override_for_next_file(vm.test_isolation_enabled);
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
                 while !junit.suite_stack.is_empty() {

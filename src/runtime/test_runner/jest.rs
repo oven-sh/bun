@@ -134,6 +134,10 @@ pub struct TestRunner<'a> {
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
     pub(crate) default_timeout_override: u32,
 
+    /// `default_timeout_override` as the `--preload` scripts left it. They evaluate once
+    /// per global, not once per file, so this is what each file starts from. maxInt(u32) means not set.
+    pub(crate) preload_default_timeout_override: u32,
+
     pub(crate) test_options: &'a TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations.
@@ -209,6 +213,15 @@ impl<'a> TestRunner<'a> {
         bun_test::vm_timer().remove(&raw mut active_file.timer);
     }
 
+    /// Drops the `setDefaultTimeout()` of the file that just finished. Under `--isolate` the
+    /// preloads' value goes too: the next file gets a fresh global and re-evaluates them
+    /// (see `BunTestRoot::reset_hook_scope_for_test_isolation`).
+    pub(crate) fn reset_default_timeout_override_for_next_file(&mut self, isolate: bool) {
+        if isolate {
+            self.preload_default_timeout_override = u32::MAX;
+        }
+        self.default_timeout_override = self.preload_default_timeout_override;
+    }
 
     pub(crate) fn should_file_run_concurrently(&self, file_id: FileId) -> bool {
         // Check if global concurrent flag is set
@@ -509,6 +522,9 @@ pub mod Jest {
 
         if let Some(test_runner) = runner() {
             test_runner.default_timeout_override = timeout_ms;
+            if global_object.bun_vm().is_in_preload {
+                test_runner.preload_default_timeout_override = timeout_ms;
+            }
         }
 
         Ok(JSValue::UNDEFINED)

@@ -2217,6 +2217,7 @@ impl TestCommand {
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
                 default_timeout_override: u32::MAX,
+                preload_default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
@@ -3117,7 +3118,9 @@ impl TestCommand {
                         if let Some(t) = reporter.timings.as_mut() {
                             t.record_since(file_name.as_bytes(), started);
                         }
-                        reporter.jest.default_timeout_override = u32::MAX;
+                        reporter
+                            .jest
+                            .reset_default_timeout_override_for_next_file(isolate);
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);

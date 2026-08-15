@@ -128,7 +128,7 @@ impl AWSSignatureCache {
             inner.cache.clear();
         }
         inner.date = numeric_day;
-        bun_core::handle_oom(inner.cache.put(key, value));
+        inner.cache.put(key, value);
     }
 }
 

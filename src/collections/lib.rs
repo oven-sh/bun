@@ -82,7 +82,7 @@ impl<T, C> PriorityQueue<T, C> {
 }
 impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
     /// Push and sift-up.
-    pub fn add(&mut self, elem: T) -> Result<(), bun_alloc::AllocError> {
+    pub fn add(&mut self, elem: T) {
         self.items.push(elem);
         let mut child = self.items.len() - 1;
         while child > 0 {
@@ -98,7 +98,6 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
                 break;
             }
         }
-        Ok(())
     }
     /// Pop min, sift-down; `None` when empty.
     pub fn remove_or_null(&mut self) -> Option<T> {

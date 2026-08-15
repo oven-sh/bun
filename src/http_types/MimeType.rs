@@ -95,7 +95,7 @@ impl Compact {
 }
 
 #[cold]
-pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
+pub fn create_hash_table() -> Map {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
     // `StringHashMap` boxes the key.
@@ -106,10 +106,10 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
             bstr::BStr::new(entry.slice()),
             <&'static str>::from(*entry),
         );
-        map.put(entry.slice(), *entry)?;
+        map.put(entry.slice(), *entry);
     }
 
-    Ok(map)
+    map
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]

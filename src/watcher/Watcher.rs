@@ -712,13 +712,8 @@ impl Watcher {
                 }
             }
         }
-        // Abort on OOM:
-        // `MultiArrayList::ensure_unused_capacity` returns `Err(AllocError)` on
-        // allocation failure (does NOT abort), so discarding it would let the
-        // following `append_assume_capacity` write past capacity.
         self.watchlist
-            .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
-            .unwrap_or_else(|_| bun_core::out_of_memory());
+            .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()));
 
         if autowatch_parent_dir {
             parent_watch_item = Some(match parent_watch_item {
@@ -796,9 +791,7 @@ impl Watcher {
         if let Some(idx) = self.index_of(hash) {
             return Ok(idx as WatchItemIndex);
         }
-        self.watchlist
-            .ensure_unused_capacity(1)
-            .unwrap_or_else(|_| bun_core::out_of_memory());
+        self.watchlist.ensure_unused_capacity(1);
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
     }
 

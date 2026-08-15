@@ -590,7 +590,7 @@ pub mod semver_string {
             }
 
             let hash = Builder::string_hash(str);
-            let entry = self.pool.get_or_put(hash)?;
+            let entry = self.pool.get_or_put(hash);
             if entry.found_existing {
                 return Ok(*entry.value_ptr);
             }
@@ -606,7 +606,7 @@ pub mod semver_string {
                 return Ok(String::init_inline(str));
             }
 
-            let entry = self.pool.get_or_put(hash)?;
+            let entry = self.pool.get_or_put(hash);
             if entry.found_existing {
                 return Ok(*entry.value_ptr);
             }
@@ -627,7 +627,7 @@ pub mod semver_string {
                 });
             }
 
-            let entry = self.pool.get_or_put(hash)?;
+            let entry = self.pool.get_or_put(hash);
             if entry.found_existing {
                 return Ok(ExternalString {
                     value: *entry.value_ptr,
@@ -652,7 +652,7 @@ pub mod semver_string {
                 });
             }
 
-            let entry = self.pool.get_or_put(hash)?;
+            let entry = self.pool.get_or_put(hash);
             if entry.found_existing {
                 return Ok(ExternalString {
                     value: *entry.value_ptr,
@@ -848,12 +848,12 @@ pub mod semver_string {
         pub value_ptr: &'a mut String,
     }
     impl StringPool {
-        pub fn get_or_put(&mut self, hash: u64) -> Result<StringPoolEntry<'_>, AllocError> {
-            let gpe = self.map.get_or_put(hash)?;
-            Ok(StringPoolEntry {
+        pub fn get_or_put(&mut self, hash: u64) -> StringPoolEntry<'_> {
+            let gpe = self.map.get_or_put(hash);
+            StringPoolEntry {
                 found_existing: gpe.found_existing,
                 value_ptr: gpe.value_ptr,
-            })
+            }
         }
         #[inline]
         pub fn contains(&self, hash: u64) -> bool {
@@ -867,8 +867,8 @@ pub mod semver_string {
         /// Pre-reserve so `n` entries
         /// fit without rehash.
         #[inline]
-        pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
-            self.map.ensure_total_capacity(n)
+        pub fn ensure_total_capacity(&mut self, n: usize) {
+            self.map.ensure_total_capacity(n);
         }
     }
 
@@ -1004,7 +1004,7 @@ pub mod semver_string {
             // &mut self.ptr; capture scalars first, then re-borrow.
             let start = self.len;
             let cap = self.cap;
-            let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
+            let string_entry = self.string_pool.get_or_put(hash);
             if string_entry.found_existing {
                 let allocated = &self.ptr.as_ref().unwrap()[0..cap];
                 if !strings::eql(string_entry.value_ptr.slice(allocated), slice_) {

@@ -20,6 +20,7 @@
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+#![feature(alloc_error_hook)]
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
@@ -1731,6 +1732,16 @@ mod draft {
         // this hook, a bare `panic!` would print the std
         // default hook + unwind with no trace string and no upload.
         std::panic::set_hook(Box::new(rust_panic_hook));
+        // A failed infallible allocation (`Vec::push`, `Box::new`, hashbrown
+        // growth, anything reaching `handle_alloc_error`) is an out-of-memory
+        // condition, not a bug. Without this hook std prints "memory allocation
+        // of N bytes failed" and calls `abort()`, which the SIGABRT handler
+        // above then reports as an ordinary crash.
+        std::alloc::set_alloc_error_hook(rust_alloc_error_hook);
+    }
+
+    fn rust_alloc_error_hook(_layout: core::alloc::Layout) {
+        super::out_of_memory()
     }
 
     /// `std::panic` hook: emit the same trace-string + auto-report as the fatal

@@ -224,13 +224,9 @@ pub struct Headers {
 }
 
 impl Clone for Headers {
-    // The only fallible calls are allocations — abort on OOM.
     fn clone(&self) -> Headers {
         Headers {
-            entries: self
-                .entries
-                .clone()
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            entries: self.entries.clone(),
             buf: self.buf.clone(),
         }
     }
@@ -253,7 +249,6 @@ impl Headers {
         None
     }
 
-    // The only fallible calls are allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
         let mut offset: u32 = u32::try_from(self.buf.len()).unwrap();
         self.buf.reserve(name.len() + value.len());
@@ -269,12 +264,10 @@ impl Headers {
             offset,
             length: u32::try_from(value.len()).unwrap(),
         };
-        self.entries
-            .append(HeaderEntry {
-                name: name_ptr,
-                value: value_ptr,
-            })
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        self.entries.append(HeaderEntry {
+            name: name_ptr,
+            value: value_ptr,
+        });
     }
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {

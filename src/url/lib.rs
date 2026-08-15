@@ -586,6 +586,11 @@ impl<'a> URL<'a> {
                 offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
                 offset += url.parse_host(&base[offset as usize..]).unwrap_or(0);
             }
+            // Bare bracketed IPv6 host, e.g. the `[::1]:4873/` left of an .npmrc
+            // `//[::1]:4873/:_authToken` key once its `//` is stripped.
+            b'[' => {
+                offset += url.parse_host(base).unwrap_or(0);
+            }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
                 let is_protocol_relative = base.len() > 1 && base[1] == b'/';
                 if is_protocol_relative {

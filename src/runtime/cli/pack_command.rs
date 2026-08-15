@@ -1519,8 +1519,6 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     Ok(bins)
 }
 
-/// A `bin` (`File`) or `directories.bin` (`Dir`) value as the subpath the tree
-/// walks compare against, or `None` when there is nothing to pack from it.
 pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let normalized: &'a [u8] =
         resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, buf);

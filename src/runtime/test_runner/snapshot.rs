@@ -33,6 +33,10 @@ pub struct Snapshots {
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     values: HashMap<u64, Box<[u8]>>,
+    /// Test name -> number of snapshot matchers (file or inline) that test has run so far;
+    /// numbers the `.snap` keys. Scoped to the test file being run, not to `_current_file`:
+    /// inline snapshots bump it before the file's `.snap` is opened, and a file that only
+    /// uses inline snapshots never opens one.
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
@@ -109,12 +113,10 @@ pub struct File {
 }
 
 impl Snapshots {
-    /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
-    /// `writeSnapshotFile` tears them down on file switch.
+    /// Called when a test file starts running (including each `--rerun-each` pass) and
+    /// when a test is retried, so every run of a file numbers its snapshots from 1.
     pub(crate) fn reset_counts(&mut self) {
-        for v in self.counts.values_mut() {
-            *v = 0;
-        }
+        self.counts.clear();
     }
 
     pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
@@ -354,8 +356,6 @@ impl Snapshots {
             self.file_buf.shrink_to_fit();
 
             self.values.clear();
-
-            self.counts.clear();
         }
         Ok(())
     }

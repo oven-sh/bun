@@ -139,10 +139,8 @@ impl<'a> Entry<'a> {
         version.starts_with(b"npm:")
     }
 
-    /// Whether a registry package is behind this entry: one of its `name@<range>` specs asked a
-    /// registry for it by version range or dist-tag. `link:`, path, tarball and git specs get a
-    /// `version` line too, but no registry package. An `npm:` alias has one, but the migrator
-    /// names it from the entry's tarball URL, so an alias entry is not migratable without that.
+    /// One of the entry's `name@<range>` specs asked a registry for it (`link:` and path entries
+    /// have a `version` line too). Alias entries are only named from their tarball URL.
     pub(crate) fn is_registry_entry(&self) -> bool {
         let mut asked_by_range = false;
         for spec in &self.specs {
@@ -1078,9 +1076,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                // An empty url fetches name@version from the registry configured when the
-                // lockfile is loaded: all yarn recorded for an entry without a `resolved`
-                // line, and all bun.lock keeps of a default-registry URL anyway.
+                // An empty url is fetched by name@version from the configured registry.
                 let is_default_registry = |resolved: &[u8]| {
                     resolved.starts_with(b"https://registry.yarnpkg.com/")
                         || resolved.starts_with(b"https://registry.npmjs.org/")

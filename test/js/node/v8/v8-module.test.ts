@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
-import { GCProfiler, getHeapSpaceStatistics, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
+import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
 import vm from "node:vm";
 
 describe("v8.getHeapStatistics", () => {

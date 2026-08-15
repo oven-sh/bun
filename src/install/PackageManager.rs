@@ -2230,8 +2230,7 @@ pub fn init(
             }
         }
 
-        // Lowest to highest precedence: this default, BUN_CONFIG_MAX_HTTP_REQUESTS
-        // (`async_http::load_env`, called from `options.load`), --network-concurrency.
+        // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
             if env.has_http_proxy() {
                 DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES

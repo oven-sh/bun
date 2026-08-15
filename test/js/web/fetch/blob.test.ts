@@ -702,8 +702,10 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
     const windows: [start: number, end: number][] = [
       [0, 5], // inside the first read
       [3, 7],
+      [0, 256 * 1024], // exactly the first pull's buffer: the window ends on a read that fills it
       [100, 700_000], // several pulls; the last one has to be cut short
       [size - 10, size], // ends at EOF
+      [size - 10, size + 100], // the file ends first (the slice is taken before the size is known)
       [4096, 4096], // nothing to deliver at all
     ];
 
@@ -713,35 +715,35 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
       return Buffer.concat(chunks);
     }
 
+    // `subarray` clamps at EOF like the stream has to.
+    function expectWindow(delivered: Buffer, start: number, end: number) {
+      const expected = data.subarray(start, end);
+      expect(delivered.length).toBe(expected.length);
+      expect(delivered).toEqual(expected);
+    }
+
     test.each(windows)("Bun.file(path).slice(%d, %d).stream()", async (start, end) => {
       using dir = tempDir("blob-file-slice-stream", { "data.bin": data });
-      const streamed = await collect(Bun.file(`${dir}/data.bin`).slice(start, end).stream());
-      expect(streamed.length).toBe(end - start);
-      expect(streamed).toEqual(data.subarray(start, end));
+      expectWindow(await collect(Bun.file(`${dir}/data.bin`).slice(start, end).stream()), start, end);
     });
 
     // Buffered consumers size their pulls from the slice and need the stream to
     // close once it is delivered (#18192, #31675).
     test.each(windows)("Bun.file(path).slice(%d, %d).stream().bytes()", async (start, end) => {
       using dir = tempDir("blob-file-slice-bytes", { "data.bin": data });
-      const bytes = Buffer.from(await Bun.file(`${dir}/data.bin`).slice(start, end).stream().bytes());
-      expect(bytes.length).toBe(end - start);
-      expect(bytes).toEqual(data.subarray(start, end));
+      const bytes = await Bun.file(`${dir}/data.bin`).slice(start, end).stream().bytes();
+      expectWindow(Buffer.from(bytes), start, end);
     });
 
     test.each(windows)("new Response(Bun.file(path).slice(%d, %d)).body", async (start, end) => {
       using dir = tempDir("blob-file-slice-body", { "data.bin": data });
-      const streamed = await collect(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)).body!);
-      expect(streamed.length).toBe(end - start);
-      expect(streamed).toEqual(data.subarray(start, end));
+      expectWindow(await collect(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)).body!), start, end);
     });
 
     test.each(windows)("HTMLRewriter.transform(new Response(Bun.file(path).slice(%d, %d)))", async (start, end) => {
       using dir = tempDir("blob-file-slice-rewriter", { "data.bin": data });
       const response = new HTMLRewriter().transform(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)));
-      const rewritten = Buffer.from(await response.arrayBuffer());
-      expect(rewritten.length).toBe(end - start);
-      expect(rewritten).toEqual(data.subarray(start, end));
+      expectWindow(Buffer.from(await response.arrayBuffer()), start, end);
     });
 
     // Reading .size gives the unsliced file's stream a window that ends exactly
@@ -750,9 +752,7 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
       using dir = tempDir("blob-file-resolved-size-stream", { "data.bin": data });
       const file = Bun.file(`${dir}/data.bin`);
       expect(file.size).toBe(size);
-      const streamed = await collect(file.stream());
-      expect(streamed.length).toBe(size);
-      expect(streamed).toEqual(data);
+      expectWindow(await collect(file.stream()), 0, size);
     });
   });
 });

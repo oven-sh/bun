@@ -78,6 +78,12 @@ impl PackageManifestMap {
     /// another), the extended response must win regardless of which one
     /// arrives last, otherwise the dependencies waiting for the extended one
     /// would never resolve.
+    ///
+    /// This only decides what this install resolves from. A fetched document
+    /// is written to the disk cache by the task that parsed it, before it gets
+    /// here, so when both were fetched the disk ends up with whichever save
+    /// finished last; if that was the abbreviated one, the next resolve that
+    /// needs the extended document fetches it again, nothing else depends on it.
     pub(crate) fn insert(
         &mut self,
         name_hash: PackageNameHash,

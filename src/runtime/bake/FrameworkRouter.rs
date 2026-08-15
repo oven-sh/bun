@@ -1717,6 +1717,7 @@ impl FrameworkRouter {
 
                         arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                     }
+                    bun_resolver::fs::EntryKind::Dangling => {}
                 }
             }
         }

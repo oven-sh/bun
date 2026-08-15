@@ -565,6 +565,13 @@ interface FetchEvent extends Event {
 }
 
 interface EventMap {
+  /**
+   * Dispatched on a `Worker`'s own global scope for an uncaught exception or
+   * unhandled rejection in that worker, before the parent's `Worker` object
+   * receives it. `error` is the thrown value, `message` its formatted text.
+   * Bun does not dispatch this on the main thread's global scope.
+   */
+  error: ErrorEvent;
   fetch: FetchEvent;
   message: MessageEvent;
   messageerror: MessageEvent;

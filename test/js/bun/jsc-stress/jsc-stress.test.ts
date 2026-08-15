@@ -121,6 +121,9 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Behavior Bun's WebKit keeps after upstream removed it (oven-sh/WebKit#446):
+  // cyclic arrays convert to strings the way V8 does, in every tier.
+  "string-conversion-recursion.js",
 ];
 
 const wasmFixtures = [

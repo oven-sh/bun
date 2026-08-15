@@ -622,10 +622,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 ));
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
                 let mut sorted_dependencies: Vec<DependencyID> =
-                    Vec::with_capacity(root_deps.len as usize);
-                for i in 0..root_deps.len {
-                    sorted_dependencies.push(DependencyID::new(root_deps.off + i));
-                }
+                    root_deps.dependency_ids().collect();
                 let by_name = ByName {
                     dependencies,
                     buf: string_bytes,

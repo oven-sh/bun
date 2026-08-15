@@ -78,7 +78,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
+    RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -154,7 +154,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
+            RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script)));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }

@@ -598,7 +598,7 @@ export default function IndexPage() {
   // BUN_JSC_validateExceptionChecks=1 aborts the child on the first JSC call whose
   // exception state goes unchecked. Debug and ASAN builds enforce it; release builds
   // ignore the option, so there these only check that the build succeeds.
-  describe("exception checks", () => {
+  describe.concurrent("exception checks", () => {
     async function buildApp(cwd: string, ...args: string[]) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--app", ...args],
@@ -614,7 +614,7 @@ export default function IndexPage() {
         .split("\n")
         .map(line => line.trim())
         .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
-      return { stdout, exitCode, signalCode: proc.signalCode, uncheckedScopes };
+      return { stdout, stderr, exitCode, signalCode: proc.signalCode, uncheckedScopes };
     }
 
     test("loading the config file", async () => {
@@ -685,6 +685,41 @@ export function getStaticPaths() {
       expect(rendered[0]).toContain("<p>Hello from the client</p>");
       expect(rendered[1]).toContain("<h1>Post first</h1>");
       expect(rendered[2]).toContain("<h1>Post second</h1>");
+    });
+
+    test("a config import that fails to resolve", async () => {
+      // Resolving the config's imports goes through Bake::GlobalObject's resolve hook; a
+      // specifier it cannot resolve falls through to the regular resolver, which throws.
+      using dir = tempDir("bake-production-validate-unresolved", {
+        "bun.app.ts": `import "./does-not-exist";
+          export default { app: { framework: "react" } };`,
+      });
+
+      const { stderr, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
+      expect({ exitCode, signalCode, uncheckedScopes }).toEqual({ exitCode: 1, signalCode: null, uncheckedScopes: [] });
+      expect(stderr).toContain("Cannot find module './does-not-exist'");
+    });
+
+    test("a route importing a file outside the bundle while rendering", async () => {
+      // import() of a path the bundler never saw is resolved to a "bake:/" key that is not
+      // in the output map, so the fetch hook hands it to the regular loader to read from disk.
+      const dir = await tempDirWithBakeDeps("bake-production-validate-disk-import", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "extra/banner.mjs": `export const banner = "read from disk while rendering";`,
+        "pages/index.tsx": `import { join } from "node:path";
+
+export default async function IndexPage() {
+  // A computed specifier, so the bundler leaves this import() for the runtime.
+  const { banner } = await import(join(import.meta.dir, "../extra/banner.mjs"));
+  return <p>{banner}</p>;
+}`,
+      });
+
+      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
+      expect({ exitCode, signalCode, uncheckedScopes }).toEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+        "<p>read from disk while rendering</p>",
+      );
     });
   });
 });

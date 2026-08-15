@@ -31,7 +31,7 @@ use crate::linker_context::prepare_css_asts_for_chunk::{
 };
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
+use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange, PostProcessChunkCtx};
 
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
@@ -129,8 +129,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     {
-        let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
-
         {
             let mut total_count: usize = 0;
             for chunk in chunks.iter_mut() {
@@ -166,12 +164,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
-            chunk_contexts.extend(chunks.iter().map(|chunk| GenerateChunkCtx {
-                c: c_ref,
-                chunks: chunks_ref,
-                chunk: bun_ptr::BackRef::new(chunk),
-            }));
-            debug_assert_eq!(chunks.len(), chunk_contexts.len());
+            // Pointed into by the `PendingPartRange`s below; outlives `group.wait()`.
+            let chunk_contexts: Vec<GenerateChunkCtx> = chunks
+                .iter()
+                .map(|chunk| GenerateChunkCtx {
+                    c: c_ref,
+                    chunks: chunks_ref,
+                    chunk: bun_ptr::BackRef::new(chunk),
+                })
+                .collect();
 
             debug!(" START {} compiling part ranges", total_count);
             // Pre-reserved to `total_count` so pushes never reallocate; the
@@ -316,6 +317,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
 
+        // Cross-chunk imports index the whole chunk list, whichever chunks get
+        // post-processed below.
+        let chunk_unique_keys: Vec<&'static [u8]> =
+            chunks.iter().map(|chunk| chunk.unique_key).collect();
         // For dev server, only post-process CSS + HTML chunks.
         let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
             &mut chunks[1..]
@@ -326,13 +331,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            c.worker_pool().each_ptr(
-                chunk_contexts[0],
-                LinkerContext::generate_chunk,
-                chunks_to_do,
-            );
+            c.initialize_pretty_paths_for_isolated_hashes(chunks_to_do)?;
+            let ctx = PostProcessChunkCtx {
+                c: &*c,
+                chunk_unique_keys: &chunk_unique_keys,
+            };
+            c.worker_pool()
+                .each_ptr(ctx, LinkerContext::generate_chunk, chunks_to_do);
 
             debug!("  DONE {} postprocess chunks", chunks_to_do.len());
         }

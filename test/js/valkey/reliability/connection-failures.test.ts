@@ -788,11 +788,10 @@ describe("Valkey: Recovering After fail()", () => {
     async () => {
       using dir = tempDir("valkey-unix", {});
       const socketPath = path.join(String(dir), "r.sock");
-      // Connection 1 is dropped by the server after PING, which schedules a retry
-      // 50ms later; the listener is gone by then, so that retry fails outright.
+      // Connection 1 is dropped by the server instead of answering PING.
       const first = helloServer({
         PING: (_connection, socket) => {
-          socket.end("+PONG\r\n");
+          socket.end();
           return null;
         },
       });
@@ -801,35 +800,49 @@ describe("Valkey: Recovering After fail()", () => {
       const second = helloServer({ HELLO: () => null });
       await first.listenUnix(socketPath);
       const client = new RedisClient(`redis+unix://${socketPath}`);
-      let fromTimer: Promise<unknown> | undefined;
+      // Settled by the connect() made in the window; the handler is attached
+      // right away so that a failure elsewhere is not reported as its rejection.
+      const fromTimer = Promise.withResolvers<string>();
       try {
         await client.connect();
-        expect(await client.ping()).toBe("PONG");
-        await first.close();
-        while (client.connected) await Bun.sleep(1);
-        // The retry is armed now, due before a timer armed here with the same
-        // delay. Blocking past both makes the loop fire them in one pass: the
-        // retry fails outright, then this callback runs in the window before
-        // the deferred close, brings the listener back and calls connect().
-        const ran = Promise.withResolvers<void>();
+        // Stops accepting at once while connection 1 stays up, so the retry
+        // scheduled when it drops fails outright.
+        void first.close();
+        const ping = await client.ping().then(
+          () => "answered",
+          (err: Error & { code: string }) => err.code,
+        );
+        expect(ping).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        // The close that rejected the PING also armed the retry, 50ms out, and
+        // this continuation runs in its microtask checkpoint, before the loop
+        // turns again. Blocking past the retry and the timer armed here makes
+        // the loop fire both in one pass, in due order: the retry fails
+        // outright, then the callback runs in the window before the deferred
+        // close, brings the listener back and calls connect().
         setTimeout(() => {
           void second.listenUnix(socketPath);
-          fromTimer = client.connect();
-          ran.resolve();
-        }, 50);
-        Bun.sleepSync(120);
-        await ran.promise;
+          fromTimer.resolve(
+            client.connect().then(
+              () => "connected",
+              (err: Error & { code: string }) => err.code,
+            ),
+          );
+        }, 150);
+        Bun.sleepSync(250);
+        // The deferred close schedules the next retry, which is what connects.
         while (second.connections === 0) await Bun.sleep(1);
-        // A second dial would arrive within the next retry delay (50ms); this
-        // is the bound on asserting that it never comes.
+        // Had the callback's connect() dialled on top, the deferred close would
+        // still have scheduled its retry, so a second connection would follow
+        // within one retry delay (at most 100ms at this point); this is the
+        // bound on asserting that it never comes.
         await Bun.sleep(250);
         expect(second.connections).toBe(1);
         second.sockets[0].write("+OK\r\n");
-        await fromTimer;
-        expect({ connected: client.connected, connections: second.connections }).toEqual({
-          connected: true,
-          connections: 1,
-        });
+        expect({
+          fromTimer: await fromTimer.promise,
+          connected: client.connected,
+          connections: second.connections,
+        }).toEqual({ fromTimer: "connected", connected: true, connections: 1 });
       } finally {
         client.close();
         await first.close();

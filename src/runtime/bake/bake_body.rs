@@ -227,10 +227,7 @@ impl UserOptions {
     }
 }
 
-/// `app.root` defaults to, and a user supplied value is resolved against, the
-/// directory `Framework::resolve` resolves the framework's own paths against.
-/// DevServer strips the result off absolute file paths, so it never ends in a
-/// separator.
+/// Absolute, no trailing separator, resolved against the same directory as `Framework::resolve`.
 fn resolve_root(
     user_root: Option<ZigStringSlice>,
     global: &JSGlobalObject,

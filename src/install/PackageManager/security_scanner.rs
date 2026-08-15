@@ -36,7 +36,6 @@ use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 
 /// Signal name for a raw signal byte.
@@ -91,12 +90,7 @@ fn do_partial_install_of_security_scanner(
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
-    original_cwd: &[u8],
 ) -> Result<(), Error> {
-    let (workspace_filters, install_root_dependencies) =
-        InstallWithManager::get_workspace_filters(manager, original_cwd)?;
-    // `defer manager.allocator.free(workspace_filters)` — workspace_filters is now owned, drops at scope exit.
-
     if !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(());
     }
@@ -114,8 +108,8 @@ fn do_partial_install_of_security_scanner(
             HoistedInstall::install_hoisted_packages(
                 manager,
                 ctx,
-                &workspace_filters,
-                install_root_dependencies,
+                &[],
+                true,
                 log_level,
                 packages_to_install,
             )?
@@ -124,8 +118,8 @@ fn do_partial_install_of_security_scanner(
             IsolatedInstall::install_isolated_packages(
                 manager,
                 ctx,
-                install_root_dependencies,
-                &workspace_filters,
+                true,
+                &[],
                 packages_to_install,
             )?
         }
@@ -223,6 +217,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    seeds: &[PackageID],
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
@@ -232,14 +227,13 @@ pub(crate) fn perform_security_scan_after_resolution(
         return Ok(None);
     }
 
-    // For remove/uninstall, scan all remaining packages after removal
-    // For other commands, scan all if no update requests, otherwise scan update packages
     let scan_all =
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
     let result = attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
     )?;
@@ -249,19 +243,14 @@ pub(crate) fn perform_security_scan_after_resolution(
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
+            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
                 security_scanner,
                 scan_all,
+                seeds,
                 command_ctx,
                 original_cwd,
                 true,
@@ -283,25 +272,27 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(
+        manager,
+        security_scanner,
+        true,
+        &[],
+        command_ctx,
+        original_cwd,
+    )?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
+            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
                 security_scanner,
                 true,
+                &[],
                 command_ctx,
                 original_cwd,
                 true,
@@ -622,6 +613,46 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
+    fn collect_seeded_packages(&mut self, seeds: &[PackageID]) -> Result<(), Error> {
+        if seeds.is_empty() {
+            return Ok(());
+        }
+
+        let pkgs = self.manager.lockfile.packages.slice();
+        let pkg_dependencies = pkgs.items_dependencies();
+        let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
+
+        let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
+        for &seed in seeds {
+            if (seed as usize) < pkgs.len() {
+                wanted.set(seed as usize);
+            }
+        }
+
+        for (parent_idx, deps) in pkg_dependencies.iter().enumerate() {
+            let parent: PackageID = PackageID::try_from(parent_idx).expect("int cast");
+            for _dep_id in deps.begin()..deps.end() {
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+                let target = resolutions[dep_id as usize];
+                if target == invalid_package_id || !wanted.is_set(target as usize) {
+                    continue;
+                }
+                if self.dedupe.get_or_put(target)?.found_existing {
+                    continue;
+                }
+
+                self.queue.push_back(QueueItem {
+                    pkg_id: target,
+                    dep_id,
+                    pkg_path: vec![parent, target],
+                    dep_path: vec![dep_id],
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
@@ -767,6 +798,7 @@ fn attempt_security_scan(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<ScanAttemptResult, Error> {
@@ -774,6 +806,7 @@ fn attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
         false,
@@ -784,6 +817,7 @@ fn attempt_security_scan_with_retry(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
     is_retry: bool,
@@ -823,6 +857,7 @@ fn attempt_security_scan_with_retry(
         collector.collect_all_packages()?;
     } else {
         collector.collect_update_packages()?;
+        collector.collect_seeded_packages(seeds)?;
     }
 
     collector.process_queue()?;

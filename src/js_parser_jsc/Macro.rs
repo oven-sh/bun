@@ -520,7 +520,6 @@ impl From<MacroError> for Error {
             MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
             MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
-            MacroError::Js(JsError::Terminated) => crate::Error::JSTerminated,
             MacroError::Js(JsError::Thrown) => crate::Error::JSError,
         }
     }
@@ -838,9 +837,10 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
-                if vm.as_mut().wait_for_promise(promise).is_err() {
-                    return Err(MacroError::Js(JsError::Terminated));
-                }
+                // The VM stopped before the macro's promise settled: throw its termination and unwind.
+                vm.as_mut()
+                    .wait_for_promise(promise)
+                    .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
 
                 let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;

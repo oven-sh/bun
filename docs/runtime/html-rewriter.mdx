@@ -127,10 +127,14 @@ rewriter.on("div", {
 ```
 
 `transform(response)` returns immediately; the rewrite continues in the
-background and you read the result off the returned `Response`. Because the
-rewrite outlives `transform()`, an error thrown by an async handler (or a
-Promise it returns that rejects) rejects the response body instead of throwing
-from `transform()`:
+background and you read the result off the returned `Response`. Reading it
+paces the rewrite: a streamed input (a file, a `fetch()` response, a
+`ReadableStream`) is pulled through only as fast as the returned body is
+consumed, so a slow reader does not accumulate the whole document in memory. If
+nothing reads the body, the rewrite still runs every handler to the end of the
+document and buffers the output until it is read. Because the rewrite outlives
+`transform()`, an error thrown by an async handler (or a Promise it returns that
+rejects) rejects the response body instead of throwing from `transform()`:
 
 ```ts
 try {

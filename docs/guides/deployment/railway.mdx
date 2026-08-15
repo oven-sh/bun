@@ -23,7 +23,7 @@ You can either follow this guide step-by-step or deploy the pre-configured templ
 **Prerequisites**:
 
 - A Bun application ready for deployment
-- A [Railway account](https://railway.app/)
+- A [Railway account](https://railway.com/)
 - Railway CLI (for CLI deployment method)
 - A GitHub account (for Dashboard deployment method)
 
@@ -84,7 +84,7 @@ railway domain
 </Step>
 </Steps>
 
-Your app is now live. Railway auto-deploys on every GitHub push.
+Your app is now live. `railway up` deploys your local directory rather than a GitHub repository; to have Railway auto-deploy on every GitHub push, connect the service to your repository with `railway service source connect --repo <owner>/<repo> --branch <branch>`.
 
 ---
 
@@ -127,11 +127,11 @@ Your app is now live. Railway auto-deploys on every GitHub push.
 
 ## Configuration (Optional)
 
-By default, Railway uses [Nixpacks](https://docs.railway.com/guides/build-configuration#nixpacks-options) to automatically detect and build your Bun application with zero configuration.
+By default, Railway uses [Railpack](https://docs.railway.com/builds/railpack) to automatically detect and build your Bun application with zero configuration.
 
-However, the [Railpack](https://docs.railway.com/guides/build-configuration#railpack) application builder has better Bun support and always supports the latest version of Bun. The pre-configured templates use Railpack by default.
+Railpack detects Bun from your `bun.lock` and installs the latest version of Bun unless you pin one with the `engines.bun` or `packageManager` field in `package.json`. Railway's previous builder, [Nixpacks](https://github.com/railwayapp/nixpacks), is in maintenance mode.
 
-To enable Railpack in a custom project, add the following to your `railway.json`:
+If your service still builds with Nixpacks, switch it to Railpack by adding the following to your `railway.json`:
 
 ```json railway.json icon="file-json"
 {
@@ -142,4 +142,4 @@ To enable Railpack in a custom project, add the following to your `railway.json`
 }
 ```
 
-For more build configuration settings, see the [Railway documentation](https://docs.railway.com/guides/build-configuration).
+For more build configuration settings, see the [Railway documentation](https://docs.railway.com/builds/build-configuration).

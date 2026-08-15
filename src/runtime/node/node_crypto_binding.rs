@@ -5,7 +5,6 @@ use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
@@ -127,13 +126,12 @@ macro_rules! extern_crypto_job {
 
                 fn run(
                     this: &mut Self,
-                    vm: &Borrow,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
-                    // SAFETY: the creating global, alive under the borrow; C++
+                    // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
-                        this.global.under_borrow(vm)
+                        this.global.under_ticket(done.ticket())
                     });
                     Some(done)
                 }
@@ -147,17 +145,13 @@ macro_rules! extern_crypto_job {
                     // `runFromJS` never sees the callback, so it cannot run user
                     // JS; free the ctx first, then invoke.
                     drop(this);
-                    match produced {
-                        Ok(()) => {
-                            global.bun_vm().event_loop_mut().run_callback(
-                                callback.get(),
-                                global,
-                                JSValue::UNDEFINED,
-                                args.as_slice(),
-                            );
-                        }
-                        Err(err) => global.report_active_exception_as_unhandled(err),
-                    }
+                    produced?;
+                    global.bun_vm().event_loop_mut().run_callback(
+                        callback.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        args.as_slice(),
+                    );
                     Ok(())
                 }
             }
@@ -210,8 +204,8 @@ pub mod random {
     /// `crypto.randomFill` / `randomBytes` off the JS thread.
     enum RandomFillJob {
         /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
-        /// can observe it yet, so fill its bytes directly (under the VM borrow
-        /// that keeps it alive).
+        /// can observe it yet, so fill its bytes directly (under the job's ticket,
+        /// which keeps its VM alive).
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
         /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
@@ -237,18 +231,17 @@ pub mod random {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             match this {
                 RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                    // the borrow keeps the VM (and so that buffer) alive; `length` is
+                    // the ticket keeps the VM (and so that buffer) alive; `length` is
                     // the buffer's own allocation size.
                     let slice = unsafe {
                         core::slice::from_raw_parts_mut(
-                            core::ptr::from_mut(bytes.under_borrow(vm)),
+                            core::ptr::from_mut(bytes.under_ticket(done.ticket())),
                             *length,
                         )
                     };
@@ -1045,7 +1038,7 @@ mod _impl {
     }
 
     /// `crypto.scrypt` off the JS thread: derives straight into the result
-    /// ArrayBuffer's bytes under the VM borrow that keeps them alive.
+    /// ArrayBuffer's bytes under the job's ticket, which keeps their VM alive.
     pub(crate) struct ScryptJob {
         params: bun_jsc::ThreadSafe<Scrypt>,
         result: JsPtr<[u8]>,
@@ -1064,11 +1057,10 @@ mod _impl {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
-            let key = unsafe { this.result.under_borrow(vm) };
+            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the ticket.
+            let key = unsafe { this.result.under_ticket(done.ticket()) };
             this.err = this.params.run_task_impl(key);
             Some(done)
         }

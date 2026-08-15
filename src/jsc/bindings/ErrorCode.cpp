@@ -206,17 +206,26 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     }
 
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
-    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+
+    // Convert the message and `cause` here rather than in ErrorInstance::create(JSGlobalObject*, ...),
+    // which hands back nullptr when that conversion is interrupted: every caller throws or rejects with
+    // what we return, so an object is always made. Whatever interrupted the conversion is dealt with
+    // below.
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    JSValue cause;
+    if (options.isObject() && !scope.exception())
+        cause = asObject(options)->getIfPropertyExists(globalObject, vm.propertyNames->cause);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return created_error;
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return uncheckedDowncast<JSObject>(thrown_exception->value());
+        // A stopped worker's TerminationException stays pending for the caller's frame to report; the
+        // (message-less) error is still made. Anything else thrown while building the message (an
+        // OOM resolving a rope, a throwing `cause` getter) becomes the error, as before.
+        if (!vm.isTerminationException(thrown_exception)) {
+            (void)scope.tryClearException();
+            if (auto* object = thrown_exception->value().getObject())
+                return object;
+        }
     }
-    return created_error;
+    return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -240,7 +249,11 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
-    return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    if (scope.exception() && !vm.hasPendingTerminationException())
+        (void)scope.tryClearException();
+    return JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)

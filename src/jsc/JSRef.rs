@@ -205,6 +205,10 @@ impl JsRef {
         }
     }
 
+    pub fn is_finalized(&self) -> bool {
+        matches!(self, JsRef::Finalized)
+    }
+
     pub fn is_not_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),

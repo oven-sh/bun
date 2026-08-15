@@ -51,7 +51,7 @@ afterEach(() => {
 
 ---
 
-Next, add these preload scripts to your `bunfig.toml`. You can also put everything in a single `preload.ts` script.
+Next, add these preload scripts to your `bunfig.toml`. If you combine them into a single preload script, load the `@testing-library/*` packages with `await import()` after `GlobalRegistrator.register()`; a static `import` is evaluated before `register()` runs, and `screen` queries then throw.
 
 ```toml bunfig.toml icon="settings"
 [test]
@@ -67,8 +67,8 @@ import { TestingLibraryMatchers } from "@testing-library/jest-dom/matchers";
 import { Matchers, AsymmetricMatchers } from "bun:test";
 
 declare module "bun:test" {
-  interface Matchers<T> extends TestingLibraryMatchers<typeof expect.stringContaining, T> {}
-  interface AsymmetricMatchers extends TestingLibraryMatchers {}
+  interface Matchers<T> extends TestingLibraryMatchers<typeof expect.stringContaining, void> {}
+  interface AsymmetricMatchers extends TestingLibraryMatchers<any, any> {}
 }
 ```
 
@@ -82,7 +82,7 @@ import { screen, render } from "@testing-library/react";
 import { MyComponent } from "./myComponent";
 
 test("Can use Testing Library", () => {
-  render(MyComponent);
+  render(<MyComponent />);
   const myComponent = screen.getByTestId("my-component");
   expect(myComponent).toBeInTheDocument();
 });

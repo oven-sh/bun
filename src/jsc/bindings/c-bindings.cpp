@@ -978,17 +978,20 @@ static struct sigaction previous_actions[NSIG];
     FOR_EACH_LINUX_ONLY_SIGNAL(M)
 #endif
 
+// Called from the handler below, and from Bun__sendPendingSignalIfNecessary for a
+// signal that arrived before the child's pid was known. The mask has to be put
+// back with SIG_SETMASK: on the second path `sig` is not in the saved set, so
+// unblocking the saved set would leave it blocked for the rest of the process,
+// and the re-raise of the child's signal at exit would fall through to abort().
 static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
 {
-    sigset_t restore_mask;
+    sigset_t previous_mask;
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, sig);
-    sigemptyset(&restore_mask);
-    sigaddset(&restore_mask, sig);
-    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
+    pthread_sigmask(SIG_BLOCK, &mask, &previous_mask);
     kill(pid, sig);
-    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
+    pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
 }
 
 extern "C" void Bun__sendPendingSignalIfNecessary()

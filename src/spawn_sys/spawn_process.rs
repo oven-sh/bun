@@ -499,7 +499,7 @@ impl PosixSpawnResult {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
         // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
-        // in `pifd_from_pid` still covers misdetection by retrying with 0).
+        // in `pidfd_for_child` still covers misdetection by retrying with 0).
         let kernel = bun_core::linux_kernel_version();
         if (kernel.major, kernel.minor) >= (5, 10) {
             bun_sys::O::NONBLOCK as u32
@@ -508,8 +508,12 @@ impl PosixSpawnResult {
         }
     }
 
+    /// `pidfd_open(2)` for a child of ours. Arms the process-wide waiter-thread
+    /// fallback when the failure means pidfds are unusable here (old kernel,
+    /// gVisor, seccomp), in which case the child can still be waited on via
+    /// `WaiterThread`; any other error is returned as-is.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub fn pidfd_for_child(pid: PidT) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -520,11 +524,11 @@ impl PosixSpawnResult {
         let pidfd_flags = Self::pidfd_flags_for_linux();
 
         let attempt = 'brk: {
-            let rc = bun_sys::pidfd_open(self.pid, pidfd_flags);
+            let rc = bun_sys::pidfd_open(pid, pidfd_flags);
             if let Err(e) = &rc {
                 if e.get_errno() == bun_sys::E::EINVAL {
                     // Retry once, incase they don't support PIDFD_NONBLOCK.
-                    break 'brk bun_sys::pidfd_open(self.pid, 0);
+                    break 'brk bun_sys::pidfd_open(pid, 0);
                 }
             }
             rc
@@ -542,35 +546,40 @@ impl PosixSpawnResult {
                     | bun_sys::E::EACCES
                     | bun_sys::E::EINVAL => {
                         crate::waiter_thread_flag::set();
-                        return Err(err);
                     }
-
-                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                    // Until we switch to CLONE_PIDFD, this needs to be handled separately.
-                    bun_sys::E::ESRCH => {}
-
-                    // For all other cases, ensure we don't leak the child process on error
-                    // That would cause Zombie processes to accumulate.
-                    _ => {
-                        loop {
-                            let mut status: i32 = 0;
-                            // SAFETY: libc wait4
-                            let rc = unsafe {
-                                libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
-                            };
-                            match bun_sys::get_errno(rc as isize) {
-                                bun_sys::E::SUCCESS => {}
-                                bun_sys::E::EINTR => continue,
-                                _ => {}
-                            }
-                            break;
-                        }
-                    }
+                    _ => {}
                 }
                 Err(err)
             }
             Ok(fd) => Ok(fd.native()),
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+        let result = Self::pidfd_for_child(self.pid);
+        if let Err(err) = &result {
+            // Waiter thread armed: it waits for this child instead. ESRCH: the child
+            // exited between spawn and pidfd_open (the caller reaps it via `has_exited`).
+            // Until we switch to CLONE_PIDFD, this needs to be handled separately.
+            // For all other cases, ensure we don't leak the child process on error
+            // That would cause Zombie processes to accumulate.
+            if !crate::waiter_thread_flag::get() && err.get_errno() != bun_sys::E::ESRCH {
+                loop {
+                    let mut status: i32 = 0;
+                    // SAFETY: libc wait4
+                    let rc =
+                        unsafe { libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut()) };
+                    match bun_sys::get_errno(rc as isize) {
+                        bun_sys::E::SUCCESS => {}
+                        bun_sys::E::EINTR => continue,
+                        _ => {}
+                    }
+                    break;
+                }
+            }
+        }
+        result
     }
 }
 

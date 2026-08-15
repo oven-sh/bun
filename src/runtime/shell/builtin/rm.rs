@@ -7,7 +7,8 @@ use bun_sys::{E, FdExt, dir_iterator};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_openat,
+    EventLoopHandle, Interpreter, NodeId, ParseError, ShellTask, WorkPoolTask, shell_openat,
+    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -80,13 +81,13 @@ impl Default for Opts {
 
 #[derive(Default, Clone, Copy)]
 pub enum PromptBehaviour {
-    /// `--interactive=never` (default)
+    /// `-f`, `--interactive=never` (default)
     #[default]
     Never,
-    /// `-I`, `--interactive=once`
-    Once { removed_count: u32 },
-    /// `-i`, `--interactive=always`
-    Always,
+    /// `-i`/`--interactive=always` (before every removal) or `-I`/`--interactive=once`.
+    /// Prompting is not implemented: once the flags are parsed this is rejected,
+    /// naming the option as it was given.
+    Prompt { flag: &'static [u8] },
 }
 
 enum RmParseFlag {
@@ -158,12 +159,23 @@ impl Rm {
                                     opts.remove_empty_dirs = true;
                                 }
                             }
-                            if !matches!(
-                                Self::state_mut(interp, cmd).opts.prompt_behaviour,
-                                PromptBehaviour::Never
-                            ) {
-                                let buf: &[u8] = b"rm: \"-i\" is not supported yet";
-                                return Self::write_err_literal(interp, cmd, idx, buf);
+                            // Checked only once every flag is parsed so that a later
+                            // `-f` still cancels an earlier `-i`.
+                            if let PromptBehaviour::Prompt { flag } =
+                                Self::state_mut(interp, cmd).opts.prompt_behaviour
+                            {
+                                return Builtin::fail_parse(
+                                    interp,
+                                    cmd,
+                                    Kind::Rm,
+                                    &ParseError::Unsupported(unsupported_flag(flag)),
+                                    || {
+                                        Self::state_mut(interp, cmd).state = RmState::ParseOpts {
+                                            idx,
+                                            wait_write_err: true,
+                                        }
+                                    },
+                                );
                             }
 
                             let args_start = idx as usize;
@@ -511,11 +523,15 @@ impl Rm {
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=once" => {
-                    opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.prompt_behaviour = PromptBehaviour::Prompt {
+                        flag: b"--interactive=once",
+                    };
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=always" => {
-                    opts.prompt_behaviour = PromptBehaviour::Always;
+                    opts.prompt_behaviour = PromptBehaviour::Prompt {
+                        flag: b"--interactive=always",
+                    };
                     RmParseFlag::ContinueParsing
                 }
                 _ => RmParseFlag::IllegalOption,
@@ -530,8 +546,8 @@ impl Rm {
                 b'r' | b'R' => opts.recursive = true,
                 b'v' => opts.verbose = true,
                 b'd' => opts.remove_empty_dirs = true,
-                b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
-                b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
+                b'i' => opts.prompt_behaviour = PromptBehaviour::Prompt { flag: b"-i" },
+                b'I' => opts.prompt_behaviour = PromptBehaviour::Prompt { flag: b"-I" },
                 _ => return RmParseFlag::IllegalOptionWithFlag,
             }
         }

@@ -1,9 +1,7 @@
-//! The export names Node's cjs-module-lexer would find in a CommonJS file, so that
-//! `import { x } from "./x.cjs"` links (as `undefined`) even when evaluation never
-//! put `x` on `module.exports`. `JSCommonJSModule::toSyntheticSource` unions them
-//! with the evaluated object's own properties.
-//!
-//! Detected, lexically (any scope, any binding named `exports` / `module`):
+//! The export names Node's cjs-module-lexer would find in a CommonJS file.
+//! `JSCommonJSModule::toSyntheticSource` unions them with the evaluated
+//! `module.exports`, so `import { x }` links (as `undefined`) for names evaluation
+//! never produced. Detected lexically, in any scope, whatever `exports`/`module` are bound to:
 //! - `exports.x =`, `exports["x"] =`, `module.exports.x =`
 //! - `module.exports = { x, "y": ..., ...require("./z") }`
 //! - `Object.defineProperty(exports, "x", { value | get })`
@@ -53,8 +51,7 @@ impl<'a> CommonJSStaticExports<'a> {
         }
     }
 
-    /// `<kind><length>:<text>` entries, e.g. `e6:alwayse9:debugOnlyr10:./cond.cjs`;
-    /// lengths are in UTF-16 code units because C++ walks this as a `WTF::String`.
+    /// `e6:alwaysr10:./cond.cjs`: kind, length in UTF-16 units (C++ walks a `WTF::String`), text.
     pub(crate) fn serialize(&self, arena: &'a bun_alloc::Arena) -> StoreStr {
         if self.names.is_empty() && self.reexports.is_empty() {
             return StoreStr::EMPTY;

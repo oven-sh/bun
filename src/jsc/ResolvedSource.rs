@@ -52,8 +52,7 @@ pub struct ResolvedSource {
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
 
-    /// `Ast.commonjs_static_exports` as a string (empty for ESM). +1 owned like
-    /// `source_code`: the C++ consumer takes it and leaves the field empty.
+    /// `Ast.commonjs_static_exports`; a +1 that the C++ consumer takes, leaving the field empty.
     pub commonjs_static_exports: BunString,
 }
 

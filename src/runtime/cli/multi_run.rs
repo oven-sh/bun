@@ -15,7 +15,7 @@ use bun_paths as path;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
-use crate::run_command::RunCommand;
+use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
@@ -107,6 +107,9 @@ struct ProcessSlot {
     /// `PosixSpawnResult::to_process`. Freed via `Process::deref`.
     ptr: *mut Process,
     status: Status,
+    start_time: Instant,
+    /// Set together with `status` when the exit arrives.
+    end_time: Option<Instant>,
 }
 
 pub(crate) struct ProcessHandle<'a> {
@@ -119,9 +122,6 @@ pub(crate) struct ProcessHandle<'a> {
 
     process: Option<ProcessSlot>,
     options: SpawnOptions,
-
-    start_time: Option<Instant>,
-    end_time: Option<Instant>,
 
     /// Set by the `maybe_finish` that counts this script out of
     /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
@@ -155,7 +155,7 @@ impl<'a> ProcessHandle<'a> {
             ptr::null(),
         ];
 
-        self.start_time = Instant::now().into();
+        let start_time = Instant::now();
         let envp;
         let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
@@ -257,6 +257,8 @@ impl<'a> ProcessHandle<'a> {
         self.process = Some(ProcessSlot {
             ptr: process,
             status: Status::Running,
+            start_time,
+            end_time: None,
         });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // owner backref set before any reap callback can fire.
@@ -318,8 +320,9 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(_process, status, _rusage) => {
-            (*this).process.as_mut().unwrap().status = status;
-            (*this).end_time = Instant::now().into();
+            let slot = (*this).process.as_mut().unwrap();
+            slot.status = status;
+            slot.end_time = Some(Instant::now());
             // Aborted runs finish on exit alone; their pending output is dropped.
             if !(*(*this).state).aborted {
                 ProcessHandle::drain_and_close_pipes(this);
@@ -466,13 +469,14 @@ impl<'a> State<'a> {
         let writer = Output::error_writer();
         self.write_prefix(handle, writer)?;
 
-        match &handle.process.as_ref().unwrap().status {
+        let slot = handle.process.as_ref().unwrap();
+        match &slot.status {
             Status::Exited(exited) => {
                 if exited.code != 0 {
                     writeln!(writer, "Exited with code {}", exited.code)?;
                 } else {
-                    if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
-                        let duration = end.duration_since(start);
+                    if let Some(end) = slot.end_time {
+                        let duration = end.duration_since(slot.start_time);
                         let ms = duration.as_nanos() as f64 / 1_000_000.0;
                         if ms > 1000.0 {
                             writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
@@ -494,7 +498,7 @@ impl<'a> State<'a> {
         }
 
         // Check if we should abort on error
-        let failed = match &handle.process.as_ref().unwrap().status {
+        let failed = match &slot.status {
             Status::Exited(exited) => exited.code != 0,
             Status::Signaled(_) => true,
             _ => true,
@@ -878,7 +882,15 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
+    let _ = RunCommand::configure_env_for_run(
+        ctx,
+        &mut this_transpiler_slot,
+        None,
+        ConfigureEnvOptions {
+            log_errors: true,
+            store_root_fd: false,
+        },
+    )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -1174,8 +1186,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,
-            start_time: None,
-            end_time: None,
             finished: false,
             remaining_dependencies: 0,
             group_dependents: Vec::new(),

@@ -125,6 +125,12 @@ describe("css tests", () => {
     // Same trimming applies inside function arguments.
     minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
     minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
+
+    // An rgb() whose alpha is only known at runtime is parsed into its channels
+    // and printed back from them, in order; the legacy comma form is not a color
+    // here and is left as written.
+    minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
+    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
   });
 
   describe("pseudo-class edge case", () => {

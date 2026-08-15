@@ -673,6 +673,35 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    // Same as above, but the rewriter has already produced output (the `<a>`)
+    // by the time the handler suspends. Nothing is consuming the body yet, so
+    // those bytes sit in the rewriter's own buffer; the stream that `.body` or
+    // `.clone()` creates afterwards has to be seeded with them, or the output
+    // would start at `<p>`. Both consumers are attached before the handler
+    // resumes.
+    describe("output produced before the rewrite suspended reaches a stream created later", () => {
+      const expected = "<a>first</a><p>new</p>";
+      const suspending = () =>
+        new HTMLRewriter()
+          .on("p", {
+            async element(element) {
+              await setImmediatePromise();
+              element.setInnerContent("new");
+            },
+          })
+          .transform(new Response("<a>first</a><p>old</p>"));
+
+      it(".body", async () => {
+        expect(await suspending().body.text()).toBe(expected);
+      });
+
+      it(".clone() seeds both branches", async () => {
+        const res = suspending();
+        const clone = res.clone();
+        expect(await Promise.all([res.text(), clone.text()])).toEqual([expected, expected]);
+      });
+    });
+
     it("transform(ArrayBuffer) throws the ArrayBuffer wording", () => {
       expect(() =>
         new HTMLRewriter()

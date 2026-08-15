@@ -366,8 +366,12 @@ function traceStringFrameImages(stderr: string): (string | null)[] {
 // below vmEntryToJavaScript the remaining slots were reported as frames in no
 // module until the frame buffer was full.
 describe.if(isWindows)("Windows: crash trace continues below the JS frames", () => {
+  // JIT-pool code is in no loaded module; "JIT" is the tag a trace string may
+  // carry for it instead of the bare unknown-module marker.
+  const isJitFrame = (image: string | null) => image === null || image === "JIT";
+
   function bunFramesBelowTheJitFrames(images: (string | null)[]): number {
-    const lastJitFrame = images.lastIndexOf(null);
+    const lastJitFrame = images.findLastIndex(isJitFrame);
     // The thunk that called the native function is JIT-pool code even when
     // the JS itself is interpreted; without it the count below is meaningless.
     expect(lastJitFrame).toBeGreaterThan(0);
@@ -430,7 +434,7 @@ describe.if(isWindows)("Windows: crash trace continues below the JS frames", () 
     // The FFI call stub and the native-call thunk are JIT-pool code even for
     // interpreted callers; a third JIT frame proves the JS was compiled (the
     // DFG may inline the three functions into one frame).
-    expect(images.filter(image => image === null).length).toBeGreaterThanOrEqual(2 + 1);
+    expect(images.filter(isJitFrame).length).toBeGreaterThanOrEqual(2 + 1);
     // vmEntryToJavaScript plus at least the JSC entry point that called it and
     // the bun code that called that. Unfixed, the frames after
     // vmEntryToJavaScript were stack slots in no module, so this was zero.

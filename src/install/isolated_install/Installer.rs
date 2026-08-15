@@ -2319,8 +2319,7 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// Called from main thread after every task has finished (dependents may still be
-    /// creating these links while a script failure is handled).
+    /// Main thread, once every task is done: dependents may still be linking while a script fails.
     pub(crate) fn unlink_failed_optional_entries(&self) {
         if self.failed_optional_entries.is_empty() {
             return;
@@ -2915,8 +2914,6 @@ pub enum Which {
     Staging,
 }
 
-/// Appends the link name of `dep_name` inside the `node_modules` of an entry
-/// installed as `entry_node_modules_name`.
 fn append_dependency_link_name(
     dest: &mut AutoPath,
     dep_name: &[u8],

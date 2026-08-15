@@ -1075,15 +1075,23 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         } else {
                             None
                         };
-                        let (source, source_is_utf16): (&[u8], bool) = match &transcoded {
-                            Some(units) => (units.as_bytes(), units.is_utf16()),
-                            None => (&code_result.buffer, false),
-                        };
+                        let (source, source_encoding): (&[u8], strings::EncodingNonAscii) =
+                            match &transcoded {
+                                Some(units) => (
+                                    units.as_bytes(),
+                                    if units.is_utf16() {
+                                        strings::EncodingNonAscii::Utf16
+                                    } else {
+                                        strings::EncodingNonAscii::Latin1
+                                    },
+                                ),
+                                None => (&code_result.buffer, strings::EncodingNonAscii::Utf8),
+                            };
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
                             source,
-                            source_is_utf16,
+                            source_encoding,
                             &mut source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();

@@ -490,7 +490,15 @@ impl File {
 
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
-        result.st_size = self.contents.len() as _;
+        // Size of the bytes a read returns (`utf8_contents`), not of the
+        // stored width.
+        result.st_size = match self.encoding {
+            Encoding::Binary => self.contents.len(),
+            Encoding::Latin1 => {
+                strings::element_length_latin1_into_utf8(self.contents.as_bytes())
+            }
+            Encoding::Utf16 => strings::element_length_utf16_into_utf8(self.utf16_units()),
+        } as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
@@ -500,6 +508,42 @@ impl File {
         let lhs = &ctx[lhs_i as usize];
         let rhs = &ctx[rhs_i as usize];
         strings::cmp_strings_asc((), lhs.name, rhs.name)
+    }
+
+    /// `Utf16` contents viewed as code units.
+    fn utf16_units(&self) -> &'static [u16] {
+        debug_assert!(self.encoding == Encoding::Utf16);
+        let bytes = self.contents.as_bytes();
+        debug_assert!(bytes.len().is_multiple_of(2));
+        debug_assert!(bytes.as_ptr().addr().is_multiple_of(2));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "2-byte alignment is externally guaranteed; see the SAFETY comment and the debug_asserts above"
+        )]
+        // SAFETY: `to_bytes` serializes `Utf16` contents as u16 code units at
+        // a 2-byte-aligned offset, and the section base is even on every
+        // platform (the bytecode subrange in the same section relies on
+        // base % 128 == 8).
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
+    }
+
+    /// The file's bytes as UTF-8, whatever width `contents` is stored in.
+    /// `Binary` and pure-ASCII `Latin1` borrow the section directly; a
+    /// transcoded module materializes a copy so `fs.readFileSync` /
+    /// `Bun.file()` on its bunfs path round-trip the original source bytes.
+    pub fn utf8_contents(&self) -> std::borrow::Cow<'static, [u8]> {
+        use std::borrow::Cow;
+        let bytes = self.contents.as_bytes();
+        match self.encoding {
+            Encoding::Binary => Cow::Borrowed(bytes),
+            Encoding::Latin1 => match strings::to_utf8_from_latin1(bytes) {
+                Some(utf8) => Cow::Owned(utf8),
+                None => Cow::Borrowed(bytes),
+            },
+            Encoding::Utf16 => Cow::Owned(strings::to_utf8_alloc(self.utf16_units())),
+        }
     }
 
     pub fn to_wtf_string(&mut self) -> BunString {
@@ -513,21 +557,7 @@ impl File {
                         BunString::create_static_external(self.contents.as_bytes(), true);
                 }
                 Encoding::Utf16 => {
-                    let bytes = self.contents.as_bytes();
-                    debug_assert!(bytes.len().is_multiple_of(2));
-                    debug_assert!(bytes.as_ptr().addr().is_multiple_of(2));
-                    #[expect(
-                        clippy::cast_ptr_alignment,
-                        reason = "2-byte alignment is externally guaranteed; see the SAFETY comment and the debug_asserts above"
-                    )]
-                    // SAFETY: `to_bytes` serializes `Utf16` contents as u16
-                    // code units at a 2-byte-aligned offset, and the section
-                    // base is even on every platform (the bytecode subrange in
-                    // the same section relies on base % 128 == 8).
-                    let units = unsafe {
-                        core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-                    };
-                    self.wtf_string = BunString::create_static_external_utf16(units);
+                    self.wtf_string = BunString::create_static_external_utf16(self.utf16_units());
                 }
             }
         }

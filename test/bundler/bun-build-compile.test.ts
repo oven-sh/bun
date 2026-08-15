@@ -780,8 +780,8 @@ console.log("width", desc.includes("8Bit:(1)") ? "8bit" : "16bit");
 console.log("value", "café 😀");
 `;
 
-  async function buildAndRun(extraArgs: string[], runEnv: Record<string, string> = {}) {
-    using dir = tempDir("compile-text-width", { "main.js": mainJs });
+  async function buildAndRun(extraArgs: string[], runEnv: Record<string, string> = {}, source: string = mainJs) {
+    using dir = tempDir("compile-text-width", { "main.js": source });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", ...extraArgs, "main.js", "--outfile", "app"],
       env: bunEnv,
@@ -834,6 +834,25 @@ console.log("value", "café 😀");
     });
     expect(stdout).toContain("width 16bit");
     expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
+
+  // Whatever width the module text is stored in, reading its bunfs path
+  // through fs or Bun.file must still return the original UTF-8 bytes.
+  const roundTripJs = (banner: string) => `import { readFileSync, statSync } from "node:fs";
+const text = readFileSync(import.meta.path, "utf8");
+const blob = await Bun.file(import.meta.path).text();
+console.log("banner", text.includes(${JSON.stringify(banner)}) ? "intact" : "mangled");
+console.log("blob", blob === text ? "same" : "different");
+console.log("size", statSync(import.meta.path).size === Buffer.byteLength(text, "utf8") ? "matches" : "differs");
+`;
+
+  test.each([
+    ["Latin-1", "// café banner"],
+    ["UTF-16", "// café 😀 banner"],
+  ])("fs reads of the module's bunfs path round-trip the source (%s)", async (_width, banner) => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", banner], {}, roundTripJs(banner));
+    expect(stdout).toBe("banner intact\nblob same\nsize matches\n");
     expect(exitCode).toBe(0);
   });
 });

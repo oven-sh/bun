@@ -624,7 +624,10 @@ test("source text has the expected length", () => {
   expect(covered()).toBe(${2 * coverageTextUnits});
 });
 `;
+// `units` must be a multiple of `piece.length` (in code units), or the result
+// would end in a partial repetition of the piece.
 function repeatUnits(piece: string, units: number) {
+  expect(units % piece.length).toBe(0);
   return Buffer.alloc((Buffer.byteLength(piece) * units) / piece.length, piece).toString();
 }
 

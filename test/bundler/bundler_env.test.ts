@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -142,3 +143,67 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+// The bundler reads the environment its process started with, and itBundled's
+// api backend calls Bun.build() inside the test runner, so the builds below run
+// in a child process whose environment holds the values being inlined.
+test("Bun.build env option: which process.env reads get inlined", async () => {
+  using dir = tempDir("bun-build-env-option", {
+    "a.js": `console.log(process.env.NODE_ENV, process.env.BUN_ENV, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
+    "build.ts": `
+      const variants = {
+        "unset": {},
+        "disable": { env: "disable" },
+        "disable, target bun": { env: "disable", target: "bun" },
+        "false": { env: false },
+        "null": { env: null },
+        "0": { env: 0 },
+        "inline": { env: "inline" },
+        "PUBLIC_*": { env: "PUBLIC_*" },
+        "*": { env: "*" },
+        "bogus": { env: "bogus" },
+      };
+      const out = {};
+      for (const [name, options] of Object.entries(variants)) {
+        try {
+          const result = await Bun.build({ entrypoints: ["./a.js"], target: "node", ...options });
+          const text = await result.outputs[0].text();
+          out[name] = text.split("\\n").find(line => line.startsWith("console.log("));
+        } catch (e) {
+          out[name] = "threw: " + e.message;
+        }
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NODE_ENV: "from_build_env",
+      BUN_ENV: "from_build_env",
+      PUBLIC_FOO: "public_value",
+      PRIVATE_BAR: "private_value",
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const nothingInlined = `console.log(process.env.NODE_ENV, process.env.BUN_ENV, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`;
+  expect(JSON.parse(stdout)).toEqual({
+    "unset": `console.log("from_build_env", "from_build_env", process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
+    "disable": nothingInlined,
+    "disable, target bun": nothingInlined,
+    "false": nothingInlined,
+    "null": nothingInlined,
+    "0": nothingInlined,
+    "inline": `console.log("from_build_env", "from_build_env", "public_value", "private_value");`,
+    "PUBLIC_*": `console.log("from_build_env", "from_build_env", "public_value", process.env.PRIVATE_BAR);`,
+    "*": `console.log("from_build_env", "from_build_env", "public_value", "private_value");`,
+    "bogus": "threw: env must be 'inline', 'disable', or a string with a '*' character",
+  });
+  expect(exitCode).toBe(0);
+});

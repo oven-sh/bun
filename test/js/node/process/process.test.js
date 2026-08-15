@@ -550,8 +550,12 @@ it.concurrent("process.env.TZ and NODE_TLS_REJECT_UNAUTHORIZED writes still reac
   // effect first. After the first write they are ordinary data properties, so
   // without ProhibitsPropertyCaching the DFG folds the write site into a plain
   // store once it is hot: the string still lands in process.env but the timezone
-  // stops changing and non-strings are stored raw. Non-concurrent JIT makes the
-  // tier-up happen at a fixed call count (around call 100) so the loop is short.
+  // stops changing and non-strings are stored raw. The fold only happens if the
+  // Baseline read IC has started watching the property and a write has fired that
+  // watchpoint before the DFG compiles the function, which the default thresholds
+  // do at about call 100 (unfixed, this fails at call 99); non-concurrent JIT pins
+  // that order. jitPolicyScale=0 would compile before the watchpoint exists and
+  // make the unfixed build pass, so the thresholds are deliberately left alone.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -161,6 +161,23 @@ static JSValue findAsyncContextRef(JSValue context)
     return jsUndefined();
 }
 
+// True for a context the runner alone populated, i.e. one that would have been
+// no context at all without it.
+static bool holdsOnlyAsyncContextRefs(JSValue context)
+{
+    auto* array = dynamicDowncast<JSArray>(context);
+    if (!array)
+        return false;
+    unsigned length = array->length();
+    if (length == 0)
+        return false;
+    for (unsigned i = 0; i < length; i += 2) {
+        if (!array->canGetIndexQuickly(i) || !isAsyncContextRef(array->getIndexQuickly(i)))
+            return false;
+    }
+    return true;
+}
+
 // The caller checks for an exception afterwards.
 static void appendPairsWithoutRefs(JSGlobalObject* globalObject, JSValue context, MarkedArgumentBuffer& entries)
 {
@@ -189,8 +206,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__AsyncContextRef__enableTracking(JSC
     globalObject->setAsyncContextTrackingEnabled(true);
 }
 
+// AsyncContextFrame::withAsyncContextIfNeeded for a test, describe or hook
+// callback being registered: the (ref, ref) of the invocation registering it
+// is not a context of its own. Whatever else the context holds is captured
+// as usual; __enter replaces the stale ref when the callback runs.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__AsyncContextRef__withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue callbackValue)
+{
+    if (holdsOnlyAsyncContextRefs(globalObject->m_asyncContextData.get()->getInternalField(0)))
+        return callbackValue;
+    return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callbackValue)));
+}
+
 // Returns what to invoke in place of `callback` so that it runs with its usual
-// context plus (ref, ref). A callback registered under a context (already an
+// context plus (ref, ref). A callback registered under a context (an
 // AsyncContextFrame) gets a new frame, which Bun__JSValue__call installs and
 // restores as usual. Any other callback gets the array installed in place, so
 // that, as before, what it does to the context (als.enterWith()) outlives it;
@@ -201,8 +229,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__AsyncContextRe
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue callback = JSValue::decode(callbackValue);
-    auto* ref = dynamicDowncast<WebCore::JSAsyncContextRef>(JSValue::decode(refValue));
-    ASSERT(ref);
+    JSValue ref = JSValue::decode(refValue);
+    ASSERT(isAsyncContextRef(ref));
     auto* slot = globalObject->m_asyncContextData.get();
 
     auto* registrationFrame = dynamicDowncast<AsyncContextFrame>(callback);
@@ -225,33 +253,21 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__AsyncContextRe
     if (registrationFrame)
         return JSValue::encode(AsyncContextFrame::create(globalObject, registrationFrame->callback.get(), context));
 
-    ref->m_previousContext.set(vm, ref, previousContext);
-    ref->m_installedContext.set(vm, ref, context);
     slot->putInternalField(vm, 0, context);
     return JSValue::encode(callback);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__AsyncContextRef__leave(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue refValue)
+// Takes the refs back out of whatever the callback left in the slot
+// (als.enterWith() replaces the array, als.disable() splices it in place), so
+// that those effects outlive the callback as they did before. After a frame
+// the call itself restored the slot, which then holds no ref.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__AsyncContextRef__leave(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ref = dynamicDowncast<WebCore::JSAsyncContextRef>(JSValue::decode(refValue));
-    ASSERT(ref);
-    JSValue installed = ref->m_installedContext.get();
-    if (!installed)
-        return; // __enter returned a frame instead
-    JSValue previous = ref->m_previousContext.get();
-    ref->m_installedContext.clear();
-    ref->m_previousContext.clear();
-
     auto* slot = globalObject->m_asyncContextData.get();
     JSValue current = slot->getInternalField(0);
-    if (current == installed) {
-        slot->putInternalField(vm, 0, previous);
-        return;
-    }
-    // The callback replaced the array (enterWith() copies it); keep its version without the ref.
     if (findAsyncContextRef(current).isUndefined())
         return;
     MarkedArgumentBuffer entries;

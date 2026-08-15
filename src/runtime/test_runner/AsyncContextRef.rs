@@ -8,6 +8,8 @@
 //! late calls to the abandoned invocation instead, which rejects them.
 //! Invocations that completed are never consulted, so callbacks they
 //! registered keep belonging to whichever entry runs them.
+//!
+//! The slot manipulation lives next to `AsyncContextFrame` (AsyncContextFrame.cpp).
 
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 
@@ -19,14 +21,6 @@ pub struct AsyncContextRef {
     r#ref: RefDataPtr,
 }
 
-/// Plain `JSValue`s (not an `Option`) so the conservative stack scan sees both.
-pub(crate) struct Entered {
-    /// What to invoke in place of the callback passed to [`AsyncContextRef::enter`].
-    pub(crate) callable: JSValue,
-    /// For [`AsyncContextRef::leave`].
-    pub(crate) ref_js: JSValue,
-}
-
 impl AsyncContextRef {
     // Codegen calls `finalize(Box<Self>)`; clippy::boxed_local is a false positive.
     #[allow(clippy::boxed_local)]
@@ -35,19 +29,17 @@ impl AsyncContextRef {
     }
 
     /// Puts `refdata` (a `+1`, consumed) into the context `callback` is about to
-    /// run with. See `Bun__AsyncContextRef__enter` for what that does to the slot.
-    pub(crate) fn enter(global: &JSGlobalObject, callback: JSValue, refdata: RefDataPtr) -> JsResult<Entered> {
+    /// run with, and returns what to invoke in its place. Pair with [`Self::leave`].
+    pub(crate) fn enter(global: &JSGlobalObject, callback: JSValue, refdata: RefDataPtr) -> JsResult<JSValue> {
         let ref_js = AsyncContextRef { r#ref: refdata }.to_js(global);
         let callable = bun_jsc::cpp::Bun__AsyncContextRef__enter(global, callback, ref_js);
         ref_js.ensure_still_alive();
-        Ok(Entered { callable: callable?, ref_js })
+        callable
     }
 
-    /// Takes the ref back out once the callback returned, before microtasks are drained.
-    pub(crate) fn leave(global: &JSGlobalObject, ref_js: JSValue) -> JsResult<()> {
-        let result = bun_jsc::cpp::Bun__AsyncContextRef__leave(global, ref_js);
-        ref_js.ensure_still_alive();
-        result
+    /// Call once the callback returned, before its microtasks run.
+    pub(crate) fn leave(global: &JSGlobalObject) -> JsResult<()> {
+        bun_jsc::cpp::Bun__AsyncContextRef__leave(global)
     }
 
     /// A `+1` to the abandoned invocation the running JS descends from, if any.

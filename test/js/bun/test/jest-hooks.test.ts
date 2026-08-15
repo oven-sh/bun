@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 let hooks_run: string[] = [];
@@ -253,9 +253,32 @@ describe("test jest hooks in bun-test", () => {
 
 // The runner adds its own entry to the async context while a hook or test runs; what the
 // callback itself does to the context has to stay in effect afterwards, as it always has.
-describe("AsyncLocalStorage.enterWith() in a hook stays in effect for the tests that follow", () => {
+describe("what a hook does to the AsyncLocalStorage context stays in effect for the tests that follow", () => {
   const storage = new AsyncLocalStorage<string>();
   afterAll(() => storage.disable());
+
+  // First, while no store has been entered yet: a hook registered while a store is active runs
+  // under that store instead (last describe in this file). The runner's own entry is in the
+  // context when these hooks are registered, and must not count as such a store.
+  describe("entered in hooks registered inside a test", () => {
+    let storeWhenOnTestFinishedRan: string | undefined;
+
+    it("registers them", () => {
+      afterEach(() => {
+        storage.enterWith("from the afterEach");
+      });
+      // Runs after the afterEach hooks, including the file's.
+      onTestFinished(() => {
+        storeWhenOnTestFinishedRan = storage.getStore();
+        storage.enterWith("from the onTestFinished");
+      });
+    });
+
+    it("each one's store is in effect for what follows it", () => {
+      expect(storeWhenOnTestFinishedRan).toBe("from the afterEach");
+      expect(storage.getStore()).toBe("from the onTestFinished");
+    });
+  });
 
   describe("entered in beforeAll", () => {
     beforeAll(() => {
@@ -286,5 +309,38 @@ describe("AsyncLocalStorage.enterWith() in a hook stays in effect for the tests 
     it("and is replaced for the next test", () => {
       expect(storage.getStore()).toBe("beforeEach run 2");
     });
+  });
+
+  // disable() splices the storage out of the context array in place rather than replacing it.
+  describe("disabled in a later beforeAll", () => {
+    beforeAll(() => {
+      storage.enterWith("entered before disable()");
+    });
+    beforeAll(() => {
+      storage.disable();
+    });
+
+    it("stays gone: run() does not bring the old store back", () => {
+      storage.run("inside run()", () => {});
+      expect(storage.getStore()).toBeUndefined();
+    });
+  });
+});
+
+describe("a hook registered inside a test under AsyncLocalStorage.run() runs with that store", () => {
+  const storage = new AsyncLocalStorage<string>();
+  let storeSeenByAfterEach: string | undefined;
+
+  it("registers the hook", () => {
+    storage.run("store of the run() that registered it", () => {
+      afterEach(() => {
+        storeSeenByAfterEach = storage.getStore();
+      });
+    });
+  });
+
+  it("the hook saw the store; the next test does not", () => {
+    expect(storeSeenByAfterEach).toBe("store of the run() that registered it");
+    expect(storage.getStore()).toBeUndefined();
   });
 });

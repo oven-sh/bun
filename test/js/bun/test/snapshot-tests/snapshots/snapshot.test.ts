@@ -981,7 +981,8 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
   `;
 
   async function runTestFile(source: string) {
-    using dir = tempDir("snapshot-after-runner-moved-on", { "late.test.ts": prelude + source });
+    const testFile = prelude + source;
+    using dir = tempDir("snapshot-after-runner-moved-on", { "late.test.ts": testFile });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "late.test.ts"],
       cwd: String(dir),
@@ -992,16 +993,17 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const snapPath = join(String(dir), "__snapshots__", "late.test.ts.snap");
     const snap = existsSync(snapPath) ? readFileSync(snapPath, "utf8") : null;
+    // Inline snapshots are written into the test file itself once the run is over.
+    const testFileAfterwards = readFileSync(join(String(dir), "late.test.ts"), "utf8");
     // stdout starts with the "bun test vX.Y.Z (sha)" banner; the rest is what the test file logged.
-    return { stdout: stdout.replace(/^bun test v.*\n/, ""), stderr, exitCode, snap };
+    return { stdout: stdout.replace(/^bun test v.*\n/, ""), stderr, exitCode, snap, testFile, testFileAfterwards };
   }
 
   test.concurrent("a test that timed out", async () => {
     // Same body for both cases, as with test.each. The first case only continues once the second
     // one has started, so it has always timed out by then; the second case then waits for the
-    // first one's late matchers before taking its own snapshots. The inline snapshot is keyed by
-    // its own source location, so it still works late; it must just not count against "second".
-    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+    // first one's late matchers before taking its own snapshots.
+    const { stdout, stderr, snap, testFile, testFileAfterwards } = await runTestFile(/* ts */ `
       const secondStarted = Promise.withResolvers<void>();
       const firstDone = Promise.withResolvers<void>();
       async function migrate(name: string) {
@@ -1014,7 +1016,15 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
               throw new Error(name);
             }).toThrowErrorMatchingSnapshot(),
           );
-          report("late toMatchInlineSnapshot", () => expect("lockfile of " + name).toMatchInlineSnapshot(\`"lockfile of first"\`));
+          // Block bodies: a matcher called in tail position gets located at report()'s own call to it.
+          report("late toMatchInlineSnapshot", () => {
+            expect("lockfile of " + name).toMatchInlineSnapshot();
+          });
+          report("late toThrowErrorMatchingInlineSnapshot", () => {
+            expect(() => {
+              throw new Error(name);
+            }).toThrowErrorMatchingInlineSnapshot();
+          });
           firstDone.resolve();
           return;
         }
@@ -1034,20 +1044,23 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
         `late with hint: ${rejected}`,
         `late without hint: ${rejected}`,
         `late toThrowErrorMatchingSnapshot: ${rejected}`,
-        "late toMatchInlineSnapshot: did not throw",
+        `late toMatchInlineSnapshot: ${rejected}`,
+        `late toThrowErrorMatchingInlineSnapshot: ${rejected}`,
         "",
       ].join("\n"),
     );
     expect(stderr).toContain("this test timed out after 1ms");
     expect(stderr).toContain("(pass) migrate > second");
     // Nothing of the first case's under the second case's name, and the second case's own
-    // unhinted snapshot is still number 1 (on the previous behaviour the late calls, the inline
-    // one included, pushed it to number 2).
+    // unhinted snapshot is still number 1 (on the previous behaviour the late calls pushed it to
+    // number 2).
     expect(snap).toBe(
       header +
         '\nexports[`migrate second: second 1`] = `"lockfile of second"`;\n' +
         '\nexports[`migrate second 1`] = `"lockfile of second"`;\n',
     );
+    // The late inline matchers did not get their snapshots written into the test file either.
+    expect(testFileAfterwards).toBe(testFile);
   });
 
   test.concurrent("a hook that timed out", async () => {
@@ -1099,32 +1112,48 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
   });
 
   test.concurrent("an attempt that the runner gave up on, while its retry runs", async () => {
-    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+    // Both attempts run the same inline matcher. On the previous behaviour the first attempt's late
+    // call and the retry's call asked for different values on the same line, which fails the
+    // writing of the file's inline snapshots as a whole ("Multiple inline snapshots on the same
+    // line must all have the same value").
+    const { stdout, stderr, snap, testFile, testFileAfterwards } = await runTestFile(/* ts */ `
       const retryStarted = Promise.withResolvers<void>();
       const firstAttemptDone = Promise.withResolvers<void>();
       let attempts = 0;
       test(
         "retried",
         async () => {
-          if (attempts++ === 0) {
+          const attempt = ++attempts;
+          // Block body: a matcher called in tail position gets located at the call to inline() instead.
+          const inline = () => {
+            expect("from attempt " + attempt).toMatchInlineSnapshot();
+          };
+          if (attempt === 1) {
             Promise.reject(new Error("first attempt fails in the background"));
             await retryStarted.promise;
-            report("late from the first attempt", () => expect("from attempt 1").toMatchSnapshot());
+            report("late from the first attempt", () => expect("from attempt " + attempt).toMatchSnapshot());
+            report("late inline from the first attempt", inline);
             firstAttemptDone.resolve();
             return;
           }
           retryStarted.resolve();
           await firstAttemptDone.promise;
-          expect("from attempt 2").toMatchSnapshot();
+          expect("from attempt " + attempt).toMatchSnapshot();
+          inline();
         },
         { retry: 1 },
       );
     `);
 
-    expect(stdout).toBe(`late from the first attempt: ${rejected}\n`);
+    expect(stdout).toBe(`late from the first attempt: ${rejected}\nlate inline from the first attempt: ${rejected}\n`);
     expect(stderr).toContain("(pass) retried");
-    // The passing attempt owns "retried 1"; a later run must compare against its value.
+    expect(stderr).not.toContain("Failed to update inline snapshot");
+    // The passing attempt owns "retried 1" and the inline snapshot; a later run must compare
+    // against its values.
     expect(snap).toBe(header + '\nexports[`retried 1`] = `"from attempt 2"`;\n');
+    expect(testFileAfterwards).toBe(
+      testFile.replace("toMatchInlineSnapshot()", 'toMatchInlineSnapshot(`"from attempt 2"`)'),
+    );
   });
 
   test.concurrent("callbacks registered by a finished hook still snapshot under the running test", async () => {

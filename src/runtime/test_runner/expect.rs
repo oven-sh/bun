@@ -212,6 +212,19 @@ impl Expect {
         parent.bun_test()
     }
 
+    /// An invocation the runner gave up on (AsyncContextRef.rs) gets to record
+    /// nothing more, with the error an `expect()` left over from a finished test gets.
+    fn reject_snapshot_if_abandoned(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if self.parent.as_ref().is_some_and(|parent| parent.abandoned.get()) {
+            return Err(Self::throw_test_finished(global_this));
+        }
+        Ok(())
+    }
+
+    fn throw_test_finished(global_this: &JSGlobalObject) -> JsError {
+        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
+    }
+
     pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
@@ -623,9 +636,8 @@ impl Expect {
 
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
-        if parent.abandoned.get() {
-            return Err(crate::Error::TestNotActive);
-        }
+        // Under a retry, an abandoned attempt's entry is current again; `reject_snapshot_if_abandoned` ran first.
+        debug_assert!(!parent.abandoned.get());
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let execution_entry = match &parent.phase {
@@ -1061,6 +1073,7 @@ impl Expect {
             let signature = Self::get_signature(fn_name, "", false);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
+        this.reject_snapshot_if_abandoned(global_this)?;
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => return Err(JsError::OutOfMemory),
@@ -1209,6 +1222,7 @@ impl Expect {
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let this = self;
+        this.reject_snapshot_if_abandoned(global_this)?;
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
@@ -1221,9 +1235,7 @@ impl Expect {
                     crate::Error::SnapshotInConcurrentGroup => {
                         return Err(global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests")));
                     }
-                    crate::Error::TestNotActive => {
-                        return Err(global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing")));
-                    }
+                    crate::Error::TestNotActive => return Err(Self::throw_test_finished(global_this)),
                     crate::Error::NoTest => {
                         return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                     }

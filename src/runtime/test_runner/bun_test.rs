@@ -52,11 +52,13 @@ fn strong_create(value: JSValue) -> Strong {
     Strong::create(value, global)
 }
 
+/// `JSValue::with_async_context_if_needed`, except that the ref of the test
+/// registering the callback (AsyncContextRef.rs) does not count as a context.
 /// Applied when a test/describe/hook callback is stored, not when the arguments
 /// are parsed: registration reads `.length` and `.bind()`s the function itself,
 /// and the wrapper is not a function.
 pub(crate) fn keep_registration_async_context(callback: JSValue) -> JSValue {
-    callback.with_async_context_if_needed(VirtualMachine::get().global())
+    bun_jsc::cpp::Bun__AsyncContextRef__withAsyncContextIfNeeded(VirtualMachine::get().global(), callback)
 }
 
 pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
@@ -1178,12 +1180,12 @@ impl BunTest {
         }
 
         let mut callable: JSValue = cfg_callback;
-        let mut entered_ref: JSValue = JSValue::ZERO;
+        let mut entered = false;
         if let Some(invocation_ref) = invocation_ref {
             match AsyncContextRef::enter(global_this, cfg_callback, invocation_ref) {
-                Ok(entered) => {
-                    callable = entered.callable;
-                    entered_ref = entered.ref_js;
+                Ok(v) => {
+                    callable = v;
+                    entered = true;
                 }
                 Err(e) => {
                     // OOM: charge it to this entry and still run the callback, as for `done` above.
@@ -1210,8 +1212,8 @@ impl BunTest {
                 }
             }
         }
-        if !entered_ref.is_empty() {
-            if let Err(e) = AsyncContextRef::leave(global_this, entered_ref) {
+        if entered {
+            if let Err(e) = AsyncContextRef::leave(global_this) {
                 let exception = global_this.take_exception(e);
                 if failure.is_none() {
                     failure = Some(Some(exception));

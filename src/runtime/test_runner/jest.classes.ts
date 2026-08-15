@@ -803,14 +803,14 @@ export default [
     klass: {},
     proto: {},
   }),
-  // Internal to the runner (AsyncContextRef.rs); the values belong to Bun__AsyncContextRef__enter/__leave.
+  // Internal to the runner (AsyncContextRef.rs).
   define({
     name: "AsyncContextRef",
     construct: false,
     noConstructor: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["installedContext", "previousContext"],
+    values: [],
     configurable: false,
     klass: {},
     proto: {},

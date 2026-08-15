@@ -2260,7 +2260,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
 <b>Commands:<r>
   <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
+  <b><green>bun pm<r> <blue>ls<r>               list the tree of installed dependencies
   <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
   <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
   <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder

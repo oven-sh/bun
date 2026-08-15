@@ -648,10 +648,7 @@ pub struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
-    /// Snapshot name -> how many snapshot matchers (file or inline) that test has run in
-    /// this file so far; numbers the `.snap` keys. Lives here rather than on the
-    /// process-wide `Snapshots` so every file run (and every `--rerun-each` pass) starts
-    /// from 1, whether or not the file ever opens a `.snap`.
+    /// Snapshot name -> snapshot matchers (file or inline) run so far; numbers the `.snap` keys.
     pub(crate) snapshot_counts: StringHashMap<usize>,
 
     pub(crate) phase: Phase,

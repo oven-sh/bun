@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { access, chmod, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -896,6 +896,48 @@ describe.concurrent("bun-install", () => {
     expect(stderr).toContain("long-git-dep");
     expect(stdout).toContain("bun install v1.");
     expect(exitCode).toBe(1);
+  });
+
+  // Shadow `git` with a shim that records its argv and fails, so the https clone
+  // attempt falls through to the ssh fallback and the test can assert the exact
+  // ssh:// URL bun hands to git.
+  it.skipIf(isWindows).each([
+    // #36931: a port is not the scp-style host:path colon; it must not become a
+    // path segment (ssh://git@localhost/52626/user/repo.git).
+    ["git+ssh://git@localhost:52626/user/repo.git#v1.0.0", "ssh://git@localhost:52626/user/repo.git"],
+    // scp-style colons inside an ssh:// URL are still rewritten to a slash...
+    ["git+ssh://git@localhost:user/repo.git", "ssh://git@localhost/user/repo.git"],
+    // ...including when the path happens to start with a digit.
+    ["git+ssh://git@localhost:1user/repo.git", "ssh://git@localhost/1user/repo.git"],
+  ])("ssh fallback clone URL for %s", async (dependency, expectedCloneUrl) => {
+    using dir = tempDir("git-ssh-port", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: dependency },
+      }),
+      "bin/git": `#!/bin/sh\necho "$@" >> "$GIT_ARGS_LOG"\nexit 1\n`,
+    });
+    await chmod(join(String(dir), "bin", "git"), 0o755);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        PATH: `${join(String(dir), "bin")}:${env.PATH}`,
+        GIT_ARGS_LOG: join(String(dir), "git-args.log"),
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("cloning repository");
+    expect(exitCode).toBe(1);
+
+    const gitArgs = (await file(join(String(dir), "git-args.log")).text()).split(/\s+/);
+    expect(gitArgs.filter(arg => arg.startsWith("ssh://"))).toEqual([expectedCloneUrl]);
   });
 
   it("should handle empty string in dependencies", async () => {

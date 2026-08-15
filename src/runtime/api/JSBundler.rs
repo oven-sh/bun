@@ -1598,7 +1598,10 @@ pub mod js_bundler {
             return;
         }
         // SAFETY: claimed above ⇒ ours alone.
-        let this = unsafe { &mut *this };
+        on_load_async_answered(unsafe { &mut *this }, source_code_value, loader_as_int);
+    }
+
+    fn on_load_async_answered(this: &mut Load, source_code_value: JSValue, loader_as_int: JSValue) {
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {

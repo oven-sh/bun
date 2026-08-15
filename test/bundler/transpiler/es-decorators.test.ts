@@ -845,6 +845,7 @@ describe("ES Decorators", () => {
           import Cls from "./mod.js";
           const c = new Cls();
           console.log(c.foo());
+          console.log(Cls.name);
         `,
         "mod.js": `
           function dec(fn, ctx) { console.log("decorated", ctx.name); return fn; }
@@ -863,7 +864,7 @@ describe("ES Decorators", () => {
 
       const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(filterStderr(rawStderr)).toBe("");
-      expect(stdout).toBe("decorated foo\n42\n");
+      expect(stdout).toBe("decorated foo\n42\ndefault\n");
       expect(exitCode).toBe(0);
     });
 
@@ -979,6 +980,191 @@ describe("ES Decorators", () => {
       expect(output).not.toContain("class default");
       // the lowered output must still be valid syntax
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+  });
+
+  describe("inferred names of lowered anonymous class expressions", () => {
+    // Lowering turns `const Bar = class { ... }` into `_class = class { ... }`,
+    // which would otherwise make the class infer the name "_class". The name
+    // the source position would have inferred must be restored without adding
+    // a class binding: a binding can only hold identifier names, shadows the
+    // outer variable inside the class body, and is renamed by the bundler.
+    test.concurrent("names that are not valid identifiers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const obj = {
+          "foo-bar": class { @dec m() {} },
+          "": class { @dec m() {} },
+          default: class { @dec m() {} },
+          "with space": class { accessor x; },
+        };
+        console.log(JSON.stringify([obj["foo-bar"].name, obj[""].name, obj.default.name, obj["with space"].name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["foo-bar","","default","with space"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("console.log and Bun.inspect show the inferred name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Item = class { accessor id; };
+        const Decorated = class { @dec m() {} };
+        class Child extends Item {}
+        console.log(Item, Bun.inspect(new Item(), { compact: true }), Bun.inspect({ item: new Item() }, { compact: true }));
+        console.log(Decorated, Bun.inspect(new Decorated(), { compact: true }), Child);
+        const id = x => x;
+        const Nameless = id(class { @dec m() {} });
+        console.log(Nameless, Bun.inspect(new Nameless(), { compact: true }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        [
+          "[class Item] Item { id: [Getter/Setter] } { item: Item { id: [Getter/Setter] } }",
+          "[class Decorated] Decorated { m: [Function: m] } [class Child extends Item]",
+          "[class (anonymous)] { m: [Function: m] }",
+        ].join("\n") + "\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("every naming context", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const A = class { @dec m() {} };
+        let B; B = class { @dec m() {} };
+        const { C = class { @dec m() {} } } = {};
+        const [D = class { @dec m() {} }] = [];
+        const obj = { E: class { @dec m() {} } };
+        class Holder {
+          static F = class { @dec m() {} };
+          G = class { @dec m() {} };
+        }
+        const H = @dec class {};
+        console.log(JSON.stringify([A.name, B.name, C.name, D.name, obj.E.name, Holder.F.name, new Holder().G.name, H.name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["A","B","C","D","E","F","G","H"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("no naming context leaves the name empty", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const id = x => x;
+        console.log(JSON.stringify([id(class { @dec m() {} }).name, id(@dec class {}).name, id(class { accessor x; }).name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["","",""]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class body still refers to the outer binding", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        let Bar = class {
+          @dec m() { return Bar; }
+          static s() { return Bar; }
+        };
+        const Original = Bar;
+        Bar = "reassigned";
+        console.log(Original.name, new Original().m(), Original.s());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Bar reassigned reassigned\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("name is set before static initializers run", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Bar = class {
+          static field = this.name;
+          static #priv = this.name;
+          static priv() { return this.#priv; }
+          static { console.log("static block:", this.name); }
+          @dec m() {}
+        };
+        console.log(Bar.name, Bar.field, Bar.priv());
+        const Baz = @dec class {
+          static field = this.name;
+        };
+        console.log(Baz.name, Baz.field);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("static block: Bar\nBar Bar Bar\nBaz Baz\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a static member named `name` declared by the class wins", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Getter = class { static get name() { return "from getter"; } @dec m() {} };
+        const Setter = class { static set name(v) {} @dec m() {} };
+        const Method = class { static name() {} @dec m() {} };
+        const DecoratedMethod = class { @dec static name() {} };
+        const DecoratedComputed = class { @dec static ["name"]() {} };
+        const Accessor = class { static accessor name = "from accessor"; @dec m() {} };
+        const Field = class { static seenBefore = this.name; static name = "from field"; @dec m() {} };
+        const Uninitialized = class { static name; @dec m() {} };
+        const Instance = class { name = "instance"; @dec m() {} };
+        console.log(JSON.stringify([
+          Getter.name,
+          Setter.name,
+          typeof Method.name,
+          typeof DecoratedMethod.name,
+          typeof DecoratedComputed.name,
+          Accessor.name,
+          Field.seenBefore,
+          Field.name,
+          Uninitialized.name,
+          Instance.name,
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["from getter",null,"function","function","function","from accessor","Field","from field",null,"Instance"]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a decorated static accessor named `name` is installed after the body runs", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Foo = class {
+          static seenBefore = this.name;
+          @dec static accessor name = "from accessor";
+        };
+        console.log(JSON.stringify([Foo.seenBefore, Foo.name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["Foo","from accessor"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a static `name` method keyed by an inlined TypeScript enum member wins too", async () => {
+      using dir = tempDir("es-dec-enum-name-key", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          enum Key { Name = "name" }
+          function dec() {}
+          const Foo = class {
+            static [Key.Name]() { return "method"; }
+            @dec m() {}
+          };
+          console.log(typeof Foo.name);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("function\n");
+      expect(exitCode).toBe(0);
     });
   });
 

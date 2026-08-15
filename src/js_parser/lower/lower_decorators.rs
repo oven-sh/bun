@@ -5,9 +5,8 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{HashMap, VecExt};
 
-use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
+use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
@@ -124,19 +123,21 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-/// Whether a context-inferred name (`export default` → "default", object
-/// property keys, assignment targets) can be attached to a lowered anonymous
-/// class expression as its syntactic binding name. Class bodies are always
-/// strict mode code and the output may be a module, so reserved words
-/// ("default", "let", "await", …), `eval`/`arguments`, and non-identifier
-/// strings would turn `_class = class <name> {}` into a syntax error.
-#[inline]
-fn can_be_class_binding_name(name: &[u8]) -> bool {
-    js_lexer::is_identifier(name)
-        && js_lexer::keyword(name).is_none()
-        && !js_lexer::is_strict_mode_reserved_word(name)
-        && name != b"await"
-        && !is_eval_or_arguments(name)
+/// Installed before static blocks run; a `static name` field instead wins on its own.
+fn defines_static_name_method(props: &[Property]) -> bool {
+    props.iter().any(|prop| {
+        prop.flags.contains(Flags::Property::IsStatic)
+            && (prop.flags.contains(Flags::Property::IsMethod)
+                // A decorated accessor is installed from the suffix instead.
+                || (prop.kind == PropertyKind::AutoAccessor && prop.ts_decorators.len_u32() == 0))
+            && match prop.key {
+                Some(key) => matches!(
+                    key.unwrap_inlined().data,
+                    js_ast::ExprData::EString(s) if s.eql_comptime(b"name")
+                ),
+                None => false,
+            }
+    })
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -1142,19 +1143,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 class_name_ref = ecr;
                 class_name_loc = loc;
                 expr_class_is_anonymous = true;
-                if let Some(name) = name_from_context
-                    && can_be_class_binding_name(name)
-                {
-                    class.class_name = Some(js_ast::LocRef {
-                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
-                        loc,
-                    });
-                }
             }
         } else {
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
+        // Decided before Phase 2 replaces decorated computed keys with temporaries.
+        let restore_inferred_name =
+            expr_class_is_anonymous && !defines_static_name_method(class.properties.slice());
 
         let mut inner_class_ref: Ref = class_name_ref;
         if !is_expr {
@@ -2420,6 +2416,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 merged.push(np);
             }
             new_properties = merged;
+        }
+
+        // A string literal, unlike a class binding, survives the bundler's renaming.
+        if restore_inferred_name {
+            let this_e = p.new_expr(E::This {}, loc);
+            let name_e = p.new_expr(
+                E::EString {
+                    data: name_from_context.unwrap_or(b"").into(),
+                    ..Default::default()
+                },
+                loc,
+            );
+            let set_name = p.call_rt(loc, b"__name", &[this_e, name_e]);
+            let block = p.make_static_block(set_name, loc);
+            new_properties.insert(0, block);
         }
 
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());

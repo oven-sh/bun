@@ -65,8 +65,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
         return;
     }
 
-    // `bun ...` tasks run this executable directly instead of going through
-    // `<bun> run`.
     let is_bun_task = strings::starts_with(task, b"bun ");
 
     let mut argv: Vec<&[u8]> = Vec::new();
@@ -92,22 +90,20 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
 
     let _unbuffered = Output::disable_buffering_scope();
 
-    // `spawn_sync::spawn` execs argv[0] as given, without a $PATH search, so a
-    // bare command name is resolved here and passed as the exec path (`argv0`)
-    // while the task's own words stay argv. argv[0] needs no resolving when it
-    // is already the npm client's absolute path, or contains a slash (the spawn
-    // resolves that against `cwd` itself).
-    let mut exe_buf = bun_paths::path_buffer_pool::get();
-    let exe: Option<&bun_core::ZStr> = if is_bun_task {
+    // The spawn does no $PATH search of its own: a bare command name is resolved
+    // here and passed as the exec path, and a path containing a slash is
+    // resolved against `cwd` by the spawn.
+    let mut exec_path_buf = bun_paths::path_buffer_pool::get();
+    let exec_path: Option<&bun_core::ZStr> = if is_bun_task {
         match bun_core::self_exe_path() {
-            Ok(exe) => Some(exe),
+            Ok(exec_path) => Some(exec_path),
             Err(err) => return print_task_error(task, err),
         }
     } else if npm_client.is_some() || strings::contains_char(argv[0], b'/') {
         None
     } else {
-        match which_for_spawn(&mut *exe_buf, path_env, cwd, argv[0]) {
-            Some(exe) => Some(exe),
+        match which_for_spawn(&mut *exec_path_buf, path_env, cwd, argv[0]) {
+            Some(exec_path) => Some(exec_path),
             None => {
                 return print_task_error(
                     task,
@@ -122,7 +118,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
 
     let result = spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-        argv0: exe.map(bun_core::ZStr::as_ptr),
+        argv0: exec_path.map(bun_core::ZStr::as_ptr),
         envp: None,
         cwd: Box::from(cwd),
         stderr: spawn_sync::SyncStdio::Inherit,

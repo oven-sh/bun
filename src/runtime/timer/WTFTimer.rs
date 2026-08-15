@@ -226,12 +226,12 @@ impl WTFTimer {
     }
 
     /// # Safety
-    /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
+    /// `this` must be the unique owner of a `WTFTimer` produced by `WTFTimer__create`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };
-        // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
-        // the paired free.
+        // SAFETY: `WTFTimer__create` handed its `Box` over via `heap::into_raw`,
+        // so `heap::take` is the paired reclaim.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }

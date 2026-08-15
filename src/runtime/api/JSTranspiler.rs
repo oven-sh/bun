@@ -677,20 +677,12 @@ pub(crate) struct TransformJs {
 impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
-    fn run(
-        this: &mut Self,
-        vm: &jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
-        TransformTask::run(this, vm);
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        TransformTask::run(this, done.ticket());
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
-        Ok(TransformTask::then(
-            &mut this,
-            js.promise.swap(),
-            cx.global(),
-        )?)
+        TransformTask::then(&mut this, js.promise.swap(), cx.global())
     }
 }
 
@@ -748,13 +740,13 @@ impl TransformTask {
         value
     }
 
-    fn run(&mut self, vm: &jsc::vm_handle::Borrow) {
+    fn run(&mut self, vm: &jsc::Ticket) {
         let name = self.loader.stdin_name();
         let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
         self.transpiler.linker.resolver = resolver_ptr;
-        // SAFETY: the wrapper's config, alive under the borrow (see `schedule`).
+        // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
-            self.tsconfig.map(|p| &*unsafe { p.under_borrow(vm) });
+            self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
 
         let arena = Arena::new();
 
@@ -867,11 +859,7 @@ impl TransformTask {
         }
     }
 
-    fn then(
-        &mut self,
-        promise: &mut JSPromise,
-        global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
@@ -901,11 +889,7 @@ impl TransformTask {
         self.finish(promise, global)
     }
 
-    fn finish(
-        &mut self,
-        promise: &mut JSPromise,
-        global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         promise.settle(global, self.output_code.transfer_to_js(global))
     }
 }

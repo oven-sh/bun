@@ -21,6 +21,15 @@ function checkToml(toml) {
   expect(toml.install.scopes["@mybigcompany3"].three).toBe(4);
   expect(toml.install.cache.dir).toBe("C:\\Windows\\System32");
   expect(toml.install.cache.dir2).toBe("C:\\Windows\\System32\\🏳️‍🌈");
+  // Imported date/time values are the same Temporal objects TOML.parse returns.
+  expect(toml.dates.odt).toBeInstanceOf(Temporal.Instant);
+  expect(toml.dates.odt.toString()).toBe("1979-05-27T07:32:00Z");
+  expect(toml.dates.ldt).toBeInstanceOf(Temporal.PlainDateTime);
+  expect(toml.dates.ldt.toString()).toBe("1979-05-27T07:32:00");
+  expect(toml.dates.ld).toBeInstanceOf(Temporal.PlainDate);
+  expect(toml.dates.ld.toString()).toBe("1979-05-27");
+  expect(toml.dates.lt).toBeInstanceOf(Temporal.PlainTime);
+  expect(toml.dates.lt.toString()).toBe("07:32:00");
 }
 
 it("via dynamic import", async () => {

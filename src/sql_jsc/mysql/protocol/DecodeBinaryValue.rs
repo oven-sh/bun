@@ -187,7 +187,6 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                 // interned crate::Error names so `?` can widen here.
                 let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
                     bun_jsc::JsError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-                    bun_jsc::JsError::Terminated => crate::Error::Terminated,
                     bun_jsc::JsError::Thrown => crate::Error::Thrown,
                 })?;
                 Ok(SQLDataCell::date(ts))

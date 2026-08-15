@@ -322,6 +322,13 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
+        /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
+        pub fn set_url(&mut self, href: Box<[u8]>) {
+            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+                .unwrap_or_else(|_| OwnedURL::from_href(href));
+            self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -508,16 +515,15 @@ pub mod registry {
                 registry_url
             };
 
-            let url_hash = Self::hash(strings::without_trailing_slash(&final_href));
-
-            Ok(Scope {
+            let mut scope = Scope {
                 name: name.into(),
-                url: OwnedURL::from_href(final_href),
-                url_hash,
                 token: registry.token,
                 auth,
                 user,
-            })
+                ..Default::default()
+            };
+            scope.set_url(final_href);
+            Ok(scope)
         }
     }
 
@@ -1952,6 +1958,35 @@ impl PackageManifest {
     }
 }
 
+/// Fills `set` with the names listed in `bundle(d)Dependencies`; returns whether it was `true` (bundle everything).
+fn collect_bundled_deps(
+    version_obj: Option<&JSON::E::ObjectJSON>,
+    set: &mut StringSet,
+) -> Result<bool, AllocError> {
+    set.map.clear_retaining_capacity();
+    let mut bundle_all_deps = false;
+    if let Some(bundled_deps_value) = version_obj
+        .and_then(|o| o.get(b"bundleDependencies"))
+        .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
+    {
+        match bundled_deps_value {
+            JSON::E::JsonValue::Boolean(boolean) => {
+                bundle_all_deps = *boolean;
+            }
+            JSON::E::JsonValue::Array(arr) => {
+                for bundled_dep in arr.get().items() {
+                    let Some(s) = bundled_dep.as_str() else {
+                        continue;
+                    };
+                    set.insert(s)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(bundle_all_deps)
+}
+
 // Keys are pre-hashed string hashes, so don't re-hash them.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
 
@@ -2151,27 +2186,7 @@ impl PackageManifest {
                     }
                 }
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_value) = version_obj
-                    .and_then(|o| o.get(b"bundleDependencies"))
-                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-                {
-                    match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
-                            bundle_all_deps = *boolean;
-                        }
-                        JSON::E::JsonValue::Array(arr) => {
-                            for bundled_dep in arr.get().items() {
-                                let Some(s) = bundled_dep.as_str() else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(obj) = version_obj
@@ -2375,27 +2390,7 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_value) = version_obj
-                    .and_then(|o| o.get(b"bundleDependencies"))
-                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-                {
-                    match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
-                            bundle_all_deps = *boolean;
-                        }
-                        JSON::E::JsonValue::Array(arr) => {
-                            for bundled_dep in arr.get().items() {
-                                let Some(s) = bundled_dep.as_str() else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
 
                 let mut package_version: PackageVersion = empty_version;
 

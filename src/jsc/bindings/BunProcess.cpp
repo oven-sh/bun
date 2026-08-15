@@ -171,12 +171,12 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
-extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
-extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
+extern "C" void Bun__setExitCode(void*, uint8_t);
+extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
-extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
+extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
@@ -302,11 +302,11 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
+    process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
         return;
     }
-    process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
@@ -905,14 +905,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    Process__dispatchOnExit(zigGlobal, exitCode);
+    Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
 
-    // process.reallyExit(exitCode);
+    // process.reallyExit(process.exitCode) — re-read: an 'exit' listener may have set it.
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     MarkedArgumentBuffer args;
-    args.append(jsNumber(exitCode));
+    args.append(jsNumber(Bun__getExitCode(bunVM(zigGlobal))));
     JSC::call(globalObject, reallyExitVal, args, ""_s);
     RETURN_IF_EXCEPTION(throwScope, {});
 

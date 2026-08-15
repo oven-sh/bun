@@ -763,10 +763,12 @@ impl Image {
                     // existing fastMalloc storage in-place (zero byte copy);
                     // pinning then keeps it alive even if JS does `.buffer` →
                     // `transfer()` while the worker reads.
-                    2 => {
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -777,7 +779,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }
@@ -1304,14 +1306,14 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and not used again here; the read
         // dispatch hands it to `on_read_bytes` below exactly once, also when it
-        // returns `Err` (a termination hit while delivering synchronously, i.e.
-        // after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, global) }.map_err(jsc::JsError::from)?;
+        // returns `Err` (an exception left pending while delivering synchronously,
+        // i.e. after the chain has already been reclaimed).
+        unsafe { blob.read_bytes_to_handler(raw, global) }?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
@@ -1344,47 +1346,34 @@ impl<'a> BlobReadChain<'a> {
                     drop(bytes);
                 }
                 let Some(this_value) = image.this_ref.get().try_get() else {
-                    let _ = outer.reject(
+                    drop(deliver);
+                    return outer.reject(
                         global,
                         Ok(global.create_error_instance(format_args!(
                             "Image: collected before read completed"
                         ))),
                     );
-                    drop(deliver);
-                    return;
                 };
-                // Source is now `.owned`; this re-entry takes the regular path.
-                let inner = match image.schedule(global, this_value, kind, deliver) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // `deliver` was moved into `schedule()`; on
-                        // error it has already been dropped there.
-                        let _ = outer.reject(
-                            global,
-                            Ok(global.create_error_instance(format_args!(
-                                "Image: pipeline schedule failed"
-                            ))),
-                        );
-                        return;
-                    }
-                };
-                let _ = outer.resolve(global, inner);
+                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
+                // `deliver` was already dropped there and the pending exception is the rejection.
+                let inner = image.schedule(global, this_value, kind, deliver);
+                outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, Ok(e.to_error_instance(global)));
+                outer.reject(global, Ok(e.to_error_instance(global)))
             }
         }
     }
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
         // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
         // handed back to us exactly once (trait contract); nothing else points
         // at it, so reclaiming it here is the chain's one and only free.
         let boxed = unsafe { bun_core::heap::take(this) };
-        boxed.on_read_bytes_impl(result);
+        boxed.on_read_bytes_impl(result)
     }
 }
 
@@ -1465,16 +1454,12 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
-    fn run(
-        this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run();
         Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(PipelineTask::then(this, js, cx)?)
+        PipelineTask::then(this, js, cx)
     }
 }
 
@@ -1772,11 +1757,7 @@ impl PipelineTask {
 
     /// Back on the JS thread: publish dims, deliver the result. The pin and
     /// the hold on the Image are released when `js` drops at the end.
-    pub(crate) fn then(
-        mut self,
-        mut js: PipelineJs,
-        cx: &jsc::JsThread<'_>,
-    ) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);

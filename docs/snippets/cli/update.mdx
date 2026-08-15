@@ -1,7 +1,8 @@
 ## CLI Usage
 
 ```bash terminal icon="terminal"
-bun update <name>@<version>
+bun update [<name>[@<version>] | <pattern>]...
+bun up
 ```
 
 ### Update Strategy
@@ -11,13 +12,22 @@ bun update <name>@<version>
 </ParamField>
 
 <ParamField path="--latest" type="boolean">
-  Update packages to their latest versions
+  Update packages to their latest versions. Alias: <code>-L</code>
 </ParamField>
 
 ### Dependency Scope
 
-<ParamField path="--production" type="boolean">
-  Don't install devDependencies. Alias: <code>-p</code>
+<ParamField path="--dev" type="boolean">
+  Only update <code>devDependencies</code>. Alias: <code>-D</code>
+</ParamField>
+
+<ParamField path="--prod" type="boolean">
+  Only update <code>dependencies</code> and <code>optionalDependencies</code>. Aliases: <code>-P</code>,{" "}
+  <code>--production</code>
+</ParamField>
+
+<ParamField path="--no-optional" type="boolean">
+  Don't update <code>optionalDependencies</code>
 </ParamField>
 
 <ParamField path="--global" type="boolean">
@@ -103,7 +113,7 @@ bun update <name>@<version>
 ### Script Execution
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">
@@ -120,9 +130,9 @@ bun update <name>@<version>
   Add to <code>trustedDependencies</code> in the project's <code>package.json</code> and install the package(s)
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 ### General & Environment
@@ -132,7 +142,7 @@ bun update <name>@<version>
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Perform a dry run without making changes
 </ParamField>
 
 <ParamField path="--cwd" type="string">

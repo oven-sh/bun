@@ -202,7 +202,7 @@ impl TarballStream {
         // Wrapped once as `ParentRef` so
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
+        // variant for streaming tarballs (set by `enqueue_extract_npm_package`,
         // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
@@ -1047,7 +1047,7 @@ impl TarballStream {
             drop((*network).tarball_stream.take());
 
             // `task.apply_patch_task` is intentionally not touched: the
-            // buffered `.extract` path (`enqueueExtractNPMPackage` →
+            // buffered `.extract` path (`enqueue_extract_npm_package` →
             // `Task.callback`) never populates it for npm tarballs either —
             // patching is handled later by the install phase.
             //
@@ -1075,7 +1075,7 @@ impl TarballStream {
     unsafe fn populate_result(&mut self, task: *mut Task) {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
-        // for streaming tarballs (set by `enqueueExtractNPMPackage`).
+        // for streaming tarballs (set by `enqueue_extract_npm_package`).
         unsafe {
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {

@@ -21,7 +21,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
-    std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteDatabaseSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSync;
@@ -33,12 +32,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkController;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSink;
     std::unique_ptr<IsoSubspace> m_subspaceForStringDecoder;
-    std::unique_ptr<IsoSubspace> m_subspaceForReadableState;
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
     std::unique_ptr<IsoSubspace> m_subspaceForImportMeta;
-    std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSpecialSandbox;
@@ -58,7 +55,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSocketHandlers;
-    std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
     std::unique_ptr<IsoSubspace> m_subspaceForStrongRootBlock;
@@ -73,8 +69,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<IsoSubspace> m_subspaceForWasmStreamingCompiler;
@@ -116,7 +110,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForOneShotDirectSink;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamIntoArrayOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamAsyncIterator;
-    std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamReaderBase;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamBYOBReader;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamBYOBRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamDefaultController;
@@ -162,13 +155,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;
     std::unique_ptr<IsoSubspace> m_subspaceForErrorEvent;
     std::unique_ptr<IsoSubspace> m_subspaceForEvent;
-    std::unique_ptr<IsoSubspace> m_subspaceForEventListener;
     std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
     std::unique_ptr<IsoSubspace> m_subspaceForEventEmitter;
 
-    std::unique_ptr<IsoSubspace> m_subspaceForZigGlobalObject;
-
-    std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
 
@@ -190,7 +179,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;

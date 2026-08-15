@@ -788,29 +788,6 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
 template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
 template void JSMockModule::visit(JSC::SlotVisitor&);
 
-extern Structure* createMockResultStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
-        globalObject,
-        globalObject->objectPrototype(),
-        2);
-    JSC::PropertyOffset offset;
-
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        vm.propertyNames->type,
-        0,
-        offset);
-
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        vm.propertyNames->value,
-        0, offset);
-    return structure;
-}
-
 static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, const WTF::String& type, JSC::JSValue value)
 {
     JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);

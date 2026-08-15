@@ -485,7 +485,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        self.buffer_payload(data).expect("unreachable");
+        bun_core::handle_oom(self.buffer_payload(data));
         if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
@@ -502,9 +502,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         kind: Opcode,
         is_final: bool,
     ) -> usize {
-        if !data.is_empty() && self.buffer_payload(data).is_err() {
-            self.terminate(ErrorCode::Closed);
-            return 0;
+        if !data.is_empty() {
+            bun_core::handle_oom(self.buffer_payload(data));
         }
 
         if data.len() == left_in_fragment {

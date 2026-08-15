@@ -564,8 +564,12 @@ void writableStreamDefaultControllerError(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable);
+    // Cleared after StartErroring rather than before as in the spec: StartErroring reaches a
+    // native codec chunk still in flight through the algorithms, and nothing else it does uses
+    // them (a Writable stream has no pending abort request, so it cannot get to the abort steps).
+    writableStreamStartErroring(globalObject, stream, error);
     writableStreamDefaultControllerClearAlgorithms(controller);
-    RELEASE_AND_RETURN(scope, writableStreamStartErroring(globalObject, stream, error));
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void writableStreamDefaultControllerErrorIfNeeded(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue error)

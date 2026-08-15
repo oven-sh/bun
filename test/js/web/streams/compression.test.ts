@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { addAbortSignal } from "node:stream";
 import zlib from "node:zlib";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
@@ -831,6 +832,24 @@ describe("bounded output per input chunk", () => {
     await expect(writer.closed).rejects.toThrow("stop");
     // The abort algorithm errored the readable (dropping the piece it still held).
     await expect(reader.read()).rejects.toThrow("stop");
+  });
+
+  // node:stream's addAbortSignal() errors the writable through its controller, the
+  // other route into the erroring state (it clears the sink's algorithms on the way).
+  test("addAbortSignal() on the writable mid-expansion settles the write", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, ds.writable);
+    controller.abort();
+    expect(await write).toBeUndefined();
+    await expect(writer.closed).rejects.toMatchObject({ name: "AbortError" });
   });
 
   // An abort during close() is different: the close in progress wins, so a flush

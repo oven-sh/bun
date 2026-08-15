@@ -823,7 +823,8 @@ unsafe extern "C" {
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

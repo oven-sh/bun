@@ -570,7 +570,11 @@ impl Execution {
 
     fn on_group_completed(global_this: &JSGlobalObject) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.disable();
+        let vm = global_this.bun_vm().as_mut();
+        // Under --isolate the swap between files kills and clears the tracked set.
+        if !vm.test_isolation_enabled {
+            vm.auto_killer.disable();
+        }
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {

@@ -9296,8 +9296,14 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 /// Write-all behind `Output::writer()`/`error_writer()` and the scoped-debug
 /// `QuietWriter`. Nothing is logged on failure; the error is returned so the
 /// adapter can surface it and `ScopedLogger::log` can disable the scope.
-fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> Maybe<()> {
-    File::borrow(&fd).write_all(bytes)
+fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
+    while !bytes.is_empty() {
+        match write(fd, bytes)? {
+            0 => return Err(Error::from_code(E::EIO, Tag::write)),
+            n => bytes = &bytes[n..],
+        }
+    }
+    Ok(())
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

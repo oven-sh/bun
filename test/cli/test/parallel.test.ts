@@ -903,6 +903,58 @@ test("--parallel writes new snapshots from every worker", async () => {
   expect(code2).toBe(0);
 });
 
+test("--parallel summary reports the same snapshot counts as a serial run", async () => {
+  // Two file snapshots plus one inline snapshot. The inline one is only
+  // counted as added when the worker writes it back into c.test.js at exit,
+  // after the file itself has been reported done, so it covers the path the
+  // per-file counters can't. (Block bodies: an inline snapshot taken as an
+  // arrow's tail call can't locate its caller to write itself back.)
+  const fixture = {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>{ expect("value-a").toMatchSnapshot(); });`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>{ expect(process.env.B_VALUE ?? "value-b").toMatchSnapshot(); });`,
+    "c.test.js": `import {test,expect} from "bun:test"; test("c",()=>{ expect("value-c").toMatchInlineSnapshot(); });`,
+  };
+  using serialDir = tempDir("serial-snapshot-summary", fixture);
+  using parallelDir = tempDir("parallel-snapshot-summary", fixture);
+
+  // The summary's snapshot line and, when printed separately, the expect() line after it.
+  const snapshotSummary = (stderr: string) =>
+    stderr.split(/\r?\n/).filter(line => /^(snapshots:|\s+\d+ snapshots,|\s+\d+ expect\(\) calls)/.test(line));
+
+  async function run(dir: string, args: string[], env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false", ...env },
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // First run writes all three snapshots.
+  const [serial, created] = await Promise.all([run(String(serialDir), []), run(String(parallelDir), ["--parallel=3"])]);
+  expect(snapshotSummary(serial.stderr)).toEqual(["snapshots: +3 added", " 3 expect() calls"]);
+  expect(serial.exitCode).toBe(0);
+  expect(created.stdout).toContain("PARALLEL");
+  expect(snapshotSummary(created.stderr)).toEqual(snapshotSummary(serial.stderr));
+  expect(created.exitCode).toBe(0);
+
+  // Second run matches them: the snapshot count folds into the expect() line.
+  const matched = await run(String(parallelDir), ["--parallel=3"]);
+  expect(matched.stdout).toContain("PARALLEL");
+  expect(snapshotSummary(matched.stderr)).toEqual([" 3 snapshots, 3 expect() calls"]);
+  expect(matched.exitCode).toBe(0);
+
+  // b's value changed, so one of the three fails.
+  const failed = await run(String(parallelDir), ["--parallel=3"], { B_VALUE: "changed" });
+  expect(failed.stdout).toContain("PARALLEL");
+  expect(snapshotSummary(failed.stderr)).toEqual(["snapshots: 2 passed, 1 failed", " 3 expect() calls"]);
+  expect(failed.stderr).toContain("1 fail");
+  expect(failed.exitCode).toBe(1);
+});
+
 test("--parallel: a test producing a >64MB result line is truncated, not treated as a crash", async () => {
   // Test name just over the 64MB IPC frame limit → the per-test status line
   // itself exceeds it. The encoder must truncate so the receiver doesn't drop

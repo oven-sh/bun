@@ -453,6 +453,7 @@ impl<'a> Coordinator<'a> {
                     files,
                     unhandled,
                 ] = nums;
+                let snapshot_counts = rd.counts();
 
                 self.flush_captured(w);
                 if self.last_header_idx == Some(idx) {
@@ -482,6 +483,10 @@ impl<'a> Coordinator<'a> {
                     summary.files += files;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                self.reporter
+                    .jest
+                    .snapshots
+                    .add_summary_counts(snapshot_counts);
                 self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
@@ -526,6 +531,9 @@ impl<'a> Coordinator<'a> {
                 if !chunk.is_empty() {
                     self.coverage_chunks.push(Box::<[u8]>::from(chunk));
                 }
+            }
+            frame::Kind::SnapshotCounts => {
+                self.reporter.jest.snapshots.add_summary_counts(rd.counts());
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }

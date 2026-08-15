@@ -1104,6 +1104,20 @@ describe("ES Decorators", () => {
       );
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a decorated static accessor named `name` is installed after the body runs", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Foo = class {
+          static seenBefore = this.name;
+          @dec static accessor name = "from accessor";
+        };
+        console.log(JSON.stringify([Foo.seenBefore, Foo.name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["Foo","from accessor"]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("private member calls in lowered classes", () => {

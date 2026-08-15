@@ -2703,8 +2703,7 @@ mod draft {
     /// Largest zlib stream whose unpadded base64 form fits a trace string.
     const MAX_COMPRESSED_MESSAGE_LEN: usize = TRACE_STRING_MAX_LEN * 3 / 4;
 
-    /// Appends the unpadded base64 zlib stream of the longest prefix of `message` that fits in
-    /// the room left in `writer`, keeping `reserved` bytes free for what the caller appends next.
+    /// Appends base64(zlib(p)), p the longest message prefix that fits with `reserved` bytes spare.
     fn write_panic_message(
         writer: &mut TraceStringBuf,
         message: &[u8],
@@ -2775,8 +2774,7 @@ mod draft {
         }
     }
 
-    /// `message[..len]`, shortened so it does not end inside a multi-byte UTF-8 sequence.
-    /// The whole message (`len == message.len()`) is returned as-is, whatever its encoding.
+    /// `message[..len]` backed up off UTF-8 continuation bytes; the whole message comes back as-is.
     fn utf8_prefix(message: &[u8], mut len: usize) -> &[u8] {
         while len < message.len() && len > 0 && message[len] & 0xC0 == 0x80 {
             len -= 1;

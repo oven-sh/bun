@@ -2064,9 +2064,7 @@ impl BuildArtifact {
                 "<r>path<r>: <green>\"{s}\"<r>",
                 bstr::BStr::new(&self.path),
             )?;
-            formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-                .expect("unreachable");
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -2077,9 +2075,7 @@ impl BuildArtifact {
                 <&'static str>::from(self.loader),
             )?;
 
-            formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-                .expect("unreachable");
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -2092,9 +2088,7 @@ impl BuildArtifact {
             )?;
 
             if self.hash != 0 {
-                formatter
-                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-                    .expect("unreachable");
+                formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
 
                 formatter.write_indent(writer)?;
@@ -2106,9 +2100,7 @@ impl BuildArtifact {
                 )?;
             }
 
-            formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-                .expect("unreachable");
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -2117,9 +2109,7 @@ impl BuildArtifact {
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
 
             if self.output_kind != OutputKind::Sourcemap {
-                formatter
-                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-                    .expect("unreachable");
+                formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
                 write!(

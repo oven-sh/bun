@@ -589,25 +589,19 @@ extern "C" void onExitSignal(int sig)
     bun_restore_stdio();
     signal(sig, SIG_DFL);
 
-    // The signal being handled is blocked for the duration of its handler, so
-    // unblock it: with SIG_DFL restored, raise() then terminates the process
-    // before it returns.
+    // `sig` is blocked while its own handler runs; once unblocked, raise() kills us here.
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, sig);
     pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
     raise(sig);
 
-    // Still alive, so this process is PID 1 of a pid namespace (a container
-    // entrypoint without an init). The kernel discards default-action signals
-    // aimed at init, including the one just raised; returning would resume the
-    // interrupted command as if the signal had never arrived.
+    // Only reached as PID 1 of a pid namespace: the kernel discards SIG_DFL
+    // signals aimed at init, the re-raise above included.
     _exit(128 + sig);
 }
 
-// Takes over a signal whose default action is to terminate the process, so
-// that the TTY is restored first. A disposition inherited from the parent
-// (`nohup`, `trap '' INT`, a non-interactive shell backgrounding us) is kept.
+// Leaves an inherited SIG_IGN (`nohup`, `trap '' INT`) in place.
 static void installExitSignalHandler(int sig)
 {
     struct sigaction sa;
@@ -712,12 +706,8 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit.
-    //
-    // Also needed when we are PID 1 of a pid namespace (`docker run image bun
-    // install` without `--init`), TTY or not: the kernel only delivers a signal
-    // to init if init has a handler for it, so with SIG_DFL `docker stop` /
-    // Ctrl-C would be ignored until the SIGKILL escalation.
+    // Restore TTY state on exit. PID 1 of a pid namespace (a container without an
+    // init) needs the handler even without a TTY: the kernel drops signals init does not handle.
     bool isPidNamespaceInit = false;
 #if OS(LINUX)
     isPidNamespaceInit = getpid() == 1;

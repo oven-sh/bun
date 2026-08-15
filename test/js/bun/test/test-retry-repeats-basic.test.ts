@@ -36,7 +36,9 @@ async function runRetryFixture(name: string, source: string) {
 
 // In each fixture below, attempt 1 times out while waiting on something that
 // attempt 2 completes as soon as it starts. Attempt 1's late completion must
-// not count as the completion of attempt 2.
+// not count as the completion of attempt 2, and a late error from attempt 1 is
+// reported the way a timed-out test's late error is reported while the next
+// test runs: as an unhandled error between tests, leaving attempt 2 alone.
 
 test.concurrent("a late resolve from a timed-out attempt does not complete the retry", async () => {
   const { stdout, stderr, exitCode } = await runRetryFixture(
@@ -124,6 +126,39 @@ test.concurrent("a late done() from a timed-out attempt does not complete the re
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("a late done(error) from a timed-out attempt is not attributed to the retry", async () => {
+  const { stdout, stderr, exitCode } = await runRetryFixture(
+    "retry-stale-done-error",
+    `
+      import { test } from "bun:test";
+      let firstDone: (err?: unknown) => void;
+      let attempt = 0;
+      test("retry", done => {
+        attempt++;
+        if (attempt === 1) {
+          firstDone = done;
+          return;
+        }
+        firstDone(new Error("late error from attempt 1"));
+        setTimeout(() => {
+          console.log("attempt 2 body finished");
+          done();
+        }, 1);
+      }, { retry: 2, timeout: 500 });
+    `,
+  );
+
+  expect(stdout).toContain("attempt 2 body finished");
+  expect(stderr).toContain("Unhandled error between tests");
+  expect(stderr).toContain("error: late error from attempt 1");
+  expect(stderr).toContain("(pass) retry (attempt 2)");
+  expect(stderr).not.toContain("(attempt 3)");
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("0 fail");
+  expect(stderr).toContain("1 error");
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("a late rejection from a timed-out attempt is not attributed to the retry", async () => {
   const { stdout, stderr, exitCode } = await runRetryFixture(
     "retry-stale-reject",
@@ -144,8 +179,6 @@ test.concurrent("a late rejection from a timed-out attempt is not attributed to 
     `,
   );
 
-  // Same as a timed-out test's promise rejecting while the next test runs: the
-  // error is reported between tests, and the running attempt is left alone.
   expect(stdout).toContain("attempt 2 body finished");
   expect(stderr).toContain("Unhandled error between tests");
   expect(stderr).toContain("error: late rejection from attempt 1");

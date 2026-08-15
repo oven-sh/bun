@@ -819,31 +819,45 @@ impl BunTest {
         let [value] = callframe.arguments_as_array::<1>();
 
         let was_error = !value.is_empty_or_undefined_or_null();
+        // A second done() is a no-op, as in Bun 1.2.20.
+        // In Jest it is "Expected done to be called once, but it was called multiple times."
+        // Vitest does not support done callbacks.
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
-            // in Bun 1.2.20, this is a no-op
-            // in Jest, this is "Expected done to be called once, but it was called multiple times."
-            // Vitest does not support done callbacks
-        } else {
-            // error is only reported for the first done() call
-            if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
-            }
-        }
-        // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
+        let (first_call, ref_in) = unsafe {
+            let first_call = !(*this).called;
             (*this).called = true;
-            (*this).r#ref.take()
+            (first_call, (*this).r#ref.take())
         };
-        let Some(ref_in) = ref_in else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        // `this.ref` was already taken above.
         // RefPtr<T> currently has NO Drop impl, so decrement the
         // intrusive count explicitly at scope exit. Without this the
         // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
+        let ref_in = ref_in.map(|r| scopeguard::guard(r, |r: RefDataPtr| r.deref()));
+
+        // error is only reported for the first done() call
+        if first_call && was_error {
+            // Report against the entry/attempt the callback was handed to (as `bun_test_then_or_catch`
+            // does for a rejection), so a done(error) that arrives after that entry timed out is an
+            // unhandled error rather than a failure of whatever runs now. The ref is only attached
+            // once the callback returns; a done(error) made while it is still on the stack has no
+            // ref, and the generic path reports against the running entry.
+            let owner = ref_in
+                .as_ref()
+                .and_then(|r| Some((r.buntest_weak.upgrade()?, &r.phase)));
+            match owner {
+                Some((strong, phase)) => {
+                    // SAFETY: `&mut` derived via `UnsafeCell`; the borrow ends with this call.
+                    strong.get().on_uncaught_exception(global_this, Some(value), false, phase);
+                }
+                None => {
+                    let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                }
+            }
+        }
+
+        let Some(ref_in) = ref_in else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.

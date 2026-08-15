@@ -290,6 +290,19 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
     }
 }
 
+/// Keeps the platform loop ref'd until dropped; construct via [`EventLoop::ref_loop_scoped`].
+#[must_use = "dropping immediately releases the loop ref"]
+pub struct LoopRefGuard(*mut uws::Loop);
+
+impl Drop for LoopRefGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: the per-thread loop outlives the VM; balances the `ref_()` in `ref_loop_scoped`.
+            unsafe { (*self.0).unref() };
+        }
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -1122,15 +1135,11 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
         while promise.status() == PromiseStatus::Pending {
-            if jsc_vm.execution_forbidden()
-                || !self.vm_ref().script_allowed()
-                || self.global_ref().has_pending_termination_exception()
-            {
+            if self.must_stand_down() {
                 return Err(jsc::Stopped);
             }
             self.tick();
@@ -1139,6 +1148,57 @@ impl EventLoop {
             }
         }
         Ok(())
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) that also returns once nothing is left that could settle `promise`.
+    pub fn wait_for_module_promise(
+        &mut self,
+        promise: *mut jsc::JSInternalPromise,
+    ) -> Result<(), jsc::Stopped> {
+        while jsc::JSPromise::status_ptr(promise) == PromiseStatus::Pending {
+            if self.must_stand_down() {
+                return Err(jsc::Stopped);
+            }
+            self.tick();
+            if jsc::JSPromise::status_ptr(promise) != PromiseStatus::Pending
+                || !self.vm_ref().has_pending_loop_work()
+            {
+                break;
+            }
+            // Ref'd only while parked, so the check above reads the real ref state.
+            let _parked = self.ref_loop_scoped();
+            self.auto_tick();
+        }
+        Ok(())
+    }
+
+    /// Ref the loop so `auto_tick` parks until the next event or timer instead of polling; unref'd work still wakes it.
+    pub fn ref_loop_scoped(&self) -> LoopRefGuard {
+        let Some(loop_) = self.usockets_loop_opt() else {
+            return LoopRefGuard(core::ptr::null_mut());
+        };
+        // SAFETY: the per-thread loop outlives the VM; released by `LoopRefGuard::drop`.
+        unsafe { (*loop_).ref_() };
+        LoopRefGuard(loop_)
+    }
+
+    fn usockets_loop_opt(&self) -> Option<*mut uws::Loop> {
+        #[cfg(windows)]
+        {
+            self.uws_loop.map(NonNull::as_ptr)
+        }
+        #[cfg(not(windows))]
+        {
+            self.vm_ref().event_loop_handle
+        }
+    }
+
+    /// The conditions under which a wait returns [`jsc::Stopped`]; see [`wait_for_promise`](Self::wait_for_promise).
+    fn must_stand_down(&self) -> bool {
+        let vm = self.vm_ref();
+        vm.jsc_vm().execution_forbidden()
+            || !vm.script_allowed()
+            || self.global_ref().has_pending_termination_exception()
     }
 
     pub fn wakeup(&self) {

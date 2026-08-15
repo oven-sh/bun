@@ -539,6 +539,13 @@ impl Loop {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
     }
+    /// Whether any I/O handle (socket poll, pipe, tty, process, fs watcher) is open and started, ref'd or not.
+    pub fn has_active_io_handles(&mut self) -> bool {
+        let mut found = false;
+        // SAFETY: self is a live loop; the walk is synchronous, so `found` outlives every callback.
+        unsafe { uv_walk(self, Some(io_handle_walk_cb), (&raw mut found).cast()) };
+        found
+    }
     #[inline]
     pub fn tick(&mut self) {
         // SAFETY: self is a live loop.
@@ -588,6 +595,28 @@ unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void)
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
         unsafe { uv_close(handle, None) };
+    }
+}
+
+unsafe extern "C" fn io_handle_walk_cb(handle: *mut uv_handle_t, found: *mut c_void) {
+    // SAFETY: libuv passes a live handle; `found` is the `bool` local of `has_active_io_handles`.
+    unsafe {
+        if uv_is_closing(handle) != 0 || uv_is_active(handle) == 0 {
+            return;
+        }
+        if matches!(
+            uv_handle_get_type(handle),
+            HandleType::Poll
+                | HandleType::NamedPipe
+                | HandleType::Tty
+                | HandleType::Process
+                | HandleType::FsEvent
+                | HandleType::FsPoll
+                | HandleType::Tcp
+                | HandleType::Udp
+        ) {
+            *found.cast::<bool>() = true;
+        }
     }
 }
 

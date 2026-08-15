@@ -472,7 +472,7 @@ pub(crate) fn get_or_put(
             dependency::version::Tag::Symlink => 'symlink: {
                 let mut path = PathBuffer::uninit();
                 let Some(folder_path) = dependency::link_path_for_lockfile(rel, &mut path) else {
-                    break 'symlink Err(crate::Error::PathTooLong);
+                    break 'symlink Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                 };
                 let mut resolver: SymlinkResolver = NewResolver { folder_path };
                 break 'symlink read_package_json_from_disk(

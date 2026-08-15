@@ -332,10 +332,7 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
             clearPendingTermination();
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
         }
-        // else: termination came from outside this Script (the bun:test
-        // watchdog around the test body, Worker.terminate(), etc.). Leave
-        // the request set and the TerminationException in the scope so it
-        // propagates to whoever armed it.
+        // Otherwise the termination isn't ours; leave it pending so it propagates.
         return true;
     }
 

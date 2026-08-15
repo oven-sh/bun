@@ -3047,19 +3047,17 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+// What JSC__VM__clearExecutionTimeLimit parks the watchdog at. Watchdog's
+// already-dispatched timer can't be cancelled and asserts hasTimeLimit() when
+// it fires, so "cleared" is a finite limit that never elapses rather than
+// Watchdog::noTimeLimit.
+static constexpr WTF::Seconds idleExecutionTimeLimit { static_cast<double>(INT32_MAX) };
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (auto* watchdog = vm->watchdog()) {
-        // The bun:test runner relaxes the watchdog to INT32_MAX seconds
-        // between test callbacks (see run_test_callback in bun_test.rs)
-        // instead of clearing it, to keep Watchdog's internal state
-        // consistent across stale dispatchAfter callbacks. Treat that idle
-        // sentinel as "no limit" so it doesn't permanently opt spawnSync
-        // out of its blocking fast path; no real caller sets a limit in
-        // this range.
-        return watchdog->hasTimeLimit() && watchdog->getTimeLimit() < WTF::Seconds { static_cast<double>(INT32_MAX) };
-    }
+    if (auto* watchdog = vm->watchdog())
+        return watchdog->getTimeLimit() < idleExecutionTimeLimit;
 
     return false;
 }
@@ -5092,26 +5090,17 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (vm->watchdog())
-        vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+    if (auto* watchdog = vm->watchdog())
+        watchdog->setTimeLimit(idleExecutionTimeLimit);
 }
 void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& watchdog = vm->ensureWatchdog();
-    // When called from inside an existing VMEntryScope, start the watchdog
-    // timer now: the scope's own Watchdog::enteredVM() only runs on the
-    // outermost entry, so if the watchdog is being created for the first
-    // time here, m_hasEnteredVM would otherwise stay false and the timer
-    // would never arm. Mirrors setupWatchdog() in NodeVMScript.cpp.
-    //
-    // When called from *outside* any VMEntryScope (the test runner arming
-    // before callback.call()), leave m_hasEnteredVM alone — the next
-    // VMEntryScope's setUpSlow() will call enteredVM() and start the timer.
-    // Forcing it true here with no scope active would make
-    // Watchdog::isActive() lie, and VMTraps::handleTraps() would then
-    // dereference the null vm.entryScope when servicing a stale
-    // NeedWatchdogCheck trap from native code.
+    // Watchdog::enteredVM() normally runs from VMEntryScope setup, so a watchdog
+    // created while JS is already on the stack must be entered by hand. With no
+    // entry scope the next one enters it; entering here instead would make
+    // VMTraps::handleTraps deref a null vm.entryScope on a stale check.
     if (vm->entryScope)
         watchdog.enteredVM();
     watchdog.setTimeLimit(WTF::Seconds { limit });

@@ -15,6 +15,7 @@ unsafe extern "C" {
     safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     safe fn JSC__VM__setExecutionTimeLimit(vm: &VM, timeout_seconds: f64);
+    safe fn JSC__VM__clearExecutionTimeLimit(vm: &VM);
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
     // to `callback` (never dereferenced as Rust data) — same contract as
@@ -59,11 +60,12 @@ impl VM {
         JSC__VM__hasExecutionTimeLimit(self)
     }
 
-    /// Arms JSC's `Watchdog` so running JS is interrupted with a
-    /// `TerminationException` at the next safepoint once `timeout_seconds`
-    /// of CPU time elapse. Used by the test runner around each test callback.
     pub fn set_execution_time_limit(&self, timeout_seconds: f64) {
         JSC__VM__setExecutionTimeLimit(self, timeout_seconds)
+    }
+
+    pub fn clear_execution_time_limit(&self) {
+        JSC__VM__clearExecutionTimeLimit(self)
     }
 
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper

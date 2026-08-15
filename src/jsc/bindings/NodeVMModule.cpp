@@ -118,10 +118,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                     vm.clearHasTerminationRequest();
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
                 }
-                // else: termination came from outside this module evaluation
-                // (the bun:test watchdog around the test body,
-                // Worker.terminate(), etc.). Leave the TerminationException
-                // pending so it propagates to whoever armed it.
+                // Otherwise the termination isn't ours; leave it pending so it propagates.
                 return {};
             }
         }
@@ -270,10 +267,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             vm.clearHasTerminationRequest();
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
-        // else: termination came from outside this module evaluation (the
-        // bun:test watchdog around the test body, Worker.terminate(), etc.).
-        // Leave the TerminationException pending so it propagates to
-        // whoever armed it; VM_RETURN_IF_EXCEPTION below bails out.
+        // Otherwise the termination isn't ours; leave it pending so it propagates.
     } else {
         setSigintReceived(false);
     }

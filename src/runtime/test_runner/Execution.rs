@@ -1078,13 +1078,8 @@ fn step_sequence_one(
     }
 }
 
-/// Kill child processes spawned by the timed-out test so they don't outlive
-/// it. Skipped under test.concurrent() because the auto-killer tracks
-/// processes globally and we'd take out other still-running tests' children.
-/// Called from both the event-loop timer path (handle_timeout) and the
-/// synchronous-return path in step_sequence_one when the JSC watchdog has
-/// interrupted a busy-looping callback — in that case the event-loop timer
-/// never fires, so this is the only chance to clean up.
+/// Skipped under test.concurrent(): the auto-killer is process-global and would
+/// take out other in-flight tests' children too.
 fn kill_dangling_processes(group_sequence_count: usize, global_this: &JSGlobalObject) {
     if group_sequence_count != 1 {
         return;

@@ -1155,34 +1155,12 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
 
-        // Arm the JSC watchdog so synchronous infinite loops (e.g.
-        // `while (true);`) in the test body are interrupted. The event-loop
-        // timer above can only fire once control returns to the event loop,
-        // which never happens if the callback never yields. JSC's Watchdog
-        // schedules on a separate VMTraps queue thread and raises a
-        // TerminationException at the next safepoint; the Err arm below
-        // clears it so subsequent tests can run, and evaluate_timeout() in
-        // step_sequence_one() reports FailBecauseTimeout.
-        //
-        // The watchdog is a hang detector, not the precise timer — that's the
-        // event-loop timer's job for callbacks that yield. A one-second grace
-        // over the test deadline avoids interrupting a synchronous prologue
-        // (spawning a child, building fixtures) that would have yielded in
-        // time for the event-loop timer to handle the timeout on the next
-        // tick; without it, very short per-test timeouts would be cut off
-        // before they reach their first await.
-        //
-        // On return, the limit is relaxed to a large finite sentinel rather
-        // than cleared to noTimeLimit. Watchdog::startTimer()'s dispatchAfter
-        // can't be cancelled; if m_timeLimit were infinity then the next
-        // VMEntryScope's enteredVM() would skip startTimer (no hasTimeLimit),
-        // leaving m_cpuDeadline at the infinity exitedVM() parked it at, and
-        // when the stale dispatch fires shouldTerminate() would call
-        // startTimer(∞) and trip ASSERT(hasTimeLimit()). Keeping a finite
-        // limit makes every enteredVM() refresh m_cpuDeadline so the stale
-        // timer resolves to a harmless early return.
+        // The event-loop timer above can't fire while the callback spins
+        // synchronously; JSC's watchdog throws a TerminationException at the
+        // next safepoint instead, which the Err arm below clears and
+        // evaluate_timeout() reports. The grace keeps it from racing the
+        // event-loop timer for callbacks that do yield.
         const WATCHDOG_GRACE_SECONDS: f64 = 1.0;
-        const WATCHDOG_IDLE_SECONDS: f64 = i32::MAX as f64;
         let watchdog_armed = !timeout.eql(&Timespec::EPOCH);
         if watchdog_armed {
             let now = Timespec::now_force_real_time();
@@ -1192,7 +1170,7 @@ impl BunTest {
         }
         let _watchdog_relax = scopeguard::guard(watchdog_armed, |armed| {
             if armed {
-                vm.jsc_vm().set_execution_time_limit(WATCHDOG_IDLE_SECONDS);
+                vm.jsc_vm().clear_execution_time_limit();
             }
         });
 

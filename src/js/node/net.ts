@@ -2133,8 +2133,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
   }
-  // Also for a reused handle: doConnect replaces the connection it still
-  // carries, so the stream state of that connection has to go with it.
+  // A reused handle gets a new connection from doConnect, so it is reset as well.
   initSocketHandle(this);
 
   if (!pipe) {

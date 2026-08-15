@@ -18,7 +18,11 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // Every write has to reach put() for its ToString. Without ProhibitsPropertyCaching,
+    // a put IC (LLInt/JIT) or a DFG PutByStatus fold stores the raw value straight into
+    // the object on later executions of the same site. Neither consults OverridesPut,
+    // and the DFG works from the structure alone, so slot.disableCaching() is not enough.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::ProhibitsPropertyCaching;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {

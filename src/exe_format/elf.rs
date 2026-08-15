@@ -7,6 +7,7 @@
 //! Must work on any host platform (macOS, Windows, Linux) for cross-compilation.
 
 use core::mem::size_of;
+use core::ops::Range;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -64,35 +65,28 @@ impl ElfFile {
         }
 
         let ehdr = read_ehdr(&self.data);
-        let phdr_size = size_of::<Elf64_Phdr>();
 
-        // Bounds-check the program header table up-front; --compile-executable-path
-        // accepts arbitrary files, so a corrupt e_phoff/e_phnum must not panic.
-        let phdr_table_end = ehdr
-            .e_phoff
-            .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
-        if phdr_table_end > self.data.len() as u64 {
+        // --compile-executable-path accepts arbitrary files, and this rewrite is
+        // best-effort: a header table or PT_INTERP that does not fit in the
+        // file leaves the interpreter alone instead of failing the build.
+        let Ok(phdrs) = phdr_table(&self.data, ehdr) else {
             return;
-        }
+        };
 
-        for i in 0..ehdr.e_phnum as usize {
-            let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
-            let phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
+        for phdr_offset in phdrs.step_by(PHDR_SIZE) {
+            let phdr = read_phdr(&self.data, phdr_offset);
             if phdr.p_type != PT_INTERP {
                 continue;
             }
 
-            let interp_offset = usize::try_from(phdr.p_offset).expect("int cast");
-            let interp_filesz = usize::try_from(phdr.p_filesz).expect("int cast");
-            if interp_offset + interp_filesz > self.data.len() {
+            let Ok(interp) = file_range(&self.data, phdr.p_offset, phdr.p_filesz) else {
                 return;
-            }
+            };
 
             // reshaped for borrowck — compute replacement under an
             // immutable borrow, then take a mutable borrow for the writes.
             let replacement: &'static [u8] = {
-                let interp_region = &self.data[interp_offset..][..interp_filesz];
-                let current = slice_to_nul(interp_region);
+                let current = slice_to_nul(&self.data[interp.clone()]);
 
                 if !current.starts_with(b"/nix/store/") && !current.starts_with(b"/gnu/store/") {
                     return;
@@ -116,7 +110,7 @@ impl ElfFile {
 
                 // FHS path + NUL must fit in the existing segment (always true for
                 // store paths: 32-char hash + pname + "/lib/" alone exceeds any FHS path).
-                if replacement.len() + 1 > interp_filesz {
+                if replacement.len() + 1 > interp.len() {
                     return;
                 }
 
@@ -131,7 +125,7 @@ impl ElfFile {
             };
 
             {
-                let interp_region = &mut self.data[interp_offset..][..interp_filesz];
+                let interp_region = &mut self.data[interp];
                 interp_region[..replacement.len()].copy_from_slice(replacement);
                 interp_region[replacement.len()..].fill(0);
             }
@@ -150,42 +144,30 @@ impl ElfFile {
     /// the rewritten PT_INTERP so `readelf -S` shows accurate metadata. The kernel
     /// only consults PT_INTERP, so any failure here is silently ignored.
     fn update_interp_section_size(&mut self, ehdr: Elf64_Ehdr, new_size: u64) {
-        let shdr_size = size_of::<Elf64_Shdr>();
-        let shnum = ehdr.e_shnum;
-        if shnum == 0 || ehdr.e_shstrndx >= shnum {
+        if ehdr.e_shstrndx >= ehdr.e_shnum {
             return;
         }
-
-        let shdr_table_end =
-            (ehdr.e_shoff).saturating_add((shnum as u64).saturating_mul(shdr_size as u64));
-        if shdr_table_end > self.data.len() as u64 {
+        let Ok(shdrs) = shdr_table(&self.data, ehdr) else {
             return;
-        }
-
-        let strtab_shdr = self.read_shdr(ehdr.e_shoff, ehdr.e_shstrndx);
-        let strtab_end = strtab_shdr.sh_offset.saturating_add(strtab_shdr.sh_size);
-        if strtab_end > self.data.len() as u64 {
+        };
+        let strtab_shdr = read_shdr(&self.data, &shdrs, ehdr.e_shstrndx);
+        let Ok(strtab) = file_range(&self.data, strtab_shdr.sh_offset, strtab_shdr.sh_size) else {
             return;
-        }
-        // reshaped for borrowck — copy strtab bounds out so we can
-        // re-borrow self.data mutably below.
-        let strtab_off = usize::try_from(strtab_shdr.sh_offset).expect("int cast");
-        let strtab_len = usize::try_from(strtab_shdr.sh_size).expect("int cast");
+        };
 
-        for i in 0..shnum as usize {
-            let shdr = self.read_shdr(ehdr.e_shoff, u16::try_from(i).expect("int cast"));
-            if shdr.sh_name as usize >= strtab_len {
+        for i in 0..ehdr.e_shnum {
+            let shdr = read_shdr(&self.data, &shdrs, i);
+            let name_offset = shdr.sh_name as usize;
+            if name_offset >= strtab.len() {
                 continue;
             }
-            let strtab = &self.data[strtab_off..][..strtab_len];
-            let name = slice_to_nul(&strtab[shdr.sh_name as usize..]);
-            if name != b".interp" {
+            if slice_to_nul(&self.data[strtab.clone()][name_offset..]) != b".interp" {
                 continue;
             }
 
             // sh_size @ +32 in Elf64_Shdr
-            let shdr_offset = usize::try_from(ehdr.e_shoff).expect("int cast") + i * shdr_size;
-            write_u64_le(&mut self.data[shdr_offset + 32..][..8], new_size);
+            let entry = shdr_offset(&shdrs, i);
+            write_u64_le(&mut self.data[entry + 32..][..8], new_size);
             return;
         }
     }
@@ -211,8 +193,6 @@ impl ElfFile {
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
-        let bun_section_offset = bun_section.file_offset;
-        let bun_section_vaddr = bun_section.vaddr;
         let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
@@ -224,34 +204,37 @@ impl ElfFile {
         // PT_LOAD holding the relocated PHDR + `.interp`, #31023). Growing an
         // existing PT_LOAD rather than adding a late one is required by
         // WSL1's kernel loader (#29963).
-        let phdr_size = size_of::<Elf64_Phdr>();
-        let mut rw_phdr_index: Option<usize> = None;
-        let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
+        let mut rw_phdr: Option<(usize, Elf64_Phdr)> = None;
         let mut max_vaddr_end: u64 = 0;
-        for i in 0..ehdr.e_phnum as usize {
-            let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
-            let phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
+        for phdr_offset in phdr_table(&self.data, ehdr)?.step_by(PHDR_SIZE) {
+            let phdr = read_phdr(&self.data, phdr_offset);
             if phdr.p_type != PT_LOAD {
                 continue;
             }
 
-            let vaddr_end = phdr.p_vaddr + phdr.p_memsz;
-            if vaddr_end > max_vaddr_end {
-                max_vaddr_end = vaddr_end;
-            }
+            let vaddr_end = phdr
+                .p_vaddr
+                .checked_add(phdr.p_memsz)
+                .ok_or(ElfError::InvalidElfFile)?;
+            max_vaddr_end = max_vaddr_end.max(vaddr_end);
 
             if (phdr.p_flags & PF_W) != 0
-                && phdr.p_vaddr <= bun_section_vaddr
-                && bun_section_vaddr < vaddr_end
+                && phdr.p_vaddr <= bun_section.vaddr
+                && bun_section.vaddr < vaddr_end
             {
-                rw_phdr_index = Some(i);
-                rw_phdr = phdr;
+                rw_phdr = Some((phdr_offset, phdr));
             }
         }
 
-        let Some(rw_index) = rw_phdr_index else {
+        let Some((rw_phdr_offset, rw_phdr)) = rw_phdr else {
             return Err(ElfError::NoWritableLoadSegment);
         };
+
+        // Every file offset taken from the template's headers is checked
+        // against the file before the layout below is computed from it.
+        let old_rw_file_end = file_range(&self.data, rw_phdr.p_offset, rw_phdr.p_filesz)?.end;
+        let bun_vaddr_slot = file_range(&self.data, bun_section.file_offset, header_size)?;
+        let old_shdrs = shdr_table(&self.data, ehdr)?;
 
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
@@ -266,9 +249,9 @@ impl ElfFile {
         // `new_file_offset` follows the segment's existing (vaddr - offset)
         // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
         // covers our new payload continuously once we grow p_filesz.
-        let new_vaddr = align_up(max_vaddr_end, page_size);
-        let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
-        let new_file_offset = rw_phdr.p_offset + offset_in_segment;
+        let new_vaddr = max_vaddr_end
+            .checked_next_multiple_of(page_size)
+            .ok_or(ElfError::InvalidElfFile)?;
 
         // Sanity: `max_vaddr_end` already reflects the RW segment's full
         // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
@@ -277,6 +260,16 @@ impl ElfFile {
         if new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
+        let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
+        let new_file_offset = rw_phdr
+            .p_offset
+            .checked_add(offset_in_segment)
+            .ok_or(ElfError::InvalidElfFile)?;
+        let move_dst_start = new_file_offset
+            .checked_add(aligned_new_size)
+            .ok_or(ElfError::InvalidElfFile)?;
+        let new_file_offset = to_usize(new_file_offset)?;
+        let move_dst_start = to_usize(move_dst_start)?;
 
         // File layout after this function returns:
         //
@@ -288,7 +281,7 @@ impl ElfFile {
         //                                              zero to keep BSS semantics)
         //   [new_file_offset, +aligned_new_size)      [u64 LE size][payload][zero pad]
         //                                             (new .bun contents — vaddr = new_vaddr)
-        //   [payload_end, +moved_tail_size)           relocated non-ALLOC sections + old
+        //   [move_dst_start, +moved_tail_size)        relocated non-ALLOC sections + old
         //                                             section header table
         //
         // Anything past `old_rw_file_end` in the input — non-ALLOC sections
@@ -297,72 +290,50 @@ impl ElfFile {
         // because that file range now lives inside the extended RW PT_LOAD.
         // Leaving it in place would mmap it into what was previously BSS
         // (zero-initialized statics), corrupting the process.
-        let old_rw_file_end = rw_phdr.p_offset + rw_phdr.p_filesz;
-        let old_file_size: u64 = self.data.len() as u64;
-        if old_rw_file_end > old_file_size {
+        //
+        // A segment whose file image is larger than its memory image
+        // (p_filesz > p_memsz) is malformed and would put `new_file_offset`
+        // inside the segment's existing bytes. The section header table must
+        // be part of the relocated tail: the payload is written over its old
+        // location.
+        let move_src_start = old_rw_file_end;
+        let move_src_end = self.data.len();
+        if new_file_offset < move_src_start || old_shdrs.start < move_src_start {
             return Err(ElfError::InvalidElfFile);
         }
-
-        let move_src_start: u64 = old_rw_file_end;
-        let move_src_end: u64 = old_file_size;
-        let moved_tail_size: u64 = move_src_end - move_src_start;
-        let move_dst_start: u64 = new_file_offset + aligned_new_size;
-        let move_dst_end: u64 = move_dst_start + moved_tail_size;
-
-        let total_new_size: u64 = move_dst_end;
+        let moved_tail_size = move_src_end - move_src_start;
+        let total_new_size = move_dst_start
+            .checked_add(moved_tail_size)
+            .ok_or(ElfError::InvalidElfFile)?;
 
         // resize() zero-fills, so the explicit zero-fills below are
         // partially redundant but harmless.
-        let total_new_size_usz = usize::try_from(total_new_size).expect("int cast");
-        self.data
-            .reserve(total_new_size_usz.saturating_sub(self.data.len()));
-        self.data.resize(total_new_size_usz, 0);
+        self.data.resize(total_new_size, 0);
 
         // Relocate the tail (non-ALLOC sections + old shdr table) past the
         // payload. Do this BEFORE zero-filling and writing the payload — if
         // `new_file_offset < old_file_size` (debug binaries with hundreds of
         // MB of debug info past the RW segment), the destination overlaps
         // the source, so memmove is required.
-        if moved_tail_size != 0 {
-            self.data.copy_within(
-                usize::try_from(move_src_start).expect("int cast")
-                    ..usize::try_from(move_src_end).expect("int cast"),
-                usize::try_from(move_dst_start).expect("int cast"),
-            );
-        }
+        self.data
+            .copy_within(move_src_start..move_src_end, move_dst_start);
 
         // Zero the bytes between the old RW file-content end and the payload
         // start. This entire range is now inside the extended PT_LOAD's
         // file-backed region; keeping it zero preserves BSS semantics.
-        self.data[usize::try_from(move_src_start).expect("int cast")
-            ..usize::try_from(new_file_offset).expect("int cast")]
-            .fill(0);
+        self.data[move_src_start..new_file_offset].fill(0);
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
-        write_u64_le(
-            &mut self.data[usize::try_from(new_file_offset).expect("int cast")..][..8],
-            payload.len() as u64,
-        );
-        self.data[usize::try_from(new_file_offset + header_size).expect("int cast")..]
-            [..payload.len()]
-            .copy_from_slice(payload);
-
-        // Zero the padding between payload end and the relocated tail
-        let payload_end = new_file_offset + new_content_size;
-        if move_dst_start > payload_end {
-            self.data[usize::try_from(payload_end).expect("int cast")
-                ..usize::try_from(move_dst_start).expect("int cast")]
-                .fill(0);
-        }
+        write_u64_le(&mut self.data[new_file_offset..][..8], payload.len() as u64);
+        let payload_start = new_file_offset + size_of::<u64>();
+        self.data[payload_start..][..payload.len()].copy_from_slice(payload);
+        self.data[payload_start + payload.len()..move_dst_start].fill(0);
 
         // Write the vaddr of the appended data at the ORIGINAL .bun section location
         // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
         // this vaddr (always non-zero), which the runtime dereferences as a pointer.
         // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
-        write_u64_le(
-            &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
-            new_vaddr,
-        );
+        write_u64_le(&mut self.data[bun_vaddr_slot], new_vaddr);
 
         // Update every section header whose sh_offset pointed into the moved
         // tail so tools like `readelf -S`, `objdump`, and `gdb` still find
@@ -371,36 +342,26 @@ impl ElfFile {
         //
         // The section header table itself is part of the moved tail, so we
         // compute its new location from e_shoff's old value.
-        let old_shdr_offset: u64 = ehdr.e_shoff;
-        let shdr_table_size = ehdr.e_shnum as u64 * size_of::<Elf64_Shdr>() as u64;
-        if old_shdr_offset < move_src_start || old_shdr_offset + shdr_table_size > move_src_end {
-            return Err(ElfError::InvalidElfFile);
-        }
-        let new_shdr_offset: u64 = old_shdr_offset + (move_dst_start - move_src_start);
-        self.write_ehdr_shoff(new_shdr_offset);
+        let tail_shift = move_dst_start - move_src_start;
+        let new_shdrs = old_shdrs.start + tail_shift..old_shdrs.end + tail_shift;
+        self.write_ehdr_shoff(new_shdrs.start as u64);
 
-        let shnum = ehdr.e_shnum;
-        for i in 0..shnum as usize {
-            let shdr_file_offset: u64 = new_shdr_offset + i as u64 * size_of::<Elf64_Shdr>() as u64;
-            let shdr_file_offset_usz = usize::try_from(shdr_file_offset).expect("int cast");
-            let mut shdr: Elf64_Shdr =
-                read_struct(&self.data[shdr_file_offset_usz..][..size_of::<Elf64_Shdr>()]);
+        for i in 0..ehdr.e_shnum {
+            let mut shdr = read_shdr(&self.data, &new_shdrs, i);
 
-            if i == bun_section.section_index as usize {
-                shdr.sh_offset = new_file_offset;
+            if i == bun_section.section_index {
+                shdr.sh_offset = new_file_offset as u64;
                 shdr.sh_size = new_content_size;
                 shdr.sh_addr = new_vaddr;
             } else if shdr.sh_type != SHT_NOBITS
-                && shdr.sh_offset >= move_src_start
-                && shdr.sh_offset < move_src_end
+                && shdr.sh_offset >= move_src_start as u64
+                && shdr.sh_offset < move_src_end as u64
             {
-                shdr.sh_offset += move_dst_start - move_src_start;
+                shdr.sh_offset += tail_shift as u64;
             }
 
-            write_struct(
-                &mut self.data[shdr_file_offset_usz..][..size_of::<Elf64_Shdr>()],
-                &shdr,
-            );
+            let entry = shdr_offset(&new_shdrs, i);
+            write_struct(&mut self.data[entry..][..SHDR_SIZE], &shdr);
         }
 
         // Extend the existing writable PT_LOAD to cover the appended payload.
@@ -410,22 +371,13 @@ impl ElfFile {
         //
         // PT_GNU_STACK is deliberately left alone; repurposing it into a
         // separate late PT_LOAD is what breaks WSL1 (#29963).
-        {
-            let new_segment_size = offset_in_segment + aligned_new_size;
-            let extended = Elf64_Phdr {
-                p_type: rw_phdr.p_type,
-                p_flags: rw_phdr.p_flags,
-                p_offset: rw_phdr.p_offset,
-                p_vaddr: rw_phdr.p_vaddr,
-                p_paddr: rw_phdr.p_paddr,
-                p_filesz: new_segment_size,
-                p_memsz: new_segment_size,
-                p_align: rw_phdr.p_align,
-            };
-            let phdr_offset =
-                usize::try_from(ehdr.e_phoff).expect("int cast") + rw_index * phdr_size;
-            write_struct(&mut self.data[phdr_offset..][..phdr_size], &extended);
-        }
+        let new_segment_size = offset_in_segment + aligned_new_size;
+        let extended = Elf64_Phdr {
+            p_filesz: new_segment_size,
+            p_memsz: new_segment_size,
+            ..rw_phdr
+        };
+        write_struct(&mut self.data[rw_phdr_offset..][..PHDR_SIZE], &extended);
 
         Ok(())
     }
@@ -434,53 +386,34 @@ impl ElfFile {
 
     /// Returns the file offset and section index of the `.bun` section.
     fn find_bun_section(&self, ehdr: Elf64_Ehdr) -> Result<BunSectionInfo, ElfError> {
-        let shdr_size = size_of::<Elf64_Shdr>();
-        let shdr_table_offset = ehdr.e_shoff;
-        let shnum = ehdr.e_shnum;
-
-        if shnum == 0 {
+        if ehdr.e_shnum == 0 {
             return Err(ElfError::BunSectionNotFound);
         }
-        if shdr_table_offset + shnum as u64 * shdr_size as u64 > self.data.len() as u64 {
+        if ehdr.e_shstrndx >= ehdr.e_shnum {
             return Err(ElfError::InvalidElfFile);
         }
+        let shdrs = shdr_table(&self.data, ehdr)?;
 
         // Read the .shstrtab section to get section names
-        let shstrtab_shdr = self.read_shdr(shdr_table_offset, ehdr.e_shstrndx);
-        let strtab_offset = shstrtab_shdr.sh_offset;
-        let strtab_size = shstrtab_shdr.sh_size;
-
-        if strtab_offset + strtab_size > self.data.len() as u64 {
-            return Err(ElfError::InvalidElfFile);
-        }
-        let strtab = &self.data[usize::try_from(strtab_offset).expect("int cast")..]
-            [..usize::try_from(strtab_size).expect("int cast")];
+        let shstrtab_shdr = read_shdr(&self.data, &shdrs, ehdr.e_shstrndx);
+        let strtab =
+            &self.data[file_range(&self.data, shstrtab_shdr.sh_offset, shstrtab_shdr.sh_size)?];
 
         // Search for .bun section
-        for i in 0..shnum as usize {
-            let shdr = self.read_shdr(shdr_table_offset, u16::try_from(i).expect("int cast"));
-            let name_offset = shdr.sh_name;
+        for i in 0..ehdr.e_shnum {
+            let shdr = read_shdr(&self.data, &shdrs, i);
+            let name_offset = shdr.sh_name as usize;
 
-            if (name_offset as usize) < strtab.len() {
-                let name = slice_to_nul(&strtab[name_offset as usize..]);
-                if name == b".bun" {
-                    return Ok(BunSectionInfo {
-                        file_offset: shdr.sh_offset,
-                        vaddr: shdr.sh_addr,
-                        section_index: u16::try_from(i).expect("int cast"),
-                    });
-                }
+            if name_offset < strtab.len() && slice_to_nul(&strtab[name_offset..]) == b".bun" {
+                return Ok(BunSectionInfo {
+                    file_offset: shdr.sh_offset,
+                    vaddr: shdr.sh_addr,
+                    section_index: i,
+                });
             }
         }
 
         Err(ElfError::BunSectionNotFound)
-    }
-
-    fn read_shdr(&self, table_offset: u64, index: u16) -> Elf64_Shdr {
-        let offset = table_offset + index as u64 * size_of::<Elf64_Shdr>() as u64;
-        read_struct(
-            &self.data[usize::try_from(offset).expect("int cast")..][..size_of::<Elf64_Shdr>()],
-        )
     }
 
     fn write_ehdr_shoff(&mut self, new_shoff: u64) {
@@ -494,6 +427,61 @@ impl ElfFile {
             _ => 0x1000,                      // 4KB
         }
     }
+}
+
+const PHDR_SIZE: usize = size_of::<Elf64_Phdr>();
+const SHDR_SIZE: usize = size_of::<Elf64_Shdr>();
+
+/// The file range `offset..offset + len` described by a pair of header fields,
+/// or `InvalidElfFile` if it overflows or runs past the end of `data`. Every
+/// offset read from a template goes through here before it is used to slice:
+/// `--compile-executable-path` accepts arbitrary files.
+fn file_range(data: &[u8], offset: u64, len: u64) -> Result<Range<usize>, ElfError> {
+    let start = to_usize(offset)?;
+    let end = start
+        .checked_add(to_usize(len)?)
+        .ok_or(ElfError::InvalidElfFile)?;
+    if end > data.len() {
+        return Err(ElfError::InvalidElfFile);
+    }
+    Ok(start..end)
+}
+
+/// An ELF64 offset or size as a slice index. Only fails on a target whose
+/// `usize` is narrower than the 64-bit fields.
+fn to_usize(value: u64) -> Result<usize, ElfError> {
+    usize::try_from(value).map_err(|_| ElfError::InvalidElfFile)
+}
+
+fn phdr_table(data: &[u8], ehdr: Elf64_Ehdr) -> Result<Range<usize>, ElfError> {
+    file_range(
+        data,
+        ehdr.e_phoff,
+        u64::from(ehdr.e_phnum) * PHDR_SIZE as u64,
+    )
+}
+
+fn shdr_table(data: &[u8], ehdr: Elf64_Ehdr) -> Result<Range<usize>, ElfError> {
+    file_range(
+        data,
+        ehdr.e_shoff,
+        u64::from(ehdr.e_shnum) * SHDR_SIZE as u64,
+    )
+}
+
+/// `offset` is an entry of a table returned by [`phdr_table`].
+fn read_phdr(data: &[u8], offset: usize) -> Elf64_Phdr {
+    read_struct(&data[offset..][..PHDR_SIZE])
+}
+
+/// `table` comes from [`shdr_table`] and `index` is below the `e_shnum` it was
+/// computed from.
+fn shdr_offset(table: &Range<usize>, index: u16) -> usize {
+    table.start + usize::from(index) * SHDR_SIZE
+}
+
+fn read_shdr(data: &[u8], table: &Range<usize>, index: u16) -> Elf64_Shdr {
+    read_struct(&data[shdr_offset(table, index)..][..SHDR_SIZE])
 }
 
 struct BunSectionInfo {
@@ -619,27 +607,20 @@ fn host_uses_nix_store_interpreter() -> bool {
             }
 
             let ehdr = read_ehdr(data);
-            let phdr_size = size_of::<Elf64_Phdr>();
-            let table_end = (ehdr.e_phoff)
-                .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
-            if table_end > data.len() as u64 {
+            let Ok(phdrs) = phdr_table(data, ehdr) else {
                 return false;
-            }
+            };
 
-            for i in 0..ehdr.e_phnum as usize {
-                let off = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
-                let phdr: Elf64_Phdr = read_struct(&data[off..][..phdr_size]);
+            for phdr_offset in phdrs.step_by(PHDR_SIZE) {
+                let phdr = read_phdr(data, phdr_offset);
                 if phdr.p_type != PT_INTERP {
                     continue;
                 }
 
-                let interp_off = usize::try_from(phdr.p_offset).expect("int cast");
-                let interp_sz = usize::try_from(phdr.p_filesz).expect("int cast");
-                if interp_off + interp_sz > data.len() {
+                let Ok(interp) = file_range(data, phdr.p_offset, phdr.p_filesz) else {
                     return false;
-                }
-
-                let interp = slice_to_nul(&data[interp_off..][..interp_sz]);
+                };
+                let interp = slice_to_nul(&data[interp]);
                 return interp.starts_with(b"/nix/store/") || interp.starts_with(b"/gnu/store/");
             }
             false
@@ -702,19 +683,6 @@ pub(crate) struct Elf64_Phdr {
     pub p_filesz: u64,
     pub p_memsz: u64,
     pub p_align: u64,
-}
-
-impl Elf64_Phdr {
-    const ZEROED: Self = Self {
-        p_type: 0,
-        p_flags: 0,
-        p_offset: 0,
-        p_vaddr: 0,
-        p_paddr: 0,
-        p_filesz: 0,
-        p_memsz: 0,
-        p_align: 0,
-    };
 }
 
 #[repr(C)]

@@ -331,6 +331,16 @@ pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     Ok(())
 }
 
+/// A width or height reported by a C decoder (`c_int`); anything that is not
+/// strictly positive means the header was rejected or is corrupt.
+#[inline]
+fn positive_dimension(v: c_int) -> Result<u32, Error> {
+    match u32::try_from(v) {
+        Ok(d) if d != 0 => Ok(d),
+        _ => Err(Error::DecodeFailed),
+    }
+}
+
 pub(crate) struct Probe {
     pub format: Format,
     pub width: u32,
@@ -367,11 +377,8 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
             // SAFETY: same handle invariant as above.
             let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
-            if rw <= 0 || rh <= 0 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(rw).expect("int cast");
-            h = u32::try_from(rh).expect("int cast");
+            w = positive_dimension(rw)?;
+            h = positive_dimension(rh)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -379,13 +386,11 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
             if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
                 == 0
-                || cw <= 0
-                || ch <= 0
             {
                 return Err(Error::DecodeFailed);
             }
-            w = u32::try_from(cw).expect("int cast");
-            h = u32::try_from(ch).expect("int cast");
+            w = positive_dimension(cw)?;
+            h = positive_dimension(ch)?;
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
@@ -655,6 +660,15 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
+/// The highway kernels take `i32` dimensions. The static decoders reject any
+/// side over 2³¹−1 (the PNG/BMP format limit; JPEG, WebP and GIF are far
+/// smaller) and `do_resize` caps targets at 0x3FFFF, so this only fails for a
+/// frame no kernel could address anyway.
+#[inline]
+fn kernel_dimension(v: u32) -> Result<i32, Error> {
+    i32::try_from(v).map_err(|_| Error::TooManyPixels)
+}
+
 pub(crate) fn resize(
     src: &[u8],
     sw: u32,
@@ -673,31 +687,25 @@ pub(crate) fn resize(
             Err(e) => return Err(e),
         }
     }
+    let (src_w, src_h) = (kernel_dimension(sw)?, kernel_dimension(sh)?);
+    let (dst_w, dst_h) = (kernel_dimension(dw)?, kernel_dimension(dh)?);
     // ONE allocation for output + the kernel's scratch arena (intermediate
     // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
     // C++; mimalloc here is faster than libc, and the over-allocation rounds
     // into the same size class as the row buffer alone.
     let out_sz: usize = (dw as usize) * (dh as usize) * 4;
     // SAFETY: pure FFI query; all args are by-value ints, no pointers.
-    let scratch_sz = unsafe {
-        bun_image_resize_scratch_size(
-            i32::try_from(sw).expect("int cast"),
-            i32::try_from(sh).expect("int cast"),
-            i32::try_from(dw).expect("int cast"),
-            i32::try_from(dh).expect("int cast"),
-            f as i32,
-        )
-    };
+    let scratch_sz = unsafe { bun_image_resize_scratch_size(src_w, src_h, dst_w, dst_h, f as i32) };
     let mut block: Vec<u8> = vec![0u8; out_sz + scratch_sz];
     // SAFETY: block has out_sz + scratch_sz bytes; dst at [0..out_sz), scratch at [out_sz..).
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
-            i32::try_from(sw).expect("int cast"),
-            i32::try_from(sh).expect("int cast"),
+            src_w,
+            src_h,
             block.as_mut_ptr(),
-            i32::try_from(dw).expect("int cast"),
-            i32::try_from(dh).expect("int cast"),
+            dst_w,
+            dst_h,
             f as i32,
             block.as_mut_ptr().add(out_sz),
         )
@@ -713,7 +721,8 @@ pub(crate) fn resize(
     Ok(block)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
+/// `degrees` is 90, 180 or 270 (callers validate it).
+pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u16) -> Result<Decoded, Error> {
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
         (h, w)
     } else {
@@ -721,7 +730,12 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     };
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
+        match system_backend::BackendError::split(system_backend::rotate(
+            src,
+            w,
+            h,
+            u32::from(degrees / 90),
+        )) {
             Ok(Some(out)) => {
                 return Ok(Decoded {
                     rgba: out,
@@ -734,17 +748,10 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
+    let (kw, kh) = (kernel_dimension(w)?, kernel_dimension(h)?);
     let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes; degrees is multiple of 90.
-    unsafe {
-        bun_image_rotate_rgba8(
-            src.as_ptr(),
-            i32::try_from(w).expect("int cast"),
-            i32::try_from(h).expect("int cast"),
-            out.as_mut_ptr(),
-            i32::try_from(degrees).expect("int cast"),
-        )
-    };
+    unsafe { bun_image_rotate_rgba8(src.as_ptr(), kw, kh, out.as_mut_ptr(), i32::from(degrees)) };
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -762,16 +769,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             Err(e) => return Err(e),
         }
     }
+    let (kw, kh) = (kernel_dimension(w)?, kernel_dimension(h)?);
     let mut out: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    unsafe {
-        bun_image_flip_rgba8(
-            src.as_ptr(),
-            i32::try_from(w).expect("int cast"),
-            i32::try_from(h).expect("int cast"),
-            out.as_mut_ptr(),
-            horizontal as i32,
-        )
-    };
+    unsafe { bun_image_flip_rgba8(src.as_ptr(), kw, kh, out.as_mut_ptr(), horizontal as i32) };
     Ok(out)
 }

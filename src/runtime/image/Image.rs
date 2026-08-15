@@ -1945,7 +1945,7 @@ impl PipelineTask {
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
-            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
+            let next = codecs::rotate(&d.rgba, d.width, d.height, p.rotate)?;
             // Assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
@@ -2071,7 +2071,7 @@ fn apply_orientation(
     if t.rotate != 0 {
         // Swap pixel slots only — `next` carries no ICC profile, and the
         // one on `d` (set by decode) must survive EXIF auto-orient.
-        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate))?;
+        let next = codecs::rotate(&d.rgba, d.width, d.height, t.rotate)?;
         d.rgba = next.rgba;
         d.width = next.width;
         d.height = next.height;

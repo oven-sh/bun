@@ -528,6 +528,38 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each(["BUN_CONFIG_TOKEN", "NPM_CONFIG_TOKEN"])(
+    "%s applies to the registry passed with --registry",
+    async key => {
+      using capture = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+      });
+      const { stderr, exitCode } = await install(String(dir), ["--registry", capture.url], { [key]: authToken });
+      expect(stderr).not.toContain("error:");
+      expect(new Set(capture.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("--registry drops the _authToken of the .npmrc registry but keeps BUN_CONFIG_TOKEN", async () => {
+    using dead = deadRegistry();
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `registry=${dead.url}\n//localhost:${dead.server.port}/:_authToken=token-for-dead\n`,
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir), ["--registry", capture.url], {
+      BUN_CONFIG_TOKEN: authToken,
+    });
+    expect(stderr).not.toContain("error:");
+    expect(dead.hits).toBe(0);
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
   test("NPM_CONFIG_REGISTRY beats registry= in project .npmrc", async () => {
     using dead = deadRegistry();
     using dir = tempDir("config-precedence", {

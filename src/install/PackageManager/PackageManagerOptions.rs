@@ -631,6 +631,30 @@ impl Options {
             }
         }
 
+        if let Some(cli) = &maybe_cli {
+            if !cli.registry.is_empty() {
+                let new_url = bun_url::URL::parse(cli.registry);
+                let same_origin = {
+                    let prev_url = self.scope.url.url();
+                    bun_core::without_trailing_slash(new_url.host)
+                        == bun_core::without_trailing_slash(prev_url.host)
+                        && (new_url.is_https() || !prev_url.is_https())
+                };
+                if !same_origin {
+                    self.scope.token = Box::default();
+                    self.scope.auth = Box::default();
+                    self.scope.user = Box::default();
+                }
+                let href: Box<[u8]> = cli.registry.into();
+                self.scope.url_hash =
+                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
+                self.scope.url = bun_url::OwnedURL::from_href(href);
+            }
+        }
+
+        // Unlike the credentials dropped by the registry overrides above, these
+        // are not tied to a host: they apply to whichever registry ended up as
+        // the default, so they are read only once that is settled.
         {
             const TOKEN_KEYS: [&[u8]; 3] = [
                 b"BUN_CONFIG_TOKEN",
@@ -686,25 +710,6 @@ impl Options {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
-
-            if !cli.registry.is_empty() {
-                let new_url = bun_url::URL::parse(cli.registry);
-                let same_origin = {
-                    let prev_url = self.scope.url.url();
-                    bun_core::without_trailing_slash(new_url.host)
-                        == bun_core::without_trailing_slash(prev_url.host)
-                        && (new_url.is_https() || !prev_url.is_https())
-                };
-                if !same_origin {
-                    self.scope.token = Box::default();
-                    self.scope.auth = Box::default();
-                    self.scope.user = Box::default();
-                }
-                let href: Box<[u8]> = cli.registry.into();
-                self.scope.url_hash =
-                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                self.scope.url = bun_url::OwnedURL::from_href(href);
-            }
 
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;

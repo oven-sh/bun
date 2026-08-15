@@ -1165,19 +1165,20 @@ impl BunTest {
             let remaining_seconds = remaining_ns as f64 / bun_core::time::NS_PER_S as f64;
             vm.jsc_vm().set_execution_time_limit(remaining_seconds + WATCHDOG_GRACE_SECONDS);
         }
-        let _watchdog_relax = scopeguard::guard(watchdog_armed, |armed| {
-            if armed {
-                vm.jsc_vm().clear_execution_time_limit();
-            }
-        });
 
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let call_result = vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
             args_slice,
-        ) {
+        );
+        // Relax before reporting: error printing re-enters user JS (e.g. Error.prepareStackTrace),
+        // and a termination raised there would outlive the clear below and silently skip later tests.
+        if watchdog_armed {
+            vm.jsc_vm().clear_execution_time_limit();
+        }
+        let result: JSValue = match call_result {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

@@ -5966,15 +5966,12 @@ extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore::AbortSig
     abortSignal->decrementPendingActivityCount();
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
+extern "C" void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
 {
-
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->signalAbort(
         globalObject,
         static_cast<WebCore::CommonAbortReason>(reason));
-    ;
-    return arg0;
 }
 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__reasonIfAborted(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject, CommonAbortReason* reason)

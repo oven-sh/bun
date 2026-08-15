@@ -1427,7 +1427,6 @@ impl Expect {
                         &raw const matcher_name,
                         host_fn_ptr,
                         matcher_fn,
-                        true,
                     )
                 };
 
@@ -3257,7 +3256,6 @@ unsafe extern "C" {
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
-        strong: bool,
     ) -> JSValue;
     fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
 

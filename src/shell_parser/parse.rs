@@ -2193,9 +2193,8 @@ enum AddDelimiter {
     No,
     /// Only after text that was pending; nothing is pushed otherwise.
     AfterText,
-    /// Whitespace or an operator ended the word: as `AfterText`, and a word whose last part was
-    /// already pushed as its own token (a closing quote, `$VAR`, `$(cmd)`, `*`, `}`) is delimited
-    /// too.
+    /// Whitespace or an operator ended the word: as `AfterText`, but a word with no text left to
+    /// flush (it ended in a closing quote, `$VAR`, `$(cmd)`, `*` or `}`) is delimited too.
     AfterWord,
 }
 

@@ -958,22 +958,13 @@ impl Tree {
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
-        // Hoist the dep-id slice once.
-        // `builder.list` is not mutated for the duration of this loop (the recursive call happens
-        // *after* it), so the slice is stable; detach to raw ptr/len so the loop body can freely
-        // take `&builder` / `&mut builder.log` without borrowck re-deriving the view per iteration.
-        let (this_deps_ptr, this_deps_len): (*const DependencyID, usize) = {
-            let s = this
-                .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice());
-            (s.as_ptr(), s.len())
-        };
+        // The loop body only reads through `builder`; the recursive call comes after the loop.
+        let this_deps: &[DependencyID] = this
+            .dependencies
+            .get(builder.list.items_dependencies()[self_id as usize].as_slice());
         // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
-        for i in 0..this_deps_len {
-            // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
-            // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
-            let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
+        for &dep_id in this_deps {
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`,
             // so it is always in bounds.
             let dep = unsafe { deps.get_unchecked(dep_id as usize) };

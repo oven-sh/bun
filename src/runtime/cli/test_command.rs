@@ -1553,8 +1553,6 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// Like the JUnit report, called on the bail exits: snapshots are otherwise only written
-    /// when the run ends, and under `--update-snapshots` the open `.snap` is already truncated.
     pub(crate) fn write_snapshots_before_bail(&mut self) {
         if let Err(err) = self.jest.snapshots.write_inline_snapshots() {
             Output::err(err, "Failed to write inline snapshots", ());

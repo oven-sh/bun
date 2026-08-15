@@ -928,3 +928,71 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The slow property walk (objects with static tables, proxies in the prototype
+// chain) looks each property up with getPropertySlot. When that lookup threw,
+// the exception stayed pending while the walk moved on to the next property,
+// and the prototype step dereferenced the empty value a throwing getPrototype
+// returns. Run in a child: before the fix these abort or segfault.
+describe.concurrent("property lookup throws while formatting", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // Skip symbolizing a failure report; symbolization of the debug
+        // binary takes longer than the test timeout.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("lazy static property whose builder throws", async () => {
+    // Formatting Bun reifies its static table. Its first entry is `$`, whose
+    // builder calls into JS. Right after a stack overflow unwinds, native code
+    // may still run but JSC refuses to enter JS, so at the first depth where
+    // Bun.inspect(Bun) gets through, `$` throws and the entries after it must
+    // still be walked.
+    expect(
+      await run(`
+        let result;
+        function recurse() {
+          try { recurse(); } catch {}
+          if (result === undefined) {
+            try { result = Bun.inspect(Bun); } catch {}
+          }
+        }
+        recurse();
+        console.log(result.includes("Archive: [class Archive]"), result.includes("$:"));
+      `),
+    ).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+  });
+
+  it("proxy get trap in the prototype chain throws", async () => {
+    expect(
+      await run(`
+        const proto = new Proxy({}, {
+          ownKeys() { return ["a", "b"]; },
+          get(target, key) {
+            if (key === "a") throw new Error("a");
+            return key === "b" ? 2 : undefined;
+          },
+        });
+        console.log(Bun.inspect(Object.create(proto)));
+      `),
+    ).toEqual({ stdout: "{\n  b: 2,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("proxy getPrototypeOf trap in the prototype chain throws", async () => {
+    expect(
+      await run(`
+        const proto = new Proxy({}, { getPrototypeOf() { throw new Error("x"); } });
+        console.log(Bun.inspect(Object.create(proto)));
+      `),
+    ).toEqual({ stdout: "{}\n", stderr: "", exitCode: 0 });
+  });
+});

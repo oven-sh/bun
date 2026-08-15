@@ -201,6 +201,16 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--raw                                  Compare file bytes as-is; skip the JS/CSS/JSON re-print (bun pm diff)"
         ),
+        clap::param!("--unformatted                          Alias of --raw (bun pm diff)"),
+        clap::param!(
+            "--unminify                             Rename short locals in lockstep in every JS file, not only ones that look minified (bun pm diff)"
+        ),
+        clap::param!(
+            "--minify                               Also normalise syntax (!0 vs true, quotes, parens…) so equivalent spellings collapse (bun pm diff)"
+        ),
+        clap::param!(
+            "-w, --ignore-space                     Treat files that differ only in whitespace as unchanged (bun pm diff)"
+        ),
         clap::param!(
             "--name-only                            Only list the files that differ (bun pm diff)"
         ),
@@ -569,6 +579,9 @@ pub struct CommandLineArguments {
     pub diff_args: Vec<&'static [u8]>,
     pub diff_name_only: bool,
     pub diff_raw: bool,
+    pub diff_unminify: bool,
+    pub diff_minify: bool,
+    pub diff_ignore_space: bool,
     pub diff_stat: bool,
     pub diff_context: Option<usize>,
 
@@ -661,6 +674,9 @@ impl Default for CommandLineArguments {
             diff_args: Vec::new(),
             diff_name_only: false,
             diff_raw: false,
+            diff_unminify: false,
+            diff_minify: false,
+            diff_ignore_space: false,
             diff_stat: false,
             diff_context: None,
 
@@ -1755,7 +1771,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.long = args.flag(b"--long");
             cli.diff_args = args.options(b"--diff").to_vec();
             cli.diff_name_only = args.flag(b"--name-only");
-            cli.diff_raw = args.flag(b"--raw");
+            cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
+            cli.diff_unminify = args.flag(b"--unminify");
+            cli.diff_minify = args.flag(b"--minify");
+            cli.diff_ignore_space = args.flag(b"--ignore-space");
             cli.diff_stat = args.flag(b"--stat");
             if let Some(n) = args.option(b"--unified") {
                 match strings::parse_int::<usize>(n, 10) {

@@ -258,7 +258,10 @@ Piped or with `NO_COLOR`, the output is a plain unified patch of the real file c
 
 | Flag                  | Description                                                              |
 | --------------------- | ------------------------------------------------------------------------ |
-| `--raw`               | Compare bytes as-is; skip the JS/CSS/JSON re-print                       |
+| `--raw`, `--unformatted` | Compare bytes as-is; skip the JS/CSS/JSON re-print                    |
+| `--minify`            | Also fold equivalent syntax (`!0`/`true`, quote style, redundant parens) so only meaning is compared |
+| `--unminify`          | Rename short locals in lockstep in every JS file, not just ones that look minified |
+| `-w`, `--ignore-space` | Treat files that differ only in whitespace as unchanged (`whitespace only`) |
 | `--stat`              | One line per file with a change count and bar instead of the hunks       |
 | `--name-only`         | Only list the files that differ, marked `A`dded / `M`odified / `D`eleted |
 | `-U <n>`, `--unified` | Lines of context around each change (default 3)                          |

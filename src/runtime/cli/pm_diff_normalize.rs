@@ -47,7 +47,14 @@ pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
-pub(crate) fn normalize(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
+/// How hard to normalise before comparing.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Options {
+    /// Fold equivalent syntax too (`!0`/`true`, quote style, redundant parens), not only layout.
+    pub minify_syntax: bool,
+}
+
+pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<Normalized> {
     if bytes.len() > MAX_BYTES {
         return None;
     }
@@ -56,8 +63,8 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
             let _store = StoreScope::enter();
             let arena = Arena::new();
             let source = bun_ast::Source::init_path_string(path, bytes);
-            let ast = parse_js(&arena, &source, loader)?;
-            print_js(&arena, ast, &source)
+            let ast = parse_js(&arena, &source, loader, options)?;
+            print_js(&arena, ast, &source, options)
         }
         Kind::Css => normalize_css(path, bytes),
         Kind::Json => normalize_json(path, bytes),
@@ -71,6 +78,7 @@ pub(crate) fn normalize_minified_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
+    options: Options,
 ) -> Option<(Normalized, Normalized)> {
     let Some(Kind::Js(loader)) = kind_for(path) else {
         return None;
@@ -82,8 +90,8 @@ pub(crate) fn normalize_minified_pair(
     let (arena_o, arena_n) = (Arena::new(), Arena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader)?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader)?;
+    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
+    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
     {
         let mut namer = Namer::new(
             &arena_o,
@@ -93,8 +101,8 @@ pub(crate) fn normalize_minified_pair(
         );
         namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0);
     }
-    let mut o = print_js(&arena_o, ast_o, &source_o)?;
-    let mut n = print_js(&arena_n, ast_n, &source_n)?;
+    let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
+    let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
     o.was_minified = true;
     n.was_minified = true;
     Some((o, n))
@@ -130,12 +138,14 @@ fn parse_js<'a>(
     arena: &'a Arena,
     source: &'a bun_ast::Source,
     loader: bun_ast::Loader,
+    options: Options,
 ) -> Option<Box<bun_ast::Ast<'a>>> {
     let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
     // Print what is there: no dead-code removal, no macro execution, no import trimming.
     opts.features.dead_code_elimination = false;
     opts.features.no_macros = true;
     opts.features.trim_unused_imports = false;
+    opts.features.minify_syntax = options.minify_syntax;
     opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
@@ -151,6 +161,7 @@ fn print_js<'a>(
     arena: &'a Arena,
     mut ast: Box<bun_ast::Ast<'a>>,
     source: &'a bun_ast::Source,
+    options: Options,
 ) -> Option<Normalized> {
     let imports: Vec<Vec<u8>> = ast
         .import_records
@@ -174,6 +185,7 @@ fn print_js<'a>(
     );
     let print_opts = bun_js_printer::Options {
         transform_only: true,
+        minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,
         source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut collector)),

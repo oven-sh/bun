@@ -371,6 +371,33 @@ describe("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--minify folds equivalent syntax; --unminify renames locals in lockstep even in readable files; -w", async () => {
+    const files = {
+      // Same program, different spellings: only --minify sees through it.
+      "a/flags.js": `module.exports = { on: !0, off: !1, none: void 0, s: 'x' + 'y' };\n`,
+      "b/flags.js": `module.exports = { on: true, off: false, none: undefined, s: "xy" };\n`,
+      // Same program, locals renamed by hand: only --unminify (or a minified-looking file) collapses it.
+      "a/sum.js": `module.exports = function sum(xs) {\n  let t = 0;\n  for (const x of xs) t += x;\n  return t;\n};\n`,
+      "b/sum.js": `module.exports = function sum(a) {\n  let n = 0;\n  for (const v of a) n += v;\n  return n;\n};\n`,
+      "a/notes.txt": `one two\nthree\n`,
+      "b/notes.txt": `one  two\n\tthree \n\n`,
+    };
+    const plain = await pretty(files);
+    expect(plain.text).toMatch(/\nflags\.js ─+ normalized \+1 -1\n/);
+    expect(plain.text).toMatch(/\nsum\.js ─+ normalized \+5 -5\n/);
+    expect(plain.text).toMatch(/\nnotes\.txt ─+ \+3 -2\n/);
+    const folded = await pretty(files, ["--minify", "--unminify", "-w"]);
+    expect(folded.text).toMatch(/\nflags\.js ─+ formatting only\n/);
+    expect(folded.text).toMatch(/\nsum\.js ─+ formatting only\n/);
+    expect(folded.text).toMatch(/\nnotes\.txt ─+ whitespace only\n/);
+    expect(folded.text).toContain("2 formatting only  ·  1 whitespace only");
+    expect(changedLines(folded.text)).toEqual([]);
+    expect(folded.exitCode).toBe(0);
+    // --unformatted is --raw.
+    const raw = await pretty(files, ["--unformatted"]);
+    expect(raw.text).toMatch(/\nflags\.js ─+ \+1 -1\n/);
+  });
+
   test("summary calls out new builtin imports, risky APIs, and skips source maps", async () => {
     const { text, exitCode } = await pretty({
       "a/index.js": `const path = require("path");\nmodule.exports = p => path.basename(p);\n`,

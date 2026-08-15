@@ -31,6 +31,12 @@ use bun_core::fmt::buf_print_infallible as buf_print;
 pub(crate) struct DiffFlags {
     /// Compare bytes, not the canonical re-print of JS/CSS/JSON.
     pub raw: bool,
+    /// Lockstep-rename short locals in every JS file, not only ones that look minified.
+    pub unminify: bool,
+    /// Fold equivalent syntax as well as layout.
+    pub minify: bool,
+    /// Files differing only in whitespace count as unchanged.
+    pub ignore_space: bool,
     pub name_only: bool,
     pub stat: bool,
     pub context: usize,
@@ -655,6 +661,8 @@ enum Semantic {
     FormattingOnly,
     /// Hunks were computed on the canonical re-print (gutter shows original lines when known).
     Normalized { unminified: bool },
+    /// `-w`: the bytes differ but not once runs of whitespace are collapsed.
+    WhitespaceOnly,
 }
 
 #[derive(Default)]
@@ -680,6 +688,24 @@ fn is_js_like(path: &[u8]) -> bool {
         normalize::kind_for(path),
         Some(normalize::Kind::Js(_) | normalize::Kind::Json)
     ) || path.ends_with(b".jsonc")
+}
+
+/// Every run of ASCII whitespace becomes one space and leading/trailing runs go, for `-w`.
+fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut pending_space = false;
+    for &b in bytes {
+        if b.is_ascii_whitespace() {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(b' ');
+                pending_space = false;
+            }
+            out.push(b);
+        }
+    }
+    out
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -727,13 +753,25 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             changes.push(change);
             continue;
         }
+        if flags.ignore_space {
+            if let (Some(o), Some(n)) = (old, new) {
+                if collapse_whitespace(o) == collapse_whitespace(n) {
+                    change.semantic = Semantic::WhitespaceOnly;
+                    changes.push(change);
+                    continue;
+                }
+            }
+        }
+        let nopts = normalize::Options {
+            minify_syntax: flags.minify,
+        };
         // Canonical re-print: same parser and printer on both sides, so only meaning survives.
         let (norm_old, norm_new) = if flags.raw {
             (None, None)
         } else {
             (
-                old.and_then(|b| normalize::normalize(path, b)),
-                new.and_then(|b| normalize::normalize(path, b)),
+                old.and_then(|b| normalize::normalize(path, b, nopts)),
+                new.and_then(|b| normalize::normalize(path, b, nopts)),
             )
         };
         if let Some(n) = &norm_new {
@@ -761,7 +799,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
                 change.semantic = Semantic::FormattingOnly;
             }
             (Some(o), Some(n), Some(no), Some(nn)) if style.pretty => {
-                let unminified = no.was_minified || nn.was_minified;
+                let unminified = no.was_minified || nn.was_minified || flags.unminify;
                 change.semantic = Semantic::Normalized { unminified };
                 if unminified {
                     unified_hunks(
@@ -774,7 +812,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
                     );
                     // Minifier name churn: retry with positional names and keep whichever diff is smaller.
                     if change.added + change.removed > 2 {
-                        if let Some((co, cn)) = normalize::normalize_minified_pair(path, o, n) {
+                        if let Some((co, cn)) =
+                            normalize::normalize_minified_pair(path, o, n, nopts)
+                        {
                             let mut alt = FileChange {
                                 path,
                                 highlight: change.highlight,
@@ -897,6 +937,15 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
             let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
             let sep = if style.pretty { "│" } else { "|" };
+            if let Semantic::FormattingOnly | Semantic::WhitespaceOnly = c.semantic {
+                let what = if c.semantic == Semantic::FormattingOnly {
+                    "formatting only"
+                } else {
+                    "whitespace only"
+                };
+                pretty!(" {} <d>{}<r> <d>{}<r>\n", padded, sep, what);
+                continue;
+            }
             if c.binary || c.sourcemap {
                 pretty!(
                     " {} <d>{}<r> <yellow>{}<r>   {} → {} bytes\n",
@@ -932,6 +981,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             (None, Some(_)) => Output::print(format_args!("new file\n")),
             (Some(_), None) => Output::print(format_args!("deleted file\n")),
             _ => {}
+        }
+        if c.semantic == Semantic::WhitespaceOnly {
+            Output::print(format_args!("Whitespace-only changes\n"));
+            continue;
         }
         if c.binary || c.sourcemap {
             Output::print(format_args!(
@@ -1027,6 +1080,13 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
             .count();
         if formatting_only > 0 {
             line.push_str(&format!("  <d>·  {formatting_only} formatting only<r>"));
+        }
+        let whitespace_only = changes
+            .iter()
+            .filter(|c| c.semantic == Semantic::WhitespaceOnly)
+            .count();
+        if whitespace_only > 0 {
+            line.push_str(&format!("  <d>·  {whitespace_only} whitespace only<r>"));
         }
         #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{line}\n"));
@@ -1502,11 +1562,18 @@ impl Style {
         let note = match c.semantic {
             Semantic::Text => "",
             Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
+            Semantic::WhitespaceOnly => "\x1b[2mwhitespace only\x1b[0m",
             Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
             Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
         };
         let badge = match (c.old, c.new, c.binary) {
-            _ if c.semantic == Semantic::FormattingOnly => note.to_string(),
+            _ if matches!(
+                c.semantic,
+                Semantic::FormattingOnly | Semantic::WhitespaceOnly
+            ) =>
+            {
+                note.to_string()
+            }
             _ if c.sourcemap => format!(
                 "\x1b[2msource map {} → {} bytes\x1b[0m",
                 c.old.map_or(0, <[u8]>::len),

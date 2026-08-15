@@ -2,6 +2,7 @@ import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -385,9 +386,18 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(sent).toBe(false);
 });
 
+// For children that terminate via SIG_DFL (rather than via a test hook that
+// calls suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane
+// the runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child; every user is isPosix/isLinux-gated
+// so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)
-// must route through the crash handler so they are not silently lost.
+// must route through the crash handler so they are not silently lost. Outside
+// ASAN builds the abort/trap hooks raise the real signal, so these also prove
+// the sigaction registration itself.
 describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
   test.concurrent.each([
     ["abort", "SIGABRT", "abort() called"],
@@ -435,37 +445,6 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(sent).toBe(true);
   });
 
-  // These two tests terminate via SIG_DFL (not via a test hook that calls
-  // suppress_core_dumps_if_necessary()), so on the --coredump-upload CI lane
-  // the runner would flag leaked core files as a hard failure. ulimit -c 0 in
-  // a shell wrapper is inherited by the bun child; the whole describe is
-  // isPosix-gated so /bin/sh is available.
-  const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
-
-  // The above goes via the internal test hook, which under ASAN calls the
-  // handler directly because ASAN owns the fault signals. This case raises the
-  // signal for real to prove the sigaction registration itself; ASAN builds
-  // never install those handlers so skip there.
-  test.skipIf(isASAN).concurrent.each(["SIGABRT", "SIGTRAP"] as const)(
-    "raised %s produces a crash report",
-    async signal => {
-      await using proc = Bun.spawn({
-        cmd: noCoreCmd([
-          bunExe(),
-          "-e",
-          `process.kill(process.pid, "${signal}")`,
-          "--debug-crash-handler-use-trace-string",
-        ]),
-        env: noReportEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-      expect(stderr).toContain("oh no");
-      expect(proc.signalCode).toBe(signal);
-    },
-  );
-
   // process.abort() is a deliberate user action, not a Bun crash. It must still
   // terminate with SIGABRT but must not print a crash report or upload one.
   test.concurrent("process.abort() does not report a crash", async () => {
@@ -497,6 +476,126 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(stderr).not.toContain(server.url.toString());
     expect(proc.signalCode).toBe("SIGABRT");
     expect(sent).toBe(false);
+  });
+});
+
+// The crash handler is registered for SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGABRT/
+// SIGTRAP, but one of those arriving from kill(2) (`kill -SEGV`, a timeout
+// tool sending SIGABRT, `process.kill(process.pid, child.signal)` mirroring a
+// child's death) is not a fault in Bun. It has to die from the signal exactly
+// like a process without a handler (and like Node) does: no report, no upload.
+// Linux only: the handler tells the two apart with si_code, which only Linux
+// defines usefully (see was_sent_with_kill in src/crash_handler/lib.rs).
+describe.if(isLinux)("fatal signals sent with kill(2) are not reported as crashes", () => {
+  const handledSignals = ["SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT", "SIGTRAP"] as const;
+
+  // Real deliveries need the sigaction handler, which ASAN builds leave
+  // uninstalled so that ASAN's own fault diagnostics stay in charge.
+  describe.skipIf(isASAN)("delivered by the kernel", () => {
+    test.concurrent("a signal from another process dies silently, reporting enabled", async () => {
+      let sent = false;
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          sent = true;
+          return new Response("OK");
+        },
+      });
+
+      await using proc = Bun.spawn({
+        // Keep the event loop alive; "ready" proves startup (and the crash
+        // handler's sigaction registration) completed before the kill.
+        cmd: noCoreCmd([bunExe(), "-e", `console.log("ready"); setInterval(() => {}, 1 << 30);`]),
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const decoder = new TextDecoder();
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("ready\n")) break;
+      }
+      expect(stdout).toBe("ready\n");
+
+      proc.kill("SIGSEGV");
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(sent).toBe(false);
+    });
+
+    test.concurrent.each(handledSignals)("process.kill(process.pid, %s) dies silently from it", async signal => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([bunExe(), "-e", `process.kill(process.pid, "${signal}")`]),
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(proc.signalCode).toBe(signal);
+    });
+  });
+
+  // Same handler body, fed a chosen si_code through the test hook, so the
+  // classification is covered in ASAN builds as well. Values are the Linux
+  // ones from sigaction(2) / <asm-generic/siginfo.h>.
+  describe("classified by si_code", () => {
+    const SI_USER = 0; // kill(2)
+    const SI_QUEUE = -1; // sigqueue(3)
+    const SI_TKILL = -6; // tgkill(2): how glibc and musl deliver abort() and raise()
+    const SI_KERNEL = 0x80; // kernel-raised without a more specific code, e.g. int3 -> SIGTRAP on x86_64
+    const SEGV_MAPERR = 1; // access to an unmapped address
+    const BUS_ADRERR = 2; // access to a nonexistent physical address, e.g. past the end of a truncated mmap'd file
+
+    const runHook = async (signal: (typeof handledSignals)[number], siCode: number) => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([
+          bunExe(),
+          "-e",
+          `require("bun:internal-for-testing").crash_handler.handlePosixSignal(${osConstants.signals[signal]}, ${siCode})`,
+          "--debug-crash-handler-use-trace-string",
+        ]),
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, signalCode: proc.signalCode };
+    };
+
+    test.concurrent.each([
+      ["SIGSEGV", "SI_USER", SI_USER],
+      ["SIGBUS", "SI_USER", SI_USER],
+      ["SIGILL", "SI_USER", SI_USER],
+      ["SIGFPE", "SI_USER", SI_USER],
+      ["SIGABRT", "SI_USER", SI_USER],
+      ["SIGTRAP", "SI_USER", SI_USER],
+      ["SIGSEGV", "SI_QUEUE", SI_QUEUE],
+      ["SIGABRT", "SI_QUEUE", SI_QUEUE],
+    ] as const)("%s with %s dies silently from the signal", async (signal, _name, siCode) => {
+      expect(await runHook(signal, siCode)).toEqual({ stderr: "", signalCode: signal });
+    });
+
+    test.concurrent.each([
+      ["SIGABRT", "SI_TKILL", SI_TKILL, "abort() called"],
+      ["SIGSEGV", "SEGV_MAPERR", SEGV_MAPERR, "Segmentation fault at address 0xDEADBEEF"],
+      ["SIGBUS", "BUS_ADRERR", BUS_ADRERR, "Bus error at address 0xDEADBEEF"],
+      ["SIGTRAP", "SI_KERNEL", SI_KERNEL, "Trap instruction at address 0xDEADBEEF"],
+    ] as const)("%s with %s is still reported as a crash", async (signal, _name, siCode, message) => {
+      const { stderr, signalCode } = await runHook(signal, siCode);
+      expect(stderr).toContain(message);
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect(signalCode).toBe(signal);
+    });
   });
 });
 

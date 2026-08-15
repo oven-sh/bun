@@ -1570,9 +1570,30 @@ mod draft {
 
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
-        // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
-        // sigfault address field.
-        let addr: usize = unsafe { (*info).si_addr() as usize };
+        // SAFETY: registered with SA_SIGINFO, so the kernel passes a valid
+        // siginfo_t; `si_addr` reads the per-platform sigfault address field.
+        let (si_code, addr) = unsafe { ((*info).si_code, (*info).si_addr() as usize) };
+
+        handle_posix_signal(
+            sig,
+            si_code,
+            addr,
+            match fault_context_from_ucontext(ctx) {
+                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                None => TraceSeed::None,
+            },
+        )
+    }
+
+    /// Body of `handle_segfault_posix`, taking the two `siginfo_t` fields it
+    /// uses. `pub` so the `bun:internal-for-testing` binding can run it with
+    /// a chosen `si_code`: ASAN builds never install the handler itself
+    /// (`reset_on_posix`).
+    #[cfg(unix)]
+    pub fn handle_posix_signal(sig: c_int, si_code: c_int, addr: usize, seed: TraceSeed<'_>) -> ! {
+        if was_sent_with_kill(si_code) {
+            die_from_signal(sig);
+        }
 
         crash_handler(
             match sig {
@@ -1585,11 +1606,33 @@ mod draft {
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
-            match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
-                None => TraceSeed::None,
-            },
-        );
+            seed,
+        )
+    }
+
+    /// `kill -SEGV <pid>` / `process.kill(pid, "SIGABRT")` means "die with this
+    /// signal", not that anything in Bun faulted; for these deliveries the
+    /// `si_addr` slot of the siginfo union even holds the sender's pid, which
+    /// the report would print as the fault address.
+    ///
+    /// Linux (sigaction(2)) sets a positive `si_code` on every signal the
+    /// kernel raises itself (`SEGV_MAPERR`, `BUS_ADRERR`, `ILL_*`, `TRAP_*`,
+    /// `SI_KERNEL`), `SI_TKILL` for `tgkill(2)`, which is how libc's `abort()`
+    /// and `raise()` deliver SIGABRT, and `SI_USER` / `SI_QUEUE` for `kill(2)` /
+    /// `sigqueue(3)`. Only the last two are diverted. Other platforms keep
+    /// reporting every delivery: the check relies on the Linux codes (the libc
+    /// crate does not even define `SI_USER` for Apple targets).
+    #[cfg(unix)]
+    fn was_sent_with_kill(si_code: c_int) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            matches!(si_code, libc::SI_USER | libc::SI_QUEUE)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let _ = si_code;
+            false
+        }
     }
 
     #[cfg(unix)]
@@ -2964,56 +3007,7 @@ mod draft {
     fn crash(reason: CrashReason) -> ! {
         #[cfg(not(windows))]
         {
-            let sig = reason.terminal_signal();
-
-            // Install default handler so that the raise below will terminate.
-            // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
-            // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
-            let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
-            sigact.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
-                libc::sigemptyset(&raw mut sigact.sa_mask);
-            }
-            for s in [
-                libc::SIGSEGV,
-                libc::SIGILL,
-                libc::SIGBUS,
-                libc::SIGABRT,
-                libc::SIGFPE,
-                libc::SIGHUP,
-                libc::SIGTERM,
-                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
-                // fallback (brk on aarch64) is lethal even when JS installed
-                // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
-                // `signal-exit` package does).
-                libc::SIGTRAP,
-            ] {
-                // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
-                unsafe {
-                    libc::sigaction(s, &raw const sigact, core::ptr::null_mut());
-                }
-            }
-
-            // We may be running inside the signal handler for `sig`, in which
-            // case the kernel added it to this thread's mask and a re-raise
-            // would sit pending forever. Unblock it so the raise below is
-            // delivered. pthread_sigmask is async-signal-safe.
-            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-            unsafe {
-                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut set);
-                libc::sigaddset(&raw mut set, sig);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-            }
-
-            // SAFETY: raise has no preconditions; with SIG_DFL installed and
-            // the signal unblocked this terminates the process.
-            unsafe {
-                libc::raise(sig);
-            }
-            // If we somehow get here, fall through to a guaranteed-fatal trap.
-            core::intrinsics::abort();
+            die_from_signal(reason.terminal_signal())
         }
         #[cfg(windows)]
         {
@@ -3027,6 +3021,62 @@ mod draft {
             // the CRT `abort() has been called` message, and can invoke WER.
             abort()
         }
+    }
+
+    /// Terminate through `sig`'s default action. Used both after a crash
+    /// report has been printed and for fatal signals that were sent with
+    /// kill(2) (`handle_posix_signal`), which die exactly as they would have
+    /// without our handler installed. Everything here is async-signal-safe.
+    #[cfg(unix)]
+    fn die_from_signal(sig: c_int) -> ! {
+        // Install default handler so that the raise below will terminate.
+        // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
+        // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
+        let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
+        sigact.sa_sigaction = libc::SIG_DFL;
+        // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
+        unsafe {
+            libc::sigemptyset(&raw mut sigact.sa_mask);
+        }
+        for s in [
+            libc::SIGSEGV,
+            libc::SIGILL,
+            libc::SIGBUS,
+            libc::SIGABRT,
+            libc::SIGFPE,
+            libc::SIGHUP,
+            libc::SIGTERM,
+            // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+            // fallback (brk on aarch64) is lethal even when JS installed
+            // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
+            // `signal-exit` package does).
+            libc::SIGTRAP,
+        ] {
+            // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
+            unsafe {
+                libc::sigaction(s, &raw const sigact, core::ptr::null_mut());
+            }
+        }
+
+        // We may be running inside the signal handler for `sig`, in which
+        // case the kernel added it to this thread's mask and a re-raise
+        // would sit pending forever. Unblock it so the raise below is
+        // delivered. pthread_sigmask is async-signal-safe.
+        // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+        unsafe {
+            let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+            libc::sigemptyset(&raw mut set);
+            libc::sigaddset(&raw mut set, sig);
+            libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+        }
+
+        // SAFETY: raise has no preconditions; with SIG_DFL installed and
+        // the signal unblocked this terminates the process.
+        unsafe {
+            libc::raise(sig);
+        }
+        // If we somehow get here, fall through to a guaranteed-fatal trap.
+        core::intrinsics::abort();
     }
 
     pub static VERBOSE_ERROR_TRACE: AtomicBool = AtomicBool::new(false);

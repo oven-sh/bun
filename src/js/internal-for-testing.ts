@@ -125,6 +125,8 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   abort: () => void;
   fastfail: () => void;
   trap: () => void;
+  /** Runs the POSIX fatal-signal handler as if `signo` arrived with this `si_code`. No-op on Windows. */
+  handlePosixSignal: (signo: number, siCode: number) => void;
   raiseIgnoringPanicHandler: () => void;
 };
 

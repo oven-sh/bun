@@ -867,7 +867,9 @@ impl PublishCommand {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
+        // `construct_publish_headers` sends `auth` (Basic) when there is no token.
         if registry.token.is_empty()
+            && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
         {
             return Err(PublishError::NeedAuth);

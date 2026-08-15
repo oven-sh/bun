@@ -807,6 +807,137 @@ describe("--dry-run", async () => {
   });
 });
 
+describe("basic auth", () => {
+  type Upload = { method: string; pathname: string; authorization: string | null };
+
+  function mockRegistry(uploads: Upload[]) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        uploads.push({
+          method: req.method,
+          pathname: new URL(req.url).pathname,
+          authorization: req.headers.get("authorization"),
+        });
+        return Response.json({ ok: true });
+      },
+    });
+  }
+
+  // Only the project config may supply credentials: bunEnv inherits the
+  // runner's HOME / XDG_CONFIG_HOME, which can carry a real ~/.npmrc.
+  function isolatedEnv(dir: string) {
+    const spawnEnv: NodeJS.Dict<string> = { ...env, HOME: dir, USERPROFILE: dir };
+    delete spawnEnv.XDG_CONFIG_HOME;
+    return spawnEnv;
+  }
+
+  const basic = "Basic " + Buffer.from("basic-user:basic-pass").toString("base64");
+
+  test.concurrent(".npmrc username + _password", async () => {
+    const uploads: Upload[] = [];
+    using server = mockRegistry(uploads);
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("publish-basic-npmrc-password", {
+      "package.json": JSON.stringify({ name: "basic-auth-password-pkg", version: "1.0.0" }),
+      ".npmrc": [
+        `registry=http://${host}/`,
+        `//${host}/:username=basic-user`,
+        `//${host}/:_password=${Buffer.from("basic-pass").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { out, err, exitCode } = await publish(isolatedEnv(String(dir)), String(dir));
+    expect(err).not.toContain("missing authentication");
+    expect(uploads).toEqual([{ method: "PUT", pathname: "/basic-auth-password-pkg", authorization: basic }]);
+    expect(out).toContain(" + basic-auth-password-pkg@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(".npmrc _auth", async () => {
+    const uploads: Upload[] = [];
+    using server = mockRegistry(uploads);
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("publish-basic-npmrc-auth", {
+      "package.json": JSON.stringify({ name: "basic-auth-auth-pkg", version: "1.0.0" }),
+      ".npmrc": [
+        `registry=http://${host}/`,
+        `//${host}/:_auth=${Buffer.from("basic-user:basic-pass").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { out, err, exitCode } = await publish(isolatedEnv(String(dir)), String(dir));
+    expect(err).not.toContain("missing authentication");
+    expect(uploads).toEqual([{ method: "PUT", pathname: "/basic-auth-auth-pkg", authorization: basic }]);
+    expect(out).toContain(" + basic-auth-auth-pkg@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bunfig.toml scoped registry with username + password (#17531)", async () => {
+    const uploads: Upload[] = [];
+    using server = mockRegistry(uploads);
+    using dir = tempDir("publish-basic-bunfig-scope", {
+      "package.json": JSON.stringify({ name: "@basic-auth-scope/pkg", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          scopes: {
+            "@basic-auth-scope": {
+              url: `http://127.0.0.1:${server.port}/`,
+              username: "basic-user",
+              password: "basic-pass",
+            },
+          },
+        },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(isolatedEnv(String(dir)), String(dir));
+    expect(err).not.toContain("missing authentication");
+    expect(uploads).toEqual([{ method: "PUT", pathname: "/@basic-auth-scope%2fpkg", authorization: basic }]);
+    expect(out).toContain(" + @basic-auth-scope/pkg@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("publishing a tarball", async () => {
+    const uploads: Upload[] = [];
+    using server = mockRegistry(uploads);
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("publish-basic-tarball", {
+      "package.json": JSON.stringify({ name: "basic-auth-tarball-pkg", version: "1.0.0" }),
+      ".npmrc": [
+        `registry=http://${host}/`,
+        `//${host}/:_auth=${Buffer.from("basic-user:basic-pass").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+    const spawnEnv = isolatedEnv(String(dir));
+    await pack(String(dir), spawnEnv);
+
+    const { out, err, exitCode } = await publish(spawnEnv, String(dir), "./basic-auth-tarball-pkg-1.0.0.tgz");
+    expect(err).not.toContain("missing authentication");
+    expect(uploads).toEqual([{ method: "PUT", pathname: "/basic-auth-tarball-pkg", authorization: basic }]);
+    expect(out).toContain(" + basic-auth-tarball-pkg@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("no credentials is still rejected before anything is uploaded", async () => {
+    const uploads: Upload[] = [];
+    using server = mockRegistry(uploads);
+    using dir = tempDir("publish-basic-no-credentials", {
+      "package.json": JSON.stringify({ name: "no-credentials-pkg", version: "1.0.0" }),
+      ".npmrc": `registry=http://127.0.0.1:${server.port}/\n`,
+    });
+
+    const { err, exitCode } = await publish(isolatedEnv(String(dir)), String(dir));
+    expect(err).toContain("missing authentication");
+    expect(uploads).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("lifecycle scripts", async () => {
   const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`
@@ -834,6 +965,8 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   };
 
   for (const arg of [[], ["--dry-run"]]) {
+    // Spawns six child bun processes, which takes ~5s on a debug build; timing
+    // out here kills the shared Verdaccio and fails the rest of the file.
     test(`should run in order${arg.length > 0 ? " (--dry-run)" : ""}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
       const bunfig = await registry.authBunfig("lifecycle" + (arg.length > 0 ? "dry" : ""));
@@ -864,7 +997,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
         "\nprepublishOnly: true\npublish: true\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
       ]);
-    });
+    }, 30_000);
   }
 
   test("--ignore-scripts", async () => {

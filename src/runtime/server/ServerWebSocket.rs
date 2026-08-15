@@ -213,6 +213,15 @@ pub(super) fn blob_payload<'a>(
     Ok(Some(blob.shared_view()))
 }
 
+/// Handler state a `publish*` method reads once up front (`publish_ctx`).
+#[derive(Clone, Copy)]
+struct PublishCtx {
+    /// The server's `uws_app_t*`; `ssl` says which `NewApp<SSL>` it is.
+    app: *mut c_void,
+    ssl: bool,
+    publish_to_self: bool,
+}
+
 impl ServerWebSocket {
     #[inline]
     fn websocket(&self) -> AnyWebSocket {
@@ -253,20 +262,20 @@ impl ServerWebSocket {
     // bool flags — net more code than three small orthogonal helpers.
     // ──────────────────────────────────────────────────────────────────────
 
-    /// `(app, ssl, publish_to_self)` from the handler, or `None` when the
-    /// server has been torn down (`handler.app == None`). The "publish() closed"
-    /// log + `0` return is the caller's responsibility (it varies in nothing,
-    /// but keeping it inline preserves the per-method `scoped_log!` callsite).
+    /// The handler state a publish needs, or `None` when the server has been
+    /// torn down (`handler.app == None`). The "publish() closed" log + `0`
+    /// return is the caller's responsibility (it varies in nothing, but keeping
+    /// it inline preserves the per-method `scoped_log!` callsite).
     #[inline]
-    fn publish_ctx(&self) -> Option<(*mut c_void, bool, bool)> {
+    fn publish_ctx(&self) -> Option<PublishCtx> {
         let handler = self.handler();
         let app = handler.app?;
         let flags = handler.flags;
-        Some((
+        Some(PublishCtx {
             app,
-            flags.contains(HandlerFlags::SSL),
-            flags.contains(HandlerFlags::PUBLISH_TO_SELF),
-        ))
+            ssl: flags.contains(HandlerFlags::SSL),
+            publish_to_self: flags.contains(HandlerFlags::PUBLISH_TO_SELF),
+        })
     }
 
     /// Shared `compress` argument validation for publish*/send*. Preserves the
@@ -295,18 +304,16 @@ impl ServerWebSocket {
     #[inline]
     fn do_publish(
         &self,
-        ssl: bool,
-        app: *mut c_void,
-        publish_to_self: bool,
+        ctx: PublishCtx,
         topic: &[u8],
         buffer: &[u8],
         opcode: Opcode,
         compress: bool,
     ) -> JSValue {
-        let status = if !publish_to_self && !self.is_closed() {
+        let status = if !ctx.publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
-            AnyWebSocket::publish_with_options(ssl, app, topic, buffer, opcode, compress)
+            AnyWebSocket::publish_with_options(ctx.ssl, ctx.app, topic, buffer, opcode, compress)
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
@@ -829,7 +836,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -857,27 +864,11 @@ impl ServerWebSocket {
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
             let buffer = array_buffer.slice();
-            return Ok(self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                buffer,
-                Opcode::Binary,
-                compress,
-            ));
+            return Ok(self.do_publish(ctx, topic_slice.slice(), buffer, Opcode::Binary, compress));
         }
 
         if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
-            let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                slice,
-                Opcode::Binary,
-                compress,
-            );
+            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
             message_value.ensure_still_alive();
             return Ok(ret);
         }
@@ -888,9 +879,7 @@ impl ServerWebSocket {
             let slice = view.to_slice();
 
             let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
+                ctx,
                 topic_slice.slice(),
                 slice.slice(),
                 Opcode::Text,
@@ -914,7 +903,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -942,9 +931,7 @@ impl ServerWebSocket {
         let slice = view.to_slice();
 
         let ret = self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
+            ctx,
             topic_slice.slice(),
             slice.slice(),
             Opcode::Text,
@@ -969,7 +956,7 @@ impl ServerWebSocket {
             );
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -999,9 +986,7 @@ impl ServerWebSocket {
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
             return Ok(self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
+                ctx,
                 topic_slice.slice(),
                 array_buffer.slice(),
                 Opcode::Binary,
@@ -1010,15 +995,7 @@ impl ServerWebSocket {
         }
 
         if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
-            let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                slice,
-                Opcode::Binary,
-                compress,
-            );
+            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
             message_value.ensure_still_alive();
             return Ok(ret);
         }

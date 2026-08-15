@@ -1459,8 +1459,7 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                // Not `request.version`: on the root it is bound to the row the `workspaces` list
-                // creates for the member, whose literal is the member's path.
+                // Decided from the entry's text: on the root `request.version` is bound to the member's path.
                 resolution::Tag::Workspace => match dependency::Tag::infer(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     _ => b"workspace:*",

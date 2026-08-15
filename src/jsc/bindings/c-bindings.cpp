@@ -596,8 +596,7 @@ extern "C" void onExitSignal(int sig)
     pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
     raise(sig);
 
-    // Only reached as PID 1 of a pid namespace: the kernel discards SIG_DFL
-    // signals aimed at init, the re-raise above included.
+    // Only reached as PID 1 of a pid namespace: the kernel discards SIG_DFL signals aimed at init, the re-raise above included.
     _exit(128 + sig);
 }
 
@@ -706,8 +705,7 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit. PID 1 of a pid namespace (a container without an
-    // init) needs the handler even without a TTY: the kernel drops signals init does not handle.
+    // Restore TTY state on exit. PID 1 of a pid namespace needs the handler even without a TTY: the kernel drops signals init does not handle.
     bool isPidNamespaceInit = false;
 #if OS(LINUX)
     isPidNamespaceInit = getpid() == 1;

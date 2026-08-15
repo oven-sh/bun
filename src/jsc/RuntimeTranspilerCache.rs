@@ -51,10 +51,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: CommonJS entries store the statically detected export names
-/// (`Ast.commonjs_static_exports`) in the record slot. Older CommonJS entries have
-/// an empty slot, which would make `import { x }` of a conditionally assigned
-/// export link only on a cache miss.
+/// Version 26: CommonJS entries store `Ast.commonjs_static_exports` in the record slot.
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -259,9 +256,7 @@ pub struct Entry {
     pub metadata: Metadata,
     pub output_code: OutputCode,
     pub sourcemap: Box<[u8]>,
-    /// `module_type == Esm`: the serialized `ModuleInfo` (may be empty when the
-    /// entry was written without the isolation cache enabled).
-    /// `module_type == Cjs`: `Ast.commonjs_static_exports`, verbatim.
+    /// ESM: serialized `ModuleInfo` (possibly empty). CJS: `Ast.commonjs_static_exports`.
     pub esm_record: Box<[u8]>,
 }
 

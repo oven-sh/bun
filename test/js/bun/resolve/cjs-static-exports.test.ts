@@ -204,10 +204,11 @@ test.concurrent("a later module.exports assignment discards earlier re-exports, 
   const result = await runJSON({
     "prod.cjs": `exports.shared = "prod"; if (${NEVER}) exports.prodOnly = 1;`,
     "dev.cjs": `exports.shared = "dev"; if (${NEVER}) exports.devOnly = 1;`,
+    // prod.cjs is loaded too, so only the discard rule keeps prodOnly out.
     "mod.cjs": `
       if (${NEVER}) module.exports = require("./prod.cjs");
       else module.exports = require("./dev.cjs");
-      if (${NEVER}) require("./prod.cjs");
+      require("./prod.cjs");
     `,
     "entry.mjs": `
       import { shared, devOnly } from "./mod.cjs";
@@ -221,11 +222,12 @@ test.concurrent("a later module.exports assignment discards earlier re-exports, 
 test.concurrent("re-exports that cannot be resolved or were never loaded are skipped", async () => {
   const result = await runJSON({
     "never-loaded.cjs": `exports.neverLoaded = 1;`,
+    // The __exportStar comes after the module.exports assignment so both re-exports survive.
     "mod.cjs": `
       exports.ok = 1;
       if (${NEVER}) exports.okMaybe = 1;
-      if (${NEVER}) module.exports = require("./does-not-exist.cjs");
       if (${NEVER}) module.exports = require("./never-loaded.cjs");
+      if (${NEVER}) __exportStar(require("./does-not-exist.cjs"), exports);
     `,
     "entry.mjs": `
       import { ok, okMaybe } from "./mod.cjs";

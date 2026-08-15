@@ -134,11 +134,7 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
-    // CommonJS only: export names detected while transpiling, serialized as
-    // documented in src/js_parser/commonjs_static_exports.rs, or empty.
-    // Owned like source_code: a consumer (Zig::SourceProvider or
-    // JSCommonJSModule) takes it and leaves the field empty; whatever is left
-    // is deref'd by ResolvedSourceCodeHolder.
+    // See ResolvedSource.rs. Whoever takes it leaves the field empty.
     BunString commonjs_static_exports;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;

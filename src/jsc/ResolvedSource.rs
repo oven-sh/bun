@@ -52,11 +52,8 @@ pub struct ResolvedSource {
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
 
-    /// CommonJS only: `Ast.commonjs_static_exports`, the export names detected
-    /// lexically (see `bun_js_parser::commonjs_static_exports`), or empty. Same
-    /// ownership as `source_code`: +1 handed to C++, where `Zig::SourceProvider` /
-    /// `JSCommonJSModule` take it and leave the field empty, and whatever is left
-    /// is released by `ResolvedSourceCodeHolder`.
+    /// `Ast.commonjs_static_exports` as a string (empty for ESM). +1 owned like
+    /// `source_code`: the C++ consumer takes it and leaves the field empty.
     pub commonjs_static_exports: BunString,
 }
 
@@ -83,8 +80,6 @@ impl Default for ResolvedSource {
 }
 
 impl ResolvedSource {
-    /// Builds the `commonjs_static_exports` field from the parser's (or the
-    /// transpiler cache's) serialized form.
     pub fn commonjs_static_exports_from_bytes(serialized: &[u8]) -> BunString {
         if serialized.is_empty() {
             BunString::empty()

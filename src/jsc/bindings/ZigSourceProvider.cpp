@@ -141,9 +141,7 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
-    // The provider's copy of the struct now owns this +1 (released in the
-    // destructor); clear the caller's so ResolvedSourceCodeHolder doesn't
-    // release it again.
+    // Now owned by m_resolvedSource; released in the destructor.
     resolvedSource.commonjs_static_exports = BunStringEmpty;
 
     if (shouldGenerateCodeCoverage) {

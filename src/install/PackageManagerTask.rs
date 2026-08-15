@@ -699,8 +699,7 @@ pub struct GitCheckoutRequest {
 
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
-    /// `tarball.url` itself (`normalize` set) or the absolute path `enqueue_local_tarball`
-    /// resolved it to on the main thread; the worker must not read the lockfile for this.
+    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
     pub(crate) tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.

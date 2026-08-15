@@ -123,6 +123,20 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
+/// Whether the class body defines a static member keyed `name` (`static get
+/// name()`, `static name = ...`), which replaces the constructor's own `name`.
+fn defines_static_name(props: &[Property]) -> bool {
+    props.iter().any(|prop| {
+        prop.flags.contains(Flags::Property::IsStatic)
+            && match &prop.key {
+                Some(key) => {
+                    matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"name"))
+                }
+                None => false,
+            }
+    })
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -2403,8 +2417,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // naming the class binding: the bundler renames a binding that collides
         // with the enclosing scope (`const Bar = class Bar2 {}`), and a binding
         // would shadow the outer `Bar` inside the class body. The block goes
-        // first so static initializers left in the body observe the name.
-        if expr_class_is_anonymous {
+        // first so static initializers left in the body observe the name. A body
+        // with its own static `name` gets no block: static methods and accessors
+        // are installed before any static block runs, so it would overwrite them.
+        if expr_class_is_anonymous && !defines_static_name(&new_properties) {
             let this_e = p.new_expr(E::This {}, loc);
             let name_e = p.new_expr(
                 E::EString {

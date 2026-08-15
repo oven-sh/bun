@@ -1446,8 +1446,7 @@ pub mod fs {
                         cache.kind = EntryKind::Dangling;
                         return Ok(cache);
                     }
-                    // Otherwise keep the kind from the link's own directory bit; the empty
-                    // `cache.symlink` makes the resolver fall back to `parent.abs_real_path + base`.
+                    // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);
                 }
                 scopeguard::defer! {
@@ -1547,8 +1546,7 @@ pub mod fs {
         }
     }
 
-    /// What `stat()` fails with on a link to nothing (or a loop); other errors
-    /// (EACCES, EMFILE, ...) describe an entry that exists and surface when it is read.
+    /// How `stat()` fails on a link to nothing or a loop; other errors surface when the entry is read.
     fn is_dangling_link_error(errno: bun_sys::E) -> bool {
         matches!(
             errno,

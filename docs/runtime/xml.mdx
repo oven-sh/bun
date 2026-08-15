@@ -50,7 +50,7 @@ By default the result is a **compact object** keyed by element name — the shap
 
 - The result has one key, the root element's name.
 - An element with no attributes and no child elements becomes its text content, trimmed of surrounding whitespace (`""` when empty).
-- Any other element becomes an object with a `"@name"` key per attribute, one key per distinct child element name — an **array** when that name repeats, in document order — and `"#text"` for its trimmed character data, if any.
+- Any other element becomes an object. It has a `"@name"` key per attribute, one key per distinct child element name, and `"#text"` for its trimmed character data, if any. When a child element name repeats, its key holds an **array** in document order.
 - CDATA sections and entity references are already expanded into the text. Comments and processing instructions are dropped.
 - All values are strings. Nothing is coerced to numbers, booleans, or `null`.
 
@@ -71,7 +71,7 @@ console.log(p);
 // }
 ```
 
-Every element is `{ name, attributes, children }`; `children` holds child elements and strings, and text is passed through exactly (including whitespace-only runs between elements).
+Every element is `{ name, attributes, children }`. `children` holds child elements and strings. The parser passes text through exactly, including whitespace-only runs between elements.
 
 #### Input types and encodings
 
@@ -97,7 +97,7 @@ try {
 
 ### `Bun.XML.stringify()`
 
-Serialize either shape back to XML. The output has no XML declaration and is always well-formed: `&`, `<`, `>` (and, in attributes, quotes, tabs and newlines) are escaped, and element or attribute names that are not XML names throw.
+Serialize either shape back to XML. The output has no XML declaration and is always well-formed. Bun escapes `&`, `<` and `>`. In attributes it also escapes quotes, tabs and newlines. Element or attribute names that are not XML names throw.
 
 ```ts
 import { XML } from "bun";
@@ -120,7 +120,7 @@ XML.stringify({
 // '<p class="lead">Hello <b>world</b>!</p>'
 ```
 
-A value with a string `name` and a `children` or `attributes` property is written as a node; anything else is a compact object and must have exactly one key naming the root element. Strings, numbers, booleans, bigints and `Date`s (as ISO strings) become text, `null` becomes an empty element, and `undefined`, functions and symbols are skipped like `JSON.stringify` skips them (unlike `JSON.stringify`, a bigint is written as its decimal digits rather than rejected).
+Bun writes a value as a node when it has a string `name` and a `children` or `attributes` property. Anything else is a compact object and must have exactly one key naming the root element. Strings, numbers, booleans, bigints and `Date`s (as ISO strings) become text. `null` becomes an empty element. Bun skips `undefined`, functions and symbols, as `JSON.stringify` does. Unlike `JSON.stringify`, Bun writes a bigint as its decimal digits rather than rejecting it.
 
 #### Pretty printing
 
@@ -144,7 +144,7 @@ console.log(XML.stringify(data, null, 2));
 
 ### ES Modules
 
-You can import XML files directly. Files are decoded like bytes passed to `XML.parse` (UTF-8, UTF-16, or ISO-8859-1 per the byte-order mark or declaration), and the module's value is the compact object described above:
+You can import XML files directly. Bun decodes the file like bytes passed to `XML.parse` (UTF-8, UTF-16, or ISO-8859-1 per the byte-order mark or declaration). The module's value is the compact object described above:
 
 ```xml config.xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -215,7 +215,7 @@ bun --hot server.ts
 
 ## Bundler Integration
 
-When you bundle with Bun, imported XML files are parsed at build time and inlined as JavaScript objects:
+When you bundle with Bun, the bundler parses imported XML files at build time and inlines them as JavaScript objects:
 
 ```bash terminal icon="terminal"
 bun build app.ts --outdir=dist
@@ -229,7 +229,7 @@ Parsing at build time means:
 
 ### Dynamic Imports
 
-XML files can be dynamically imported:
+You can import XML files dynamically:
 
 ```ts
 const { default: doc } = await import("./config.xml");
@@ -242,17 +242,17 @@ const { default: doc } = await import("./config.xml");
 Bun's XML parser is written in Rust and implements [XML 1.0 (Fifth Edition)](https://www.w3.org/TR/2008/REC-xml-20081126/) as a **non-validating processor that does not read external entities**:
 
 - The whole document, including the internal DTD subset, must be well-formed — anything else throws a `SyntaxError`.
-- Internal entities declared in the document are expanded (with expansion limits, so "billion laughs" payloads fail instead of exhausting memory), attribute values are normalized, and attribute defaults declared in the internal subset are applied.
-- External DTDs and external entities are never fetched or read, so there is no XXE surface. In a document with no DTD, a reference to an undeclared entity is an error; when the DOCTYPE points at an external subset (or uses parameter entities) that could have declared it, the reference is kept as written (`&nbsp;` stays `&nbsp;`), unless the document says `standalone="yes"`.
-- Nothing is validated against the DTD, namespaces are not resolved (prefixed names are kept verbatim), and comments and processing instructions are skipped.
+- The parser expands internal entities declared in the document, with expansion limits so "billion laughs" payloads fail instead of exhausting memory. It normalizes attribute values and applies attribute defaults declared in the internal subset.
+- The parser never fetches or reads external DTDs or external entities, so there is no XXE surface. In a document with no DTD, a reference to an undeclared entity is an error. When the DOCTYPE points at an external subset (or uses parameter entities) that could have declared the entity, the parser keeps the reference as written (`&nbsp;` stays `&nbsp;`), unless the document says `standalone="yes"`.
+- The parser validates nothing against the DTD. It does not resolve namespaces and keeps prefixed names verbatim. It skips comments and processing instructions.
 
-It is run against the [W3C XML Conformance Test Suite](https://www.w3.org/XML/Test/): all 1,679 cases that have a required outcome for this class of processor pass — not-well-formed documents are rejected, well-formed ones are accepted and, where the suite gives one, their element tree matches its canonical output byte for byte. The [translated test suite](https://github.com/oven-sh/bun/blob/main/test/js/bun/xml/xml-test-suite.test.ts) lists every case, including the ones whose outcome legitimately depends on not reading external entities.
+The parser is run against the [W3C XML Conformance Test Suite](https://www.w3.org/XML/Test/). All 1,679 cases that have a required outcome for this class of processor pass: the parser rejects not-well-formed documents and accepts well-formed ones. Where the suite gives a canonical output, the element tree of a well-formed document matches it byte for byte. The [translated test suite](https://github.com/oven-sh/bun/blob/main/test/js/bun/xml/xml-test-suite.test.ts) lists every case, including the ones whose outcome legitimately depends on not reading external entities.
 
 ---
 
 ## Performance
 
-The parser works in two stages, like Bun's JSON parser: a SIMD pass (runtime-dispatched AVX2/AVX-512/NEON/SVE kernels) finds the bytes that can change the parse, so character data, attribute values, comments and CDATA sections are never scanned a byte at a time, and element and attribute names reuse JavaScriptCore's atom-string cache the same way `JSON.parse` does.
+The parser works in two stages, like Bun's JSON parser. A SIMD pass (runtime-dispatched AVX2/AVX-512/NEON/SVE kernels) finds the bytes that can change the parse, so the parser never scans character data, attribute values, comments and CDATA sections a byte at a time. Element and attribute names reuse JavaScriptCore's atom-string cache the same way `JSON.parse` does.
 
 [`bench/xml/xml.mjs`](https://github.com/oven-sh/bun/blob/main/bench/xml/xml.mjs) compares `Bun.XML.parse` with popular npm parsers on the same documents (lower is better; Linux x64, one core):
 

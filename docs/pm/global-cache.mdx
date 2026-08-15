@@ -3,7 +3,7 @@ title: "Global cache"
 description: "How Bun stores and manages packages in its global cache"
 ---
 
-Bun stores every package downloaded from the registry in a global cache at `~/.bun/install/cache`, or the path set by the `BUN_INSTALL_CACHE_DIR` environment variable. Packages live in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
+Bun stores every package downloaded from the registry in a global cache at `~/.bun/install/cache`, or the path set by the `BUN_INSTALL_CACHE_DIR` environment variable. Packages live in subdirectories named like `${name}@${version}`, so Bun can cache multiple versions of a package.
 
 <Accordion title="Configuring cache behavior">
 
@@ -29,11 +29,11 @@ disableManifest = false
 When installing a package, if the cache already contains a version in the range specified by `package.json`, Bun uses the cached copy instead of downloading it again.
 
 <Accordion title="Installation details">
-If the semver version has a pre-release suffix (`1.0.0-beta.0`) or a build suffix (`1.0.0+20220101`), it is replaced with a hash of that value instead, to reduce the chance of errors from long file paths.
+If the semver version has a pre-release suffix (`1.0.0-beta.0`) or a build suffix (`1.0.0+20220101`), Bun replaces the suffix with a hash of that value instead, to reduce the chance of errors from long file paths.
 
 When the `node_modules` folder exists, before installing, Bun checks that `node_modules` contains all expected packages with appropriate versions. If so, `bun install` completes. Bun uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
-If a package is missing or has a version incompatible with the `package.json`, Bun checks for a compatible module in the cache. If found, it is installed into `node_modules`. Otherwise, Bun downloads the package from the registry, then installs it.
+If a package is missing or has a version incompatible with the `package.json`, Bun checks for a compatible module in the cache. If the cache has one, Bun installs it into `node_modules`. Otherwise, Bun downloads the package from the registry, then installs it.
 
 </Accordion>
 
@@ -47,7 +47,7 @@ Once a package is downloaded into the cache, Bun still needs to copy those files
 
 ## Saving disk space
 
-Since Bun uses hardlinks to "copy" a module into a project's `node_modules` directory on Linux and Windows, the contents of the package only exist in a single location on disk, greatly reducing the disk space used by `node_modules`.
+On Linux and Windows, Bun uses hardlinks to "copy" a module into a project's `node_modules` directory, so the contents of the package only exist in a single location on disk. This greatly reduces the disk space used by `node_modules`.
 
 The same applies on macOS, with a caveat. There Bun uses `clonefile`, which is copy-on-write: the clone occupies no extra disk space, but it counts towards the drive's limit. Because the copy only happens on write, patching `node_modules/*` in one project can't affect other installations.
 
@@ -60,7 +60,7 @@ Configure this with the `--backend` flag, which all of Bun's package management 
 - **`copyfile`**: The fallback used when any of the above fail. It is the slowest option. On macOS, it uses `fcopyfile()`; on Linux it uses `copy_file_range()`.
 - **`symlink`**: Used only for `file:` (and eventually `link:`) dependencies. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own `node_modules` folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js doesn't resolve node_modules of dependencies unless each dependency has its own `node_modules` folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash terminal icon="terminal"
 bun install --backend symlink

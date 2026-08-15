@@ -2853,9 +2853,9 @@ impl VirtualMachine {
 
 /// Synthesize a JS
 /// `BuildMessage` / `ResolveMessage` / `AggregateError` from the parser
-/// `log` of transpiling `specifier` and write it into `ret` as `.err(..)` so
-/// the C++ module-loader (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp)
-/// rejects the import promise with a real Error instead of `undefined`.
+/// `log` and write it into `ret` as `.err(..)` so the C++ module-loader
+/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
+/// with a real Error instead of `undefined`.
 ///
 /// Free function; takes `&JSGlobalObject` directly rather
 /// than `&mut VirtualMachine` because the body never touches VM state.
@@ -2872,8 +2872,8 @@ pub(crate) fn process_fetch_log(
     let take =
         |r: JsResult<JSValue>| -> JSValue { r.unwrap_or_else(|e| global_this.take_exception(e)) };
 
-    // The unresolved imports live in the module being transpiled, so it is the
-    // referrer; `ResolveMessage::create` stores it as raw UTF-8 bytes.
+    // `ResolveMessage::create` takes raw `&[u8]` and stores them verbatim, so
+    // we must convert to UTF-8 here.
     let referrer_utf8 = specifier.to_utf8();
 
     match log.msgs.len() {

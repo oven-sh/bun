@@ -58,8 +58,7 @@ extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSStri
   return JSC::loadAndEvaluateModule(global, key->getString(global), nullptr, nullptr);
 }
 
-// Both HMR patch entry points own `source` (DevServer.rs hands over a fresh copy)
-// and release it through transferToWTFString().
+// Both HMR patch entry points take ownership of `source` (DevServer.rs passes an OwnedString).
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);

@@ -8,9 +8,7 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSSourceCode.h"
 
-// These (and BakeProdLoad below) return a BunString whose reference the caller
-// owns: consume it with transferToWTFString(), which releases it. toWTFString()
-// takes a second reference and leaks the one we were handed.
+// These (and BakeProdLoad below) return an owned reference: consume it with transferToWTFString().
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 extern "C" BunString BakeToWindowsPath(BunString a);
 

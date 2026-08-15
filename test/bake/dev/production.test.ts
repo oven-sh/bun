@@ -650,6 +650,9 @@ export default async function AboutPage() {
       expect(output).toContain("Processing thread");
       return output;
     }
+    // LSan symbolizes every record it reports through llvm-symbolizer, which
+    // takes tens of seconds against the debug binary on a loaded machine.
+    const leakScanTimeout = 120_000;
 
     // LSan prints one record per allocation site: "Direct leak of N byte(s) in
     // M object(s) allocated from:" followed by "#k 0x... in <function> <file>"
@@ -695,9 +698,7 @@ export default async function AboutPage() {
         expect(aboutHtml).toContain("<div>about lazy<p>shared from about</p></div>");
         expect(leakedBunStrings(stderr)).toEqual([]);
       },
-      // LSan symbolizes every record through llvm-symbolizer, which is slow
-      // against the debug binary.
-      60_000,
+      leakScanTimeout,
     );
 
     // A successful build exits without tearing its VM down, and the VM's module
@@ -720,7 +721,7 @@ export default async function AboutPage() {
         expect(stderr).toContain("about page failed to render");
         expect(leakedBunStrings(stderr)).toEqual([]);
       },
-      60_000,
+      leakScanTimeout,
     );
   });
 });

@@ -47,7 +47,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
-void restoreWatchdog(VM& vm, double oldTimeout);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -95,7 +94,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 setupWatchdog(vm, timeout, &oldLimit.emplace(), nullptr);
             nodeVmGlobalObject->drainOwnMicrotasks();
             if (timeout != 0)
-                restoreWatchdog(vm, *oldLimit);
+                vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
             // The drain may legitimately leave the termination exception
             // pending (watchdog fired mid-checkpoint); observe it so the
             // exception-check validator is satisfied before the TOP scope
@@ -239,7 +238,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     if (timeout != 0) {
-        restoreWatchdog(vm, *oldLimit);
+        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
     // Evaluation (or the afterEvaluate drain) may leave an exception pending

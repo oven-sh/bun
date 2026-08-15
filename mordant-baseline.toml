@@ -43,7 +43,6 @@
 "reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_runtime]
-"arg_named_like_other_param:src/runtime/cli/install_completions_command.rs" = 4
 "arg_named_like_other_param:src/runtime/cli/pack_command.rs" = 1
 "bare_bool_args:src/runtime/api.rs" = 2
 "bare_bool_args:src/runtime/api/bun/h2_frame_parser.rs" = 1

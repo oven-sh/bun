@@ -1205,24 +1205,64 @@ fn plan_edges(
                 }
             })
             .collect();
-        for (w, want) in inst.wants.iter().enumerate() {
-            let Some(plan) = &planned[w] else {
-                continue;
-            };
-            let (v, to) = (plan.v, plan.to);
-            if to.is_some()
-                && forks_surviving_instance(
+        let edge_wants: Vec<(DependencyID, Option<usize>)> = edges_on.followers[inst_i]
+            .iter()
+            .map(|&edge| {
+                let owner = inst
+                    .wants
+                    .iter()
+                    .position(|want| want.dep_ids.contains(&edge));
+                (edge, owner)
+            })
+            .collect();
+        let direct_stays = edges_on.direct[inst_i].iter().any(|&dep_id| {
+            direct_row_stays(
+                &manager.lockfile,
+                manifest,
+                dep_id,
+                inst.current,
+                min_age,
+                excludes,
+            )
+        });
+        // Holds cascade (a held want stays behind and can block another), so iterate to a fixed point.
+        let mut held_wants = vec![false; inst.wants.len()];
+        loop {
+            let mut changed = false;
+            for w in 0..inst.wants.len() {
+                let Some(plan) = &planned[w] else {
+                    continue;
+                };
+                if held_wants[w] || plan.to.is_none() {
+                    continue;
+                }
+                if forks_surviving_instance(
                     &manager.lockfile,
                     inst,
                     w,
                     &planned,
-                    &edges_on[inst_i],
-                    v,
+                    &held_wants,
+                    &edge_wants,
+                    direct_stays,
+                    plan.v,
                     manifest_buf,
-                )
-            {
+                ) {
+                    held_wants[w] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (w, want) in inst.wants.iter().enumerate() {
+            let Some(plan) = &planned[w] else {
+                continue;
+            };
+            if held_wants[w] {
                 continue;
             }
+            let (v, to) = (plan.v, plan.to);
             if to.is_some() && !v.tag.pre.value.is_inline() {
                 let end = pins.len() + want.dep_ids.len();
                 pre_strings.push((
@@ -1267,31 +1307,105 @@ fn plan_edges(
     Ok((pins, report))
 }
 
-/// For each planned instance, every edge in the lockfile still resolving to it.
-fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> Vec<Vec<DependencyID>> {
-    let mut slot_of: Vec<u32> = vec![u32::MAX; lockfile.packages.len()];
+/// Live rows grouped per planned instance. `followers` resolve to the instance and only the
+/// post-resolve redirect can move them; `direct` rows (root/workspace-owned) name its package and
+/// are re-resolved by the differ instead, so they are matched by name (after the differ re-appends
+/// root rows their resolutions are not yet valid). Orphaned rows outside every live slice are skipped.
+struct InstanceEdges {
+    followers: Vec<Vec<DependencyID>>,
+    direct: Vec<Vec<DependencyID>>,
+}
+
+fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> InstanceEdges {
+    let packages_len = lockfile.packages.len();
+    let mut slot_of: Vec<u32> = vec![u32::MAX; packages_len];
     for (i, inst) in instances.iter().enumerate() {
         slot_of[inst.pkg_id as usize] = i as u32;
     }
-    let mut edges_on: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    for (j, &target) in lockfile.buffers.resolutions.iter().enumerate() {
-        let Some(&slot) = slot_of.get(target as usize) else {
-            continue;
-        };
-        if slot != u32::MAX {
-            edges_on[slot as usize].push(j as DependencyID);
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let pkg_names = lockfile.packages.items_name();
+    let dep_slices = lockfile.packages.items_dependencies();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+
+    let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
+    let mut direct: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
+    for owner in 0..packages_len {
+        let slice = dep_slices[owner];
+        let is_direct = matches!(
+            pkg_res[owner].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        );
+        for row in slice.begin() as usize..slice.end() as usize {
+            if !is_direct {
+                let Some(&slot) = slot_of.get(resolutions[row] as usize) else {
+                    continue;
+                };
+                if slot != u32::MAX {
+                    followers[slot as usize].push(row as DependencyID);
+                }
+                continue;
+            }
+            let Some(version) =
+                dedupe::effective_version(lockfile, row as DependencyID, &deps[row])
+            else {
+                continue;
+            };
+            let names = match version.tag {
+                DependencyVersionTag::Npm => version.npm().name,
+                DependencyVersionTag::DistTag => version.dist_tag().name,
+                _ => continue,
+            };
+            for (i, inst) in instances.iter().enumerate() {
+                if names.eql(pkg_names[inst.pkg_id as usize], buf, buf) {
+                    direct[i].push(row as DependencyID);
+                }
+            }
         }
     }
-    edges_on
+    InstanceEdges { followers, direct }
+}
+
+/// Whether the differ will land this root/workspace row back on `current`: the best release its
+/// range allows (or its dist-tag target) is `current` itself.
+fn direct_row_stays(
+    lockfile: &Lockfile,
+    manifest: &PackageManifest,
+    dep_id: DependencyID,
+    current: Semver::Version,
+    min_age: Option<f64>,
+    excludes: Option<&[&[u8]]>,
+) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
+        return false;
+    };
+    let found = match version.tag {
+        DependencyVersionTag::Npm => manifest
+            .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
+            .unwrap(),
+        DependencyVersionTag::DistTag => manifest
+            .find_by_dist_tag_with_filter(version.dist_tag().tag.slice(buf), min_age, excludes)
+            .unwrap(),
+        _ => return false,
+    };
+    found.is_some_and(|found| {
+        found.version.order(current, &manifest.string_buf, buf) == Ordering::Equal
+    })
 }
 
 /// An edge left behind at a still-satisfying `current` would re-create the duplicate `bun dedupe` removes.
+#[allow(clippy::too_many_arguments)]
 fn forks_surviving_instance(
     lockfile: &Lockfile,
     inst: &Instance,
     want_index: usize,
     planned: &[Option<Planned>],
-    edges: &[DependencyID],
+    held_wants: &[bool],
+    edge_wants: &[(DependencyID, Option<usize>)],
+    direct_stays: bool,
     v: Semver::Version,
     manifest_buf: &[u8],
 ) -> bool {
@@ -1302,25 +1416,21 @@ fn forks_surviving_instance(
     {
         return false;
     }
+    if direct_stays {
+        return true;
+    }
     let deps = lockfile.buffers.dependencies.as_slice();
     let stays = |version: &dependency::Version| {
         version.tag != DependencyVersionTag::Npm
             || !version.npm().version.satisfies(v, buf, manifest_buf)
     };
-    edges.iter().any(|&edge| {
-        match inst
-            .wants
-            .iter()
-            .position(|other| other.dep_ids.contains(&edge))
-        {
-            Some(w) if w == want_index => false,
-            Some(w) => planned[w].is_none() && stays(&inst.wants[w].version),
-            None => {
-                let dep = &deps[edge as usize];
-                dep.behavior.is_bundled()
-                    || dedupe::effective_npm_range(lockfile, edge, dep)
-                        .is_none_or(|range| stays(&range))
-            }
+    edge_wants.iter().any(|&(edge, owner)| match owner {
+        Some(w) if w == want_index => false,
+        Some(w) => (planned[w].is_none() || held_wants[w]) && stays(&inst.wants[w].version),
+        None => {
+            let dep = &deps[edge as usize];
+            dep.behavior.is_bundled()
+                || dedupe::effective_npm_range(lockfile, edge, dep).is_none_or(|range| stays(&range))
         }
     })
 }

@@ -557,6 +557,72 @@ test.concurrent("a deduped lockfile is a fixed point of `bun update`", async () 
   await frozen(dir);
 });
 
+// Holds cascade: the peer's range rejects 2.0.0, holding bounded-dep's edge; that held edge in turn
+// rejects 4.0.0, so wide-dep's edge must be held too instead of forking leaf off the kept 1.0.0.
+test.concurrent("a held edge blocks its sibling from forking the instance", async () => {
+  using server = await serveRegistry({
+    "wide-dep": { "1.0.0": { dependencies: { leaf: ">=1.0.0" } } },
+    "bounded-dep": { "1.0.0": { dependencies: { leaf: ">=1.0.0 <3.0.0" } } },
+    "peer-host": { "1.0.0": { peerDependencies: { leaf: "1.0.0 || >=4.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "4.0.0": {} },
+  });
+  const packageJson = pkgJson({ "wide-dep": "1.0.0", "bounded-dep": "1.0.0", "peer-host": "1.0.0" });
+  const dir = await installServed(
+    server,
+    "update-hold-cascade-",
+    pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+  );
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectNoMoves(stdout);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// A direct range that will move is no reason to hold: root leaf `^1.0.0 || ^3.0.0` moves to 3.0.0,
+// so parent's `^1.0.0 || ^2.0.0` edge moves to 2.0.0 instead of being held at the 1.0.0 the root leaves.
+test.concurrent("a direct edge that moves away does not hold its transitive siblings", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0 || ^2.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} },
+  });
+  const dir = await installServed(server, "update-direct-moves-", pkgJson({ parent: "1.0.0", leaf: "1.0.0" }));
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  // Widen the root range in package.json and bun.lock, keeping the locked resolution at 1.0.0.
+  await write(join(dir, "package.json"), stringify(pkgJson({ parent: "1.0.0", leaf: "^1.0.0 || ^3.0.0" })));
+  const lockfile = await lockText(dir);
+  expect(lockfile.split(`"leaf": "1.0.0"`)).toHaveLength(2);
+  await write(join(dir, "bun.lock"), lockfile.replace(`"leaf": "1.0.0"`, `"leaf": "^1.0.0 || ^3.0.0"`));
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0", "3.0.0"]);
+  expect(exitCode).toBe(0);
+  const before = await lockText(dir);
+
+  const again = await run(dir, "dedupe");
+  expect(again.stderr).not.toContain("error:");
+  expect(again.exitCode).toBe(0);
+  expect(await lockText(dir)).toBe(before);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

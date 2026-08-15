@@ -8,14 +8,14 @@ validator-resource-errors = ["bun_alloc::AllocError", "bun_sys::Error", "bun_err
 # on; add a lint here only with a reason.
 disabled = [
     # "list the variants instead of `_`": a per-site style call, ~500 today.
-    "wildcard_local_enum",
+    "wildcard_over_own_enum",
     # Structs with several bools are nearly all option bags here; the state
     # machines among them were found by hand once and are not worth the volume.
-    "flag_cluster",
+    "bool_cluster",
     # Most names it flags are real, on the C++/JS side or in a sibling crate.
     "stale_safety_comment",
     # Variants only ever tested through `!=` / `_`; checked, none were bugs.
     "unread_error_variant",
     # "make the guard a type": style.
-    "guard_flag",
+    "runtime_typestate",
 ]

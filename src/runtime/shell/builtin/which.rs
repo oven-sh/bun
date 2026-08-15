@@ -195,8 +195,6 @@ impl Which {
     }
 }
 
-/// What each argument is resolved against: `$PATH` from the export env and
-/// the cwd from the shell env.
 struct SearchEnv {
     path_env: Vec<u8>,
     cwd: Vec<u8>,

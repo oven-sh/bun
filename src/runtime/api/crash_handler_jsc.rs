@@ -134,12 +134,7 @@ pub(crate) mod js_bindings {
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
     }
 
-    /// Unlike `js_panic`, which calls `panic_impl` directly, this is a real
-    /// `panic!`, so it goes through the `std::panic` hook the crash handler
-    /// installs. Without an argument the literal reaches the hook as a
-    /// `&'static str` payload; `rustPanic(message)` panics with that message
-    /// (a `String` payload), which is how the tests exercise the hook's
-    /// message cap.
+    /// A real `panic!` (reaches the crash handler through the std panic hook, unlike `js_panic`).
     #[bun_jsc::host_fn]
     fn js_rust_panic(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
@@ -151,9 +146,7 @@ pub(crate) mod js_bindings {
         panic!("{}", bstr::BStr::new(&message));
     }
 
-    /// `Result::unwrap()` on an `Err`, the shape of the `.unwrap()` sites that
-    /// reach the panic hook in production. std formats the `Err` into the
-    /// message, so this one reaches the hook as a `String` payload.
+    /// A real `Result::unwrap()` on an `Err`; std formats the message, so the hook sees a `String` payload.
     #[bun_jsc::host_fn]
     fn js_rust_unwrap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();

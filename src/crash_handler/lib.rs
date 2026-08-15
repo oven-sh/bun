@@ -614,9 +614,6 @@ mod draft {
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
-    ///
-    /// Borrows the message from the crashing frame: a reason is only ever
-    /// formatted and then passed to `crash_handler`/`crash`, never stored.
     #[derive(Clone, Copy)]
     pub enum CrashReason<'a> {
         /// From @panic()
@@ -1711,33 +1708,17 @@ mod draft {
         std::panic::set_hook(Box::new(rust_panic_hook));
     }
 
-    /// `std::panic` hook. A Rust `panic!` (`unwrap()` on `None`/`Err`, a failed
-    /// `assert!`, `unreachable!()`, …) is a bug in Bun, so it is reported through
-    /// the same `crash_handler()` every other crash goes through: same header,
-    /// same `panic(main thread): <message>` line, same trace string and upload,
-    /// same multi-thread/re-entrancy bookkeeping, same SIGABRT at the end.
-    /// `crash_handler` never returns, so nothing unwinds past this hook.
-    ///
-    /// Only the message is reported, not `info.location()`: the call site is in
-    /// the captured trace, and release builds compile with
-    /// `-Zlocation-detail=none` so the location would read `<redacted>:0:0`.
+    /// Omits `info.location()`: release builds use `-Zlocation-detail=none`; the trace has the site.
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
-        /// A panic payload can be arbitrarily long (`assert_eq!` on two large
-        /// values), but `encode_trace_string` has to fit the compressed message
-        /// into the fixed-size trace string buffer. Cut on a char boundary so
-        /// the report stays valid UTF-8.
+        /// The trace string must fit the compressed message in a fixed buffer (`encode_trace_string`).
         const MAX_MESSAGE_BYTES: usize = 1024;
 
-        // `panic!` in Rust 2021 always carries a `&'static str` or `String`
-        // payload; only `std::panic::panic_any` can produce anything else.
         let msg = info
             .payload_as_str()
             .unwrap_or("<non-string panic payload>");
         let msg = &msg[..msg.floor_char_boundary(MAX_MESSAGE_BYTES)];
-        // Read in this frame (not inside a closure) so the trim anchor is a
-        // frame that is still on the stack when the trace is captured.
         crash_handler(
             CrashReason::Panic(msg.as_bytes()),
             TraceSeed::BeginAddr(debug::return_address()),

@@ -3207,8 +3207,31 @@ describe("bundler", () => {
     },
     run: { stdout: "1 2" },
   });
-  // Constructors read `_init` at construction time, so a class from one file
-  // must not pick up the initializers of a class from a later file.
+  // Constructors read `_init` at construction time, so a class must not pick up
+  // the initializers of a class evaluated after it.
+  // https://github.com/oven-sh/bun/issues/28316
+  itBundled("edgecase/DecoratorLoweringTempsBetweenClassesInOneFile", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const inject = (target: string) => (value: undefined, context: ClassFieldDecoratorContext) => {
+          console.log("init", target, String(context.name));
+          return function (initValue: unknown) {
+            console.log("get", target, String(context.name), initValue);
+            return initValue;
+          };
+        };
+        class Test1 {
+          @inject("test1") field1: string = "test1";
+        }
+        class Test2 {
+          @inject("test2") field2: string = "test2";
+        }
+        console.log(new Test1().field1);
+      `,
+    },
+    run: { stdout: "init test1 field1\ninit test2 field2\nget test1 field1 test1\ntest1" },
+  });
+  // The same applies to a class from one file and a class from a later file.
   itBundled("edgecase/DecoratorLoweringTempsAcrossFiles", {
     files: {
       "/entry.js": /* js */ `

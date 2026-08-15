@@ -1385,6 +1385,89 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("between the field initializers of a base class and a subclass", async () => {
+      // https://github.com/oven-sh/bun/issues/28010: the constructor reads its
+      // class's `_init` at construction time, after the subclass was evaluated.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(name) {
+          return function (value, context) {
+            return function (initialValue) {
+              console.log(name, String(context.name), initialValue);
+              return initialValue;
+            };
+          };
+        }
+        class Parent {
+          @tag("Parent.foo") foo = "parent_foo";
+          @tag("Parent.shared") shared = "parent_shared";
+        }
+        class Child extends Parent {
+          @tag("Child.foo") foo = "child_foo";
+          @tag("Child.childOnly") childOnly = "child_childOnly";
+        }
+        new Child();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "Parent.foo foo parent_foo\n" +
+          "Parent.shared shared parent_shared\n" +
+          "Child.foo foo child_foo\n" +
+          "Child.childOnly childOnly child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("between the accessor storage of a base class and a subclass", async () => {
+      // https://github.com/oven-sh/bun/issues/29837
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A";
+        }
+        class B extends A {
+          accessor name = "B";
+          logName() {
+            console.log(this.name);
+            console.log(super.name);
+          }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between the decorated private methods of two classes", async () => {
+      // `this.#m()` reads the class's `_m` WeakSet and `_m_fn` (the decorated
+      // method) at call time.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function first(value, ctx) { return function () { return "first"; }; }
+        function second(value, ctx) { return function () { return "second"; }; }
+        class A { @first #m() { return "a"; } call() { return this.#m(); } }
+        class B { @second #m() { return "b"; } call() { return this.#m(); } }
+        console.log(new A().call(), new B().call());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("first second\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between a class named like a temporary and another class's temporary", async () => {
+      // The statement form keeps the class in a `_<Class>` binding, so
+      // `class init` asks for `_init`, the base name of every class's
+      // initializer array.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function answer(value, ctx) { return () => 42; }
+        @dec class init { @dec m() { return init; } }
+        const C = class { @answer x = 1; };
+        console.log(new init().m() === init, new C().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true 42\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("between class expressions in sibling blocks", async () => {
       // The `var` declarations for both expressions hoist to the same scope.
       const { stdout, stderr, exitCode } = await runDecorator(`

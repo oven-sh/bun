@@ -3052,9 +3052,7 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
-                .expect("unreachable");
+            Output::writer().write_all(alphabetized_name_version_string)?;
             Output::enable_buffering();
         }
 

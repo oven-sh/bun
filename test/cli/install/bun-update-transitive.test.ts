@@ -688,7 +688,11 @@ test.concurrent("a member's parked row does not hold wants on another instance o
   });
   const dependents = { "parent-a": "1.0.0", "parent-b": "1.0.0" };
   using tmp = tempDir("update-member-other-instance-", {
-    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { ...dependents, leaf: "2.0.0" } }),
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { ...dependents, leaf: "2.0.0" },
+    }),
     "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "^1.0.0" } }),
   });
   const dir = String(tmp);

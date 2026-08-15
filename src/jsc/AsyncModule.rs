@@ -220,7 +220,6 @@ impl AsyncModule {
                 crate::virtual_machine::process_fetch_log(
                     global_this,
                     specifier,
-                    referrer,
                     log,
                     &mut errorable,
                     e,
@@ -728,7 +727,6 @@ impl AsyncModule {
                 crate::virtual_machine::process_fetch_log(
                     global_this,
                     BunString::init(ZigString::init(this.specifier())),
-                    BunString::init(ZigString::init(this.referrer())),
                     &mut log,
                     &mut errorable,
                     err,

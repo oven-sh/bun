@@ -10437,7 +10437,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
       cmd: [bunExe(), "pm", "pack", "--destination", join(root, "project")],
       cwd: join(root, "tb-src"),
       env,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [packErr, packExitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

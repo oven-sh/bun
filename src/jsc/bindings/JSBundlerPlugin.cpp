@@ -428,13 +428,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
-    auto kind = callFrame->argument(2).toInt32(globalObject) == 1 ? BundlerPlugin::RequestKind::Load : BundlerPlugin::RequestKind::Resolve;
-    if (thisObject->plugin.takeRequest(kind, context)) {
+    if (auto kind = thisObject->plugin.takeRequest(context)) {
         thisObject->plugin.addError(
             context,
             thisObject,
             JSValue::encode(callFrame->argument(1)),
-            JSValue::encode(callFrame->argument(2)));
+            JSValue::encode(jsNumber(static_cast<uint8_t>(*kind))));
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -722,11 +721,8 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 void BundlerPlugin::tombstone()
 {
     tombstoned = true;
-    for (auto kind : { RequestKind::Resolve, RequestKind::Load }) {
-        auto requests = std::exchange(held(kind), {});
-        for (void* context : requests)
-            JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
-    }
+    for (auto& [context, kind] : std::exchange(held, {}))
+        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)

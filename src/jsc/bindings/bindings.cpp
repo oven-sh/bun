@@ -80,7 +80,6 @@
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
@@ -3047,16 +3046,6 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
-
-    return false;
-}
-
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
@@ -5074,19 +5063,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return JSC::Options::useJIT();
 }
 
-void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog())
-        vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
-}
-void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
-{
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& watchdog = vm->ensureWatchdog();
-    watchdog.setTimeLimit(WTF::Seconds { limit });
-}
-
 bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 {
     JSC::Exception* exception = dynamicDowncast<JSC::Exception>(JSC::JSValue::decode(JSValue0));
@@ -5227,10 +5203,6 @@ void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
 {
     (*arg0).notifyNeedShellTimeoutCheck();
-}
-void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedWatchdogCheck();
 }
 
 void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)

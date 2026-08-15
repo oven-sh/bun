@@ -1441,9 +1441,6 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    /// # Safety
-    /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
-    /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: &mut Resolve,
@@ -1588,20 +1585,6 @@ pub mod js_bundler {
             || loader_as_int.is_empty_or_undefined_or_null()
         {
             this.value = LoadValue::NoMatch;
-
-            if this.was_file {
-                // Faster path: skip the extra threadpool dispatch
-                // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
-                unsafe {
-                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
-                        bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                            (*this.parse_task.as_ptr()).task
-                        )),
-                    );
-                }
-                this.value = LoadValue::Consumed;
-                return;
-            }
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
             let global = bv2_plugin(this.bv2).global_object();
@@ -1685,8 +1668,9 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
-        /// From here the plugin object swallows whatever its JS side still
-        /// delivers (onLoad/onResolve answers, defer, addError). JS thread.
+        /// The plugins' VM is shutting down: every request the plugin object still holds is answered
+        /// as cancelled now, and whatever its JS side delivers later is dropped (an answer) or refused
+        /// (`.defer()`). JS thread.
         fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
@@ -1887,24 +1871,11 @@ pub mod js_bundler {
     #[unsafe(no_mangle)]
     unsafe extern "C" fn JSBundlerPlugin__answerCancelled(kind: u8, ctx: *mut c_void) {
         match kind {
-            0 => {
-                // SAFETY: the live `*mut Resolve` handed over by `Resolve::dispatch`; its one answer.
-                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
-                resolve.value = ResolveValue::Err(
-                    bun_bundler::bundle_v2::bv2_impl::cancelled_plugin_request_msg(
-                        &resolve.import_record.source_file,
-                    ),
-                );
-                bv2_mut(resolve.bv2).on_resolve_async(resolve);
-            }
-            _ => {
-                // SAFETY: as above, `*mut Load` from `Load::dispatch`.
-                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
-                load.value = LoadValue::Err(
-                    bun_bundler::bundle_v2::bv2_impl::cancelled_plugin_request_msg(&load.path),
-                );
-                bv2_mut(load.bv2).on_load_async(load);
-            }
+            // SAFETY: the live `*mut Resolve` handed over by `Resolve::dispatch`; its one answer.
+            0 => unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) }.answer_cancelled(),
+            // SAFETY: as above, `*mut Load` from `Load::dispatch`.
+            1 => unsafe { bun_ptr::callback_ctx::<Load>(ctx) }.answer_cancelled(),
+            _ => unreachable!("RequestKind"),
         }
     }
 }

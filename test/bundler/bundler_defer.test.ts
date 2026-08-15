@@ -656,11 +656,9 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     expect(onFinalizeCallCount).toBe(3);
   });
 
-  // A plugin that calls defer() WITHOUT awaiting it and answers straight away: the deferral notice and the
-  // answer used to share one intrusive queue node (the second enqueue clobbered the first), and the pass
-  // could finish — freeing the BundleV2 that embeds the defer hop — while that hop was still on its way to
-  // the JS thread (heap-use-after-free in DeferredBatchTask::run_on_js_thread under ASAN, `unreachable`
-  // in on_load otherwise). Run in a child so a regression fails it instead of taking this file down.
+  // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's
+  // accounting or let the pass finish under its own defer hop (use-after-free under ASAN). Run in a child so
+  // a regression fails the child instead of taking this file down.
   test("an un-awaited defer() with an immediate answer neither corrupts the queue nor outlives the pass", async () => {
     using dir = tempDir("defer-unawaited", {
       "entry.ts": `import { x, foo } from "./shared"; console.log(x, foo());`,
@@ -688,17 +686,19 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
         })();
       `,
     });
-    for (const inWorker of [false, true]) {
-      const script = inWorker
-        ? `const { Worker } = require("worker_threads");
+    await Promise.all(
+      [false, true].map(async inWorker => {
+        const script = inWorker
+          ? `const { Worker } = require("worker_threads");
            const w = new Worker(require("path").join(${JSON.stringify(String(dir))}, "build.js"));
            w.on("exit", c => process.exit(c));`
-        : `require(require("path").join(${JSON.stringify(String(dir))}, "build.js"))`;
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe(".".repeat(24) + "\n");
-      expect(exitCode).toBe(0);
-    }
-  }, 60_000);
+          : `require(require("path").join(${JSON.stringify(String(dir))}, "build.js"))`;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(".".repeat(24) + "\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  }, 30_000);
 });

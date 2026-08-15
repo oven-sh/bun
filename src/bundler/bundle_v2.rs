@@ -683,24 +683,6 @@ pub mod bv2_impl {
     /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
     /// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
     /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
-    /// The answer a plugin request gets when the plugins can no longer answer it.
-    pub fn cancelled_plugin_request_msg(file: &[u8]) -> bun_ast::Msg {
-        bun_ast::Msg {
-            data: bun_ast::Data {
-                text: std::borrow::Cow::Borrowed(
-                    b"Bun.build was cancelled: the VM that owns its plugins shut down",
-                ),
-                location: Some(bun_ast::Location {
-                    file: std::borrow::Cow::Owned(file.to_vec()),
-                    line: -1,
-                    column: -1,
-                    ..Default::default()
-                }),
-            },
-            ..Default::default()
-        }
-    }
-
     pub mod api {
         /// `JSBundler` — TYPE_ONLY subset.
         /// Exposed as a module (not a struct) so callers can write
@@ -1097,6 +1079,23 @@ pub mod bv2_impl {
                 }
             }
 
+            fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
+                bun_ast::Msg {
+                    data: bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"Bun.build was cancelled: the VM that owns its plugins shut down",
+                        ),
+                        location: Some(bun_ast::Location {
+                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            line: -1,
+                            column: -1,
+                            ..Default::default()
+                        }),
+                    },
+                    ..Default::default()
+                }
+            }
+
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
@@ -1124,15 +1123,8 @@ pub mod bv2_impl {
                 /// plugins will never see the request, so it is answered here — as cancelled — and handed
                 /// back to the bundle thread, which is waiting for it.
                 unsafe fn release_unrun(this: *mut Self) {
-                    // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread, and
-                    // `bv2` outlives every request of its pass (it cannot finish before this answer).
-                    unsafe {
-                        (*this).value =
-                            ResolveValue::Err(super::super::cancelled_plugin_request_msg(
-                                &(*this).import_record.source_file,
-                            ));
-                        (*(*this).bv2).on_resolve_async(&mut *this);
-                    }
+                    // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread.
+                    unsafe { (*this).answer_cancelled() };
                 }
             }
             impl Resolve {
@@ -1156,11 +1148,7 @@ pub mod bv2_impl {
                     unsafe {
                         let bv2 = &mut *self.bv2;
                         if bv2.graph.cancelled {
-                            self.value =
-                                ResolveValue::Err(super::super::cancelled_plugin_request_msg(
-                                    &self.import_record.source_file,
-                                ));
-                            bv2.on_resolve_async(self);
+                            self.answer_cancelled();
                             return;
                         }
                         let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
@@ -1168,6 +1156,14 @@ pub mod bv2_impl {
                         );
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
+                }
+                /// The plugins can no longer answer this request (their VM is shutting down, or the pass
+                /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
+                /// holds it, through the bundle thread's queue like every other answer.
+                pub fn answer_cancelled(&mut self) {
+                    self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
+                    // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
+                    unsafe { &mut *self.bv2 }.on_resolve_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1223,8 +1219,6 @@ pub mod bv2_impl {
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
-                /// Faster path: skip the extra threadpool dispatch when the file is not found.
-                pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
                 /// `.defer()`ed and not yet drained: its scan-counter unit sits in
@@ -1253,7 +1247,6 @@ pub mod bv2_impl {
                     value: LoadValue::Pending,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
-                    was_file: false,
                     called_defer: false,
                     deferred: false,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
@@ -1295,10 +1288,7 @@ pub mod bv2_impl {
                         let bv2 = &mut *self.bv2;
                         bv2.graph.outstanding_loads.push(self);
                         if bv2.graph.cancelled {
-                            self.value = LoadValue::Err(
-                                super::super::cancelled_plugin_request_msg(&self.path),
-                            );
-                            bv2.on_load_async(self);
+                            self.answer_cancelled();
                             return;
                         }
                         let concurrent_task =
@@ -1307,6 +1297,12 @@ pub mod bv2_impl {
                             );
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
+                }
+                /// As `Resolve::answer_cancelled`.
+                pub fn answer_cancelled(&mut self) {
+                    self.value = LoadValue::Err(cancelled_msg(&self.path));
+                    // SAFETY: as `Resolve::answer_cancelled`.
+                    unsafe { &mut *self.bv2 }.on_load_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1335,12 +1331,7 @@ pub mod bv2_impl {
                 /// As `Resolve::release_unrun`.
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: as `Resolve::release_unrun`.
-                    unsafe {
-                        (*this).value = LoadValue::Err(super::super::cancelled_plugin_request_msg(
-                            &(*this).path,
-                        ));
-                        (*(*this).bv2).on_load_async(&mut *this);
-                    }
+                    unsafe { (*this).answer_cancelled() };
                 }
             }
             impl crate::Graph::OutstandingNode for Load {
@@ -1458,8 +1449,6 @@ pub mod bv2_impl {
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
         pub struct CompletionDispatch {
-            /// Whether the completion result is an error.
-            pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// Whether the VM that owns the plugins is shutting down: stop
             /// waiting for their answers and fail the build (any thread).
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
@@ -1480,18 +1469,13 @@ pub mod bv2_impl {
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
+        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
         // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
         // sharing across threads is not justified. The handle only needs to *move*
         // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
         // becomes necessary, split out an enqueue-only wrapper and make only that
         // type `Sync`.
         impl CompletionHandle {
-            #[inline]
-            pub(crate) fn result_is_err(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.result_is_err)(self.owner) }
-            }
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
@@ -2076,7 +2060,7 @@ pub mod bv2_impl {
                 self.transpiler.log_mut().add_error(
                     None,
                     bun_ast::Loc::EMPTY,
-                    &b"Bun.build was cancelled: the VM that started it shut down"[..],
+                    &b"Bun.build was cancelled: the VM that owns its plugins shut down"[..],
                 );
             }
 
@@ -2100,7 +2084,7 @@ pub mod bv2_impl {
         /// The defer hop is back from the plugins' thread (bundle thread): the pass may finish again — and
         /// if everything else finished while it was out, it finishes now (an async pass re-evaluates
         /// doneness only on events; `Bun.build`'s Mini loop polls it).
-        pub fn on_defer_hop_back(&mut self) {
+        pub(crate) fn on_defer_hop_back(&mut self) {
             debug_assert!(self.graph.defer_hop_out);
             self.graph.defer_hop_out = false;
             self.on_after_decrement_scan_counter();

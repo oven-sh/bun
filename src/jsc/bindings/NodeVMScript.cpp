@@ -337,10 +337,14 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
         // Node performs the afterEvaluate microtask checkpoint inside the
         // timeout/SIGINT scope, so a `timeout` also bounds microtasks the script
-        // scheduled on the context's own queue (e.g. promise jobs).
-        if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
+        // scheduled on the context's own queue (e.g. promise jobs). A script cut short before its
+        // checkpoint keeps what it queued for the next evaluation's, as in Node.
+        JSGlobalObject* checkpointed = globalObject->hasOwnMicrotaskQueue() ? nullptr : globalObject;
+        if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue()) {
+            checkpointed = globalObject;
             globalObject->drainOwnMicrotasks();
-        termination.finish(globalObject, scope, globalObject);
+        }
+        termination.finish(globalObject, scope, checkpointed);
     }
     RETURN_IF_EXCEPTION(scope, {});
 

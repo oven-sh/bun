@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1533,7 +1533,7 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
 // which not only let such a script finish "normally" but also could not be retired afterwards: its
 // stale deadline was serviced later and terminated the *caller's* own JS once it had used up the
 // script's leftover CPU budget (and asserted on debug builds).
-test("vm timeout is wall-clock and leaves nothing armed against the caller afterwards", async () => {
+test.concurrent("vm timeout is wall-clock and leaves nothing armed against the caller afterwards", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1575,22 +1575,22 @@ test("vm timeout is wall-clock and leaves nothing armed against the caller after
   expect(exitCode).toBe(0);
 });
 
-test("a vm timeout that never fires leaves nothing behind either", async () => {
+test.concurrent("a vm timeout that never fires leaves nothing behind either", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       const vm = require("node:vm");
-      // Many short runs with a generous timeout: none fires, and the timers left behind by earlier
-      // runs must not hit later runs or the caller.
+      // Runs that finish well inside their timeout: nothing they armed may hit later runs or the caller,
+      // which stays busy — in script and idle — for far longer than that timeout afterwards.
       const ctx = vm.createContext({});
-      for (let i = 0; i < 100; i++) vm.runInContext("1 + 1", ctx, { timeout: 1000 });
+      for (let i = 0; i < 50; i++) vm.runInContext("1 + 1", ctx, { timeout: 20 });
       const t = performance.now();
       let s = 0;
-      while (performance.now() - t < 200) s += Math.sqrt(s + 1);
-      await Bun.sleep(100);
-      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 1000 });
+      while (performance.now() - t < 200) s += Math.sqrt(s + 1);   // 10x the timeout, in script
+      await new Promise(r => setTimeout(r, 100));                    // and idle in the loop
+      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 20 });
       console.log("ok");
       `,
     ],
@@ -1607,25 +1607,28 @@ test("a vm timeout that never fires leaves nothing behind either", async () => {
 
 // The next three run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
 // a child: a regression then fails that child (spawn timeout) instead of hanging this file.
-// Microtasks a timed-out script left on an afterEvaluate context are discarded, not run after the timeout
-// (they would run with no deadline armed), and the context stays usable.
-test("microtasks queued by a timed-out script on an afterEvaluate context are discarded", async () => {
+// As in Node: microtasks a script left on an afterEvaluate context when its synchronous part timed out run
+// at the next evaluation's checkpoint, under that run's timeout (never unbounded); a checkpoint that is
+// itself cut short discards the rest; the context stays usable throughout.
+test.concurrent("microtasks left on an afterEvaluate context by a timed-out script stay bounded", async () => {
   const code = `
     const vm = require("node:vm");
-    const ctx = vm.createContext({}, { microtaskMode: "afterEvaluate" });
-    let first;
-    try { vm.runInContext("Promise.resolve().then(() => { for (;;) {} }); for (;;) {}", ctx, { timeout: 20 }); } catch (e) { first = e.code; }
-    console.log(first, vm.runInContext("1 + 1", ctx, { timeout: 1000 }));
+    const ctx = vm.createContext({ log: console.log }, { microtaskMode: "afterEvaluate" });
+    const run = (src, timeout) => { try { return String(vm.runInContext(src, ctx, { timeout })); } catch (e) { return e.code; } };
+    console.log(run("Promise.resolve().then(() => log('leftover ran')); for (;;) {}", 20));
+    console.log(run("1 + 1", 1000));
+    console.log(run("Promise.resolve().then(() => { for (;;) {} }); 2", 20));
+    console.log(run("3", 1000));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT 2\n");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nleftover ran\n2\nERR_SCRIPT_EXECUTION_TIMEOUT\n3\n");
   expect(exitCode).toBe(0);
 });
 
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
-test.skipIf(process.platform === "win32")(
+test.skipIf(isWindows)(
   "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",
   async () => {
     const code = `

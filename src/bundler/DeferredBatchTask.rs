@@ -48,9 +48,8 @@ impl DeferredBatchTask {
     pub fn run_on_js_thread(&mut self) {
         {
             let bv2 = self.get_bundle_v2();
-            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
-            // The void result is discarded — see
-            // `Plugin::drain_deferred` for the exception-scope note.
+            // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
+            let rejected = bv2.graph.cancelled;
             bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
         }
         self.come_back();

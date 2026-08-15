@@ -95,4 +95,14 @@ void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope,
     }
 }
 
+// Bun.spawnSync only blocks in waitpid (its fast path) when nothing can want to interrupt the script meanwhile.
+extern "C" bool Bun__NodeVM__timedRunOnStack()
+{
+    for (auto* run = s_innermostRunOnThisThread; run; run = run->enclosing()) {
+        if (run->hasTimeout())
+            return true;
+    }
+    return false;
+}
+
 } // namespace Bun

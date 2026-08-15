@@ -28,12 +28,16 @@ public:
     ~NodeVMRunTermination();
 
     // Call once, right after the run (and any microtask checkpoint it bounds). If the run was cut short
-    // by its own timeout or SIGINT and the VM is not being stopped as a whole: `microtaskContext`'s (the vm
-    // context's) queued microtasks have been discarded, the termination withdrawn, and the
-    // ERR_SCRIPT_EXECUTION_* error thrown on `scope` from `errorRealm`. Otherwise nothing is touched and
-    // whatever is pending — an ordinary exception, or a termination that is not this run's — is the
+    // by its own timeout or SIGINT and the VM is not being stopped as a whole: the microtasks the run left
+    // for `microtaskContext` (its own queue if it has one — pass it only if that queue's checkpoint ran —
+    // else its share of the VM's queue; nullptr: none) have been discarded, the termination withdrawn, and
+    // the ERR_SCRIPT_EXECUTION_* error thrown on `scope` from `errorRealm`. Otherwise nothing is touched
+    // and whatever is pending — an ordinary exception, or a termination that is not this run's — is the
     // caller's to propagate. Either way the caller follows with RETURN_IF_EXCEPTION.
     void finish(JSC::JSGlobalObject* errorRealm, JSC::ThrowScope&, JSC::JSGlobalObject* microtaskContext);
+
+    bool hasTimeout() const { return m_timeout.has_value(); }
+    NodeVMRunTermination* enclosing() const { return m_enclosing; }
 
 private:
     void withdraw(); // stop listening: nothing of this run's can fire once it returns

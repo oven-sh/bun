@@ -62,8 +62,8 @@ pub struct Graph<'a> {
     /// onLoad requests currently handed to the plugins' thread (dispatched, not yet answered), so
     /// `drain_deferred_tasks` can reach the ones that called `.defer()`. Bundle thread only.
     pub(crate) outstanding_loads: OutstandingList<crate::bundle_v2::api::JSBundler::Load>,
-    /// The owning VM cancelled this pass; plugin requests were failed and no
-    /// deferred batch will run.
+    /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
+    /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
     pub(crate) cancelled: bool,
 
     /// A map of build targets to their corresponding module graphs.

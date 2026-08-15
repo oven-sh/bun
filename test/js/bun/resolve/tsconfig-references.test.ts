@@ -492,6 +492,30 @@ test.concurrent("referenced project using 'files' instead of 'include'", async (
   expectRan(await run(String(dir), "src/main.ts"), "hi\n");
 });
 
+test.concurrent("an include entry naming a non-TypeScript file covers only its directory", async () => {
+  using dir = tempDir("tsconfig-refs-include-file", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }],
+    }),
+    "tsconfig.app.json": JSON.stringify({
+      include: ["src/App.vue"],
+      compilerOptions: { paths: { "~/*": ["./src/*"] } },
+    }),
+    "src/App.vue": "<template />",
+    "src/main.ts": `import { greet } from "~/greet"; console.log(greet());`,
+    "src/greet.ts": `export function greet() { return "vue"; }`,
+    "src/nested/main.ts": `import { greet } from "~/greet"; console.log(greet());`,
+  });
+
+  // Any extension makes the entry a file entry (tsc's rule), so it claims src/
+  // like a "files" entry would, and like one it does not claim subdirectories.
+  expectRan(await run(String(dir), "src/main.ts"), "vue\n");
+  const nested = await run(String(dir), "src/nested/main.ts");
+  expect(nested.stderr).toContain("Cannot find module '~/greet'");
+  expect(nested.exitCode).not.toBe(0);
+});
+
 test.concurrent("referenced project combined with extends", async () => {
   using dir = tempDir("tsconfig-refs-extends", {
     "tsconfig.json": JSON.stringify({

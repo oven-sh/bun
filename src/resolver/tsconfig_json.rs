@@ -121,14 +121,16 @@ pub(crate) struct CoverageDir {
     pub recursive: bool,
 }
 
-const SOURCE_EXTENSIONS: &[&[u8]] = &[
-    b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs", b".json",
-];
-
-fn looks_like_file(path: &[u8]) -> bool {
-    SOURCE_EXTENSIONS
-        .iter()
-        .any(|ext| strings::ends_with(path, ext))
+/// tsc reads an entry whose last segment has an extension (`env.d.ts`, `src/App.vue`) as a
+/// file and any other entry as a directory. A leading dot (`.storybook`) is not an extension.
+fn names_file(entry: &[u8]) -> bool {
+    let last_segment = match strings::last_index_of_any(entry, b"/\\") {
+        Some(sep) => &entry[sep + 1..],
+        None => entry,
+    };
+    last_segment
+        .get(1..)
+        .is_some_and(|rest| strings::contains_char(rest, b'.'))
 }
 
 /// The directory an "include" entry covers: the literal prefix before its first
@@ -148,7 +150,7 @@ pub(crate) fn include_pattern_coverage(pattern: &[u8]) -> CoverageDir {
                 recursive: descends,
             }
         }
-        None if looks_like_file(pattern) => CoverageDir {
+        None if names_file(pattern) => CoverageDir {
             dir: Box::from(bun_paths::dirname(pattern).unwrap_or(b"")),
             recursive: false,
         },
@@ -575,7 +577,7 @@ impl TSConfigJSON {
         result.exclude_dirs = exclude.map(|exclude| {
             exclude
                 .into_iter()
-                .filter(|entry| !strings::contains_any(entry, b"*?") && !looks_like_file(entry))
+                .filter(|entry| !strings::contains_any(entry, b"*?"))
                 .collect()
         });
         let mut has_base_url = false;

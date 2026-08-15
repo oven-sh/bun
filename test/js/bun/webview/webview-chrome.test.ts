@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
+import { afterAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -103,7 +103,24 @@ function findChrome(): string | undefined {
   return undefined;
 }
 
-const chromePath = findChrome();
+let chromePath = findChrome();
+
+// Chrome refuses to start as root unless its sandbox is turned off, which is
+// how these tests run inside containers. Wrap the binary in a script that adds
+// the flag: in-process views get it through `chrome.path` below, the tests
+// that spawn a second bun through BUN_CHROME_PATH in bunEnv. (The runtime
+// reads the real environment, so setting process.env here would not reach it.)
+let rootChromeWrapper: string | undefined;
+if (chromePath && process.platform === "linux" && process.getuid?.() === 0 && !process.env.BUN_CHROME_PATH) {
+  const dir = tempDir("webview-chrome-root", {
+    chrome: `#!/bin/sh\nexec "${chromePath}" --no-sandbox "$@"\n`,
+  });
+  afterAll(() => dir[Symbol.dispose]());
+  chromePath = rootChromeWrapper = join(String(dir), "chrome");
+  chmodSync(chromePath, 0o755);
+  bunEnv.BUN_CHROME_PATH = chromePath;
+}
+
 // TODO: macOS 13/14 aarch64 CI — findChrome() resolves the Playwright
 // chrome-headless-shell, but it either throws ERR_DLOPEN_FAILED at spawn or
 // launches and immediately closes the pipe on first navigate. Recent Chromium
@@ -116,12 +133,12 @@ const it = chromePath && !chromeBroken ? test : test.todo;
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote
 // debugging?" dialog on every test, and create visible tabs. The
-// executable path is still auto-found.
+// executable path is still auto-found (unless running as root, see above).
 //
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+const chrome = { type: "chrome" as const, url: false as const, path: rootChromeWrapper };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -153,6 +170,54 @@ it("chrome: evaluate returns native JS values", async () => {
   expect(await view.evaluate("null")).toBe(null);
   expect(await view.evaluate("undefined")).toBe(undefined);
   expect(await view.evaluate("true")).toBe(true);
+});
+
+it("chrome: evaluate applies the same JSON round trip as the WebKit backend", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  // `r` and `s` are the bindings evaluate()'s page-side wrapper uses for the
+  // round trip; a script must still see the page's globals of those names.
+  await view.navigate(html("<script>window.r = 'page r'; window.s = 'page s';</script>"));
+  // returnByValue on its own is not JSON.stringify: NaN, ±Infinity and -0
+  // come back as `unserializableValue` with no value (which used to resolve
+  // as undefined), functions and Dates as {}, and a Symbol fails the
+  // command. evaluate() is documented as a JSON.stringify/JSON.parse round
+  // trip, so every case below must match what that round trip produces
+  // (the same table webview.test.ts checks against WKWebView).
+  const scripts = {
+    nan: "NaN",
+    infinity: "Infinity",
+    negativeInfinity: "-Infinity",
+    negativeZero: "-0",
+    fn: "() => 1",
+    symbol: "Symbol('x')",
+    date: "new Date(0)",
+    toJSON: "({ toJSON() { return 'custom' } })",
+    nested: "({ a: NaN, b: -0, c: [Infinity, undefined, () => 1] })",
+    awaited: "Promise.resolve(-0)",
+    r: "r",
+    s: "s",
+  };
+  const results: Record<string, unknown> = {};
+  for (const [name, script] of Object.entries(scripts)) {
+    results[name] = await view.evaluate(script).catch(e => ({ rejected: e.message }));
+  }
+  expect(results).toEqual({
+    nan: null,
+    infinity: null,
+    negativeInfinity: null,
+    negativeZero: 0,
+    fn: undefined,
+    symbol: undefined,
+    date: "1970-01-01T00:00:00.000Z",
+    toJSON: "custom",
+    nested: { a: null, b: 0, c: [null, null, null] },
+    awaited: 0,
+    r: "page r",
+    s: "page s",
+  });
+  // JSON.stringify(-0) is "0", so the sign is dropped, not preserved.
+  expect(Object.is(results.negativeZero, 0)).toBe(true);
+  expect(Object.is(results.awaited, 0)).toBe(true);
 });
 
 it("chrome: evaluate awaits Promises", async () => {
@@ -654,11 +719,16 @@ it("chrome: evaluate() rejected Promise carries rejection reason", async () => {
   await expect(view.evaluate("Promise.reject(new TypeError('bad'))")).rejects.toThrow(/bad/);
 });
 
-it("chrome: evaluate() with circular reference throws", async () => {
+it("chrome: evaluate() rejects when the result has no JSON form", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
-  // returnByValue can't serialize circular — Chrome throws page-side.
-  await expect(view.evaluate("const a = {}; a.self = a; a")).rejects.toThrow();
+  // The page-side JSON.stringify throws for these, and that TypeError is the
+  // rejection, as on WebKit. (returnByValue alone reports a BigInt as
+  // unserializableValue, which used to resolve as undefined.)
+  await expect(view.evaluate("(() => { const a = {}; a.self = a; return a })()")).rejects.toThrow(/circular/);
+  await expect(view.evaluate("1n")).rejects.toThrow(/BigInt/);
+  // A statement sequence is still a SyntaxError rather than being evaluated.
+  await expect(view.evaluate("const a = 1; a")).rejects.toThrow(/SyntaxError|Unexpected/);
 });
 
 it("chrome: click(selector) rejects on invalid selector syntax", async () => {

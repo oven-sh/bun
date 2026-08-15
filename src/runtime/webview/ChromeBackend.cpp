@@ -847,15 +847,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::RuntimeEvaluate: {
         // {"result":{"type":"...","value":...},"exceptionDetails":{...}?}
-        // returnByValue:true + awaitPromise:true → result.value is the
-        // JSON-serialized return. exceptionDetails present → script threw.
+        // exceptionDetails present → the script threw, or its result did
+        // not survive the page-side JSON round trip (see Ops::evaluate).
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value — the inner result object's value field.
-        // type:"undefined" → no value field → resolve undefined.
+        // result.result.value — the inner result object's value field. The
+        // page already ran the value through JSON.parse(JSON.stringify()),
+        // so it is plain JSON data and returnByValue always emits .value
+        // for it; the only result without one is type:"undefined" (script
+        // resolved to undefined, or to something JSON.stringify drops).
         auto inner = jsonField(result, { "result", 6 });
         auto type = jsonString(jsonField(inner, { "type", 4 }));
         auto valueSlice = jsonField(inner, { "value", 5 });
@@ -864,7 +867,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             return;
         }
         // JSONParse the value slice directly. Same 1-parse as WKWebView's
-        // EvalDone — the slice IS JSON (returnByValue serialized it).
+        // EvalDone — the slice IS the JSON of the final value.
         JSValue v = JSONParse(g, WTF::String::fromUTF8(valueSlice));
         settle(g, view, entry.slot, true, v ? v : jsUndefined());
         return;
@@ -1411,17 +1414,32 @@ JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
             .num("height"_s, static_cast<int32_t>(view->m_height)));
 }
 
-// Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
-// the result internally (same mechanism as WKWebView's page-side
-// JSON.stringify but implicit). exceptionDetails present → script threw.
+// Runtime.evaluate with returnByValue + awaitPromise. exceptionDetails
+// present → script threw.
+//
+// returnByValue is not JSON.stringify: NaN/±Infinity/-0 arrive as
+// result.unserializableValue with no .value, functions become {}, a symbol
+// fails the command, BigInt is unserializable, toJSON is ignored. evaluate()
+// is documented as a page-side JSON.stringify + one JSONParse here (which is
+// what the WebKit backend does), so the page runs JSON.parse(JSON.stringify())
+// itself and returnByValue only ever sees plain JSON data, which it
+// serializes faithfully. JSON.stringify throwing (BigInt, cycles) rejects →
+// exceptionDetails, like WKWebView's callAsync rejecting.
 JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& script)
 {
     auto& t = transport();
     uint32_t id = t.nextId();
     // Same "await (expr)" wrap as WKWebView: forces expression context,
-    // unwraps thenables. Chrome's awaitPromise does the await part; we
-    // just need the paren-wrap for statement-sequence rejection consistency.
-    auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
+    // unwraps thenables. The user's expression goes in the thunk argument,
+    // not in the round-trip function, so `r`/`s` are not in scope for it
+    // and page globals with those names still resolve. Parsing page-side
+    // (instead of returning the JSON text) keeps the response's .value
+    // plain JSON: one JSONParse in handleResponse, nothing escaped twice on
+    // the pipe. JSON.stringify yielding undefined stays undefined.
+    auto body = makeString(
+        "(async(r)=>{const s=JSON.stringify(await r());return s===void 0?s:JSON.parse(s)})(async()=>{return await ("_s,
+        script,
+        ")})"_s);
     return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
         Method::RuntimeEvaluate, id,
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))

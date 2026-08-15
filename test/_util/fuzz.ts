@@ -64,13 +64,20 @@ export interface Fuzz {
   readonly iters: number;
   /** Appended to the test name so a failure line shows the seed it ran with. */
   readonly label: string;
+  /**
+   * Third argument for `test()`: undefined (the runner's own per-test timeout)
+   * unless the iteration count was raised for a soak, in which case the default
+   * budget is scaled up with it.
+   */
+  readonly timeout: number | undefined;
   /** Replay instructions for a failure message. */
   repro(iteration: number): string;
 }
 
 /**
  * Reads `${prefix}_SEED` and `${prefix}_ITERS` (for example `BUN_GLOB_FUZZ_SEED`
- * and `BUN_GLOB_FUZZ_ITERS`), falling back to the given defaults.
+ * and `BUN_GLOB_FUZZ_ITERS`), falling back to the given defaults. The default
+ * iteration count is sized so the test takes a few seconds on a debug build.
  */
 export function fuzzEnv(prefix: string, defaultSeed: number, defaultIters: number): Fuzz {
   const seedName = `${prefix}_SEED`;
@@ -80,6 +87,7 @@ export function fuzzEnv(prefix: string, defaultSeed: number, defaultIters: numbe
     seed,
     iters,
     label: `(seed=${seed}, iters=${iters})`,
+    timeout: iters > defaultIters ? Math.ceil(iters / defaultIters) * 5_000 : undefined,
     repro(iteration: number): string {
       return `seed=${seed} iteration=${iteration} (replay with ${seedName}=${seed})`;
     },

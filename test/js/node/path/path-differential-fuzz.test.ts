@@ -311,4 +311,4 @@ test.skipIf(nodeMajor !== wantedMajor)(`node:path agrees with node ${fuzz.label}
   }
   console.log(`path-differential-fuzz: ${compared} calls agree with node (${fuzz.iters} iterations)`);
   expect(compared).toBeGreaterThan(0);
-});
+}, fuzz.timeout);

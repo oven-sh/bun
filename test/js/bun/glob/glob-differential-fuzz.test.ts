@@ -285,4 +285,4 @@ test(`Bun.Glob#match agrees with picomatch ${fuzz.label}`, () => {
   console.log(`glob-differential-fuzz: ${fuzz.iters} patterns, ${compared} paths compared, ${matched} matched`);
   expect(matched).toBeGreaterThan(0);
   expect(matched).toBeLessThan(compared);
-});
+}, fuzz.timeout);

@@ -41,10 +41,7 @@ pub struct Report {
 
 impl Report {
     pub(crate) fn lines_coverage_fraction(&self) -> f64 {
-        let mut intersected = self
-            .executable_lines
-            .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let mut intersected = self.executable_lines.clone();
         intersected.set_intersection(&self.lines_which_have_executed);
 
         let total_count: f64 = self.executable_lines.count() as f64;
@@ -219,10 +216,8 @@ pub mod text {
 
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
-        let mut executable_lines_that_havent_been_executed = report
-            .lines_which_have_executed
-            .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let mut executable_lines_that_havent_been_executed =
+            report.lines_which_have_executed.clone();
         executable_lines_that_havent_been_executed.toggle_all();
 
         // This sets statements in executed scopes
@@ -500,8 +495,8 @@ impl ByteRangeMapping {
 
         let mut functions: Vec<Block> = Vec::new();
         functions.reserve_exact(function_blocks.len());
-        let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len())?;
-        let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
+        let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len());
+        let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len());
 
         let mut stmts: Vec<Block> = Vec::new();
         stmts.reserve_exact(function_blocks.len());
@@ -510,8 +505,8 @@ impl ByteRangeMapping {
 
         if ignore_sourcemap || parsed_mappings_.is_none() {
             line_count = line_starts.len() as u32;
-            executable_lines = Bitset::init_empty(line_count as usize)?;
-            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
+            executable_lines = Bitset::init_empty(line_count as usize);
+            lines_which_have_executed = Bitset::init_empty(line_count as usize);
             line_hits = vec![0u32; line_count as usize];
             let line_hits_slice = line_hits.as_mut_slice();
 
@@ -615,8 +610,8 @@ impl ByteRangeMapping {
             }
         } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
-            executable_lines = Bitset::init_empty(line_count as usize)?;
-            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
+            executable_lines = Bitset::init_empty(line_count as usize);
+            lines_which_have_executed = Bitset::init_empty(line_count as usize);
             line_hits = vec![0u32; line_count as usize];
             let line_hits_slice = line_hits.as_mut_slice();
 
@@ -809,8 +804,7 @@ impl ByteRangeMapping {
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
-            line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            line_offset_table: LineOffsetTable::generate(source_contents, 0),
             source_id,
             source_url,
         }

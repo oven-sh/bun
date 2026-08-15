@@ -3069,7 +3069,7 @@ impl<'a> Parser<'a> {
 
         // Borrowed probe so a repeated class/id name doesn't box a fresh key
         // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
-        let gop = local_scope.get_or_put(name).expect("unreachable");
+        let gop = local_scope.get_or_put(name);
         let entry = gop.value_ptr;
         if gop.found_existing {
             let prev_tag = entry.ref_.tag();

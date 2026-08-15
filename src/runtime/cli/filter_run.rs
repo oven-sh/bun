@@ -112,16 +112,16 @@ impl<'a> ProcessHandle<'a> {
             // Copy to owned — `original_path` borrows env.map which is
             // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
-            let _ = env.map.put(b"PATH", &handle.config.PATH);
+            env.map.put(b"PATH", &handle.config.PATH);
             // Restores PATH unconditionally at block exit (success OR error).
             // Keep the guard armed for the whole block so `?` early-returns also
             // restore.
             scopeguard::defer! {
                 // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+                unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map() };
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             break 'brk unsafe {
@@ -1023,7 +1023,7 @@ pub(crate) fn run_scripts_with_filter(
     state.handles = handles_vec.into_boxed_slice();
     for (i, script) in scripts.iter().enumerate() {
         let handle_ptr: *mut ProcessHandle = &raw mut state.handles[i];
-        let res = map.get_or_put(&script.package_name)?;
+        let res = map.get_or_put(&script.package_name);
         if res.found_existing {
             res.value_ptr.push(handle_ptr);
             // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});

@@ -159,8 +159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.import_items_for_namespace
                                         .get_mut(&id.ref_)
                                         .unwrap()
-                                        .put(name, new_item)
-                                        .expect("unreachable");
+                                        .put(name, new_item);
                                     p.is_import_item.insert(new_ref, ());
 
                                     let symbol = &mut p.symbols[new_ref.inner_index() as usize];
@@ -395,18 +394,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
-                                    p.commonjs_named_exports
-                                        .put(
-                                            name,
-                                            CommonJSNamedExport {
-                                                loc_ref: LocRef {
-                                                    loc: name_loc,
-                                                    ref_: new_ref,
-                                                },
-                                                needs_decl: true,
+                                    p.commonjs_named_exports.put(
+                                        name,
+                                        CommonJSNamedExport {
+                                            loc_ref: LocRef {
+                                                loc: name_loc,
+                                                ref_: new_ref,
                                             },
-                                        )
-                                        .expect("unreachable");
+                                            needs_decl: true,
+                                        },
+                                    );
                                     if p.commonjs_named_exports_needs_conversion == u32::MAX {
                                         p.commonjs_named_exports_needs_conversion =
                                             (p.commonjs_named_exports.count() - 1) as u32;
@@ -570,12 +567,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Add a special symbol use instead
                         let gop = p
                             .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
-                            .get_or_put_value(name, Default::default())
-                            .expect("unreachable");
+                            .get_or_put_value(id.ref_, Default::default());
+                        let inner_use = gop.value_ptr.get_or_put_value(name, Default::default());
                         inner_use.count_estimate += 1;
                     }
                 }
@@ -627,18 +620,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             &mut p.module_scope_mut().generated,
                                             new_ref,
                                         );
-                                        p.commonjs_named_exports
-                                            .put(
-                                                name,
-                                                CommonJSNamedExport {
-                                                    loc_ref: LocRef {
-                                                        loc: name_loc,
-                                                        ref_: new_ref,
-                                                    },
-                                                    needs_decl: true,
+                                        p.commonjs_named_exports.put(
+                                            name,
+                                            CommonJSNamedExport {
+                                                loc_ref: LocRef {
+                                                    loc: name_loc,
+                                                    ref_: new_ref,
                                                 },
-                                            )
-                                            .expect("unreachable");
+                                                needs_decl: true,
+                                            },
+                                        );
                                         if p.commonjs_named_exports_needs_conversion == u32::MAX {
                                             p.commonjs_named_exports_needs_conversion =
                                                 (p.commonjs_named_exports.count() - 1) as u32;

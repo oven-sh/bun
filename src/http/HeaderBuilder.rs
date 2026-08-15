@@ -20,7 +20,7 @@ impl HeaderBuilder {
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         self.content.allocate()?;
         self.entries
-            .ensure_total_capacity(self.header_count as usize)?;
+            .ensure_total_capacity(self.header_count as usize);
         Ok(())
     }
 

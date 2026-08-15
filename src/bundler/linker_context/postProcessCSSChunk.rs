@@ -51,7 +51,7 @@ pub(crate) fn post_process_css_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
+    compile_results_for_source_map.set_capacity(compile_results.len());
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     for compile_result in compile_results.iter() {
@@ -103,21 +103,19 @@ pub(crate) fn post_process_css_chunk(
 
         if let Some(source_map_chunk) = compile_result.source_map_chunk() {
             if c.options.source_maps != options::SourceMapOption::None {
-                bun_core::handle_oom(compile_results_for_source_map.append(
-                    CompileResultForSourceMap {
-                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                        // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
-                        source_map_chunk: unsafe { source_map_chunk.alias() },
-                        // Guaranteed `Value` here
-                        // because `source_maps != None` implies `line_offset` was
-                        // initialised to `Value(_)` above.
-                        generated_offset: match line_offset {
-                            LineColumnOffsetOptional::Value(v) => v,
-                            LineColumnOffsetOptional::Null => unreachable!(),
-                        },
-                        source_index: compile_result.source_index(),
+                compile_results_for_source_map.append(CompileResultForSourceMap {
+                    // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                    // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
+                    source_map_chunk: unsafe { source_map_chunk.alias() },
+                    // Guaranteed `Value` here
+                    // because `source_maps != None` implies `line_offset` was
+                    // initialised to `Value(_)` above.
+                    generated_offset: match line_offset {
+                        LineColumnOffsetOptional::Value(v) => v,
+                        LineColumnOffsetOptional::Null => unreachable!(),
                     },
-                ));
+                    source_index: compile_result.source_index(),
+                });
             }
 
             line_offset.reset();

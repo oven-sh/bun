@@ -794,11 +794,7 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     }
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let get_or_put_result = VirtualMachine::get()
-        .as_mut()
-        .macros
-        .get_or_put(id)
-        .expect("unreachable");
+    let get_or_put_result = VirtualMachine::get().as_mut().macros.get_or_put(id);
     if get_or_put_result.found_existing {
         get_or_put_result.value_ptr.unprotect();
     }
@@ -1585,10 +1581,10 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             server_ref.gc_hint_after_listen();
 
             if let Some(handles) = crate::jsc_hooks::active_handles() {
-                bun_core::handle_oom(handles.put(
+                handles.put(
                     crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
                     (),
-                ));
+                );
             }
 
             // `init` moved `config` into the server (`mem::take`), so the
@@ -2174,7 +2170,7 @@ pub(crate) mod environment_variables {
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
             // absent — no bypass.
-            bun_core::handle_oom(env_map.put(slot.key, b""));
+            env_map.put(slot.key, b"");
             return;
         }
 
@@ -2185,7 +2181,7 @@ pub(crate) mod environment_variables {
         // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
         // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
         // kept for spec parity.
-        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
+        env_map.put(slot.key, &stored.bytes);
     }
 
     fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {

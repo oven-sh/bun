@@ -614,7 +614,7 @@ fn iterate_included_project_tree(
                     ));
                 }
                 bun_sys::FileKind::File => {
-                    let dedupe_entry = subpath_dedupe.get_or_put(entry_subpath.as_bytes())?;
+                    let dedupe_entry = subpath_dedupe.get_or_put(entry_subpath.as_bytes());
                     debug_assert!(!dedupe_entry.found_existing);
                     if dedupe_entry.found_existing {
                         continue;
@@ -751,7 +751,7 @@ fn add_entire_tree(
 
             match entry.kind {
                 bun_sys::FileKind::File => {
-                    let dedupe_entry = dedupe.get_or_put(entry_subpath.as_bytes())?;
+                    let dedupe_entry = dedupe.get_or_put(entry_subpath.as_bytes());
                     if dedupe_entry.found_existing {
                         continue;
                     }
@@ -919,7 +919,7 @@ fn iterate_bundled_deps(
 
                 let entry_subpath_ = entry_subpath(b"node_modules", entry_name.as_bytes())?;
 
-                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes());
                 dep.was_packed = true;
                 if dedupe_entry.found_existing {
                     // already got to it in `add_bundled_dep` below
@@ -949,7 +949,7 @@ fn iterate_bundled_deps(
 
             let entry_subpath_ = entry_subpath(b"node_modules", entry_name)?;
 
-            let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+            let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes());
             dep.was_packed = true;
             if dedupe_entry.found_existing {
                 // already got to it in `add_bundled_dep` below
@@ -1119,7 +1119,7 @@ fn add_bundled_dep(
                                 ) {
                                     Ok(dep_dir) => {
                                         let dedupe_entry =
-                                            dedupe.get_or_put(dep_subpath.as_bytes())?;
+                                            dedupe.get_or_put(dep_subpath.as_bytes());
                                         if dedupe_entry.found_existing {
                                             continue;
                                         }
@@ -1168,7 +1168,7 @@ fn add_bundled_dep(
                                             };
 
                                             let dedupe_entry =
-                                                dedupe.get_or_put(parent_dep_subpath.as_bytes())?;
+                                                dedupe.get_or_put(parent_dep_subpath.as_bytes());
                                             if dedupe_entry.found_existing {
                                                 continue 'next_dep;
                                             }
@@ -2041,7 +2041,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // not repeated.
         unsafe { (*transpiler_for_deinit).deinit() };
     }
-    ctx.manager.env_mut().map.put(b"npm_command", b"pack")?;
+    ctx.manager.env_mut().map.put(b"npm_command", b"pack");
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,
@@ -3986,7 +3986,6 @@ pub mod bindings {
             "{}",
             bun_fmt::bytes_to_hex_lower_string(&sha1_digest)
         ));
-        // bun.handleOom → infallible / panic-on-OOM
 
         let mut sha512_digest: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
         let mut sha512 = sha::SHA512::init();
@@ -4076,7 +4075,6 @@ pub mod bindings {
                     #[cfg(windows)]
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();
-                        // bun.handleOom — panic on OOM
                         let result = bun_core::handle_oom(strings::to_utf8_list_with_type(
                             Vec::new(),
                             pathname_w,

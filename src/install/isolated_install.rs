@@ -260,13 +260,13 @@ pub(crate) fn build_store(
     let mut peer_name_idx: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
     for dep in dependencies {
         if dep.behavior.is_peer() {
-            peer_name_idx.put(dep.name_hash, ())?;
+            peer_name_idx.put(dep.name_hash, ());
         }
     }
     let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
     let leaking_peers: DynamicBitSetList =
-        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize);
 
     if peer_name_count != 0 {
         // The runtime child of a peer edge is whichever package an ancestor's
@@ -291,9 +291,9 @@ pub(crate) fn build_store(
         // dependency names that will appear in `node_dependencies` (i.e., not
         // filtered out by bundled/disabled/unresolved).
         let own_peers: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize);
         let provides: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize);
         for pkg_idx in 0..lockfile.packages.len() {
             let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
             let deps = pkg_dependency_slices[pkg_id as usize];
@@ -319,7 +319,7 @@ pub(crate) fn build_store(
             }
         }
 
-        let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize)?;
+        let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize);
 
         let mut changed = true;
         while changed {
@@ -362,7 +362,7 @@ pub(crate) fn build_store(
     // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
     let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
 
-    let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
+    let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len());
     for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
         let dep_idx: DependencyID = _dep_idx;
         if !dependencies[dep_idx as usize].behavior.is_workspace() {
@@ -536,7 +536,7 @@ pub(crate) fn build_store(
                 let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
                     pkg_id: entry.pkg_id,
                     ctx_hash,
-                })?;
+                });
                 if dedupe_entry.found_existing {
                     let dedupe_node_id = *dedupe_entry.value_ptr;
 
@@ -613,7 +613,7 @@ pub(crate) fn build_store(
                 Vec::with_capacity(pkg_deps.len as usize)
             },
             ..Default::default()
-        })?;
+        });
 
         let mut nodes_slice = nodes.slice();
         // disjoint-column views via `split_mut`.
@@ -898,7 +898,7 @@ pub(crate) fn build_store(
     'next_entry: while let Some(entry) = entry_queue.read_item() {
         let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
 
-        let dedupe_entry = dedupe.get_or_put(pkg_id)?;
+        let dedupe_entry = dedupe.get_or_put(pkg_id);
         if !dedupe_entry.found_existing {
             *dedupe_entry.value_ptr = Vec::new();
         } else {
@@ -1021,12 +1021,12 @@ pub(crate) fn build_store(
                 .slice(string_buf);
 
             let Some(hoist_pattern) = &manager.options.hoist_pattern else {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
+                let hoist_entry = hidden_hoisted.get_or_put(dep_name);
                 break 'hoisted !hoist_entry.found_existing;
             };
 
             if hoist_pattern.is_match(dep_name) {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
+                let hoist_entry = hidden_hoisted.get_or_put(dep_name);
                 break 'hoisted !hoist_entry.found_existing;
             }
 
@@ -1046,7 +1046,7 @@ pub(crate) fn build_store(
 
         let new_entry_id: store::entry::Id =
             store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
-        store_entries.append(new_entry)?;
+        store_entries.append(new_entry);
 
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
             'skip_adding_dependency: {
@@ -1079,7 +1079,7 @@ pub(crate) fn build_store(
                         let dep_name = dependencies[new_entry_dep_id as usize]
                             .name
                             .slice(string_buf);
-                        public_hoisted.put(dep_name, ())?;
+                        public_hoisted.put(dep_name, ());
                     } else {
                         // transitive dependencies (also direct dependencies of workspaces!)
                         let dep_name = dependencies[new_entry_dep_id as usize]
@@ -1087,7 +1087,7 @@ pub(crate) fn build_store(
                             .slice(string_buf);
                         if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
                             if public_hoist_pattern.is_match(dep_name) {
-                                let hoist_entry = public_hoisted.get_or_put(dep_name)?;
+                                let hoist_entry = public_hoisted.get_or_put(dep_name);
                                 if !hoist_entry.found_existing {
                                     entry_dependencies[0].insert(
                                         store::entry::DependenciesItem {
@@ -1586,7 +1586,7 @@ pub(crate) fn install_isolated_packages(
                                             &dependencies[dep.dep_id as usize].name_hash,
                                         ));
                                         ext.update(bun_core::bytes_of(&entry_hashes[di]));
-                                        scc_ext.put(ext.final_(), ())?;
+                                        scc_ext.put(ext.final_(), ());
                                     }
                                 }
                                 member_sub.sort_unstable();
@@ -2023,7 +2023,7 @@ pub(crate) fn install_isolated_packages(
         };
 
         let show_progress = manager.options.log_level.show_progress();
-        let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
+        let installed = DynamicBitSet::init_empty(lockfile.packages.len());
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
         // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
@@ -2159,7 +2159,7 @@ pub(crate) fn install_isolated_packages(
                     // thread.
 
                     // if injected=true this might be false
-                    if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
+                    if !seen_workspace_ids.get_or_put(pkg_id).found_existing {
                         entry_steps[entry_id.get() as usize].store(
                             installer::Step::SymlinkDependencies as u32,
                             Ordering::Relaxed,

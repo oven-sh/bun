@@ -1426,7 +1426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_loc: loc,
                     ref_: r#ref,
                 },
-            )?;
+            );
         }
         Ok(())
     }
@@ -1446,11 +1446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
             // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
-            self.symbol_uses
-                .get_or_put(ref_)
-                .expect("unreachable")
-                .value_ptr
-                .count_estimate += 1;
+            self.symbol_uses.get_or_put(ref_).value_ptr.count_estimate += 1;
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -1699,7 +1695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
 
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(2)?;
+        declared_symbols.ensure_total_capacity(2);
 
         declared_symbols.append_assume_capacity(DeclaredSymbol {
             ref_: self.bun_app_namespace_ref,
@@ -1745,7 +1741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 alias_is_star: false,
                 is_exported: false,
             },
-        )?;
+        );
 
         let import_stmt = self.s(
             S::Import {
@@ -1830,7 +1826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             });
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(imports.len() + 1)?;
+        declared_symbols.ensure_total_capacity(imports.len() + 1);
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
         declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1881,7 +1877,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_is_star: false,
                     is_exported: false,
                 },
-            )?;
+            );
         }
 
         let import_stmt = self.s(
@@ -1974,7 +1970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(len)?;
+        declared_symbols.ensure_total_capacity(len);
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime");
         declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -2022,7 +2018,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias_is_star: false,
                         is_exported: false,
                     },
-                )?;
+                );
             }
         }
 
@@ -3228,12 +3224,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let order_scope = order.scope_ref();
         if (cfg!(debug_assertions) && order.loc.start != loc.start) || order_scope.kind != kind {
             self.log().level = bun_ast::Level::Verbose;
-            let _ = self.log().add_debug_fmt(
+            self.log().add_debug_fmt(
                 Some(self.source),
                 loc,
                 format_args!("Expected this scope (.{})", <&'static str>::from(kind)),
             );
-            let _ = self.log().add_debug_fmt(
+            self.log().add_debug_fmt(
                 Some(self.source),
                 order.loc,
                 format_args!(
@@ -3308,12 +3304,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(prev_loc) = self.scopes_in_order[last_i].as_ref().map(|s| s.loc) {
                     if prev_loc.start >= loc.start {
                         self.log().level = bun_ast::Level::Verbose;
-                        let _ = self.log().add_debug_fmt(
+                        self.log().add_debug_fmt(
                             Some(self.source),
                             prev_loc,
                             format_args!("Previous Scope"),
                         );
-                        let _ = self.log().add_debug_fmt(
+                        self.log().add_debug_fmt(
                             Some(self.source),
                             loc,
                             format_args!("Next Scope"),
@@ -3346,7 +3342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // lexer string-table (see `get_or_put_member_with_hash`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
-                    unsafe { scope.members.put_borrowed(key, value)? };
+                    unsafe { scope.members.put_borrowed(key, value) };
                 }
             }
         }
@@ -3633,7 +3629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_id: id,
                         name: Some(b"default"),
                     },
-                )?;
+                );
             }
 
             if let Some(star) = stmt.star_name_loc.to_nullable() {
@@ -3646,7 +3642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_id: id,
                         name: None,
                     },
-                )?;
+                );
             }
 
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
@@ -3662,7 +3658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_id: id,
                         name: Some(item.alias.slice()),
                     },
-                )?;
+                );
             }
 
             return Ok(self.s(S::Empty {}, loc));
@@ -3757,8 +3753,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             used: false,
                             import_record_index: stmt.import_record_index,
                         },
-                    )
-                    .expect("unreachable");
+                    );
                 }
             }
 
@@ -3781,7 +3776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let count_excluding_namespace = u16::try_from(stmt.items.len()).expect("int cast")
             + u16::from(stmt.default_name.is_some());
 
-        item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
+        item_refs.ensure_unused_capacity(count_excluding_namespace as usize);
         // Even though we allocate ahead of time here
         // we cannot use putAssumeCapacity because a symbol can have existing links
         // those may write to this hash table, so this estimate may be innaccurate
@@ -3820,7 +3815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 import_record_id: new_import_id,
                                 name: Some(b"default"),
                             },
-                        )?;
+                        );
 
                         self.import_records.items_mut()[new_import_id as usize]
                             .path
@@ -3850,8 +3845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 used: false,
                                 import_record_index: stmt.import_record_index,
                             },
-                        )
-                        .expect("unreachable");
+                        );
                     }
                 }
 
@@ -3901,7 +3895,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             import_record_id: new_import_id,
                             name: Some(alias),
                         },
-                    )?;
+                    );
 
                     self.import_records.items_mut()[new_import_id as usize]
                         .path
@@ -3930,8 +3924,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             used: false,
                             import_record_index: stmt.import_record_index,
                         },
-                    )
-                    .expect("unreachable");
+                    );
                 }
             }
 
@@ -4150,7 +4143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: binding.loc,
                         data: js_ast::ts::Data::Property,
                     },
-                )?;
+                );
                 self.ref_to_ts_namespace_member
                     .insert(id.r#ref, js_ast::ts::Data::Property);
             }
@@ -4481,7 +4474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ref_,
                     loc: bun_ast::Loc::EMPTY,
                 },
-            )?;
+            );
             return Ok(ref_);
         }
 
@@ -4869,7 +4862,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
         if (location.start as usize) < self.lexer.source.contents.len() && !location.is_empty() {
-            let _ = self.log().add_range_error_fmt(
+            self.log().add_range_error_fmt(
                 Some(self.source),
                 bun_ast::Range {
                     loc: location,
@@ -4993,7 +4986,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let Some(ref_) = local.ref_.to_nullable() else {
                     continue;
                 };
-                let declaration_entry = already_declared.get_or_put(ref_)?;
+                let declaration_entry = already_declared.get_or_put(ref_);
                 if !declaration_entry.found_existing {
                     let mut decls = bun_alloc::AstAlloc::vec();
                     VecExt::append(
@@ -5013,7 +5006,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declared_symbols.append(DeclaredSymbol {
                         ref_,
                         is_top_level: true,
-                    })?;
+                    });
                 }
             }
             self.relocated_top_level_vars.clear();
@@ -5069,8 +5062,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
             // if the part is dead, invalidate all the usage counts
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
-                declared_symbols: self.declared_symbols.clone()?,
-                symbol_uses: self.symbol_uses.clone()?,
+                declared_symbols: self.declared_symbols.clone(),
+                symbol_uses: self.symbol_uses.clone(),
                 ..Default::default()
             });
             self.declared_symbols.clear_retaining_capacity();
@@ -6119,9 +6112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || symbol_kind == js_ast::symbol::Kind::TsEnum)
             && !self.emitted_namespace_vars.contains_key(&name_ref)
         {
-            self.emitted_namespace_vars
-                .put_no_clobber(name_ref, ())
-                .expect("oom");
+            self.emitted_namespace_vars.put_no_clobber(name_ref, ());
 
             let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
@@ -7516,7 +7507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EArray(mut arr) => {
                 for item in arr.items.slice_mut() {
                     let js_ast::ExprData::EString(mut s) = item.data else {
-                        let _ = self.log().add_error(
+                        self.log().add_error(
                             Some(self.source),
                             item.loc,
                             Self::IMPORT_META_HOT_ACCEPT_ERR,
@@ -7550,8 +7541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'found i;
                 }
             }
-            let _ = self
-                .log()
+            self.log()
                 .add_error(Some(self.source), loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
             return None;
         };
@@ -7706,12 +7696,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: fix the renamer bug. this bug theoretically affects all
             // usages of temp refs, but i cannot find another example of it
             // breaking (like with `using`)
-            self.declared_symbols
-                .append(DeclaredSymbol {
-                    is_top_level: true,
-                    ref_: signature_cb,
-                })
-                .expect("oom");
+            self.declared_symbols.append(DeclaredSymbol {
+                is_top_level: true,
+                ref_: signature_cb,
+            });
         }
         let ctx: &mut crate::HookContext = ctx_storage.as_mut().unwrap();
 
@@ -7736,7 +7724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             match &hook_call.target.data {
                 js_ast::ExprData::EIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_);
                     if !gop.found_existing {
                         *gop.value_ptr = Expr {
                             data: js_ast::ExprData::EIdentifier(*id),
@@ -7745,7 +7733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EImportIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_);
                     if !gop.found_existing {
                         *gop.value_ptr = Expr {
                             data: js_ast::ExprData::EImportIdentifier(*id),
@@ -7754,7 +7742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::ECommonjsExportIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_);
                     if !gop.found_existing {
                         *gop.value_ptr = Expr {
                             data: js_ast::ExprData::ECommonjsExportIdentifier(*id),
@@ -8047,13 +8035,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             unsafe {
                                 core::ptr::write(
                                     &raw mut part.declared_symbols,
-                                    self.declared_symbols.clone().expect("unreachable"),
+                                    self.declared_symbols.clone(),
                                 );
                             }
                         } else {
-                            part.declared_symbols
-                                .append_list(&self.declared_symbols)
-                                .expect("unreachable");
+                            part.declared_symbols.append_list(&self.declared_symbols);
                         }
 
                         if part.import_record_indices.is_empty() {
@@ -8496,7 +8482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         use bun_ast::{InlinedEnumValue, InlinedEnumValueDecoded};
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
-        map.ensure_total_capacity(self.top_level_enums.len())?;
+        map.ensure_total_capacity(self.top_level_enums.len());
         for r#ref in self.top_level_enums.iter() {
             let Some(js_ast::ts::Data::Namespace(namespace)) =
                 self.ref_to_ts_namespace_member.get(r#ref)
@@ -8506,7 +8492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
             let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
-            inner_map.ensure_total_capacity(ns.count())?;
+            inner_map.ensure_total_capacity(ns.count());
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
                 let val = &ns.values()[i];
@@ -8644,7 +8630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parent: None,
             ..Default::default()
         });
-        let _ = scope_obj
+        scope_obj
             .members
             .ensure_total_capacity(estimated_symbol_count);
         let scope = js_ast::StoreRef::from_bump(scope_obj);
@@ -8708,7 +8694,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut symbol_uses = SymbolUseMap::default();
-        let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
+        symbol_uses.ensure_total_capacity(estimated_symbol_count);
 
         // JSX transform mode — was the `<J: JsxT>` const-generic parameter,
         // now a runtime field (matches `Parser::parse`'s own `if jsx.parse`
@@ -9057,12 +9043,10 @@ impl LowerUsingDeclarationsContext {
         scope
             .generated
             .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
-        p.declared_symbols
-            .ensure_unused_capacity(
-                // 5 to include the _promise decl later on:
-                if self.has_await_using { 5 } else { 4 },
-            )
-            .expect("oom");
+        p.declared_symbols.ensure_unused_capacity(
+            // 5 to include the _promise decl later on:
+            if self.has_await_using { 5 } else { 4 },
+        );
         p.declared_symbols.append_assume_capacity(DeclaredSymbol {
             is_top_level,
             ref_: self.stack_ref,

@@ -96,7 +96,7 @@ impl Timings {
                 && ms.is_finite()
                 && ms >= 0.0
             {
-                let _ = map.put(key, ms.round().min(u32::MAX as f64) as u32);
+                map.put(key, ms.round().min(u32::MAX as f64) as u32);
             }
         });
         bun_ast::Expr::data_store_reset();
@@ -123,8 +123,8 @@ impl Timings {
 
     pub fn record(&mut self, abs_path: &[u8], ms: u32) {
         let key = Self::key_for(abs_path);
-        let _ = self.map.put(&key, ms);
-        let _ = self.measured.put(&key, ms);
+        self.map.put(&key, ms);
+        self.measured.put(&key, ms);
     }
 
     pub fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {

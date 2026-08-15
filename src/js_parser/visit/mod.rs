@@ -63,12 +63,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
-        self.declared_symbols
-            .append(bun_ast::DeclaredSymbol {
-                ref_: r#ref,
-                is_top_level: self.current_scope == self.module_scope,
-            })
-            .expect("oom");
+        self.declared_symbols.append(bun_ast::DeclaredSymbol {
+            ref_: r#ref,
+            is_top_level: self.current_scope == self.module_scope,
+        });
     }
 
     pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
@@ -465,9 +463,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if self.options.features.inlining {
                                                 if let BData::BIdentifier(id) = property.value.data
                                                 {
-                                                    self.const_values
-                                                        .put(id.r#ref, query.expr)
-                                                        .expect("oom");
+                                                    self.const_values.put(id.r#ref, query.expr);
                                                 }
                                             }
                                         }
@@ -507,7 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             BData::BIdentifier(id) => {
                 if self.options.features.inlining {
-                    self.const_values.put(id.r#ref, expr).expect("oom");
+                    self.const_values.put(id.r#ref, expr);
                 }
             }
             BData::BMissing(_) => {}
@@ -528,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
-                            self.const_values.put(id_ref, val).expect("oom");
+                            self.const_values.put(id_ref, val);
                         }
                     }
                 } else {
@@ -814,16 +810,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            self.vis_scope()
-                .members
-                .put(
-                    original_name,
-                    ScopeMember {
-                        ref_: name.ref_,
-                        loc: name.loc,
-                    },
-                )
-                .expect("oom");
+            self.vis_scope().members.put(
+                original_name,
+                ScopeMember {
+                    ref_: name.ref_,
+                    loc: name.loc,
+                },
+            );
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
                 b"_this"
@@ -1424,7 +1417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 continue;
                             }
 
-                            let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
+                            let gpe = fn_stmts.get_or_put(name_ref);
                             let mut index = *gpe.value_ptr;
                             if !gpe.found_existing {
                                 index = u32::try_from(let_decls.len()).expect("int cast");

@@ -488,7 +488,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
     fn buf(&self) -> &[u8] {
@@ -657,7 +657,7 @@ impl Tree {
                 dependencies: DependencyIDSlice::default(),
             },
             dependencies: DependencyIDList::default(),
-        })?;
+        });
 
         // reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
@@ -892,12 +892,12 @@ impl Tree {
                     // later if it's possible to resolve it.
                     let entry = builder
                         .pending_optional_peers
-                        .get_or_put(dependency.name_hash)?;
+                        .get_or_put(dependency.name_hash);
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }
 
-                    entry.value_ptr.put(dep_id, ())?;
+                    entry.value_ptr.put(dep_id, ());
                 }
                 HoistDependencyResult::Placement(dest) => {
                     {
@@ -1066,7 +1066,7 @@ impl Tree {
                 let buf = lockfile.buffers.string_bytes.as_slice();
                 let names = lockfile.packages.items_name();
                 let resolutions = lockfile.packages.items_resolution();
-                let _ = builder.log.add_error_fmt(
+                builder.log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(

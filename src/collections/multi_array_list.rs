@@ -53,6 +53,8 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
+use bun_alloc::AllocError;
+
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
 /// element struct.
 ///
@@ -1071,10 +1073,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Modify the array so that it can hold at least `new_capacity` items.
     pub fn ensure_total_capacity(&mut self, new_capacity: usize) {
-        if self.capacity >= new_capacity {
-            return;
+        if let Err(layout) = self.grow_to(new_capacity) {
+            std::alloc::handle_alloc_error(layout);
         }
-        self.set_capacity(grow_capacity::<T>(self.capacity, new_capacity));
     }
 
     /// Modify the array so that it can hold at least `additional_count` **more** items.
@@ -1082,12 +1083,40 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.ensure_total_capacity(self.len + additional_count);
     }
 
+    /// `Vec::try_reserve` analog of [`ensure_total_capacity`]: reports an
+    /// allocation failure instead of aborting. For reservations sized from
+    /// untrusted input (a source map's segment count, a lexer's line estimate)
+    /// where the caller turns the failure into an error for the user.
+    pub fn try_ensure_total_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
+        self.grow_to(new_capacity).map_err(|_| AllocError)
+    }
+
+    /// [`try_ensure_total_capacity`] for `additional_count` **more** items.
+    pub fn try_ensure_unused_capacity(
+        &mut self,
+        additional_count: usize,
+    ) -> Result<(), AllocError> {
+        self.try_ensure_total_capacity(self.len + additional_count)
+    }
+
+    fn grow_to(&mut self, new_capacity: usize) -> Result<(), Layout> {
+        if self.capacity >= new_capacity {
+            return Ok(());
+        }
+        self.try_set_capacity(grow_capacity::<T>(self.capacity, new_capacity))
+    }
+
     /// Modify the array so that it can hold exactly `new_capacity` items.
     /// `new_capacity` must be greater or equal to `len`.
     pub fn set_capacity(&mut self, new_capacity: usize) {
+        if let Err(layout) = self.try_set_capacity(new_capacity) {
+            std::alloc::handle_alloc_error(layout);
+        }
+    }
+
+    fn try_set_capacity(&mut self, new_capacity: usize) -> Result<(), Layout> {
         debug_assert!(new_capacity >= self.len);
-        let new_bytes = aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_capacity))
-            .unwrap_or_else(|layout| std::alloc::handle_alloc_error(layout));
+        let new_bytes = aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_capacity))?;
         if self.len != 0 {
             let mut dst = Slice::<T>::from_raw(new_bytes, self.len, new_capacity);
             dst.copy_rows_from(0, &self.slice(), self.len);
@@ -1095,6 +1124,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.free_allocated_bytes();
         self.bytes = new_bytes;
         self.capacity = new_capacity;
+        Ok(())
     }
 
     /// Create a copy of this list with a new backing store. This is a bitwise
@@ -1237,9 +1267,10 @@ fn layout_for<T>(capacity: usize) -> Option<Layout> {
     Some(Layout::from_size_align(n, Reflected::<T>::ALIGN).expect("MultiArrayList layout overflow"))
 }
 
-/// On failure returns the `Layout` that could not be allocated: `set_capacity`
-/// hands it to `handle_alloc_error` (the same path `Vec` takes, which the crash
-/// handler reports as out-of-memory), `shrink_and_free` keeps the old buffer.
+/// On failure returns the `Layout` that could not be allocated: the infallible
+/// growers hand it to `handle_alloc_error` (the same path `Vec` takes, which
+/// the crash handler reports as out-of-memory), the `try_` growers report it,
+/// and `shrink_and_free` keeps the old buffer.
 fn aligned_alloc<T, A: Allocator>(
     alloc: &A,
     layout: Option<Layout>,

@@ -826,7 +826,7 @@ impl<'a> LinkerContext<'a> {
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
             for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
+                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len());
                 // The HTML loader's `ParseTask` builds its synthetic part 1 already
                 // live (so the JS-chunk visitor follows every embedded import record).
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
@@ -914,7 +914,7 @@ impl<'a> LinkerContext<'a> {
             // AutoBitSet needs to be initialized if it is dynamic
             if AutoBitSet::needs_dynamic(entry_points_len) {
                 for bits in file_entry_bits.iter_mut() {
-                    *bits = AutoBitSet::init_empty(entry_points_len)?;
+                    *bits = AutoBitSet::init_empty(entry_points_len);
                 }
             } else if !file_entry_bits.is_empty() {
                 // assert that the tag is correct
@@ -1063,7 +1063,7 @@ impl<'a> LinkerContext<'a> {
             {
                 let index = source_indices[0];
                 let path = &sources[index as usize].path;
-                source_id_map.put_no_clobber(index, 0)?;
+                source_id_map.put_no_clobber(index, 0);
 
                 // Note: the relative path lives in a local owned buffer
                 // (drops at scope exit).
@@ -1084,7 +1084,7 @@ impl<'a> LinkerContext<'a> {
 
             let mut next_mapping_source_index: i32 = 1;
             for &index in &source_indices[1..] {
-                let gop = source_id_map.get_or_put(index)?;
+                let gop = source_id_map.get_or_put(index);
                 if gop.found_existing {
                     continue;
                 }
@@ -1497,8 +1497,7 @@ impl SourceMapData {
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
-            )
-            .expect("OOM");
+            );
         }
     }
 
@@ -2368,7 +2367,7 @@ impl<'a> LinkerContext<'a> {
                             break 'follow r#ref;
                         };
 
-                        let entry = local_css_names.get_or_put(r#ref).expect("OOM");
+                        let entry = local_css_names.get_or_put(r#ref);
                         if entry.found_existing {
                             continue;
                         }
@@ -2398,8 +2397,7 @@ impl<'a> LinkerContext<'a> {
                         .expect("infallible: in-memory write");
                         // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
-                            .put(r#ref, final_generated_name.into_boxed_slice())
-                            .expect("OOM");
+                            .put(r#ref, final_generated_name.into_boxed_slice());
                     }
                 }
             }
@@ -3111,9 +3109,7 @@ impl<'a> LinkerContext<'a> {
                         DependencyList::new_in(bun_alloc::AstAlloc)
                     };
                 let mut symbol_uses = PartSymbolUseMap::default();
-                symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
-                    .expect("OOM");
+                symbol_uses.put(wrapper_ref, SymbolUse { count_estimate: 1 });
                 let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
                 let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
                 let wrap_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
@@ -3136,8 +3132,7 @@ impl<'a> LinkerContext<'a> {
                                     ref_: wrap_ref,
                                     is_top_level: true,
                                 },
-                            ])
-                            .expect("unreachable"),
+                            ]),
                             dependencies,
                             ..Default::default()
                         },
@@ -3229,9 +3224,7 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
-                symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
-                    .expect("OOM");
+                symbol_uses.put(wrapper_ref, SymbolUse { count_estimate: 1 });
                 let part_index = self
                     .graph
                     .add_part_to_file(
@@ -3241,8 +3234,7 @@ impl<'a> LinkerContext<'a> {
                             declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
                                 ref_: wrapper_ref,
                                 is_top_level: true,
-                            }])
-                            .expect("unreachable"),
+                            }]),
                             dependencies,
                             ..Default::default()
                         },
@@ -3864,19 +3856,17 @@ impl<'a> LinkerContext<'a> {
 
             match result.kind {
                 MatchImportKind::Normal => {
-                    imports_to_bind
-                        .put(
-                            import_ref,
-                            crate::ImportData {
-                                re_exports,
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(result.source_index),
-                                    import_ref: result.r#ref,
-                                    ..Default::default()
-                                },
+                    imports_to_bind.put(
+                        import_ref,
+                        crate::ImportData {
+                            re_exports,
+                            data: ImportTracker {
+                                source_index: crate::Index::init(result.source_index),
+                                import_ref: result.r#ref,
+                                ..Default::default()
                             },
-                        )
-                        .expect("unreachable");
+                        },
+                    );
                 }
                 MatchImportKind::Namespace => {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
@@ -3889,19 +3879,17 @@ impl<'a> LinkerContext<'a> {
                         }));
                 }
                 MatchImportKind::NormalAndNamespace => {
-                    imports_to_bind
-                        .put(
-                            import_ref,
-                            crate::ImportData {
-                                re_exports,
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(result.source_index),
-                                    import_ref: result.r#ref,
-                                    ..Default::default()
-                                },
+                    imports_to_bind.put(
+                        import_ref,
+                        crate::ImportData {
+                            re_exports,
+                            data: ImportTracker {
+                                source_index: crate::Index::init(result.source_index),
+                                import_ref: result.r#ref,
+                                ..Default::default()
                             },
-                        )
-                        .expect("unreachable");
+                        },
+                    );
 
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
@@ -3933,8 +3921,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::ProbablyTypescriptType => {
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
-                        .put(import_ref, ())
-                        .expect("unreachable");
+                        .put(import_ref, ());
                 }
                 MatchImportKind::Ambiguous => {
                     let source = self.get_source(source_index);
@@ -4009,7 +3996,7 @@ impl<'a> LinkerContext<'a> {
                 declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
                     ref_: r#ref,
                     is_top_level: true,
-                }])?,
+                }]),
                 can_be_removed_if_unused: true,
                 ..Default::default()
             },
@@ -4026,7 +4013,7 @@ impl<'a> LinkerContext<'a> {
             .graph
             .meta
             .items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, bun_alloc::AstAlloc::vec_from_slice(&[part_index]))?;
+        top_level.put(r#ref, bun_alloc::AstAlloc::vec_from_slice(&[part_index]));
 
         let resolved_exports =
             &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
@@ -4040,7 +4027,7 @@ impl<'a> LinkerContext<'a> {
                 },
                 ..Default::default()
             },
-        )?;
+        );
         Ok((r#ref, part_index))
     }
 

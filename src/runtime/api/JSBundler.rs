@@ -816,7 +816,7 @@ pub mod js_bundler {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
                     let slice = entry_point.to_slice_or_null(global_this)?;
-                    this.entry_points.insert(slice.slice())?;
+                    this.entry_points.insert(slice.slice());
                     drop(slice);
                 }
             } else {
@@ -845,13 +845,13 @@ pub mod js_bundler {
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
                     let slice = conditions_value.to_slice_or_null(global_this)?;
-                    this.conditions.insert(slice.slice())?;
+                    this.conditions.insert(slice.slice());
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
                         let slice = entry_point.to_slice_or_null(global_this)?;
-                        this.conditions.insert(slice.slice())?;
+                        this.conditions.insert(slice.slice());
                         drop(slice);
                     }
                 } else {
@@ -935,7 +935,7 @@ pub mod js_bundler {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
                     let slice = entry_point.to_slice_or_null(global_this)?;
-                    this.external.insert(slice.slice())?;
+                    this.external.insert(slice.slice());
                     drop(slice);
                 }
             }
@@ -959,7 +959,7 @@ pub mod js_bundler {
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
-                                .insert(slice.slice())?;
+                                .insert(slice.slice());
                             drop(slice);
                         }
                     }
@@ -970,7 +970,7 @@ pub mod js_bundler {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
-                    this.drop.insert(slice.slice())?;
+                    this.drop.insert(slice.slice());
                     drop(slice);
                 }
             }
@@ -979,7 +979,7 @@ pub mod js_bundler {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
-                    this.features.insert(slice.slice())?;
+                    this.features.insert(slice.slice());
                     drop(slice);
                 }
             }
@@ -988,7 +988,7 @@ pub mod js_bundler {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
-                    this.optimize_imports.insert(slice.slice())?;
+                    this.optimize_imports.insert(slice.slice());
                     drop(slice);
                 }
             }
@@ -1087,7 +1087,7 @@ pub mod js_bundler {
                     let value = val.to_slice();
 
                     // .insert clones the value, but not the key
-                    this.define.insert(&key, value.slice())?;
+                    this.define.insert(&key, value.slice());
                     drop(value);
                 }
             }
@@ -1206,7 +1206,7 @@ pub mod js_bundler {
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
                     for (key, value) in define_keys.iter().zip(define_values) {
-                        this.define.insert(key, value)?;
+                        this.define.insert(key, value);
                     }
 
                     let base_public_path = StandaloneModuleGraph::target_base_public_path(

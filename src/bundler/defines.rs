@@ -66,7 +66,7 @@ fn env_string_store_put(
         call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnused,
         ..Default::default()
     });
-    store.get_or_put_value(key, data)?;
+    store.get_or_put_value(key, data);
     Ok(())
 }
 

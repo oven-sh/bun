@@ -5,7 +5,7 @@ use bstr::BStr;
 use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, UnwrapOrOom as _, pretty, strings};
+use bun_core::{Global, Output, pretty, strings};
 use bun_semver::string::Builder as StringBuilder;
 
 use crate::dependency::Behavior;
@@ -86,7 +86,7 @@ impl UpdateScope<'_> {
     fn walk(&self, lockfile: &Lockfile) -> DynamicBitSet {
         let pkg_res = lockfile.packages.items_resolution();
         if self.whole_workspace {
-            let mut all = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+            let mut all = DynamicBitSet::init_empty(pkg_res.len());
             all.unmanaged.set_all(true);
             return all;
         }
@@ -160,8 +160,7 @@ impl UpdateScope<'_> {
 
     /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
-        let mut walk =
-            DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+        let mut walk = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len());
         for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             if slice.len == 0 {
                 continue;

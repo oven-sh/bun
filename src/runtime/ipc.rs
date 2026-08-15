@@ -2394,7 +2394,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                                     unreachable!()
                                 };
-                                handle_oom(adv_buf.write(data));
+                                adv_buf.write(data);
                             });
                             log!("hit NotEnoughBytes");
                             return;
@@ -2409,7 +2409,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
-                handle_oom(adv_buf.write(data));
+                adv_buf.write(data);
             });
             let mut slice_start: usize = 0;
             loop {

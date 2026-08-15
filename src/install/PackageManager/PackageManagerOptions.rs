@@ -446,7 +446,7 @@ impl Options {
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
                         Npm::registry::Scope::from_api(name, registry, env)?,
-                    )?;
+                    );
                 }
             }
 

@@ -768,7 +768,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         for dep_id in deferred {
-            tree.binaries.add(dep_id).unwrap_or_oom();
+            tree.binaries.add(dep_id);
         }
     }
 
@@ -1087,7 +1087,7 @@ impl<'a> PackageInstaller<'a> {
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         if self.successfully_installed.bit_length() < self.lockfile().packages.len() {
-            let new = Bitset::init_empty(self.lockfile().packages.len()).unwrap_or_oom();
+            let new = Bitset::init_empty(self.lockfile().packages.len());
             let old = core::mem::replace(&mut self.successfully_installed, new);
             old.copy_into(&mut self.successfully_installed);
             // `defer old.deinit(bun.default_allocator)` — Bitset impls Drop.
@@ -1925,8 +1925,7 @@ impl<'a> PackageInstaller<'a> {
                     if self.bins[package_id as usize].tag != bin::Tag::None {
                         self.trees[self.current_tree_id as usize]
                             .binaries
-                            .add(dependency_id)
-                            .unwrap_or_oom();
+                            .add(dependency_id);
                     }
 
                     let dep =
@@ -2022,8 +2021,7 @@ impl<'a> PackageInstaller<'a> {
                                         .put(
                                             trusted_name_hash,
                                             Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                        )
-                                        .unwrap_or_oom();
+                                        );
                                 }
                             }
                         }
@@ -2063,8 +2061,7 @@ impl<'a> PackageInstaller<'a> {
                                     let entry = self
                                         .summary
                                         .packages_with_blocked_scripts
-                                        .get_or_put(truncated_dep_name_hash)
-                                        .unwrap_or_oom();
+                                        .get_or_put(truncated_dep_name_hash);
                                     if !entry.found_existing {
                                         *entry.value_ptr = 0;
                                     }
@@ -2244,8 +2241,7 @@ impl<'a> PackageInstaller<'a> {
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
-                    .add(dependency_id)
-                    .unwrap_or_oom();
+                    .add(dependency_id);
             }
 
             // reshaped for borrowck — `LazyPackageDestinationDir` borrows
@@ -2363,8 +2359,7 @@ impl<'a> PackageInstaller<'a> {
                                 .put(
                                     trusted_name_hash,
                                     Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                )
-                                .unwrap_or_oom();
+                                );
                         }
                     }
                 }

@@ -1082,7 +1082,7 @@ fn configure_env_for_scripts_run(
     // `Ok` — same contract as the runtime impl (run_command.rs:628).
     let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
-    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
+    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD");
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
@@ -1105,10 +1105,7 @@ fn configure_env_for_scripts_run(
             if !t_env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
-                t_env
-                    .map
-                    .put_alloc_value(b"JOBS", jobs_str)
-                    .expect("unreachable");
+                t_env.map.put_alloc_value(b"JOBS", jobs_str);
             }
         }
     }
@@ -1116,9 +1113,8 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+            this.env_mut()
+                .load_node_js_config(paths_fs, node_path_z.as_ref());
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1130,8 +1126,8 @@ fn configure_env_for_scripts_run(
                 {
                     break 'brk;
                 }
-                this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                this.env_mut().map.put(b"PATH", &path_var);
+                this.env_mut().load_node_js_config(paths_fs, bun_path);
             }
         }
     }
@@ -1243,7 +1239,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
     path_var.push(SEP);
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
-    manager.env_mut().map.put(b"PATH", &path_var)?;
+    manager.env_mut().map.put(b"PATH", &path_var);
 
     let path_buf_len = path_buf.len();
     let mut cursor = &mut path_buf[..];
@@ -1265,7 +1261,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     manager
         .env_mut()
         .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
+        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
 
     Ok(())
 }
@@ -1876,7 +1872,7 @@ pub fn init(
         &mut *loader_ptr
     };
 
-    env.load_process()?;
+    env.load_process();
     // Copy the listing's basenames out under `entries_mutex`; `.data` must
     // only be probed while the lock is held.
     let env_probe_keys = {
@@ -2169,7 +2165,7 @@ pub fn init(
                 abs_path: Box::<[u8]>::from(&*normalized),
                 resolution: FolderResolution::PackageId(0),
             },
-        )?;
+        );
         // normalized.deinit() → Drop (stack buffer)
     }
 

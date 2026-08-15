@@ -269,7 +269,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut had_print_error = false;
             // Without code splitting a failing file is printed once per chunk
             // that includes it; report each file once.
-            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len())?;
+            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len());
             for chunk in chunks.iter() {
                 for compile_result in chunk.compile_results_for_chunk.iter() {
                     let message: Cow<'static, [u8]> = match compile_result {
@@ -362,7 +362,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
-        let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
+        let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len());
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk. This can technically be done in parallel but it
@@ -394,9 +394,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
-            if path_names_map.get_or_put(&rel_path)?.found_existing {
+            if path_names_map.get_or_put(&rel_path).found_existing {
                 // collect all duplicates in a list
-                let dup = duplicates_map.get_or_put(&rel_path)?;
+                let dup = duplicates_map.get_or_put(&rel_path);
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
@@ -520,7 +520,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
-                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
+                unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice());
             }
         }
 
@@ -622,7 +622,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // the chunk loop below. `c` outlives `static_route_visitor`.
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
-        visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
+        visited: AutoBitSet::init_empty(c.graph.files.len()),
     };
     // defer static_route_visitor.deinit() — handled by Drop
 
@@ -1125,7 +1125,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // detached `&LinkerContext`; `log_disjoint` returns the
                             // disjoint `Transpiler.log` backref so no `&mut c` is
                             // materialized.
-                            let _ = c.log_disjoint().add_error_fmt(
+                            c.log_disjoint().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(

@@ -252,18 +252,14 @@ impl GraphTraceState {
             Side::Server => &mut self.server_bits,
         };
         if b.unmanaged.bit_length < new_size {
-            b.resize(new_size, false)?;
+            b.resize(new_size, false);
         }
         Ok(())
     }
 
     pub(crate) fn clear_and_free(&mut self) {
-        self.client_bits
-            .resize(0, false)
-            .expect("freeing memory can not fail");
-        self.server_bits
-            .resize(0, false)
-            .expect("freeing memory can not fail");
+        self.client_bits.resize(0, false);
+        self.server_bits.resize(0, false);
     }
 }
 
@@ -498,7 +494,7 @@ impl HotReloadEvent {
                             // cached, anyways.
                             // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
-                            bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
+                            self.files.get_or_put(source_file_path.slice());
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files
@@ -520,11 +516,11 @@ impl HotReloadEvent {
 
         let mut rest_extra: &[u8] = &self.extra_files;
         while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
-            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
+            self.files.put(&rest_extra[0..str_idx as usize], ());
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }
         if !rest_extra.is_empty() {
-            bun_core::handle_oom(self.files.put(rest_extra, ()));
+            self.files.put(rest_extra, ());
         }
 
         let changed_file_paths = self.files.keys();
@@ -582,7 +578,7 @@ impl HotReloadEvent {
 
     /// Records a changed file path in the pending hot-reload event (deduplicated).
     pub(crate) fn append_file(&mut self, file_path: &[u8]) {
-        bun_core::handle_oom(self.files.get_or_put(file_path));
+        self.files.get_or_put(file_path);
     }
 
     /// Records a changed directory (and, when present, the changed entry
@@ -591,7 +587,7 @@ impl HotReloadEvent {
         if dir_path.is_empty() {
             return;
         }
-        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        self.dirs.get_or_put(dir_path);
 
         let Some(sub_path) = maybe_sub_path else {
             return;
@@ -1198,18 +1194,11 @@ bun_bundler::link_impl_DevServerHandle! {
                 .unwrap_or(core::ptr::null_mut())
         },
         register_barrel_with_deferrals(path) => {
-            let _ = (*this)
-                .barrel_files_with_deferrals
-                .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
-            Ok(())
+            (*this).barrel_files_with_deferrals.get_or_put(path);
         },
         register_barrel_export(barrel_path, alias) => {
-            // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
-                return;
-            };
-            let _ = gop.value_ptr.get_or_put(alias);
+            let gop = (*this).barrel_needed_exports.get_or_put(barrel_path);
+            gop.value_ptr.get_or_put(alias);
         },
     }
 }
@@ -1350,7 +1339,7 @@ impl DirectoryWatchStore {
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
-        )?;
+        );
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 

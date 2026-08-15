@@ -1028,7 +1028,7 @@ impl TimerObjectInternals {
                     .maps
                     .get(self.flags.get().kind())
                     .put(self.id, elt)
-            }?;
+            };
         }
         Ok(JSValue::js_number(f64::from(self.id)))
     }

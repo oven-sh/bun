@@ -201,7 +201,7 @@ pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
         }
     }
     // `StringHashMap::put` dupes the key on insert.
-    let _ = cache().put(
+    cache().put(
         k,
         Record {
             h3_port: entry.port,

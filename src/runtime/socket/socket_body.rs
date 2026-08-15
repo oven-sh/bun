@@ -2697,8 +2697,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
                         if !remaining_in_input_data.is_empty() {
                             // Result intentionally discarded
-                            let _ = self
-                                .buffered_data_for_node_net
+                            self.buffered_data_for_node_net
                                 .with_mut(|b| b.append_slice(remaining_in_input_data));
                         }
 
@@ -2709,8 +2708,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             // slower-path: clone the data, do one write.
             // Result intentionally discarded
-            let _ = self
-                .buffered_data_for_node_net
+            self.buffered_data_for_node_net
                 .with_mut(|b| b.append_slice(buffer.slice()));
             // R-2: `write_maybe_corked` takes `&self` and does not touch
             // `buffered_data_for_node_net`, so a `JsCell::get()` projection
@@ -2938,9 +2936,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if buffer_unwritten_data {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
-                let _ = self
-                    .buffered_data_for_node_net
-                    .with_mut(|b| b.append_slice(remaining)); // OOM/capacity: fire-and-forget
+                self.buffered_data_for_node_net
+                    .with_mut(|b| b.append_slice(remaining));
             }
         }
 

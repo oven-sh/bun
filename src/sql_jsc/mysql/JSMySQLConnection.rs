@@ -890,8 +890,7 @@ impl JSMySQLConnection {
     pub(crate) fn get_statement_from_signature_name(
         &self,
         signature_name: &[u8],
-    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
-    {
+    ) -> my_sql_connection::PreparedStatementsMapGetOrPutResult<'_> {
         self.connection_mut().statements.get_or_put(signature_name)
     }
 }

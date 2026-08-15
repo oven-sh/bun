@@ -1247,12 +1247,12 @@ impl FSWatcher {
             )
         };
         if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
+            handles.put(
                 crate::jsc_hooks::ActiveHandle::FsWatcher(
                     core::ptr::NonNull::new(ctx).expect("init: watcher"),
                 ),
                 (),
-            ));
+            );
         }
         Ok(ctx)
     }

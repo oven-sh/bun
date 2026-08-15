@@ -446,7 +446,7 @@ pub(crate) fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
+    compile_results_for_source_map.set_capacity(compile_results.len());
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
@@ -554,19 +554,17 @@ pub(crate) fn post_process_js_chunk(
 
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
-                    bun_core::handle_oom(compile_results_for_source_map.append(
-                        CompileResultForSourceMap {
-                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                            // (read-only and outlives this fn); slab-only MAL drop means
-                            // the alias is never freed — original keeps the single owner.
-                            source_map_chunk: unsafe { source_map_chunk.alias() },
-                            generated_offset: match line_offset {
-                                SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
-                            },
-                            source_index: compile_result.source_index(),
+                    compile_results_for_source_map.append(CompileResultForSourceMap {
+                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                        // (read-only and outlives this fn); slab-only MAL drop means
+                        // the alias is never freed — original keeps the single owner.
+                        source_map_chunk: unsafe { source_map_chunk.alias() },
+                        generated_offset: match line_offset {
+                            SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                            SourceMap::LineColumnOffsetOptional::Null => Default::default(),
                         },
-                    ));
+                        source_index: compile_result.source_index(),
+                    });
                 }
 
                 line_offset.reset();

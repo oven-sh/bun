@@ -580,7 +580,7 @@ impl DirEntry {
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
-        self.data.put_static_key_hashed(name_hash, key, stored)?;
+        self.data.put_static_key_hashed(name_hash, key, stored);
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);

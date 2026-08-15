@@ -1125,7 +1125,7 @@ impl StringVoidMap {
     pub(crate) fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
         // StringHashMap copies keys into owned heap allocations on insert,
         // so the pooled map outliving any one source is fine.
-        let entry = self.map.get_or_put(key).expect("unreachable");
+        let entry = self.map.get_or_put(key);
         entry.found_existing
     }
 
@@ -1738,13 +1738,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+            temp_log.append_to_maybe_recycled(log_to_copy_into, source);
             return Ok(None);
         }
     };
     drop(parser);
 
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    temp_log.append_to_maybe_recycled(log_to_copy_into, source);
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;

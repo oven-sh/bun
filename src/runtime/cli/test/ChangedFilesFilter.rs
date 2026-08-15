@@ -253,7 +253,7 @@ pub(crate) fn filter<'a>(
     }
 
     // BFS backward from every changed file that participates in the graph.
-    let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
+    let mut affected = DynamicBitSet::init_empty(sources.len());
     let mut queue: Vec<u32> = Vec::new();
 
     {

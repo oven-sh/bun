@@ -1074,7 +1074,7 @@ impl<'a> Formatter<'a> {
                 }
             }
 
-            let entry = self.map.get_or_put(value).expect("unreachable");
+            let entry = self.map.get_or_put(value);
             if entry.found_existing {
                 writer.write_all(
                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><cyan>[Circular]<r>").as_bytes(),

@@ -96,8 +96,7 @@ pub fn enqueue_dependency_list(
     dependencies_list: Lockfile::DependencySlice,
 ) {
     this.task_queue
-        .ensure_unused_capacity(dependencies_list.len as usize)
-        .expect("unreachable");
+        .ensure_unused_capacity(dependencies_list.len as usize);
 
     // Step 1. Go through main dependencies
     let end = dependencies_list.off.saturating_add(dependencies_list.len);
@@ -158,7 +157,7 @@ pub fn enqueue_tarball_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
-    let task_queue = this.task_queue.get_or_put(task_id)?;
+    let task_queue = this.task_queue.get_or_put(task_id);
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
     }
@@ -214,7 +213,7 @@ pub fn enqueue_tarball_for_reading(
     // filename store before any append.
     let path = this.lockfile.str_detached(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
-    let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
+    let task_queue = this.task_queue.get_or_put(task_id);
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
     }
@@ -261,10 +260,7 @@ pub fn enqueue_git_for_checkout(
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
-    let checkout_queue = this
-        .task_queue
-        .get_or_put(checkout_id)
-        .expect("unreachable");
+    let checkout_queue = this.task_queue.get_or_put(checkout_id);
     if !checkout_queue.found_existing {
         *checkout_queue.value_ptr = TaskCallbackList::default();
     }
@@ -288,7 +284,7 @@ pub fn enqueue_git_for_checkout(
         );
         this.task_batch.push(ThreadPool::Batch::from(task));
     } else {
-        let clone_queue = this.task_queue.get_or_put(clone_id).expect("unreachable");
+        let clone_queue = this.task_queue.get_or_put(clone_id);
         if !clone_queue.found_existing {
             *clone_queue.value_ptr = TaskCallbackList::default();
         }
@@ -357,7 +353,7 @@ pub fn enqueue_package_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
     }
-    let task_queue = this.task_queue.get_or_put(task_id)?;
+    let task_queue = this.task_queue.get_or_put(task_id);
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
     }
@@ -1076,7 +1072,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     {
                                                         let package_name = this.lockfile.str(&name);
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = this.log_mut().add_error_fmt(
+                                                        this.log_mut().add_error_fmt(
                                                             None,
                                                             bun_ast::Loc::EMPTY,
                                                             format_args!(
@@ -1171,8 +1167,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
+                        let manifest_entry_parse = this.task_queue.get_or_put_context(task_id, ());
                         if !manifest_entry_parse.found_existing {
                             *manifest_entry_parse.value_ptr = TaskCallbackList::default();
                         }
@@ -1262,10 +1257,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     }
                 }
 
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(checkout_id, ())
-                    .expect("unreachable");
+                let entry = this.task_queue.get_or_put_context(checkout_id, ());
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }
@@ -1296,10 +1288,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
                 this.task_batch.push(ThreadPool::Batch::from(task));
             } else {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(clone_id, ())
-                    .expect("unreachable");
+                let entry = this.task_queue.get_or_put_context(clone_id, ());
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }
@@ -1363,10 +1352,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // `this.task_queue`; scope it tightly so the calls below can
             // reborrow `*this`.
             {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
+                let entry = this.task_queue.get_or_put_context(task_id, ());
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }
@@ -1567,10 +1553,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             };
             // reshaped for borrowck — scope `entry` tightly.
             {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
+                let entry = this.task_queue.get_or_put_context(task_id, ());
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }

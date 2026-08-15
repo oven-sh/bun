@@ -761,18 +761,11 @@ impl BunxCommand {
             force_using_bun,
         )?;
         let env_loader = this_transpiler.env_mut();
+        env_loader.map.put(b"npm_command", b"exec");
+        env_loader.map.put(b"npm_lifecycle_event", b"bunx");
         env_loader
             .map
-            .put(b"npm_command", b"exec")
-            .expect("unreachable");
-        env_loader
-            .map
-            .put(b"npm_lifecycle_event", b"bunx")
-            .expect("unreachable");
-        env_loader
-            .map
-            .put(b"npm_lifecycle_script", opts.package_name)
-            .expect("unreachable");
+            .put(b"npm_lifecycle_script", opts.package_name);
 
         if opts.package_name == b"bun-repl" {
             env_loader.map.remove(b"BUN_INSPECT_CONNECT_TO");
@@ -962,7 +955,7 @@ impl BunxCommand {
             v
         };
 
-        env_loader.map.put(b"PATH", &path)?;
+        env_loader.map.put(b"PATH", &path);
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let fs = unsafe { &mut *this_transpiler.fs };
         let uid_digits = bun_core::fmt::digit_count(uid);
@@ -1349,12 +1342,9 @@ impl BunxCommand {
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
         );
-        env_loader
-            .map
-            .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
-            .expect("oom");
+        env_loader.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true");
 
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        let envp = env_loader.map.create_null_delimited_env_map();
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

@@ -346,7 +346,7 @@ fn record_changed_path(path: &[u8]) {
     if path.is_empty() {
         return;
     }
-    bun_core::handle_oom(set.get_mut().insert(path));
+    set.get_mut().insert(path);
 }
 
 /// Write the recorded changed paths to the trigger file so the next
@@ -793,7 +793,7 @@ where
 
     #[cfg(not(windows))]
     fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
-        self.tombstones.put(key, value).expect("unreachable");
+        self.tombstones.put(key, value);
     }
 
     #[cfg(not(windows))]

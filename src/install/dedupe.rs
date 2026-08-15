@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, index_sort};
-use bun_core::{Global, Output, UnwrapOrOom as _, strings};
+use bun_core::{Global, Output, strings};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
@@ -54,15 +54,15 @@ impl<'a> Pass<'a> {
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
-            sat: DynamicBitSet::init_empty(max_edges * max_candidates).unwrap_or_oom(),
-            movable: DynamicBitSet::init_empty(max_edges).unwrap_or_oom(),
+            sat: DynamicBitSet::init_empty(max_edges * max_candidates),
+            movable: DynamicBitSet::init_empty(max_edges),
             cur_c: Vec::with_capacity(max_edges),
-            required: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
-            chosen: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
-            survivors: DynamicBitSet::init_empty(max_candidates).unwrap_or_oom(),
-            covered: DynamicBitSet::init_empty(max_edges).unwrap_or_oom(),
-            voters: DynamicBitSet::init_empty(package_count).unwrap_or_oom(),
-            voted: DynamicBitSet::init_empty(package_count).unwrap_or_oom(),
+            required: DynamicBitSet::init_empty(max_candidates),
+            chosen: DynamicBitSet::init_empty(max_candidates),
+            survivors: DynamicBitSet::init_empty(max_candidates),
+            covered: DynamicBitSet::init_empty(max_edges),
+            voters: DynamicBitSet::init_empty(package_count),
+            voted: DynamicBitSet::init_empty(package_count),
             count: Vec::with_capacity(max_candidates),
             protected: Vec::new(),
         }
@@ -347,7 +347,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
     let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
-    let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+    let mut pinned = DynamicBitSet::init_empty(pkg_res.len());
     let mut max_candidates = 0;
 
     if has_patches {
@@ -415,7 +415,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
 
     // Walked over the original resolutions: pinning every removed version that led to the orphan keeps those paths intact on the re-run.
     let (cur, live) = loop {
-        let mut live = initial.clone().unwrap_or_oom();
+        let mut live = initial.clone();
         let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
         {
             let mut pass = Pass::new(

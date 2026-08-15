@@ -418,15 +418,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// Grows `stale_files` to cover all currently-known files, filling new
     /// bits with `are_new_files_stale`.
-    pub(crate) fn ensure_stale_bit_capacity(
-        &mut self,
-        are_new_files_stale: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_stale_bit_capacity(&mut self, are_new_files_stale: bool) {
         let want = self.bundled_files.count().max(self.stale_files.bit_length);
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
-        self.stale_files.resize(aligned, are_new_files_stale)
+        self.stale_files.resize(aligned, are_new_files_stale);
     }
 
     /// `IncrementalGraph(side).freeFileContent` (client only).
@@ -568,7 +565,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
-        let gop = self.bundled_files.get_or_put(key)?;
+        let gop = self.bundled_files.get_or_put(key);
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -810,7 +807,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         seen: false,
                         edge_index,
                     },
-                )?;
+                );
             }
         }
 
@@ -1019,7 +1016,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
         }
 
-        let gop = quick_lookup.get_or_put(imported_file_index)?;
+        let gop = quick_lookup.get_or_put(imported_file_index);
         if gop.found_existing {
             if gop.value_ptr.seen {
                 return Ok(EdgeAttachmentResult::Continue);
@@ -1289,7 +1286,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         is_ssr_graph: bool,
         is_route: bool,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path);
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
@@ -1348,7 +1345,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
         kind: FileKind,
     ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path);
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -1376,7 +1373,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.first_dep.push(None);
             self.first_import.push(None);
-            self.ensure_stale_bit_capacity(true)?;
+            self.ensure_stale_bit_capacity(true);
         }
         Ok(InsertEmptyResult {
             index: FileIndex::init(idx as u32),
@@ -1394,7 +1391,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
     ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path);
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -1422,7 +1419,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
+                let gop = self.bundled_files.get_or_put(abs_path);
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);
                 }
@@ -1435,7 +1432,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             InsertFailureKey::Index(i) => (i as usize, true),
         };
-        self.ensure_stale_bit_capacity(true)?;
+        self.ensure_stale_bit_capacity(true);
         self.stale_files.set(idx);
 
         match SIDE {
@@ -1498,7 +1495,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
         // SAFETY: sibling-field access.
         unsafe {
-            let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner)?;
+            let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner);
             (*dev)
                 .incremental_result
                 .failures_added

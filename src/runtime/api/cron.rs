@@ -2321,28 +2321,16 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     }
     #[cfg(unix)]
     let envp: *const *const c_char = bun_core::c_environ();
+    // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
+    // (process-lifetime singleton; centralised single-unsafe deref).
     #[cfg(windows)]
-    let envp_owned;
+    let envp_owned = vm_mut()
+        .transpiler
+        .env_mut()
+        .map
+        .create_null_delimited_env_map();
     #[cfg(windows)]
-    let envp: *const *const c_char = {
-        // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
-        // (process-lifetime singleton; centralised single-unsafe deref).
-        match vm_mut()
-            .transpiler
-            .env_mut()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(v) => {
-                envp_owned = v;
-                envp_owned.as_ptr().cast()
-            }
-            Err(_) => {
-                s!().set_err(format_args!("Failed to create environment block"));
-                return Err(());
-            }
-        }
-    };
+    let envp: *const *const c_char = envp_owned.as_ptr().cast();
 
     // Ownership note: BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,

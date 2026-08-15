@@ -1248,7 +1248,7 @@ impl BunTest {
                             .pending_then_refs
                             .borrow_mut()
                             .push(raw_ref.cast_const());
-                        let _ = result.then(
+                        result.then(
                             global_this,
                             raw_ref,
                             Bun__TestScope__Describe2__bunTestThen,

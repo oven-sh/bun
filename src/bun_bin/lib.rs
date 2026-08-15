@@ -185,8 +185,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
                 Some(bun_alloc::mimalloc::mi_free),
             );
         }
-        // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
-        // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
+        // Converts the OS UTF-16 env block to WTF-8 and publishes it via
+        // `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
         bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
     }

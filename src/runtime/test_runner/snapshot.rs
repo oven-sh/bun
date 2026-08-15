@@ -124,8 +124,7 @@ impl Snapshots {
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
             .counts
-            .get_or_put(&snapshot_name)
-            .map_err(Error::from)?;
+            .get_or_put(&snapshot_name);
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {

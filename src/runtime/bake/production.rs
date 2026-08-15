@@ -271,7 +271,7 @@ fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
+    source_maps.put(&key, OutputFileIndex::init(source_map_index));
     Ok(())
 }
 
@@ -416,7 +416,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
     // setup and `backing` is never moved (static storage).
     let loader = unsafe { &mut *backing.loader.get() };
-    loader.map.put(b"NODE_ENV", b"production")?;
+    loader.map.put(b"NODE_ENV", b"production");
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     // In-place init via `MaybeUninit` (`init_transpiler_with_options`
@@ -764,7 +764,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
-                            )?;
+                            );
                         }
                         OutputKind::Asset => {}
                         OutputKind::Bytecode => {}
@@ -1502,7 +1502,7 @@ impl PerThread {
             // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
             // write provenance); outlives `PerThread`.
             vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
-            loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
+            loaded_files: AutoBitSet::init_empty(0),
             all_server_files: None,
             attached: false,
         }
@@ -1518,7 +1518,7 @@ impl PerThread {
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
         let n = entry_points.files.count();
-        let loaded_files = AutoBitSet::init_empty(n)?;
+        let loaded_files = AutoBitSet::init_empty(n);
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
         // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`

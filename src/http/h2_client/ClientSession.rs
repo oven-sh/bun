@@ -531,9 +531,9 @@ impl ClientSession {
         super::live_streams.fetch_add(1, Ordering::Relaxed);
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         let stream_ref = stream_mut(stream);
-        let _ = self.streams.put(stream_ref.id, stream);
+        self.streams.put(stream_ref.id, stream);
         if let Some(id) = async_http_id {
-            let _ = self.by_http_id.put(id, stream);
+            self.by_http_id.put(id, stream);
         }
         client.h2 = NonNull::new(stream);
         client.flags.protocol = Protocol::Http2;

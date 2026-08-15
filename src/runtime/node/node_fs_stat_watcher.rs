@@ -1047,12 +1047,12 @@ impl StatWatcher {
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
+            handles.put(
                 crate::jsc_hooks::ActiveHandle::StatWatcher(
                     NonNull::new(this_ptr).expect("init: watcher"),
                 ),
                 (),
-            ));
+            );
         }
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
         InitialStatTask::create_and_schedule(this_ptr);

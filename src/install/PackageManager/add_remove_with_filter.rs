@@ -659,7 +659,7 @@ pub(super) fn update_filtered_workspaces_and_install(
             let mine = core::mem::replace(&mut manager.updating_packages, outer);
             result?;
             for (name, info) in mine.iter() {
-                let entry = manager.updating_packages.get_or_put(name)?;
+                let entry = manager.updating_packages.get_or_put(name);
                 if !entry.found_existing {
                     *entry.value_ptr = PackageUpdateInfo {
                         original_version_literal: info.original_version_literal.clone(),

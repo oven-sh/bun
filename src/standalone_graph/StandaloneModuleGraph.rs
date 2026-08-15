@@ -242,11 +242,11 @@ impl StandaloneModuleGraph {
             }
             let rel = &key[prefix.len()..];
             if recursive {
-                let _ = seen.put(rel, is_dir);
+                seen.put(rel, is_dir);
             } else if let Some(sep) = strings::index_of_char(rel, b'/') {
-                let _ = seen.put(&rel[..sep as usize], true);
+                seen.put(&rel[..sep as usize], true);
             } else {
-                let _ = seen.put(rel, is_dir);
+                seen.put(rel, is_dir);
             }
         };
         for key in self.files.keys() {
@@ -693,7 +693,7 @@ impl StandaloneModuleGraph {
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
             };
-            let _ = modules.put(
+            modules.put(
                 name.as_bytes(),
                 File {
                     name: name.as_bytes(),
@@ -749,7 +749,7 @@ impl StandaloneModuleGraph {
                 if rest.len() < BASE_PUBLIC_PATH.len() || dirs.contains_key(rest) {
                     break;
                 }
-                let _ = dirs.put(rest, ());
+                dirs.put(rest, ());
             }
         }
         dirs.lock_pointers();

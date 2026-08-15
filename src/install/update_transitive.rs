@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_collections::bit_set::Range as BitRange;
 use bun_collections::{DynamicBitSet, index_sort};
-use bun_core::{Output, UnwrapOrOom as _, pretty, prettyln, strings};
+use bun_core::{Output, pretty, prettyln, strings};
 use bun_semver as Semver;
 
 use crate::audit_fix;
@@ -101,7 +101,7 @@ impl DirectDependencies {
                 } else {
                     // Every row before the first miss was a same-index hit.
                     let taken = claimed.get_or_insert_with(|| {
-                        let mut taken = DynamicBitSet::init_empty(rows.len()).unwrap_or_oom();
+                        let mut taken = DynamicBitSet::init_empty(rows.len());
                         taken.set_range_value(
                             BitRange {
                                 start: 0,
@@ -277,7 +277,7 @@ impl TransitiveUpdate {
             let lockfile = &*manager.lockfile;
             let scope = UpdateScope::of(&*manager);
             let owners = (!scope.is_whole_workspace()).then(|| scope.reachable(lockfile));
-            let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
+            let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len());
             for owner in 0..lockfile.packages.len() {
                 if owners.is_none_or(|reachable| reachable.is_set_allow_out_of_bound(owner, false))
                 {
@@ -302,7 +302,7 @@ impl TransitiveUpdate {
 
     /// Like `enqueue`, also returning the rows it pinned so later invalidation passes leave them alone.
     pub fn enqueue_tracked(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
-        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
+        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len());
         self.enqueue_inner(manager, Some(&mut pinned))?;
         Ok(pinned)
     }
@@ -409,7 +409,7 @@ pub(crate) fn refresh_children_of(
     }
     let edges = {
         let lockfile = &*manager.lockfile;
-        let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
+        let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len());
         for &owner in package_ids {
             if (owner as usize) < lockfile.packages.len() {
                 set_rows_of(&mut edges, lockfile, owner as usize);
@@ -562,7 +562,7 @@ pub(crate) fn register_moved(
             continue;
         }
         let current = res[pkg_id as usize].npm().version;
-        let entry = updating.get_or_put(names[pkg_id as usize].slice(buf))?;
+        let entry = updating.get_or_put(names[pkg_id as usize].slice(buf));
         if entry.found_existing {
             let info = &*entry.value_ptr;
             let keep = !info.original_version_literal.is_empty()
@@ -864,7 +864,7 @@ fn warn_unchecked(
     }
     let log = manager.log_mut();
     let silent = manager.options.log_level == LogLevel::Silent;
-    let mut used = DynamicBitSet::init_empty(log.msgs.len()).unwrap_or_oom();
+    let mut used = DynamicBitSet::init_empty(log.msgs.len());
     for (name, version) in unchecked {
         let reason = log
             .msgs
@@ -976,7 +976,7 @@ pub(crate) fn plannable_peer_rows(
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
 
-    let mut providers = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+    let mut providers = DynamicBitSet::init_empty(packages_len);
     for &(_, behavior, resolved) in &direct.rows {
         if !behavior.is_peer() && (resolved as usize) < packages_len {
             providers.set(resolved as usize);
@@ -994,7 +994,7 @@ pub(crate) fn plannable_peer_rows(
         }
     }
 
-    let mut rows = DynamicBitSet::init_empty(deps.len()).unwrap_or_oom();
+    let mut rows = DynamicBitSet::init_empty(deps.len());
     for owner in 0..packages_len {
         if matches!(
             pkg_res[owner].tag,

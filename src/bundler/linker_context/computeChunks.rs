@@ -94,7 +94,7 @@ pub(crate) fn compute_chunks(
         let entry_bits: AutoBitSet = {
             let eb = &mut this.graph.files.items_entry_bits_mut()[source_index as usize];
             eb.set(entry_bit as usize);
-            eb.clone()?
+            eb.clone()
         };
 
         let has_html_chunk = loaders[source_index as usize] == Loader::Html;
@@ -104,7 +104,7 @@ pub(crate) fn compute_chunks(
         // reachable from other entry points (e.g., via re-exports), its content goes into
         // a shared chunk rather than staying in the entry point's chunk.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
-        let mut entry_point_chunk_bits = AutoBitSet::init_empty(this.graph.entry_points.len())?;
+        let mut entry_point_chunk_bits = AutoBitSet::init_empty(this.graph.entry_points.len());
         entry_point_chunk_bits.set(entry_bit as usize);
 
         let js_chunk_key: &[u8] = 'brk: {
@@ -124,11 +124,11 @@ pub(crate) fn compute_chunks(
 
         // Put this early on in this loop so that CSS-only entry points work.
         if has_html_chunk {
-            let html_chunk_entry = html_chunks.get_or_put(js_chunk_key)?;
+            let html_chunk_entry = html_chunks.get_or_put(js_chunk_key);
             if !html_chunk_entry.found_existing {
                 *html_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
-                    entry_bits: entry_point_chunk_bits.clone()?,
+                    entry_bits: entry_point_chunk_bits.clone(),
                     content: chunk::Content::Html,
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
@@ -163,7 +163,7 @@ pub(crate) fn compute_chunks(
                 }
                 hasher.final_()
             };
-            let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+            let css_chunk_entry = css_chunks.get_or_put(hash_to_use);
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
@@ -192,7 +192,7 @@ pub(crate) fn compute_chunks(
 
         // Create a chunk for the entry point here to ensure that the chunk is
         // always generated even if the resulting file is empty
-        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key);
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {
@@ -238,7 +238,7 @@ pub(crate) fn compute_chunks(
                     hasher.final_()
                 };
 
-                let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+                let css_chunk_entry = css_chunks.get_or_put(hash_to_use);
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks = Box::<[u32]>::from(
@@ -253,14 +253,12 @@ pub(crate) fn compute_chunks(
                         ArrayHashMap::new();
                     for entry in order.slice() {
                         if let chunk::CssImportOrderKind::SourceIndex(si) = &entry.kind {
-                            css_files_with_parts_in_chunk
-                                .put(si.get(), AtomicUsize::new(0))
-                                .expect("oom");
+                            css_files_with_parts_in_chunk.put(si.get(), AtomicUsize::new(0));
                         }
                     }
                     *css_chunk_entry.value_ptr = Chunk {
                         entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
-                        entry_bits: entry_bits.clone()?,
+                        entry_bits: entry_bits.clone(),
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
                             asts: (0..order_len)
@@ -299,14 +297,14 @@ pub(crate) fn compute_chunks(
                     if this.graph.code_splitting {
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
-                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key);
 
                         if !js_chunk_entry.found_existing {
                             let is_browser_chunk_from_server_build =
                                 could_be_browser_target_from_server_build
                                     && ast_targets[source_index.get() as usize] == Target::Browser;
                             *js_chunk_entry.value_ptr = Chunk {
-                                entry_bits: entry_bits.clone()?,
+                                entry_bits: entry_bits.clone(),
                                 entry_point: chunk::EntryPoint::non_entry_point(
                                     source_index.get(),
                                     0,
@@ -339,8 +337,7 @@ pub(crate) fn compute_chunks(
                         let entry = js_chunk_entry
                             .value_ptr
                             .files_with_parts_in_chunk
-                            .get_or_put(source_index.get() as u32)
-                            .expect("unreachable");
+                            .get_or_put(source_index.get() as u32);
                         if !entry.found_existing {
                             *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                         }
@@ -361,8 +358,7 @@ pub(crate) fn compute_chunks(
 
                             let entry = c.chunks[chunk_idx as usize]
                                 .files_with_parts_in_chunk
-                                .get_or_put(c.source_id as u32)
-                                .expect("unreachable");
+                                .get_or_put(c.source_id as u32);
                             if !entry.found_existing {
                                 *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                             }

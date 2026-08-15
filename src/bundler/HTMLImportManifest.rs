@@ -182,7 +182,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
+    let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len());
 
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
@@ -233,7 +233,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     let additional_output_files = graph.additional_output_files.as_slice();
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
-    let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
+    let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len());
 
     // Write all chunks that have files associated with this entry point.
     // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).

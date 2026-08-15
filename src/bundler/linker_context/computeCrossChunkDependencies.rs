@@ -181,7 +181,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if other_chunk_index as usize != chunk_index {
-                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result
+                            chunk_meta.dynamic_imports.put(other_chunk_index, ());
                         }
                     }
                 }
@@ -249,7 +249,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     // be moved to a separate chunk than the use of a symbol even if
                     // the definition and use of that symbol are originally from the
                     // same source file.
-                    let _ = chunk_meta.imports.put(ref_to_use, ()); // OOM-only Result
+                    chunk_meta.imports.put(ref_to_use, ());
                 }
             }
         }
@@ -292,7 +292,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
                         }
 
-                        let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result
+                        chunk_meta.imports.put(target_ref, ());
                     }
                 }
 
@@ -300,7 +300,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
                     // result intentionally discarded
-                    let _ = chunk_meta.imports.put(
+                    chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],
                         (),
                     );
@@ -310,7 +310,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if flags.wrap != WrapKind::None {
                     // result intentionally discarded
-                    let _ = chunk_meta.imports.put(
+                    chunk_meta.imports.put(
                         deps.wrapper_refs[chunk.entry_point.source_index() as usize],
                         (),
                     );
@@ -365,7 +365,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let entry = js.imports_from_other_chunks.get_or_put_value(
                             other_chunk_index,
                             CrossChunkImportItemList::default(),
-                        )?;
+                        );
                         entry.value_ptr.push(CrossChunkImportItem {
                             r#ref: import_ref,
                             ..Default::default()
@@ -505,7 +505,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         // `alias` points into the link-pass arena (see note above),
                         // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
                         // under the StoreStr arena contract.
-                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result
+                        repr.exports_to_other_chunks.put(ref_, alias.slice());
                     }
 
                     if clause_items.len() > 0 {

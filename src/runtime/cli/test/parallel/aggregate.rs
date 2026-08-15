@@ -151,7 +151,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
-                let gop = bun_core::handle_oom(by_file.get_or_put(name));
+                let gop = by_file.get_or_put(name);
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
                     gop.key_ptr.clone_from(&owned);
@@ -175,7 +175,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else {
                         continue;
                     };
-                    let gop = bun_core::handle_oom(fc.da.get_or_put(ln));
+                    let gop = fc.da.get_or_put(ln);
                     *gop.value_ptr = if gop.found_existing {
                         gop.value_ptr.saturating_add(cnt)
                     } else {

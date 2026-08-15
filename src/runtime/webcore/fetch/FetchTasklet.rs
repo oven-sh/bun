@@ -2025,7 +2025,7 @@ impl FetchTasklet {
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
-        let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
+        let header_entries = fetch_tasklet.request_headers.entries.clone();
         // `url` is moved into `AsyncHTTP::init`; capture the one
         // post-move query (`is_http()`, debug-assert only) up front.
         let url_is_http = url.is_http();
@@ -2294,7 +2294,7 @@ impl FetchTasklet {
                 // the lock guard drops.
                 let _ = thread_safe_stream_buffer
                     .lock()
-                    .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
+                    .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY);
             }
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread()

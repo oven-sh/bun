@@ -1700,22 +1700,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return self.writable_result(len);
             }
 
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write(bytes);
         } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
             // TODO: attempt to write both in a corked buffer?
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write(bytes);
             if self.send_readable(0) {
                 return self.writable_result(len);
             }
         } else {
             // queue the data wait until highWaterMark is reached or the auto flusher kicks in
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write(bytes);
         }
 
         self.register_auto_flusher();
@@ -1751,9 +1745,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 do_send = false;
             }
 
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write_latin1(bytes);
 
             if do_send {
                 if self.send_readable(0) {
@@ -1764,16 +1756,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
             // - no backpressure
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write_latin1(bytes);
             if self.send_readable(0) {
                 return self.writable_result(len);
             }
         } else {
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            self.buffer.write_latin1(bytes);
         }
 
         self.register_auto_flusher();
@@ -1800,10 +1788,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
         let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let written = match self.buffer.write_utf16(utf16) {
-            Ok(n) => n,
-            Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-        };
+        let written = self.buffer.write_utf16(utf16);
 
         let readable_len = self.readable_slice().len();
         if readable_len >= self.high_water_mark as usize || self.has_backpressure() {
@@ -2427,7 +2412,6 @@ impl NetworkSink {
         // flush everything and send EOF
         if let Some(task) = self.task_ref() {
             let _ = task.write_bytes(b"", true);
-            // bun.handleOom → Rust aborts on OOM
         }
 
         self.source.close(err);

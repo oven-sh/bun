@@ -4,7 +4,6 @@ use bstr::BStr;
 use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::handle_oom;
 
 use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
@@ -396,7 +395,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => {
                     let idx = *idx;
-                    let gop = handle_oom(source_index_duplicates.get_or_put(idx.get()));
+                    let gop = source_index_duplicates.get_or_put(idx.get());
                     if !gop.found_existing {
                         *gop.value_ptr = Vec::<u32>::default();
                     }
@@ -424,7 +423,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     gop.value_ptr.push(i);
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    let gop = handle_oom(external_path_duplicates.get_or_put(p.text));
+                    let gop = external_path_duplicates.get_or_put(p.text);
                     if !gop.found_existing {
                         *gop.value_ptr = Vec::<u32>::default();
                     }

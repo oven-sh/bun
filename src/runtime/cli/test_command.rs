@@ -2299,7 +2299,7 @@ impl TestCommand {
         vm.transpiler.options.env.behavior =
             bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
-        let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
+        let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV");
         if !node_env_entry.found_existing {
             *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
             *node_env_entry.value_ptr = DotEnv::HashTableValue {

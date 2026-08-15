@@ -434,9 +434,7 @@ impl ValkeyClient {
                     promise: cmd.promise,
                 })
                 .unwrap_or_oom();
-            self.write_buffer
-                .write(&cmd.serialized_data)
-                .unwrap_or_oom();
+            self.write_buffer.write(&cmd.serialized_data);
             // Free the serialized data since we've copied it to the write buffer
             // Note: `allocator.free(command.serialized_data)` — Box<[u8]> drops here.
         }
@@ -750,9 +748,7 @@ impl ValkeyClient {
         );
         // Path 1: Buffer already has data, append and process from buffer
         if !self.read_buffer.remaining().is_empty() {
-            self.read_buffer
-                .write(data)
-                .expect("failed to write to read buffer");
+            self.read_buffer.write(data);
 
             // Process as many complete messages from the buffer as possible
             loop {
@@ -844,8 +840,7 @@ impl ValkeyClient {
                         }
                         self.reply_scanner.reset();
                         self.read_buffer
-                            .write(&current_data_slice[before_read_pos..])
-                            .expect("failed to write remaining stack data to buffer");
+                            .write(&current_data_slice[before_read_pos..]);
                         return Ok(()); // Exit onData, next call will use the buffer path
                     } else {
                         // Any other error is fatal
@@ -1349,7 +1344,7 @@ impl ValkeyClient {
 
             if !unwritten.is_empty() {
                 // Handle incomplete write.
-                self.write_buffer.write(unwritten).unwrap_or_oom();
+                self.write_buffer.write(unwritten);
             }
 
             return true;
@@ -1513,9 +1508,7 @@ impl ValkeyClient {
 
     /// Write data to the socket buffer
     fn write(&mut self, data: &[u8]) -> Result<usize, RedisError> {
-        self.write_buffer
-            .write(data)
-            .map_err(|_| RedisError::OutOfMemory)?;
+        self.write_buffer.write(data);
         Ok(data.len())
     }
 
@@ -1581,9 +1574,8 @@ impl HasAutoFlusher for ValkeyClient {
 impl bun_io::Write for ValkeyClient {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        self.write_buffer
-            .write(buf)
-            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
+        self.write_buffer.write(buf);
+        Ok(())
     }
 }
 
@@ -1596,9 +1588,8 @@ struct WriteBufWriter<'a>(&'a mut OffsetByteList);
 impl bun_io::Write for WriteBufWriter<'_> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        self.0
-            .write(buf)
-            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
+        self.0.write(buf);
+        Ok(())
     }
 }
 

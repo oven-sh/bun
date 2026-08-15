@@ -67,11 +67,7 @@ impl ProcessAutoKiller {
     /// identity semantics for the map key without a const→mut provenance cast.
     pub(crate) fn on_subprocess_spawn(&mut self, process: NonNull<Process>) {
         if self.enabled {
-            // Alloc failure means we never took
-            // a ref, so just bail. `put` here is fallible only on OOM.
-            if self.processes.put(process.as_ptr(), ()).is_err() {
-                return;
-            }
+            self.processes.put(process.as_ptr(), ());
             // SAFETY: caller passes a live Process; we take a ref to extend its
             // lifetime for as long as it sits in `processes`.
             unsafe { (*process.as_ptr()).ref_() };

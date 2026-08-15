@@ -418,7 +418,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut had_err = false;
 
                 let mut process_env = bun_dotenv::Loader::init();
-                process_env.load_process()?;
+                process_env.load_process();
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
                 let mut rm_buf = PathBuffer::uninit();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
@@ -976,7 +976,7 @@ fn print_trusted_dependencies_flat(
     let pkg_names = slice.items_name();
     let pkg_count = lockfile.packages.len();
 
-    let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(pkg_count));
+    let mut seen = DynamicBitSet::init_empty(pkg_count);
     let mut trusted: Vec<DependencyID> = Vec::new();
 
     let mut visit = |dep_id: DependencyID| {

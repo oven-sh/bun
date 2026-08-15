@@ -227,11 +227,11 @@ impl PmPkgCommand {
                                 bstr::BStr::new(&value[last_index..])
                             )
                             .map_err(|_| crate::Error::WriteFailed)?;
-                            results.put(key, new_value.into_boxed_slice())?;
+                            results.put(key, new_value.into_boxed_slice());
                             continue;
                         }
                     }
-                    results.put(key, value)?;
+                    results.put(key, value);
                 }
                 Err(e) => {
                     if matches!(e, crate::Error::InvalidPath) {

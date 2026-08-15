@@ -51,8 +51,8 @@ pub(crate) fn run_as_coordinator(
     if k <= 1 {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
-        let _ = env.map.put(b"JEST_WORKER_ID", b"1");
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
+        env.map.put(b"JEST_WORKER_ID", b"1");
+        env.map.put(b"BUN_TEST_WORKER_ID", b"1");
         // SAFETY: see vm_ptr note above.
         TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
@@ -61,13 +61,13 @@ pub(crate) fn run_as_coordinator(
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
-        let _ = env.map.put(b"FORCE_COLOR", b"1");
+        env.map.put(b"FORCE_COLOR", b"1");
     }
     if ctx.test_options.reporters.junit {
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if let Some(jr) = reporter.reporters.junit.take() {
-            let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
+            env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
             drop(jr);
         }
     }
@@ -80,9 +80,9 @@ pub(crate) fn run_as_coordinator(
     for i in 0..k {
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
-        let _ = env.map.put(b"JEST_WORKER_ID", &id);
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
-        envps.push(env.map.create_null_delimited_env_map()?);
+        env.map.put(b"JEST_WORKER_ID", &id);
+        env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        envps.push(env.map.create_null_delimited_env_map());
     }
     let argv = build_worker_argv(ctx)?;
 

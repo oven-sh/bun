@@ -370,13 +370,7 @@ impl WebWorker {
         let mut env_map = {
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().map.clone_with_allocator() {
-                Ok(m) => m,
-                Err(_) => {
-                    *error_message = BunString::static_(b"Out of memory");
-                    return core::ptr::null_mut();
-                }
-            }
+            parent_ref.env_loader().map.clone()
         };
         proxy_env_slots.sync_into(&mut env_map);
         let init = WorkerVmInit {

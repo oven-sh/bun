@@ -231,7 +231,6 @@ impl HmrSocket {
 
                         let timer = std::time::Instant::now();
                         dev.start_async_bundle(event.entry_points, true, timer)
-                            // bun.handleOom(err) — Rust aborts on OOM by default
                             .expect("OOM");
 
                         // `event.entry_points.deinit(allocator)` → Drop handles this

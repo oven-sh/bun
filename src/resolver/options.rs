@@ -31,8 +31,8 @@ impl Clone for ExternalModules {
         // `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
         Self {
             patterns: self.patterns.clone(),
-            abs_paths: self.abs_paths.clone().expect("oom"),
-            node_modules: self.node_modules.clone().expect("oom"),
+            abs_paths: self.abs_paths.clone(),
+            node_modules: self.node_modules.clone(),
         }
     }
 }

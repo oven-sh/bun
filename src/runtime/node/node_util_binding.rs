@@ -240,7 +240,7 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     let str = content.to_js_string(global)?.to_slice(global);
 
     let mut p = envloader::Loader::init();
-    p.load_from_string::<true, false>(str.slice())?;
+    p.load_from_string::<true, false>(str.slice());
 
     let obj = JSValue::create_empty_object(global, p.map.map.count());
     for (k, v) in p.map.map.iter() {

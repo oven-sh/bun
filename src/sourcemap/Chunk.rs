@@ -646,7 +646,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         } = self.line_offset_tables
         {
             self.line_offset_tables = LineOffsetTables::Owned(OwnedLineOffsetTables(
-                LineOffsetTable::generate(contents, approximate_line_count).unwrap_or_default(),
+                LineOffsetTable::generate(contents, approximate_line_count),
             ));
         }
 

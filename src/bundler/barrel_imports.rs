@@ -96,17 +96,8 @@ pub(crate) fn apply_barrel_optimization(
     this: &mut BundleV2,
     parse_result: &mut parse_task::Result,
 ) {
-    // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
-    // bun_collections ops that still surface AllocError.
-    apply_barrel_optimization_impl(this, parse_result).expect("OOM");
-}
-
-fn apply_barrel_optimization_impl(
-    this: &mut BundleV2,
-    parse_result: &mut parse_task::Result,
-) -> Result<(), AllocError> {
     let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
-        return Ok(());
+        return;
     };
     let source_index = result.source.index.0;
 
@@ -118,20 +109,20 @@ fn apply_barrel_optimization_impl(
     let is_side_effects_false =
         result.side_effects == bun_ast::SideEffects::NoSideEffectsPackageJson;
     if !is_explicit && !is_side_effects_false {
-        return Ok(());
+        return;
     }
     let ast = &mut result.ast;
     if ast.import_records.len() == 0 {
-        return Ok(());
+        return;
     }
     if ast.named_exports.count() == 0 && ast.export_star_import_records.len() == 0 {
-        return Ok(());
+        return;
     }
 
     // Verify pure barrel: all named exports must be re-exports
     for entry in ast.named_exports.values() {
         if ast.named_imports.get(&entry.ref_).is_none() {
-            return Ok(());
+            return;
         }
     }
 
@@ -139,7 +130,7 @@ fn apply_barrel_optimization_impl(
     if this.graph.input_files.items_flags()[source_index as usize]
         .contains(InputFileFlags::IS_EXPORT_STAR_TARGET)
     {
-        return Ok(());
+        return;
     }
 
     // Check requested_exports to see which exports were already requested by
@@ -147,7 +138,7 @@ fn apply_barrel_optimization_impl(
     // requests eagerly as each file is processed, so we don't need to scan
     // the graph.
     let requested = match RequestedExports::lookup(&this.requested_exports, source_index) {
-        Some(RequestedExports::All) => return Ok(()), // import * already seen — load everything
+        Some(RequestedExports::All) => return, // import * already seen — load everything
         Some(RequestedExports::Partial(partial)) => Some(partial),
         None => None,
     };
@@ -157,7 +148,7 @@ fn apply_barrel_optimization_impl(
     let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::default();
 
     for record_idx in ast.export_star_import_records.iter() {
-        needed_records.put(*record_idx, ())?;
+        needed_records.put(*record_idx, ());
     }
 
     if let Some(partial) = requested {
@@ -165,7 +156,7 @@ fn apply_barrel_optimization_impl(
             if let Some(resolution) =
                 resolve_barrel_export(key, &ast.named_exports, &ast.named_imports)
             {
-                needed_records.put(resolution.import_record_index, ())?;
+                needed_records.put(resolution.import_record_index, ());
             }
         }
     }
@@ -186,7 +177,7 @@ fn apply_barrel_optimization_impl(
                 if let Some(resolution) =
                     resolve_barrel_export(alias, &ast.named_exports, &ast.named_imports)
                 {
-                    needed_records.put(resolution.import_record_index, ())?;
+                    needed_records.put(resolution.import_record_index, ());
                 }
             }
         }
@@ -208,7 +199,7 @@ fn apply_barrel_optimization_impl(
                 needed_paths.put(
                     ast.import_records.as_slice()[*rec_idx as usize].path.text,
                     (),
-                )?;
+                );
             }
         }
 
@@ -221,7 +212,7 @@ fn apply_barrel_optimization_impl(
                             .path
                             .text,
                     ) {
-                        needed_records.put(imp.import_record_index, ())?;
+                        needed_records.put(imp.import_record_index, ());
                     }
                 }
             }
@@ -271,12 +262,9 @@ fn apply_barrel_optimization_impl(
         // ensuring it gets re-parsed on every incremental build. This is needed
         // because the set of needed exports can change when importing files change.
         if let Some(dev) = dev_handle {
-            dev.register_barrel_with_deferrals(result.source.path.text)
-                .map_err(|_| AllocError)?;
+            dev.register_barrel_with_deferrals(result.source.path.text);
         }
     }
-
-    Ok(())
 }
 
 /// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
@@ -428,7 +416,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
     // Build a set of import_record_indices that have named_imports entries,
     // so we can detect bare imports (those with no specific export bindings).
-    let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
+    let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len());
 
     // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
     // two `import { X } from 'mod'` statements become one, and the second
@@ -453,7 +441,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             if ir_probe.original_path == ir_probe.path.text {
                 continue;
             }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
+            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text);
         }
     }
 
@@ -499,7 +487,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             match value {
                 RequestedExports::All => {}
                 RequestedExports::Partial(p) => {
-                    p.put(alias, ())?;
+                    p.put(alias, ());
                 }
             }
             // Persist the export request on DevServer so it survives across builds.
@@ -711,7 +699,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                         }
                     }
                     RequestedExports::Partial(p) => {
-                        let alias_gop = p.get_or_put(item_alias)?;
+                        let alias_gop = p.get_or_put(item_alias);
                         if found && alias_gop.found_existing {
                             qi += 1;
                             continue;
@@ -741,7 +729,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     && !flags.contains(import_record::Flags::IS_INTERNAL)
                 {
                     if un_defer_record(barrel_ir, idx) {
-                        barrels_to_resolve.put(barrel_idx, ())?;
+                        barrels_to_resolve.put(barrel_idx, ());
                         un_deferred_any = true;
                     }
                 }
@@ -846,7 +834,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     continue;
                 }
                 if un_defer_record(barrel_ir, star_idx as usize) {
-                    barrels_to_resolve.put(barrel_idx, ())?;
+                    barrels_to_resolve.put(barrel_idx, ());
                 }
                 let mut star_rec_si = barrel_ir.as_slice()[star_idx as usize].source_index;
                 if !star_rec_si.is_valid() {
@@ -872,7 +860,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
         if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
-            barrels_to_resolve.put(barrel_idx, ())?;
+            barrels_to_resolve.put(barrel_idx, ());
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the

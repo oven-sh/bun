@@ -1,7 +1,6 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::DynamicBitSet;
-use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
@@ -370,13 +369,8 @@ pub fn install_with_manager(
                         builder,
                     )?;
 
-                    // `ArrayHashMap::clone()` is an inherent fallible method,
-                    // not the `Clone` trait, so
-                    // `Option::clone` won't see it — map by hand.
-                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
-                        Some(td) => Some(td.clone()?),
-                        None => None,
-                    };
+                    lf.trusted_dependencies
+                        .clone_from(&lockfile.trusted_dependencies);
 
                     lf.dependencies.reserve(len as usize);
                     lf.resolutions.reserve(len as usize);
@@ -1582,8 +1576,8 @@ fn enqueue_named_updates(
     let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
     let collect_latest_rows = manager.options.do_.update_to_latest();
     let requests = manager.update_requests.len();
-    let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
-    let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
+    let mut matched = DynamicBitSet::init_empty(requests);
+    let mut matched_elsewhere = DynamicBitSet::init_empty(requests);
     let mut named = NamedUpdates::default();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
@@ -1727,7 +1721,7 @@ fn workspaces_reaching_request<'a>(
     let dep_lists = packages.items_dependencies();
     let res_lists = packages.items_resolutions();
 
-    let mut owners = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    let mut owners = DynamicBitSet::init_empty(packages.len());
     let all_deps = lockfile.buffers.dependencies.as_slice();
     let all_resolutions = lockfile.buffers.resolutions.as_slice();
     for (pkg_id, (dep_list, res_list)) in dep_lists.iter().zip(res_lists).enumerate() {
@@ -1788,7 +1782,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         .options
         .do_
         .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST);
-    let mut workspaces = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    let mut workspaces = DynamicBitSet::init_empty(packages.len());
     match manager.update_target_workspaces.as_deref() {
         None => workspaces.set(
             manager
@@ -1833,7 +1827,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
                 if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
-                let entry = updating_packages.get_or_put(name).unwrap_or_oom();
+                let entry = updating_packages.get_or_put(name);
                 if !entry.found_existing {
                     entry.value_ptr.original_version_literal =
                         Box::from(dep.version.literal.slice(&lockfile.buffers.string_bytes));

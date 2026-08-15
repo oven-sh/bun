@@ -538,7 +538,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
             input: err.name().as_bytes()
         }
     )
-    .expect("unreachable"); // bun.handleOom
+    .expect("formatting into a Vec is infallible");
     let instance = g.create_error_instance(format_args!(
         "Password {verb} failed with error \"{}\"",
         err.name()

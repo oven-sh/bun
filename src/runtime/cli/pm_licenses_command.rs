@@ -670,7 +670,7 @@ impl DiskIndex {
             if let (Some(name), Some(version)) = (&info.name, &info.version) {
                 let key = disk_key(name, version);
                 if !out.contains_key(&key[..]) {
-                    let _ = out.put(&key, info);
+                    out.put(&key, info);
                 }
             }
         }

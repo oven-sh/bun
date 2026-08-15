@@ -447,7 +447,7 @@ impl BuildCommand {
 
         if ctx.bundler_options.production {
             // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production") };
         }
 
         this_transpiler.configure_defines()?;
@@ -1279,7 +1279,7 @@ pub(crate) fn collect_compile_assets(
             (),
         );
         #[cfg(not(windows))]
-        let _ = seen.put(key, ());
+        seen.put(key, ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
@@ -1290,7 +1290,7 @@ pub(crate) fn collect_compile_assets(
                     bun_fmt::quote(&dest),
                 ));
             }
-            let _ = seen.put(&dest, ());
+            seen.put(&dest, ());
             out.push(options::OutputFile {
                 loader: Loader::File,
                 input_loader: Loader::File,

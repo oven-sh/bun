@@ -207,7 +207,7 @@ impl CatalogMap {
             return Ok(&mut self.default);
         }
 
-        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
+        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf));
         if !entry.found_existing {
             *entry.key_ptr = catalog_name;
             *entry.value_ptr = Map::default();
@@ -338,7 +338,7 @@ impl CatalogMap {
             };
 
             let buf = builder.string_bytes.as_slice();
-            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf));
 
             if entry.found_existing {
                 log.add_error(Some(source), key_loc, b"Duplicate catalog");
@@ -459,7 +459,7 @@ impl CatalogMap {
 
         new_catalog
             .default
-            .ensure_total_capacity(self.default.count())?;
+            .ensure_total_capacity(self.default.count());
 
         // Per insert, finish the `&mut builder` appends FIRST, then snapshot
         // the buffer for the hash/eql closures. Snapshotting once up-front would freeze
@@ -478,11 +478,11 @@ impl CatalogMap {
 
         new_catalog
             .groups
-            .ensure_total_capacity(self.groups.count())?;
+            .ensure_total_capacity(self.groups.count());
 
         for (catalog_name, deps) in self.groups.keys().iter().zip(self.groups.values()) {
             let mut new_group = Map::default();
-            new_group.ensure_total_capacity(deps.count())?;
+            new_group.ensure_total_capacity(deps.count());
 
             for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
                 let new_key = builder.append::<String>(dep_name.slice(old_buf));
@@ -564,7 +564,7 @@ fn put_entries_from_pnpm_lockfile(
         };
 
         let buf = string_buf.bytes.as_slice();
-        let entry = catalog_map.get_or_put_adapted(&dep_name, &ctx(buf))?;
+        let entry = catalog_map.get_or_put_adapted(&dep_name, &ctx(buf));
 
         if entry.found_existing {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);

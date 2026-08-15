@@ -87,7 +87,7 @@ impl HotMap {
     /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
     /// `TaggedPointerUnion` payload list is named.
     pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
+        let gop = self._map.get_or_put(key);
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
@@ -520,7 +520,7 @@ impl ProxyEnvSlots {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
                 if let Some(val) = &self.$field {
-                    bun_core::handle_oom(map.put($name, &val.bytes));
+                    map.put($name, &val.bytes);
                 }
             };
         }
@@ -750,7 +750,7 @@ impl RareData {
     pub(crate) fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
         let table = self
             .mime_types
-            .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
+            .get_or_insert_with(mime_type::create_hash_table);
         table
             .get(str_)
             .map(|entry| mime_type::Compact::from(*entry).to_mime_type())

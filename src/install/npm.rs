@@ -1956,7 +1956,7 @@ impl PackageManifest {
 fn collect_bundled_deps(
     version_obj: Option<&JSON::E::ObjectJSON>,
     set: &mut StringSet,
-) -> Result<bool, AllocError> {
+) -> bool {
     set.map.clear_retaining_capacity();
     let mut bundle_all_deps = false;
     if let Some(bundled_deps_value) = version_obj
@@ -1972,13 +1972,13 @@ fn collect_bundled_deps(
                     let Some(s) = bundled_dep.as_str() else {
                         continue;
                     };
-                    set.insert(s)?;
+                    set.insert(s);
                 }
             }
             _ => {}
         }
     }
-    Ok(bundle_all_deps)
+    bundle_all_deps
 }
 
 // Keys are pre-hashed string hashes, so don't re-hash them.
@@ -2180,7 +2180,7 @@ impl PackageManifest {
                     }
                 }
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
+                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set);
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(obj) = version_obj
@@ -2352,9 +2352,9 @@ impl PackageManifest {
                 .unwrap_or(&[]);
             let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
             if !time_props.is_empty() {
-                time_index.ensure_total_capacity(time_props.len())?;
+                time_index.ensure_total_capacity(time_props.len());
                 for (i, p) in time_props.iter().enumerate() {
-                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()));
                     if !gop.found_existing {
                         *gop.value_ptr = i as u32;
                     }
@@ -2384,7 +2384,7 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
+                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set);
 
                 let mut package_version: PackageVersion = empty_version;
 
@@ -2830,7 +2830,7 @@ impl PackageManifest {
                             let version_map_hash = version_hasher.final_();
 
                             let name_entry =
-                                all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
+                                all_extern_strings_dedupe_map.get_or_put(name_map_hash);
                             if name_entry.found_existing {
                                 name_list = *name_entry.value_ptr;
                                 // this_names = name_list.mut(all_extern_strings) — only used in debug asserts below
@@ -2840,7 +2840,7 @@ impl PackageManifest {
                             }
 
                             let version_entry =
-                                version_extern_strings_dedupe_map.get_or_put(version_map_hash)?;
+                                version_extern_strings_dedupe_map.get_or_put(version_map_hash);
                             if version_entry.found_existing {
                                 version_list = *version_entry.value_ptr;
                             } else {

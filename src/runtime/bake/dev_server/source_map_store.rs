@@ -461,7 +461,7 @@ impl SourceMapStore {
         script_id: Key,
         ref_count: u32,
     ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
-        let gop = self.entries.get_or_put(script_id)?;
+        let gop = self.entries.get_or_put(script_id);
         if !gop.found_existing {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
@@ -668,7 +668,6 @@ impl SourceMapStore {
         let entry = &self.entries.values()[index];
 
         let script_id_decoded = SourceId(script_id.get());
-        // bun.handleOom(expr) — Rust aborts on OOM by default; just unwrap the inner Result.
         let vlq_bytes = entry
             .render_mappings(script_id_decoded.kind())
             .expect("OOM");

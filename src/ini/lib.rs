@@ -1563,7 +1563,7 @@ mod draft {
             // The single `install.scoped = registry_map` write-back happens at
             // the bottom of `load_npmrc` after the registry-configuration
             // block has finished mutating `registry_map`.
-            registry_map.scopes.ensure_unused_capacity(scope_count)?;
+            registry_map.scopes.ensure_unused_capacity(scope_count);
 
             iter.prop_idx = 0;
             iter.count = false;
@@ -1571,7 +1571,7 @@ mod draft {
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
                     let registry = result.registry.clone();
-                    registry_map.scopes.put(&*result.scope, registry)?;
+                    registry_map.scopes.put(&*result.scope, registry);
                 }
             }
         }

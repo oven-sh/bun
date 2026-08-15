@@ -58,7 +58,7 @@ impl IniTestingAPIs {
                 ),
             )?;
 
-            envmap.ensure_total_capacity(object_iter.len)?;
+            envmap.ensure_total_capacity(object_iter.len);
 
             while let Some(key) = object_iter.next()? {
                 let keyslice = key.to_owned_slice();
@@ -75,7 +75,7 @@ impl IniTestingAPIs {
                     dotenv::map::Entry {
                         value: slice.into_boxed_slice(),
                     },
-                )?;
+                );
             }
 
             env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map { map: envmap }))

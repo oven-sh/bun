@@ -207,7 +207,7 @@ impl WorkspacePackageJSONCache {
             stale_contents: Vec::new(),
         };
 
-        let entry = bun_core::handle_oom(self.map.get_or_put(path));
+        let entry = self.map.get_or_put(path);
         debug_assert!(!entry.found_existing);
         *entry.value_ptr = value;
 

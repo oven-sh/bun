@@ -313,9 +313,7 @@ impl UpdateInteractiveCommand {
 
         // Group updates by workspace path (store indices to avoid cloning)
         for (i, update) in updates.iter().enumerate() {
-            let result = workspace_groups
-                .get_or_put(&update.workspace_path)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            let result = workspace_groups.get_or_put(&update.workspace_path);
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -431,9 +429,7 @@ impl UpdateInteractiveCommand {
         // Group updates by workspace
         let mut catalog_it = catalog_updates.iter();
         while let Some((catalog_key, update)) = catalog_it.next() {
-            let result = workspace_catalog_updates
-                .get_or_put(&update.workspace_path)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            let result = workspace_catalog_updates.get_or_put(&update.workspace_path);
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -761,9 +757,7 @@ impl UpdateInteractiveCommand {
         // Group catalog dependencies
         for pkg in packages {
             if pkg.is_catalog {
-                let entry = catalog_map
-                    .get_or_put(&pkg.name)
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                let entry = catalog_map.get_or_put(&pkg.name);
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
                 }

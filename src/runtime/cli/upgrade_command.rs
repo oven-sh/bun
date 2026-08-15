@@ -196,7 +196,7 @@ impl UpgradeCommand {
                 length: u32::try_from(b"application/vnd.github.v3+json".len()).expect("int cast"),
             },
         };
-        header_entries.append(accept).expect("oom");
+        header_entries.append(accept);
         // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
@@ -232,23 +232,21 @@ impl UpgradeCommand {
                     bstr::BStr::new(access_token),
                 )
                 .expect("oom");
-                header_entries
-                    .append(headers::Entry {
-                        name: HTTP::ETag::StringPointer {
-                            offset: accept.value.offset + accept.value.length,
-                            length: u32::try_from(b"Authorization".len()).expect("int cast"),
-                        },
-                        value: HTTP::ETag::StringPointer {
-                            offset: u32::try_from(
-                                (accept.value.offset + accept.value.length) as usize
-                                    + b"Authorization".len(),
-                            )
-                            .unwrap(),
-                            length: u32::try_from(b"Bearer ".len() + access_token.len())
-                                .expect("int cast"),
-                        },
-                    })
-                    .expect("oom");
+                header_entries.append(headers::Entry {
+                    name: HTTP::ETag::StringPointer {
+                        offset: accept.value.offset + accept.value.length,
+                        length: u32::try_from(b"Authorization".len()).expect("int cast"),
+                    },
+                    value: HTTP::ETag::StringPointer {
+                        offset: u32::try_from(
+                            (accept.value.offset + accept.value.length) as usize
+                                + b"Authorization".len(),
+                        )
+                        .unwrap(),
+                        length: u32::try_from(b"Bearer ".len() + access_token.len())
+                            .expect("int cast"),
+                    },
+                });
             }
         }
 
@@ -541,7 +539,7 @@ impl UpgradeCommand {
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader = DotEnv::Loader::init();
-        env_loader.load_process()?;
+        env_loader.load_process();
 
         let use_canary: bool = 'brk: {
             let default_use_canary = Environment::IS_CANARY;
@@ -1320,23 +1318,22 @@ impl UpgradeCommand {
             {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
-                let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
+                env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
                 // `spawn_sync` takes the C-style `[*:null]?[*:0]const u8` envp
                 // directly, so build it from the DotEnv map. Output is buffered and
                 // silently dropped along with any spawn error.
-                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
-                    let _ = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_ptr().cast::<*const c_char>()),
-                        cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
-                        stdout: spawn_sync::SyncStdio::Buffer,
-                        stderr: spawn_sync::SyncStdio::Buffer,
-                        stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                }
+                let envp = env_loader.map.create_null_delimited_env_map();
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: build_argv(&completions_argv),
+                    envp: Some(envp.as_ptr().cast::<*const c_char>()),
+                    cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
+                    stdout: spawn_sync::SyncStdio::Buffer,
+                    stderr: spawn_sync::SyncStdio::Buffer,
+                    stdin: spawn_sync::SyncStdio::Ignore,
+                    #[cfg(windows)]
+                    windows: spawn_windows_options(),
+                    ..Default::default()
+                });
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());

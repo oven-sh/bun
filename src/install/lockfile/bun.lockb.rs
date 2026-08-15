@@ -500,7 +500,7 @@ pub(crate) fn load(
 
                     lockfile
                         .workspace_versions
-                        .ensure_total_capacity(workspace_versions_list.len())?;
+                        .ensure_total_capacity(workspace_versions_list.len());
                     // SAFETY: capacity reserved above; both columns are fully
                     // overwritten by `copy_from_slice` before `re_index` reads them.
                     unsafe {
@@ -516,7 +516,7 @@ pub(crate) fn load(
                         .workspace_versions
                         .values_mut()
                         .copy_from_slice(&workspace_versions_list);
-                    lockfile.workspace_versions.re_index()?;
+                    lockfile.workspace_versions.re_index();
                 }
 
                 {
@@ -529,7 +529,7 @@ pub(crate) fn load(
 
                     lockfile
                         .workspace_paths
-                        .ensure_total_capacity(workspace_paths_strings.len())?;
+                        .ensure_total_capacity(workspace_paths_strings.len());
 
                     // SAFETY: capacity reserved above; both columns are fully
                     // overwritten by `copy_from_slice` before `re_index` reads them.
@@ -546,7 +546,7 @@ pub(crate) fn load(
                         .workspace_paths
                         .values_mut()
                         .copy_from_slice(&workspace_paths_strings);
-                    lockfile.workspace_paths.re_index()?;
+                    lockfile.workspace_paths.re_index();
                 }
             } else {
                 stream.pos -= 8;
@@ -565,7 +565,7 @@ pub(crate) fn load(
 
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
-                td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
+                td.ensure_total_capacity(trusted_dependencies_hashes.len());
                 // The binary lockfile only stores the truncated hashes, not the
                 // names they were computed from. The empty value is the
                 // "name unknown, hash-only match" sentinel.
@@ -592,7 +592,7 @@ pub(crate) fn load(
                 lockfile
                     .overrides
                     .map
-                    .ensure_total_capacity(overrides_name_hashes.len())?;
+                    .ensure_total_capacity(overrides_name_hashes.len());
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
                 // reshaped for borrowck — `Context.buffer` borrows
@@ -638,7 +638,7 @@ pub(crate) fn load(
 
                 let map = &mut lockfile.patched_dependencies;
 
-                map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len())?;
+                map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len());
                 let patched_dependencies_paths: Vec<PatchedDepExternal> =
                     buffers::read_array(stream)?;
 
@@ -681,7 +681,7 @@ pub(crate) fn load(
                 } = &mut *lockfile;
                 let string_bytes: &[u8] = buffers.string_bytes.as_slice();
 
-                catalogs.default.ensure_total_capacity(default_deps.len())?;
+                catalogs.default.ensure_total_capacity(default_deps.len());
 
                 // Both arg and existing keys resolve against the lockfile's
                 // string buffer.
@@ -708,7 +708,7 @@ pub(crate) fn load(
 
                 let catalog_names: Vec<SemverString> = buffers::read_array(stream)?;
 
-                catalogs.groups.ensure_total_capacity(catalog_names.len())?;
+                catalogs.groups.ensure_total_capacity(catalog_names.len());
 
                 for catalog_name in &catalog_names {
                     let catalog_dep_names: Vec<SemverString> = buffers::read_array(stream)?;
@@ -724,7 +724,7 @@ pub(crate) fn load(
                     } else {
                         let entry = catalogs
                             .groups
-                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx))?;
+                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx));
                         if !entry.found_existing {
                             *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
@@ -732,7 +732,7 @@ pub(crate) fn load(
                         entry.value_ptr
                     };
 
-                    group.ensure_total_capacity(catalog_deps.len())?;
+                    group.ensure_total_capacity(catalog_deps.len());
 
                     debug_assert_eq!(catalog_dep_names.len(), catalog_deps.len());
                     for (dep_name, dep) in catalog_dep_names.iter().zip(catalog_deps.iter()) {
@@ -813,7 +813,7 @@ pub(crate) fn load(
     lockfile.string_pool = StringPool::default();
     lockfile
         .package_index
-        .ensure_total_capacity(lockfile.packages.len())?;
+        .ensure_total_capacity(lockfile.packages.len());
 
     // `get_or_put_id` only mutates `package_index` (and reads `packages` /
     // `buffers.string_bytes`), and `workspace_paths.put` only mutates
@@ -848,7 +848,7 @@ pub(crate) fn load(
                     // SAFETY: tag == Workspace discriminates the active union field.
                     lockfile
                         .workspace_paths
-                        .put(name_hash, *resolution.workspace())?;
+                        .put(name_hash, *resolution.workspace());
                 }
                 _ => {}
             }

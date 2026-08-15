@@ -3310,7 +3310,7 @@ pub mod formatter {
                 self.map_node = Some(node);
             }
 
-            let entry = self.map.get_or_put(value).expect("unreachable");
+            let entry = self.map.get_or_put(value);
             if entry.found_existing {
                 if writer_
                     .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
@@ -5788,7 +5788,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
-    let counter = this.counts.get_or_put(hash).expect("unreachable");
+    let counter = this.counts.get_or_put(hash);
     let current: u32 = if counter.found_existing {
         *counter.value_ptr
     } else {
@@ -5856,7 +5856,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
     }
 
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
-        let result = map.get_or_put(id).expect("unreachable");
+        let result = map.get_or_put(id);
         if !result.found_existing || result.value_ptr.is_none() {
             *result.value_ptr = Some(bun_core::time::Timer::start());
         }

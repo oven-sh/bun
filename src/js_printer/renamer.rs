@@ -287,7 +287,7 @@ impl MinifyRenamer {
         }
 
         // #14586: here, not in `compute_initial_reserved_names`, so `NumberRenamer` keeps user `$` verbatim.
-        reserved_names.put(b"$", 1).expect("unreachable");
+        reserved_names.put(b"$", 1);
 
         Ok(Box::new(MinifyRenamer {
             symbols: ManuallyDrop::new(symbols),
@@ -393,7 +393,7 @@ impl MinifyRenamer {
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx();
             let slots = &mut self.slots[ns];
 
-            let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_)?;
+            let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_);
             if gpe.found_existing {
                 let slot = &mut slots[*gpe.value_ptr];
                 slot.count += stable.count;
@@ -1006,7 +1006,7 @@ impl ExportRenamer {
     }
 
     pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
-        let entry = self.used.get_or_put(input).expect("unreachable");
+        let entry = self.used.get_or_put(input);
         if !entry.found_existing {
             *entry.value_ptr = 1;
             // `StringHashMap` does not expose a key pointer; allocate a copy in
@@ -1033,7 +1033,7 @@ impl ExportRenamer {
             }
             // `StringHashMap::put` boxes the key itself; the arena copy below is
             // only for the caller's returned slice (`string_buffer` is reused).
-            self.used.put(attempt, 1).expect("unreachable");
+            self.used.put(attempt, 1);
             *self.used.get_mut(input).expect("unreachable") = tries;
             return self.arena.alloc_slice_copy(attempt);
         }
@@ -1069,7 +1069,7 @@ pub fn compute_initial_reserved_names(
     names.ensure_total_capacity(
         cjs_names_len as usize
             + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
-    )?;
+    );
 
     for keyword in Keywords.keys() {
         names.put_assume_capacity(keyword, 1);
@@ -1108,9 +1108,7 @@ pub fn compute_reserved_names_for_scope(
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            names.put(symbol.original_name.slice(), 1);
         }
     }
 
@@ -1118,9 +1116,7 @@ pub fn compute_reserved_names_for_scope(
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            names.put(symbol.original_name.slice(), 1);
         }
     }
 

@@ -441,7 +441,7 @@ impl Route {
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and
         // drops on early-return.
-        config.entry_points.insert(&self.bundle.path)?;
+        config.entry_points.insert(&self.bundle.path);
         let xform = &vm.transpiler.options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
@@ -496,25 +496,25 @@ impl Route {
         } else {
             (b"false", b"true", b"\"production\"")
         };
-        config.define.put(b"import.meta.env.DEV", dev_bool)?;
-        config.define.put(b"import.meta.env.PROD", prod_bool)?;
-        config.define.put(b"import.meta.env.MODE", mode_str)?;
-        config.define.put(b"import.meta.env.SSR", b"false")?;
-        config.define.put(b"import.meta.env.STATIC", b"false")?;
+        config.define.put(b"import.meta.env.DEV", dev_bool);
+        config.define.put(b"import.meta.env.PROD", prod_bool);
+        config.define.put(b"import.meta.env.MODE", mode_str);
+        config.define.put(b"import.meta.env.SSR", b"false");
+        config.define.put(b"import.meta.env.STATIC", b"false");
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
             // profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
-                config.define.put(k, v)?;
+                config.define.put(k, v);
             }
         }
 
         if !is_development {
             config
                 .define
-                .put(b"process.env.NODE_ENV", b"\"production\"")?;
+                .put(b"process.env.NODE_ENV", b"\"production\"");
             config.jsx.development = false;
         } else {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;

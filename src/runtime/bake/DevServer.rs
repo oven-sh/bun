@@ -989,7 +989,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
                     true,
                 ),
-            )?;
+            );
         }
 
         break 'router FrameworkRouter::init_empty(&dev.root, types.into_boxed_slice())?;
@@ -1274,8 +1274,8 @@ impl DevServer {
             )?;
         }
 
-        self.server_graph.ensure_stale_bit_capacity(true)?;
-        self.client_graph.ensure_stale_bit_capacity(true)?;
+        self.server_graph.ensure_stale_bit_capacity(true);
+        self.client_graph.ensure_stale_bit_capacity(true);
         Ok(())
     }
 
@@ -1962,7 +1962,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
             route_bundle::State::Unqueued => {
                 // We already are bundling something, defer the request
                 if dev.current_bundle.is_some() {
-                    dev.next_bundle.route_queue.put(route_bundle_index, ())?;
+                    dev.next_bundle.route_queue.put(route_bundle_index, ());
                     ctx.on_defer(BundleQueueType::NextBundle)?;
                     dev.route_bundle_ptr(route_bundle_index).server_state =
                         route_bundle::State::DeferredToNextBundle;
@@ -2023,7 +2023,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                             break 'plugin;
                         }
                         PluginState::Pending => {
-                            dev.next_bundle.route_queue.put(route_bundle_index, ())?;
+                            dev.next_bundle.route_queue.put(route_bundle_index, ());
                             ctx.on_defer(BundleQueueType::NextBundle)?;
                             dev.route_bundle_ptr(route_bundle_index).server_state =
                                 route_bundle::State::DeferredToNextBundle;
@@ -2059,7 +2059,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     }
                 }
 
-                dev.next_bundle.route_queue.put(route_bundle_index, ())?;
+                dev.next_bundle.route_queue.put(route_bundle_index, ());
                 ctx.on_defer(BundleQueueType::NextBundle)?;
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
@@ -3254,10 +3254,8 @@ impl DevServer {
         let start_data = bv2.start_from_bake_dev_server(&{
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
+                bt.set
+                    .put(k, bundler::bake_types::EntryPointFlags(v.bits()));
             }
             bt
         })?;
@@ -3889,7 +3887,7 @@ pub(super) fn finalize_bundle(
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
 
-    let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
+    let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len());
     for ((source_index, ssr_index), ref_index) in scbs
         .list
         .items_source_index()
@@ -4056,7 +4054,7 @@ pub(super) fn finalize_bundle(
             if looks_like_tailwind {
                 // Note: `get_or_put` consumes the key by value; on miss the key
                 // already lives in the map so the explicit `*key_ptr =` is redundant.
-                let _ = map.get_or_put(Box::from(key))?;
+                let _ = map.get_or_put(Box::from(key));
             } else {
                 let _ = map.swap_remove(&Box::<[u8]>::from(key));
             }
@@ -4145,7 +4143,7 @@ pub(super) fn finalize_bundle(
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
+    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len());
 
     dev.incremental_result.had_adjusted_edges = false;
 
@@ -4193,8 +4191,8 @@ pub(super) fn finalize_bundle(
     }
     dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
+    dev.client_graph.ensure_stale_bit_capacity(false);
+    dev.server_graph.ensure_stale_bit_capacity(false);
 
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
@@ -4322,8 +4320,8 @@ pub(super) fn finalize_bundle(
         let _ = errors; // TODO:
     }
 
-    let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
-    let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+    let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len());
+    let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len());
 
     let mut has_route_bits_set = false;
 
@@ -4541,8 +4539,7 @@ pub(super) fn finalize_bundle(
                         // SAFETY: as above; the exclusive borrow of the socket's
                         // map ends when `entry` dies at the end of this block.
                         let entry = unsafe { &mut (**socket_ptr).referenced_source_maps }
-                            .get_or_put(script_id)
-                            .expect("oom");
+                            .get_or_put(script_id);
                         if !entry.found_existing {
                             sockets += 1;
                         }
@@ -5012,9 +5009,7 @@ impl DevServer {
             .current_bundle
             .as_mut()
             .expect("infallible: bundle active");
-        let gop = current_bundle
-            .resolution_failure_entries
-            .get_or_put(owner)?;
+        let gop = current_bundle.resolution_failure_entries.get_or_put(owner);
         if !gop.found_existing {
             *gop.value_ptr = Log::init();
         }
@@ -5426,9 +5421,9 @@ impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
     fn init_graph_trace_state(&self, extra_client_bits: usize) -> crate::Result<GraphTraceState> {
-        let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len())?;
+        let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len());
         let client_bits =
-            DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits)?;
+            DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits);
         Ok(GraphTraceState {
             server_bits,
             client_bits,
@@ -5855,7 +5850,7 @@ impl DevServer {
                 associated_route,
                 file_kind == framework_router::FileKind::Layout,
             ),
-        )?;
+        );
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }
 
@@ -6061,7 +6056,7 @@ impl EntryPointList {
         abs_path: &[u8],
         flags: entry_point_list::Flags,
     ) -> crate::Result<()> {
-        let gop = self.set.get_or_put(abs_path)?;
+        let gop = self.set.get_or_put(abs_path);
         if gop.found_existing {
             *gop.value_ptr |= flags;
         } else {
@@ -6097,7 +6092,7 @@ impl HTMLRouter {
         if path == b"/*" {
             self.fallback = Some(route);
         } else {
-            self.map.put(path, route)?;
+            self.map.put(path, route);
         }
         Ok(())
     }
@@ -6336,10 +6331,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .as_mut()
                     .expect("infallible: bundle active");
                 if cb.promise.strong.has_value() {
-                    cb.promise
-                        .route_bundle_indices
-                        .put(route_bundle_index, ())
-                        .expect("oom");
+                    cb.promise.route_bundle_indices.put(route_bundle_index, ());
                     self.p = Some(cb.promise.strong.get());
                     return Ok(());
                 }
@@ -6349,10 +6341,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .current_bundle
                     .as_mut()
                     .expect("infallible: bundle active");
-                cb.promise
-                    .route_bundle_indices
-                    .put(route_bundle_index, ())
-                    .expect("oom");
+                cb.promise.route_bundle_indices.put(route_bundle_index, ());
                 cb.promise.strong = strong_promise;
                 Ok(())
             }
@@ -6362,8 +6351,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .next_bundle
                         .promise
                         .route_bundle_indices
-                        .put(route_bundle_index, ())
-                        .expect("oom");
+                        .put(route_bundle_index, ());
                     self.p = Some(self.dev_mut().next_bundle.promise.strong.get());
                     return Ok(());
                 }
@@ -6372,8 +6360,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .next_bundle
                     .promise
                     .route_bundle_indices
-                    .put(route_bundle_index, ())
-                    .expect("oom");
+                    .put(route_bundle_index, ());
                 self.dev_mut().next_bundle.promise.strong = strong_promise;
                 Ok(())
             }

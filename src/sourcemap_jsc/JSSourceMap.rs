@@ -78,7 +78,6 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let Some(source_map) = vm.source_mappings().get(source_url) else {
         return Ok(JSValue::UNDEFINED);
     };
-    // Box allocation aborts on OOM (handleOom semantics).
     let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
 
     // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;

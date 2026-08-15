@@ -500,7 +500,7 @@ fn edit_update_entries(
                         // Capture the literal as an owned
                         // copy before borrowing `updating_packages` mutably.
                         let version_literal_owned = Box::<[u8]>::from(version_literal);
-                        let entry = updating_packages.get_or_put(key_str)?;
+                        let entry = updating_packages.get_or_put(key_str);
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -833,7 +833,7 @@ impl CatalogInfoIndex {
     fn init(infos: &[CatalogUpdateInfo]) -> Result<CatalogInfoIndex, bun_alloc::AllocError> {
         let mut map = StringArrayHashMap::<Vec<usize>>::with_capacity(infos.len());
         for (i, info) in infos.iter().enumerate() {
-            map.get_or_put(&info.dep_name)?.value_ptr.push(i);
+            map.get_or_put(&info.dep_name).value_ptr.push(i);
         }
         Ok(CatalogInfoIndex(map))
     }
@@ -1036,7 +1036,7 @@ pub(crate) fn edit(
                                                 let version_literal_owned =
                                                     Box::<[u8]>::from(version_literal);
                                                 let entry =
-                                                    manager.updating_packages.get_or_put(name)?;
+                                                    manager.updating_packages.get_or_put(name);
 
                                                 // first come, first serve
                                                 if entry.found_existing {

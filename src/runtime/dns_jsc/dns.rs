@@ -4847,7 +4847,7 @@ impl Resolver {
             // any re-entrant call (libuv `uv_poll_*` below do not call back into
             // this resolver synchronously).
             let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
+            let poll_entry = polls.get_or_put(fd);
             let poll: *mut UvDnsPoll = if poll_entry.found_existing {
                 *poll_entry.value_ptr
             } else {
@@ -4911,7 +4911,7 @@ impl Resolver {
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
+            let poll_entry = polls.get_or_put(fd);
 
             if !poll_entry.found_existing {
                 *poll_entry.value_ptr =

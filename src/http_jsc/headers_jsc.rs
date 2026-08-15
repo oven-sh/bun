@@ -49,13 +49,7 @@ pub fn from_fetch_headers(
         }
         false
     };
-    if headers
-        .entries
-        .ensure_total_capacity(header_count as usize)
-        .is_err()
-    {
-        bun_alloc::out_of_memory();
-    }
+    headers.entries.ensure_total_capacity(header_count as usize);
     // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
     // overwritten by `copy_to` / the explicit writes below before any read.
     unsafe { headers.entries.set_len(header_count as usize) };

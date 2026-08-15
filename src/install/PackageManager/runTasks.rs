@@ -1729,10 +1729,7 @@ pub fn has_created_network_task(
     task_id: Task::Id,
     is_required: bool,
 ) -> bool {
-    let gpe = this
-        .network_dedupe_map
-        .get_or_put(task_id)
-        .expect("unreachable");
+    let gpe = this.network_dedupe_map.get_or_put(task_id);
 
     // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
     gpe.value_ptr.is_required = if !gpe.found_existing {

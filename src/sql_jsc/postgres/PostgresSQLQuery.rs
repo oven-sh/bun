@@ -705,18 +705,11 @@ impl PostgresSQLQuery {
                 // until after the raw value-slot ptr is captured). Extract the
                 // raw slot ptr while the borrow is live so the remainder of
                 // this block needs no further `&mut` to the map.
-                let entry_value_ptr = match connection.statements.with_mut(|s| {
-                    s.get_or_put(&signature.name)
-                        .map(|e| std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr))
-                }) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        drop(signature);
-                        release_query_ref();
-                        return Err(global_object
-                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
-                    }
-                };
+                let entry_value_ptr = connection.statements.with_mut(|s| {
+                    std::ptr::from_mut::<*mut PostgresSQLStatement>(
+                        s.get_or_put(&signature.name).value_ptr,
+                    )
+                });
                 connection_entry_value = Some(entry_value_ptr);
             }
             let can_execute = !connection.has_query_running();

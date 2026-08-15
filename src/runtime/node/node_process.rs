@@ -351,10 +351,10 @@ mod _impl {
                                 let mut k = Vec::with_capacity(2 + name.len());
                                 k.extend_from_slice(b"--");
                                 k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
+                                set.insert(&k);
                             }
                             if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
+                                set.insert(&[b'-', name]);
                             }
                         }
                     }
@@ -362,7 +362,7 @@ mod _impl {
                     // land above; an alias takes a value iff its target does.
                     for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
                         if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
+                            set.insert(from);
                         }
                     }
                     set

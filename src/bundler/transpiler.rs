@@ -739,7 +739,7 @@ impl<'a> Transpiler<'a> {
                 // that inherited environment variables are always available
                 // even when a parent directory is not readable.
                 let was_production = self.options.production;
-                env.load_process()?;
+                env.load_process();
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
                     self.options.set_production(true);
@@ -799,7 +799,7 @@ impl<'a> Transpiler<'a> {
                 env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
-                env.load_process()?;
+                env.load_process();
                 if env.is_production() {
                     self.options.set_production(true);
                     // See note in the `.prefix` arm.
@@ -1087,9 +1087,9 @@ fn resolver_bundle_options_subset(
             css: ropts::owned_string_list(ropts::bundle_options::defaults::CSS_EXTENSION_ORDER),
         },
         conditions: ropts::Conditions {
-            import: src.conditions.import.clone().expect("oom"),
-            require: src.conditions.require.clone().expect("oom"),
-            style: src.conditions.style.clone().expect("oom"),
+            import: src.conditions.import.clone(),
+            require: src.conditions.require.clone(),
+            style: src.conditions.style.clone(),
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
@@ -1110,7 +1110,7 @@ fn resolver_bundle_options_subset(
                     B::Import(p) => R::Import(p.clone()),
                     B::Code(c) => R::Code(c.clone()),
                 };
-                m.put(k, rv).expect("oom");
+                m.put(k, rv);
             }
             ropts::Framework {
                 built_in_modules: m,
@@ -1398,7 +1398,7 @@ impl<'a> Transpiler<'a> {
                 let data_url = match DataURL::parse_without_check(path.text) {
                     Ok(u) => u,
                     Err(err) => {
-                        let _ = log.add_error_fmt(
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -1413,7 +1413,7 @@ impl<'a> Transpiler<'a> {
                 let body = match data_url.decode_data() {
                     Ok(b) => b,
                     Err(err) => {
-                        let _ = log.add_error_fmt(
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -1451,7 +1451,7 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
-                    let _ = log.add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -1622,7 +1622,7 @@ impl<'a> Transpiler<'a> {
                     .options
                     .bundler_feature_flags
                     .as_deref()
-                    .and_then(|s| s.clone().ok().map(Box::new));
+                    .map(|s| Box::new(s.clone()));
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -1969,10 +1969,7 @@ fn parse_data_loader<'a>(
                         continue;
                     }
 
-                    let visited = match duplicate_key_checker.get_or_put(name) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                    let visited = duplicate_key_checker.get_or_put(name);
                     if visited.found_existing {
                         decls[*visited.value_ptr as usize].value =
                             Some(prop.value.expect("infallible: prop has value"));
@@ -2150,7 +2147,7 @@ fn parse_md_loader<'a>(
         // `'bump` to `'static` for `E::String.data`).
         Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
         Err(_) => {
-            let _ = log.add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("Failed to render markdown to HTML"),
@@ -2200,7 +2197,7 @@ fn parse_wasm_loader<'a>(
 ) -> Option<ParseResult<'a>> {
     if target.is_bun() {
         if !source.is_web_assembly() {
-            let _ = log.add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -2857,21 +2854,7 @@ impl<'a> Transpiler<'a> {
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
                     resolve_result.flags.use_define_for_class_fields();
-                // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
-                // no nested `Clone` impl (the inner clone is fallible).
-                // Rebuild the outer map, deep-cloning
-                // each inner map (fallible), matching the build-command
-                // conversion.
-                let macro_remappings = {
-                    let mut m = MacroRemap::default();
-                    for (k, v) in self.options.macro_remap.iter() {
-                        let inner = v
-                            .clone()
-                            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                        m.insert(k, inner);
-                    }
-                    m
-                };
+                let macro_remappings = self.options.macro_remap.clone();
 
                 let parse_opts = ParseOptions {
                     arena: self.arena,
@@ -2999,7 +2982,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(e) => e,
             Err(err) => {
-                let _ = self.log_mut().add_error_fmt(
+                self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -3045,7 +3028,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                let _ = self.log_mut().add_error_fmt(
+                self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("{} parsing", e),

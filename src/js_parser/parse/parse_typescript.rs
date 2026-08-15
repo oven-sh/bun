@@ -293,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc: locref.loc,
                                 data: TSNamespaceMemberData::Property,
                             },
-                        )?;
+                        );
                         p.ref_to_ts_namespace_member
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
@@ -311,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc: locref.loc,
                                 data: TSNamespaceMemberData::Property,
                             },
-                        )?;
+                        );
                         p.ref_to_ts_namespace_member
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
@@ -330,7 +330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     data: clone_ts_member_data(&member_data),
                                     loc: ns.name.loc,
                                 },
-                            )?;
+                            );
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
@@ -349,7 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     data: clone_ts_member_data(&member_data),
                                     loc: ns.name.loc,
                                 },
-                            )?;
+                            );
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
@@ -399,7 +399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.pop_and_discard_scope(scope_index);
             if opts.scope.is_module() {
-                p.local_type_names.put(name_text, true)?;
+                p.local_type_names.put(name_text, true);
             }
             return Ok(p.s(S::TypeScript {}, loc));
         }
@@ -666,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc: value_loc,
                     data: TSNamespaceMemberData::EnumProperty,
                 },
-            )?;
+            );
 
             if p.lexer.token != T::TComma && p.lexer.token != T::TSemicolon {
                 break;

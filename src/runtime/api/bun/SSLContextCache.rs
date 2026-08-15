@@ -129,7 +129,7 @@ impl SSLContextCache {
 
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
-        let gop = bun_core::handle_oom(self.map.get_or_put(d));
+        let gop = self.map.get_or_put(d);
         if gop.found_existing {
             // SAFETY: existing map value is a live heap Entry (see above).
             let entry = unsafe { &mut **gop.value_ptr };

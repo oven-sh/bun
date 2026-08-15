@@ -210,7 +210,7 @@ impl ActiveHandle {
     /// This owner now holds something the stop phase must stop (JS thread).
     pub(crate) fn register(self) {
         if let Some(handles) = active_handles() {
-            bun_core::handle_oom(handles.put(self, ()));
+            handles.put(self, ());
         }
     }
 
@@ -791,7 +791,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // `VirtualMachine::init`.
                     if let Some(log) = unsafe { &*vm }.log {
                         // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -807,7 +807,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: see above.
                     if let Some(log) = unsafe { &*vm }.log {
                         // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -2534,7 +2534,7 @@ fn transpile_source_code_inner(
                 } else {
                     let mut m = bun_resolver::package_json::MacroMap::default();
                     for (k, v) in src.iter() {
-                        m.insert(k, bun_core::handle_oom(v.clone()));
+                        m.insert(k, v.clone());
                     }
                     m
                 }
@@ -3011,7 +3011,7 @@ fn transpile_source_code_inner(
                     // stacks remap to original positions even on a cache hit.
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `source_mappings` is only touched from the JS thread.
-                    let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
+                    unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
                         source,
                         bun_core::MutableString {
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),

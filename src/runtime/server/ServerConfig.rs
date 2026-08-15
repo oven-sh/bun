@@ -647,7 +647,7 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
             ));
         }
 
-        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
+        let entry = duped_route_names.get_or_put(route_name);
         if entry.found_existing {
             return Err(global.throw_todo(
                 b"Support for duplicate route parameter names is not yet implemented.\n\n\

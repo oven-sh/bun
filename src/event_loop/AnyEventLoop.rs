@@ -505,9 +505,7 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn create_null_delimited_env_map(
-        self,
-    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
+    pub fn create_null_delimited_env_map(self) -> bun_dotenv::NullDelimitedEnvMap {
         match self {
             EventLoopHandle::Js { owner } => owner.create_null_delimited_env_map(),
             EventLoopHandle::Mini(mini) => {

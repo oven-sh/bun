@@ -584,8 +584,6 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
         // TODO: this might lose a JSError, causing exception check problems
         JsError::Thrown => core::fmt::Error,
-        // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
-        // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
     }
 }

@@ -74,7 +74,7 @@ impl EnvMap {
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        let result = self.map.get_or_put(key).expect("OOM");
+        let result = self.map.get_or_put(key);
         if !result.found_existing {
             key.ref_();
         } else {
@@ -93,7 +93,7 @@ impl EnvMap {
     }
 
     pub(crate) fn ensure_total_capacity(&mut self, new_capacity: usize) {
-        self.map.ensure_total_capacity(new_capacity).expect("OOM");
+        self.map.ensure_total_capacity(new_capacity);
     }
 
     /// NOTE: Make sure you deref the string when done!
@@ -105,7 +105,7 @@ impl EnvMap {
 
     pub(crate) fn clone(&self) -> EnvMap {
         let new = EnvMap {
-            map: self.map.clone().expect("OOM"),
+            map: self.map.clone(),
         };
         new.ref_strings();
         new

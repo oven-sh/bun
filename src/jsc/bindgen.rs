@@ -328,7 +328,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         // Fallback: allocate fresh, convert, free old. `data` was `mi_malloc`'d
         // by the C++ side regardless of the Rust global allocator, so free it
         // with `mi_free` directly instead of `Vec::drop`.
-        let mut result = bun_core::handle_oom(Self::ZigType::init_capacity(length));
+        let mut result = Self::ZigType::init_capacity(length);
         let mut unmanaged = ManuallyDrop::new(unmanaged);
         for item in unmanaged.iter_mut() {
             // SAFETY: each slot holds a C++-initialized `ExternType`; `ManuallyDrop` ensures it isn't read twice.

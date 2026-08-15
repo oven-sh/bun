@@ -546,14 +546,14 @@ impl Framework {
             built_in_modules: {
                 // Note: was `ArrayHashMap::from_entries(arena, keys, vals)`;
                 // that constructor doesn't exist on the heap-backed
-                // `ArrayHashMap` — build it imperatively. `bun.handleOom`.
+                // `ArrayHashMap` — build it imperatively.
                 let keys: [&'static [u8]; 3] = [
                     b"bun-framework-react/client.tsx",
                     b"bun-framework-react/server.tsx",
                     b"bun-framework-react/ssr.tsx",
                 ];
                 let mut m: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
-                bun_core::handle_oom(m.ensure_total_capacity(keys.len()));
+                m.ensure_total_capacity(keys.len());
                 for (k, v) in keys.iter().zip(built_in_values.iter()) {
                     m.put_assume_capacity(*k, *v);
                 }
@@ -596,7 +596,7 @@ impl Framework {
             fw.built_in_modules.put(
                 b"react-refresh/runtime/index.js" as &[u8],
                 react_refresh_code,
-            )?;
+            );
         }
 
         Ok(fw)
@@ -622,7 +622,7 @@ impl Framework {
             file_system_router_types: self.file_system_router_types.clone(),
             server_components: self.server_components,
             react_fast_refresh: self.react_fast_refresh,
-            built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
+            built_in_modules: self.built_in_modules.clone(),
         }
     }
 
@@ -882,7 +882,7 @@ impl Framework {
 
             let len = array.get_length(global)?;
             let mut files: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
-            bun_core::handle_oom(files.ensure_total_capacity(len as usize));
+            files.ensure_total_capacity(len as usize);
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
@@ -1113,7 +1113,7 @@ impl Framework {
                 BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.into()),
                 BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.into()),
             };
-            bun_core::handle_oom(built_in_modules.put(k, bv));
+            built_in_modules.put(k, bv);
         }
         let server_components = self
             .server_components

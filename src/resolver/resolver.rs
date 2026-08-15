@@ -3363,7 +3363,7 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
-                let _ = self.log_mut().add_error_fmt(
+                self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
@@ -4550,7 +4550,7 @@ impl<'a> Resolver<'a> {
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
-                                    let _ = self.log_mut().add_error_fmt(
+                                    self.log_mut().add_error_fmt(
                                         None,
                                         bun_ast::Loc::default(),
                                         format_args!(
@@ -5823,7 +5823,7 @@ impl<'a> Resolver<'a> {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
-                    let _ = self.log_mut().add_error_fmt(
+                    self.log_mut().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -6498,7 +6498,7 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            let _ = self.log_mut().add_error_fmt(
+                            self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -6509,7 +6509,7 @@ impl<'a> Resolver<'a> {
                         } else if err != crate::Error::ParseErrorAlreadyLogged
                             && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         {
-                            let _ = self.log_mut().add_error_fmt(
+                            self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -6553,7 +6553,7 @@ impl<'a> Resolver<'a> {
                             match self.parse_tsconfig(abs_path, FD::INVALID) {
                                 Ok(v) => v.map(bun_core::heap::into_raw),
                                 Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
+                                    self.log_mut().add_debug_fmt(
                                         None,
                                         bun_ast::Loc::EMPTY,
                                         format_args!(

@@ -415,7 +415,7 @@ pub(crate) fn generate_symbol_import_and_use(
     // Mark this symbol as used by this part
     {
         let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
-        let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+        let uses_entry = part.symbol_uses.get_or_put(ref_);
         if !uses_entry.found_existing {
             *uses_entry.value_ptr = symbol::Use {
                 count_estimate: use_count,
@@ -448,7 +448,7 @@ pub(crate) fn generate_symbol_import_and_use(
                 },
                 ..Default::default()
             },
-        )?;
+        );
     }
 
     // Pull in all parts that declare this symbol
@@ -622,9 +622,9 @@ impl<'a> LinkerGraph<'a> {
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
         let scb = server_component_boundaries.slice();
-        self.files.set_capacity(sources.len())?;
+        self.files.set_capacity(sources.len());
         self.files.zero();
-        self.files_live = BitSet::init_empty(sources.len())?;
+        self.files_live = BitSet::init_empty(sources.len());
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
         unsafe { self.files.set_len(sources.len()) };
 
@@ -643,7 +643,7 @@ impl<'a> LinkerGraph<'a> {
                 entry_points.len()
                     + server_component_boundaries.list.len()
                     + dynamic_import_entry_points.len(),
-            )?;
+            );
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
@@ -697,7 +697,7 @@ impl<'a> LinkerGraph<'a> {
             }
 
             let import_records_len = self.ast.items_import_records().len();
-            self.meta.set_capacity(import_records_len)?;
+            self.meta.set_capacity(import_records_len);
             // Fill each slot with `Default`.
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
@@ -706,7 +706,7 @@ impl<'a> LinkerGraph<'a> {
             }
 
             if scb.list.len() > 0 {
-                self.is_scb_bitset = BitSet::init_empty(self.files.len()).expect("unreachable");
+                self.is_scb_bitset = BitSet::init_empty(self.files.len());
 
                 // Index all SCBs into the bitset. This is needed so chunking
                 // can track the chunks that SCBs belong to.
@@ -815,7 +815,7 @@ impl<'a> LinkerGraph<'a> {
                 count += ts_enums.count();
             }
             if count > 0 {
-                self.ts_enums.ensure_total_capacity(count)?;
+                self.ts_enums.ensure_total_capacity(count);
                 for ts_enums in self.ast.items_ts_enums().iter() {
                     debug_assert_eq!(ts_enums.keys().len(), ts_enums.values().len());
                     for (key, value) in ts_enums.keys().iter().zip(ts_enums.values().iter()) {
@@ -836,9 +836,7 @@ impl<'a> LinkerGraph<'a> {
             .enumerate()
         {
             let mut resolved = ResolvedExports::default();
-            resolved
-                .ensure_total_capacity(src.count())
-                .expect("unreachable");
+            resolved.ensure_total_capacity(src.count());
             debug_assert_eq!(src.keys().len(), src.values().len());
             for (key, value) in src.keys().iter().zip(src.values().iter()) {
                 resolved.put_assume_capacity(
@@ -894,7 +892,7 @@ impl<'a> LinkerGraph<'a> {
         let import_records = self.ast.items_import_records();
         let flags = self.meta.items_flags_mut();
         let len = import_records.len();
-        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
+        let mut visited = AutoBitSet::init_empty(self.ast.len());
         let mut stack: Vec<Frame> = Vec::new();
 
         for root in 0..len {
@@ -997,7 +995,7 @@ impl Default for File {
     fn default() -> Self {
         Self {
             // Note: empty static-arm bitset; load() overwrites before any read.
-            entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            entry_bits: AutoBitSet::init_empty(0),
             input_file: Index::source(0u32),
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,

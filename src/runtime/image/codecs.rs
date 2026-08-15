@@ -418,9 +418,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
     }
     // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
-    // a larger u32 value is corrupt regardless of `maxPixels`. Reject here so
-    // the i32 `last_width`/`last_height` casts downstream can't trap on a
-    // 24-byte hostile IHDR.
+    // a larger u32 value is corrupt regardless of `maxPixels`.
     if w == 0 || h == 0 || w > i32::MAX as u32 || h > i32::MAX as u32 {
         return Err(Error::DecodeFailed);
     }

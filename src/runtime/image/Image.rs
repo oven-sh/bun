@@ -67,10 +67,9 @@ pub struct Image {
     /// Apply EXIF Orientation (JPEG) before any user ops, the way Sharp's
     /// `.rotate()`-with-no-args / `autoOrient` does.
     auto_orient: bool,
-    /// Populated after a pipeline has run once; lets `.width`/`.height` answer
-    /// synchronously after the first await.
-    last_width: Cell<i32>,
-    last_height: Cell<i32>,
+    /// `(width, height)` once a pipeline has run; lets `.width`/`.height`
+    /// answer synchronously after the first await (-1 before that).
+    last_size: Cell<Option<(u32, u32)>>,
     /// Strong while at least one PipelineTask is in flight, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
@@ -86,8 +85,7 @@ impl Default for Image {
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
-            last_width: Cell::new(-1),
-            last_height: Cell::new(-1),
+            last_size: Cell::new(None),
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
         }
@@ -501,13 +499,13 @@ impl Image {
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
         let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
-        let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
+        let deg = raw.rem_euclid(360) as u16;
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "rotate: only multiples of 90 are supported"
             )));
         }
-        self.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
+        self.update_pipeline(|p| p.rotate = deg);
         Ok(callframe.this())
     }
 
@@ -916,12 +914,12 @@ impl Image {
 impl Image {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_width(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_width.get()))
+        JSValue::js_number(self.last_size.get().map_or(-1.0, |(w, _)| f64::from(w)))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_height(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_height.get()))
+        JSValue::js_number(self.last_size.get().map_or(-1.0, |(_, h)| f64::from(h)))
     }
 }
 
@@ -948,8 +946,7 @@ impl Image {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.last_width.set(i32::try_from(w).expect("int cast"));
-                    self.last_height.set(i32::try_from(h).expect("int cast"));
+                    self.last_size.set(Some((w, h)));
                     let obj = JSValue::create_empty_object(global, 3);
                     obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                     obj.put(global, b"height", JSValue::js_number(f64::from(h)));
@@ -1226,8 +1223,7 @@ impl Image {
         );
         match result {
             TaskResult::Encoded { out, format, w, h } => {
-                self.last_width.set(i32::try_from(w).expect("int cast"));
-                self.last_height.set(i32::try_from(h).expect("int cast"));
+                self.last_size.set(Some((w, h)));
                 Ok((out, format.mime()))
             }
             TaskResult::Err(e) => Err(global.throw(format_args!(
@@ -1589,7 +1585,7 @@ impl PipelineTask {
                 });
                 return;
             }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+            if u64::try_from(st.st_size).unwrap_or(0) > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
@@ -1763,8 +1759,7 @@ impl PipelineTask {
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
-                image.last_width.set(i32::try_from(*w).expect("int cast"));
-                image.last_height.set(i32::try_from(*h).expect("int cast"));
+                image.last_size.set(Some((*w, *h)));
             }
             _ => {}
         }

@@ -161,7 +161,7 @@ impl MachoFile {
                                         segname: SEGNAME_BUN,
                                         addr: original_vmaddr,
                                         size: total_size,
-                                        offset: u32::try_from(original_fileoff).expect("int cast"),
+                                        offset: sect.offset,
                                         align: (blob_alignment as f64).log2() as u32,
                                         reloff: 0,
                                         nreloc: 0,

@@ -117,7 +117,6 @@ pub struct LinkerContext<'a> {
     /// to know whether or not we can free it safely.
     pub(crate) pending_task_count: AtomicU32,
 
-    ///
     pub(crate) has_any_css_locals: AtomicU32,
 
     /// Used by Bake to extract []CompileResult before it is joined.
@@ -174,6 +173,16 @@ impl<'a> LinkerContext<'a> {
     #[inline(always)]
     pub(crate) unsafe fn bundle_v2_ptr(linker: *mut Self) -> *mut BundleV2<'a> {
         bun_core::from_field_ptr!(BundleV2, linker, linker)
+    }
+
+    /// Read-only container-of for callers holding a `*const Self`.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::bundle_v2_ptr`].
+    #[inline]
+    pub(crate) unsafe fn bundle_v2_const_ptr(linker: *const Self) -> *const BundleV2<'a> {
+        // SAFETY: address computation only; constness restored on return.
+        unsafe { Self::bundle_v2_ptr(linker.cast_mut()).cast_const() }
     }
 
     /// Shared-read accessor for the parse-side graph.
@@ -539,9 +548,15 @@ impl<'a> LinkerContext<'a> {
 
         // Note: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
-        // SAFETY: write provenance from `ptr::from_mut`; outlives every task.
+        // Shared provenance: worker tasks only read the context (they never
+        // form `&mut LinkerContext`); peer tasks hold the same pointer.
+        // SAFETY: `self` outlives every task (joined before drop).
         let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
-            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext<'a>>(self).cast())
+            bun_ptr::ParentRef::from_raw(
+                std::ptr::from_ref::<LinkerContext<'a>>(self)
+                    .cast::<LinkerContext<'static>>()
+                    .cast_mut(),
+            )
         });
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
@@ -1253,6 +1268,17 @@ pub struct LinkerOptions {
     pub(crate) public_path: &'static [u8],
 }
 
+impl LinkerOptions {
+    /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
+    /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
+    /// while printing (see `post_process_js_chunk`).
+    pub(crate) fn generates_module_info(&self) -> bool {
+        self.generate_bytecode_cache
+            && self.output_format == Format::Esm
+            && self.compile_mode.is_executable()
+    }
+}
+
 impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
@@ -1340,9 +1366,14 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `line_offset_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.line_offset_wait_group.finish();
+            // SAFETY: live until this lets the linker's `wait()` return; the linker then frees
+            // the tasks at once (`generate_chunks_in_parallel`), and nothing below touches `ctx`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,
+                )
+            };
         }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
@@ -1351,7 +1382,8 @@ impl SourceMapDataTask {
         // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let bundle: *const BundleV2 =
+            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
         // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
         // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
@@ -1376,14 +1408,19 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `quoted_contents_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.quoted_contents_wait_group.finish();
+            // SAFETY: as in `run_line_offset`, for `quoted_contents_wait_group`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.quoted_contents_wait_group,
+                )
+            };
         }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let bundle: *const BundleV2 =
+            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
         // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
         // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
@@ -1561,19 +1598,19 @@ pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
-    pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>>,
+    pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
+    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
-    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
+    /// safe `Deref`. Read-only: each task writes only through its own
+    /// `*mut Chunk`.
     pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk>,
+    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
 }
 // SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
 // shared reads are read-only.
@@ -1614,7 +1651,7 @@ impl<'a> GenerateChunkCtx<'a> {
 
 pub struct PendingPartRange<'a> {
     pub(crate) part_range: PartRange,
-    pub(crate) task: ThreadPoolLib::Task,
+    pub(crate) task: ThreadPoolLib::CountedTask,
     pub(crate) ctx: &'a GenerateChunkCtx<'a>,
     pub(crate) i: u32,
 }
@@ -1725,7 +1762,7 @@ impl<'a> LinkerContext<'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
+            // `transpiler_for_target` only reads `bundle.client_transpiler`.
             let bundle = unsafe {
                 &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
@@ -2125,6 +2162,7 @@ impl<'a> LinkerContext<'a> {
         runtime_require_ref: Option<Ref>,
         source_index: Index,
         source: &Source,
+        module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2204,6 +2242,7 @@ impl<'a> LinkerContext<'a> {
                 None
             },
             mangled_props: Some(mangled_props),
+            module_info,
             ..Default::default()
         };
 
@@ -2734,6 +2773,32 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
+            // The automatic JSX runtime import is synthesized by the parser; it
+            // exists only so lowered JSX can reference `jsx`/`jsxDEV`/etc. If no
+            // live part references those symbols the import must not be kept
+            // "for its side effects": the user never wrote it, and keeping it
+            // would bundle (or externally import) React for JSX that was
+            // entirely dead code. Liveness of the JSX import source, when it is
+            // actually needed, is established via part.dependencies (step 6
+            // wires the wrapper_ref/__toESM dependency onto this part), so
+            // skipping the side-effect scan here is safe.
+            if part.tag == bun_ast::PartTag::JsxImport {
+                if !can_be_removed_if_unused
+                    || (!part.force_tree_shaking
+                        && !self.options.tree_shaking
+                        && ctx.entry_point_kinds[source_index as usize].is_entry_point())
+                {
+                    let part_index = u32::try_from(part_index).expect("int cast");
+                    if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                        ctx.worklist.push(TreeShakeWork::Part {
+                            part_index,
+                            source_index,
+                        });
+                    }
+                }
+                continue;
+            }
+
             // Also include any statement-level imports
             for &import_index in part.import_record_indices.iter() {
                 let record = &ctx.import_records[source_index as usize][import_index as usize];
@@ -2934,7 +2999,7 @@ impl<'a> LinkerContext<'a> {
         log: &mut Log,
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scanImportsAndExports`; we only test `is_none()`.
+        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
         let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
@@ -2953,6 +3018,7 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Json
                         | Loader::Jsonc
                         | Loader::Json5
+                        | Loader::Xml
                         | Loader::Yaml
                         | Loader::Html
                         | Loader::SqliteEmbedded

@@ -10,7 +10,7 @@ use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::{Lockfile, PackageManager};
 use bun_parsers::json as JSON;
 // Note: `WorkspacePackageJSONCache` returns the T2 value-subset
 // `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
@@ -295,13 +295,6 @@ impl PackCommand {
                     );
                     Global::crash();
                 }
-                PackError::MissingPackageJSON => {
-                    Output::err_generic(
-                        "failed to find a package.json in: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_pkg_json.as_bytes())),
-                    );
-                    Global::crash();
-                }
                 // for_publish-only variants — unreachable when FOR_PUBLISH=false.
                 PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
             }
@@ -326,8 +319,6 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageVersion,
     #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
-    #[error("MissingPackageJSON")]
-    MissingPackageJSON,
     // The following two are only valid when FOR_PUBLISH == true (const-generic
     // enums cannot conditionally include variants, so both instantiations
     // share one enum).
@@ -2722,7 +2713,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     Output::err(
                         err,
                         "failed to stat file: \"{}\"",
-                        format_args!("{}", file.handle),
+                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                     );
                     Global::crash();
                 }
@@ -2994,10 +2985,8 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 /// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
 /// segments) keep packing as before.
 fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
-    value
-        .split(|&c| c == b'/')
-        .any(|component| component == b"." || component == b"..")
-        || value.iter().any(|&c| matches!(c, b'\\' | b':' | 0))
+    strings::split(value, b"/").any(|component| component == b"." || component == b"..")
+        || strings::contains_any(value, b"\\:\0")
 }
 
 fn tarball_destination<'a>(
@@ -3011,8 +3000,7 @@ fn tarball_destination<'a>(
     if !pack_filename.is_empty() && !pack_destination.is_empty() {
         Output::err_generic(
             "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
-            format_args!(
-                "{} {}",
+            (
                 bstr::BStr::new(strings::without_trailing_slash(pack_filename)),
                 bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
             ),
@@ -3056,13 +3044,12 @@ fn tarball_destination<'a>(
         if res.is_err() {
             Output::err_generic(
                 "archive destination name too long: \"{}/{}\"",
-                format_args!(
-                    "{}/{}",
+                (
                     bstr::BStr::new(strings::without_trailing_slash(&dest_buf[..dir_len_full])),
                     fmt_tarball_filename(
                         package_name,
                         package_version,
-                        TarballNameStyle::Normalize
+                        TarballNameStyle::Normalize,
                     ),
                 ),
             );
@@ -3426,45 +3413,10 @@ fn edit_root_package_json(
                             }
                         };
 
-                        let catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
                         let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
-
-                        // Note: `CatalogMap::get_group` takes `&mut self`
-                        // (returns `&mut Map`) but `pack` only needs read
-                        // access via `&Lockfile`; inline an immutable lookup.
-                        let catalog = if catalog_name.is_empty() {
-                            Some(&lockfile.catalogs.default)
-                        } else {
-                            let ctx = Semver::string::ArrayHashContext {
-                                arg_buf: catalog_name_str,
-                                existing_buf: map_buf,
-                            };
-                            let h = ctx.hash(catalog_name);
-                            lockfile
-                                .catalogs
-                                .groups
-                                .get_index_adapted_raw(h, |k, i| ctx.eql(catalog_name, *k, i))
-                                .map(|i| &lockfile.catalogs.groups.values()[i])
-                        };
-                        let Some(catalog) = catalog else {
-                            Output::err_generic(
-                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog).",
-                                (
-                                    bstr::BStr::new(dep_name_str),
-                                    bstr::BStr::new(dependency_group),
-                                ),
-                            );
-                            Global::crash();
-                        };
-
-                        let dep_name = Semver::String::init(dep_name_str, dep_name_str);
-                        let dep_ctx = Semver::string::ArrayHashContext {
-                            arg_buf: dep_name_str,
-                            existing_buf: map_buf,
-                        };
-                        let dep_h = dep_ctx.hash(dep_name);
-                        let Some(dep_idx) = catalog
-                            .get_index_adapted_raw(dep_h, |k, i| dep_ctx.eql(dep_name, *k, i))
+                        let catalog_name =
+                            strings::trim(catalog_name_str, &strings::WHITESPACE_CHARS);
+                        let Some(dep) = lockfile.catalogs.find(map_buf, catalog_name, dep_name_str)
                         else {
                             Output::err_generic(
                                 "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
@@ -3475,7 +3427,6 @@ fn edit_root_package_json(
                             );
                             Global::crash();
                         };
-                        let dep: &Dependency = &catalog.values()[dep_idx];
 
                         let literal =
                             pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
@@ -3701,8 +3652,7 @@ impl IgnorePatterns {
         Output::err(
             err,
             "failed to {} {} at: \"{}{}{}\"",
-            format_args!(
-                "{} {} {}{}{}",
+            (
                 <&str>::from(reason),
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),
@@ -3766,7 +3716,7 @@ impl IgnorePatterns {
 
         let mut has_rel_path = false;
 
-        for line in contents.split(|&b| b == b'\n') {
+        for line in strings::split(&contents, b"\n") {
             if line.is_empty() {
                 continue;
             }

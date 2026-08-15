@@ -9,6 +9,7 @@ pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
 pub use crate::sliced_string::SlicedString;
 
+mod intersects;
 #[path = "SemverQuery.rs"]
 pub mod semver_query;
 #[path = "SemverRange.rs"]
@@ -725,6 +726,9 @@ pub mod semver_string {
                     b'\\' => b'+',
                     b':' => b'+',
                     b'#' => b'+',
+                    // `?` would be parsed as a query-string delimiter during
+                    // module resolution (and is invalid in Windows filenames).
+                    b'?' => b'+',
                     _ => c,
                 };
                 use core::fmt::Write;

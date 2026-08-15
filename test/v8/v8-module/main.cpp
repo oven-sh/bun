@@ -4,6 +4,8 @@
 #endif
 #include <uv.h>
 
+#include <v8-profiler.h>
+
 #include <cinttypes>
 #include <cstdarg>
 #include <iomanip>
@@ -399,6 +401,22 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(f);
 }
 
+void test_v8_function_template_set_class_name(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, return_data_callback);
+  Local<String> class_name =
+      String::NewFromUtf8(isolate, "MyNamedClass").ToLocalChecked();
+  tmp->SetClassName(class_name);
+
+  Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+  LOG_EXPR(describe(isolate, f->GetName()));
+  info.GetReturnValue().Set(f);
+}
+
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   printf("%d arguments\n", info.Length());
@@ -709,6 +727,99 @@ void test_v8_locals_survive_nested_call(
   Local<String>::Cast(kept)->WriteUtf8V2(isolate, buf, sizeof buf,
                                          String::WriteFlags::kNullTerminate);
   LOG_EXPR(buf);
+}
+
+// Regression tests: GetReturnValue().Set() copies the Local's value into the
+// callback frame, and V8 guarantees the returned value outlives any handle
+// scope that closes before the callback returns (the stock nan idiom opens a
+// HandleScope, materializes a persistent with Nan::New, and returns a local
+// made inside that scope). The inline grant forces the scope's inline
+// destructor to run DeleteExtensions.
+
+// Calls info[1] (the JS driver passes a function that forces GC under bun)
+// while the callback is still on the stack, after the inner scope already
+// closed: the preserved return value must stay GC-visited until the runtime
+// reads the callback frame.
+static void call_gc_callback(const FunctionCallbackInfo<Value> &info) {
+  if (info.Length() > 1 && info[1]->IsFunction()) {
+    Isolate *isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    (void)info[1].As<Function>()->Call(context, Undefined(isolate), 0, nullptr);
+  }
+}
+
+void return_string_from_inner_scope(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(
+        String::NewFromUtf8(isolate, "returned-from-inner-scope")
+            .ToLocalChecked());
+  }
+  call_gc_callback(info);
+}
+
+void return_heap_number_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(Number::New(isolate, 3.25));
+  }
+  call_gc_callback(info);
+}
+
+// The return value must also survive runtime-internal scopes that pop while
+// the callback frame is live: Array::Iterate runs the iteration callback
+// inside one, and the element locals it passes are created there.
+void return_array_element_from_iterate(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> array = info[0].As<Array>();
+  (void)array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element, void *data) {
+        auto *outer = static_cast<const FunctionCallbackInfo<Value> *>(data);
+        if (index == 1) {
+          outer->GetReturnValue().Set(element);
+        }
+        return Array::CallbackResult::kContinue;
+      },
+      const_cast<void *>(static_cast<const void *>(&info)));
+  call_gc_callback(info);
+}
+
+static void inner_scope_native_getter(Local<Name> property,
+                                      const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  HandleScope hs(isolate);
+  Local<Value> grant = Local<Value>::New(isolate, Local<Value>::Cast(property));
+  (void)grant;
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "accessor-from-inner-scope")
+          .ToLocalChecked());
+}
+
+// Same scenario through a native-data-property accessor's
+// PropertyCallbackInfo.
+void return_accessor_value_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<FunctionTemplate> ctor_t = FunctionTemplate::New(isolate);
+  ctor_t->PrototypeTemplate()->SetNativeDataProperty(
+      String::NewFromUtf8Literal(isolate, "prop"), inner_scope_native_getter);
+  Local<Function> ctor = ctor_t->GetFunction(context).ToLocalChecked();
+  Local<Object> inst = ctor->NewInstance(context).ToLocalChecked();
+  Local<Value> value =
+      inst->Get(context, String::NewFromUtf8(isolate, "prop").ToLocalChecked())
+          .ToLocalChecked();
+  info.GetReturnValue().Set(value);
 }
 
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
@@ -1271,6 +1382,484 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<Integer> small_int = Integer::New(isolate, 42);
+  LOG_EXPR(small_int->Value());
+  LOG_EXPR(small_int->IsNumber());
+  LOG_EXPR(small_int->IsInt32());
+
+  Local<Integer> neg = Integer::New(isolate, -7);
+  LOG_EXPR(neg->Value());
+
+  Local<Integer> int32_max = Integer::New(isolate, 2147483647);
+  LOG_EXPR(int32_max->Value());
+
+  Local<Integer> int32_min = Integer::New(isolate, -2147483647 - 1);
+  LOG_EXPR(int32_min->Value());
+
+  // Round-trip through Value -> ToInteger
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Value> as_value = small_int;
+  Local<Integer> back = as_value->ToInteger(context).ToLocalChecked();
+  LOG_EXPR(back->Value());
+
+  return ok(info);
+}
+
+void test_v8_define_own_property(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Object> obj = Object::New(isolate);
+
+  Local<String> key_rw =
+      String::NewFromUtf8(isolate, "writable").ToLocalChecked();
+  Maybe<bool> r = obj->DefineOwnProperty(context, key_rw,
+                                         Number::New(isolate, 1.0), v8::None);
+  LOG_EXPR(r.IsJust());
+  LOG_EXPR(r.FromJust());
+
+  Local<String> key_ro =
+      String::NewFromUtf8(isolate, "readonly").ToLocalChecked();
+  r = obj->DefineOwnProperty(
+      context, key_ro, Number::New(isolate, 2.0),
+      static_cast<PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
+  LOG_EXPR(r.FromJust());
+
+  Local<String> key_hidden =
+      String::NewFromUtf8(isolate, "hidden").ToLocalChecked();
+  r = obj->DefineOwnProperty(context, key_hidden, Number::New(isolate, 3.0),
+                             v8::DontEnum);
+  LOG_EXPR(r.FromJust());
+
+  LOG_EXPR(describe(isolate, obj->Get(context, key_rw).ToLocalChecked()));
+  LOG_EXPR(describe(isolate, obj->Get(context, key_ro).ToLocalChecked()));
+  LOG_EXPR(describe(isolate, obj->Get(context, key_hidden).ToLocalChecked()));
+
+  // GetIdentityHash: stable across calls on the same object, non-zero, and
+  // survives property definition. The actual value is engine-specific so only
+  // assert on the invariants, not the number.
+  int hash1 = obj->GetIdentityHash();
+  int hash2 = obj->GetIdentityHash();
+  LOG_EXPR(hash1 != 0);
+  LOG_EXPR(hash1 == hash2);
+  r = obj->DefineOwnProperty(
+      context, String::NewFromUtf8(isolate, "late").ToLocalChecked(),
+      Number::New(isolate, 4.0), v8::None);
+  LOG_EXPR(r.FromJust());
+  int hash3 = obj->GetIdentityHash();
+  LOG_EXPR(hash1 == hash3);
+  // A fresh, distinct object must also have a non-zero hash.
+  Local<Object> other = Object::New(isolate);
+  LOG_EXPR(other->GetIdentityHash() != 0);
+
+  // Let JS assert writability/enumerability/configurability by returning obj.
+  info.GetReturnValue().Set(obj);
+}
+
+void test_v8_bigint(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<BigInt> big = BigInt::New(isolate, 123456789012345LL);
+  LOG_EXPR(big->IsBigInt());
+  LOG_EXPR(big->IsNumber());
+
+  Local<BigInt> neg = BigInt::New(isolate, -987654321098765LL);
+  LOG_EXPR(neg->IsBigInt());
+
+  Local<BigInt> zero = BigInt::New(isolate, 0);
+  LOG_EXPR(zero->IsBigInt());
+
+  // Return the first BigInt so JS can assert the numeric value exactly.
+  info.GetReturnValue().Set(big);
+}
+
+void test_v8_string_from_utf8_literal(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<String> s = String::NewFromUtf8Literal(isolate, "hello literal");
+  LOG_EXPR(s->IsString());
+  LOG_EXPR(s->Length());
+  LOG_EXPR(describe(isolate, s));
+
+  // Internalized (interned) variant must also produce an equal string.
+  Local<String> interned = String::NewFromUtf8Literal(
+      isolate, "hello literal", NewStringType::kInternalized);
+  LOG_EXPR(s->StrictEquals(interned));
+
+  // Literal with embedded UTF-8 (non-ASCII) bytes.
+  Local<String> utf8 = String::NewFromUtf8Literal(isolate, "caf\xc3\xa9");
+  LOG_EXPR(utf8->Length());
+  LOG_EXPR(describe(isolate, utf8));
+
+  return ok(info);
+}
+
+static void proto_method_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "proto-method-called").ToLocalChecked());
+}
+
+static void native_data_getter(Local<Name> property,
+                               const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  // Returning a fixed value proves the native-data-property getter was wired
+  // through Template::SetNativeDataProperty and invoked on property access.
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "native-getter-value").ToLocalChecked());
+}
+
+void test_v8_prototype_template(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> ctor_t = FunctionTemplate::New(isolate);
+  ctor_t->InstanceTemplate()->SetInternalFieldCount(1);
+
+  // PrototypeTemplate()->Set: install a method on the prototype via a nested
+  // FunctionTemplate.
+  Local<ObjectTemplate> proto_t = ctor_t->PrototypeTemplate();
+  proto_t->Set(String::NewFromUtf8Literal(isolate, "protoMethod"),
+               FunctionTemplate::New(isolate, proto_method_callback));
+
+  // SetNativeDataProperty: install a native getter with a data payload on the
+  // prototype.
+  proto_t->SetNativeDataProperty(
+      String::NewFromUtf8Literal(isolate, "nativeProp"), native_data_getter,
+      nullptr, String::NewFromUtf8(isolate, "payload").ToLocalChecked());
+
+  Local<Function> ctor = ctor_t->GetFunction(context).ToLocalChecked();
+  Local<Object> inst = ctor->NewInstance(context).ToLocalChecked();
+  LOG_EXPR(inst->InternalFieldCount());
+
+  // Read the prototype method and accessor back from C++ to prove the
+  // template wiring resolved to real properties.
+  Local<Value> method =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "protoMethod").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(method->IsFunction());
+
+  Local<Value> native_prop =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "nativeProp").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, native_prop));
+
+  // Return the instance so the JS driver can call protoMethod() and read
+  // nativeProp, asserting behavior matches Node.
+  info.GetReturnValue().Set(inst);
+}
+
+void test_v8_arraybuffer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, 16);
+  LOG_EXPR(ab->IsObject());
+
+  std::shared_ptr<BackingStore> store = ab->GetBackingStore();
+  if (store->Data() == nullptr) {
+    return fail(info, "BackingStore::Data() returned null for 16-byte buffer");
+  }
+  // Zero-initialized by default; write through the backing store and read
+  // it back through a Uint8Array view.
+  uint8_t *data = static_cast<uint8_t *>(store->Data());
+  for (size_t i = 0; i < 16; i++) {
+    LOG_EXPR((int)data[i]);
+  }
+  for (size_t i = 0; i < 16; i++) {
+    data[i] = static_cast<uint8_t>(i + 1);
+  }
+
+  Local<Uint8Array> u8 = Uint8Array::New(ab, 4, 8);
+  LOG_EXPR(u8->ByteOffset());
+  LOG_EXPR(u8->ByteLength());
+  LOG_EXPR(u8->IsUint8Array());
+  Local<ArrayBuffer> underlying = u8->Buffer();
+  LOG_EXPR(underlying->StrictEquals(ab));
+
+  return ok(info);
+}
+
+void test_v8_typedarray(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, 32);
+  Local<Uint8Array> u8 = Uint8Array::New(ab, 0, 32);
+  LOG_EXPR(u8->ByteLength());
+  LOG_EXPR(u8->ByteOffset());
+  LOG_EXPR(u8->IsUint8Array());
+
+  Local<Uint32Array> u32 = Uint32Array::New(ab, 0, 8);
+  LOG_EXPR(u32->ByteLength());
+  LOG_EXPR(u32->ByteOffset());
+  LOG_EXPR(u32->IsUint8Array());
+
+  // view at nonzero offset
+  Local<Uint8Array> tail = Uint8Array::New(ab, 8, 24);
+  LOG_EXPR(tail->ByteOffset());
+  LOG_EXPR(tail->ByteLength());
+
+  return ok(info);
+}
+
+void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (info.Length() < 1 || !info[0]->IsFunction()) {
+    return fail(info, "expected a function argument");
+  }
+  Local<Function> f = info[0].As<Function>();
+
+  Local<Value> argv[3] = {
+      Number::New(isolate, 7.0),
+      String::NewFromUtf8(isolate, "hello").ToLocalChecked(),
+      Boolean::New(isolate, true),
+  };
+  MaybeLocal<Value> result =
+      f->Call(context, Undefined(isolate), 3, argv);
+  LOG_EXPR(result.IsEmpty());
+  if (!result.IsEmpty()) {
+    LOG_EXPR(describe(isolate, result.ToLocalChecked()));
+  }
+
+  Local<Object> recv = Object::New(isolate);
+  (void)recv->Set(context,
+                  String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+                  Number::New(isolate, 99.0));
+  MaybeLocal<Value> result2 = f->Call(context, recv, 0, nullptr);
+  LOG_EXPR(result2.IsEmpty());
+  if (!result2.IsEmpty()) {
+    LOG_EXPR(describe(isolate, result2.ToLocalChecked()));
+  }
+
+  return ok(info);
+}
+
+static void construct_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> self = info.This();
+  (void)self->Set(context,
+                  String::NewFromUtf8(isolate, "constructed").ToLocalChecked(),
+                  Boolean::New(isolate, true));
+  if (info.Length() > 0) {
+    (void)self->Set(context,
+                    String::NewFromUtf8(isolate, "arg0").ToLocalChecked(),
+                    info[0]);
+  }
+}
+
+void test_v8_function_new_instance(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, construct_callback);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  Local<Function> ctor = tmp->GetFunction(context).ToLocalChecked();
+
+  Local<Value> argv[1] = {Number::New(isolate, 123.0)};
+  MaybeLocal<Object> maybe_inst = ctor->NewInstance(context, 1, argv);
+  LOG_EXPR(maybe_inst.IsEmpty());
+  Local<Object> inst = maybe_inst.ToLocalChecked();
+  LOG_EXPR(inst->IsObject());
+  LOG_EXPR(inst->InternalFieldCount());
+
+  Local<Value> constructed =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "constructed").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, constructed));
+  Local<Value> arg0 =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "arg0").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, arg0));
+
+  // zero-arg overload
+  MaybeLocal<Object> maybe_inst2 = ctor->NewInstance(context);
+  LOG_EXPR(maybe_inst2.IsEmpty());
+
+  return ok(info);
+}
+
+void test_v8_getfunction_memoized(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, construct_callback);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  tmp->PrototypeTemplate()->Set(
+      String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+      Number::New(isolate, 7.0));
+
+  Local<Function> ctor1 = tmp->GetFunction(context).ToLocalChecked();
+  Local<Function> ctor2 = tmp->GetFunction(context).ToLocalChecked();
+
+  // V8 memoizes GetFunction per context, so repeat calls return the same
+  // Function with the same .prototype.
+  LOG_EXPR(ctor1->StrictEquals(ctor2));
+
+  Local<Value> proto1 =
+      ctor1
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  Local<Value> proto2 =
+      ctor2
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(proto1->StrictEquals(proto2));
+
+  return ok(info);
+}
+
+void test_v8_map(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (info.Length() < 1 || !info[0]->IsMap()) {
+    return fail(info, "expected a Map argument");
+  }
+  Local<Map> map = info[0].As<Map>();
+
+  Local<String> key_a = String::NewFromUtf8(isolate, "a").ToLocalChecked();
+  Local<String> key_b = String::NewFromUtf8(isolate, "b").ToLocalChecked();
+
+  MaybeLocal<Map> set1 = map->Set(context, key_a, Number::New(isolate, 1.0));
+  LOG_EXPR(set1.IsEmpty());
+  MaybeLocal<Map> set2 = map->Set(context, key_b, Number::New(isolate, 2.0));
+  LOG_EXPR(set2.IsEmpty());
+  // Set must return the same Map (for chaining).
+  if (!set2.IsEmpty() &&
+      !set2.ToLocalChecked().As<Value>()->StrictEquals(info[0])) {
+    return fail(info, "Map::Set did not return the receiver map");
+  }
+
+  Maybe<bool> del_a = map->Delete(context, key_a);
+  LOG_EXPR(del_a.IsJust());
+  LOG_EXPR(del_a.FromJust());
+
+  Maybe<bool> del_missing = map->Delete(
+      context, String::NewFromUtf8(isolate, "missing").ToLocalChecked());
+  LOG_EXPR(del_missing.IsJust());
+  LOG_EXPR(del_missing.FromJust());
+
+  info.GetReturnValue().Set(map);
+}
+
+void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<String> msg =
+      String::NewFromUtf8(isolate, "boom from native").ToLocalChecked();
+
+  Local<Value> err = Exception::Error(msg);
+  LOG_EXPR(err->IsObject());
+  LOG_EXPR(
+      describe(isolate,
+               err.As<Object>()
+                   ->Get(isolate->GetCurrentContext(),
+                         String::NewFromUtf8(isolate, "message").ToLocalChecked())
+                   .ToLocalChecked()));
+
+  Local<Value> type_err = Exception::TypeError(
+      String::NewFromUtf8(isolate, "wrong type").ToLocalChecked());
+  LOG_EXPR(type_err->IsObject());
+
+  // Throw the Error so the JS driver can observe it.
+  isolate->ThrowException(err);
+}
+
+void test_v8_aligned_pointer_in_internal_field(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
+  tmp->SetInternalFieldCount(2);
+  Local<Object> obj = tmp->NewInstance(context).ToLocalChecked();
+  LOG_EXPR(obj->InternalFieldCount());
+
+  static int target_a = 111;
+  static int target_b = 222;
+
+  obj->SetAlignedPointerInInternalField(0, &target_a,
+                                        kEmbedderDataTypeTagDefault);
+  obj->SetAlignedPointerInInternalField(1, &target_b,
+                                        kEmbedderDataTypeTagDefault);
+
+  void *got_a =
+      obj->GetAlignedPointerFromInternalField(0, kEmbedderDataTypeTagDefault);
+  void *got_b =
+      obj->GetAlignedPointerFromInternalField(1, kEmbedderDataTypeTagDefault);
+
+  if (got_a != &target_a) {
+    return fail(info, "aligned pointer slot 0 round-trip failed");
+  }
+  if (got_b != &target_b) {
+    return fail(info, "aligned pointer slot 1 round-trip failed");
+  }
+  LOG_EXPR(*static_cast<int *>(got_a));
+  LOG_EXPR(*static_cast<int *>(got_b));
+
+  // nullptr must round-trip too.
+  obj->SetAlignedPointerInInternalField(0, nullptr,
+                                        kEmbedderDataTypeTagDefault);
+  if (obj->GetAlignedPointerFromInternalField(0, kEmbedderDataTypeTagDefault) !=
+      nullptr) {
+    return fail(info, "aligned pointer slot 0 should be null after reset");
+  }
+
+  return ok(info);
+}
+
+void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  Local<String> title =
+      String::NewFromUtf8(isolate, "bun-v8-test").ToLocalChecked();
+  CpuProfilingResult start_result = profiler->Start(
+      title, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)start_result.status);
+
+  // Do a little work so at least the root node exists; do NOT assert on sample
+  // counts because those are timing-dependent and differ across engines.
+  volatile double sink = 0;
+  for (int i = 0; i < 100000; i++) sink += i * 0.5;
+  (void)sink;
+
+  CpuProfile *profile = profiler->Stop(start_result.id);
+  if (profile == nullptr) {
+    return fail(info, "CpuProfiler::Stop returned null");
+  }
+  const CpuProfileNode *root = profile->GetTopDownRoot();
+  if (root == nullptr) {
+    return fail(info, "CpuProfile::GetTopDownRoot returned null");
+  }
+  LOG_EXPR(root->GetChildrenCount() >= 0);
+  LOG_EXPR(profile->GetSamplesCount() >= 0);
+  LOG_EXPR(profile->GetStartTime() <= profile->GetEndTime());
+
+  profile->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1294,6 +1883,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "test_v8_function_template_set_class_name",
+                  test_v8_function_template_set_class_name);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
@@ -1306,6 +1897,14 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope_inline_grants);
   NODE_SET_METHOD(exports, "test_v8_locals_survive_nested_call",
                   test_v8_locals_survive_nested_call);
+  NODE_SET_METHOD(exports, "return_string_from_inner_scope",
+                  return_string_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_heap_number_from_inner_scope",
+                  return_heap_number_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_array_element_from_iterate",
+                  return_array_element_from_iterate);
+  NODE_SET_METHOD(exports, "return_accessor_value_from_inner_scope",
+                  return_accessor_value_from_inner_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
@@ -1330,6 +1929,26 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
+  NODE_SET_METHOD(exports, "test_v8_define_own_property",
+                  test_v8_define_own_property);
+  NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);
+  NODE_SET_METHOD(exports, "test_v8_string_from_utf8_literal",
+                  test_v8_string_from_utf8_literal);
+  NODE_SET_METHOD(exports, "test_v8_prototype_template",
+                  test_v8_prototype_template);
+  NODE_SET_METHOD(exports, "test_v8_arraybuffer", test_v8_arraybuffer);
+  NODE_SET_METHOD(exports, "test_v8_typedarray", test_v8_typedarray);
+  NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
+  NODE_SET_METHOD(exports, "test_v8_function_new_instance",
+                  test_v8_function_new_instance);
+  NODE_SET_METHOD(exports, "test_v8_getfunction_memoized",
+                  test_v8_getfunction_memoized);
+  NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
+  NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
+  NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
+                  test_v8_aligned_pointer_in_internal_field);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

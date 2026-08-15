@@ -2858,6 +2858,135 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // `delete (null ?? ns.x)` evaluates its operand to a value, so the result is
+  // `true` with no side effect. When bundling rewrites `ns.x` to the local
+  // binding (EImportIdentifier) after folding `??`, the printer must re-wrap
+  // the operand so `delete` still sees a value instead of the binding itself.
+  // Without the wrap the output is `delete x`, a strict-mode SyntaxError.
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+        console.log(delete (0, ns.x), ns.x);
+        console.log(delete (true ? ns.x : 0), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+x\b/);
+      expect(code).not.toMatch(/delete\s+ns\.x\b/);
+    },
+    run: { stdout: "true 1\ntrue 1\ntrue 1" },
+  });
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRefMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "true 1" },
+  });
+  // Same path via a direct named import: the identifier becomes an
+  // EImportIdentifier during the visit pass.
+  itBundled("edgecase/DeleteFoldedImportedBindingRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./m.js";
+        console.log(delete (null ?? x), x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+x\b/);
+    },
+    run: { stdout: "true 1" },
+  });
+  // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
+  // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints
+  // as `__require` / `__require.main` / `__require.resolve`.
+  itBundled("edgecase/DeleteFoldedRequireRefs", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? require));
+        console.log(delete (null ?? require.main));
+        console.log(delete (null ?? require.resolve));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+__require\b/);
+      expect(code).not.toMatch(/delete\s+require\b/);
+    },
+    run: { stdout: "true\ntrue\ntrue" },
+  });
+  // The visit pass substitutes unbound `undefined` to EUndefined, which
+  // `print_undefined` emits as the bare identifier when not minifying.
+  itBundled("edgecase/DeleteFoldedUndefinedRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? undefined));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+undefined\b/);
+    },
+    run: { stdout: "true" },
+  });
+  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
+  // that prints as `__require.main == __require.module` without its own paren
+  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+import\.meta\.main\b/);
+    },
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/DeleteFoldedImportMetaMainRefNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    target: "node",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+__require\.main\b/);
+    },
+    run: { runtime: "node", stdout: "true" },
+  });
+  // A same-file `const enum` member is inlined to an EInlinedEnum wrapping an
+  // ENumber during the visit pass, so the NaN/Infinity check has to look
+  // through the wrapper.
+  itBundled("edgecase/DeleteFoldedInlinedConstEnumNaN", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const enum E { N = 0/0, I = 1/0, V = 1 }
+        console.log(delete (null ?? E.N), delete (null ?? E.I), delete (null ?? E.V));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+NaN\b/);
+      expect(code).not.toMatch(/delete\s+Infinity\b/);
+    },
+    run: { stdout: "true true true" },
+  });
   // https://github.com/oven-sh/bun/issues/14509
   // A require() in the catch handler of a try/catch is the common "fallback
   // require" pattern and should not fail the build when unresolvable.

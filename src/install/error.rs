@@ -8,22 +8,12 @@ pub enum Error {
     NotDir,
     #[error("NameTooLong")]
     NameTooLong,
-    #[error("FileTooBig")]
-    FileTooBig,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("ProcessFdQuotaExceeded")]
-    ProcessFdQuotaExceeded,
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("ReadOnlyFileSystem")]
-    ReadOnlyFileSystem,
-    #[error("FileSystem")]
-    FileSystem,
-    #[error("FileBusy")]
-    FileBusy,
     #[error("DeviceBusy")]
     DeviceBusy,
     #[error("TarballHTTP400")]
@@ -208,16 +198,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
-    #[error("NPMLockfileVersionMismatch")]
-    NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
     #[error("DependencyLoop")]
     DependencyLoop,
     #[error("NotSupported")]
@@ -271,14 +253,9 @@ impl Error {
             Self::AccessDenied => "AccessDenied",
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
-            Self::FileTooBig => "FileTooBig",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::ReadOnlyFileSystem => "ReadOnlyFileSystem",
-            Self::FileSystem => "FileSystem",
-            Self::FileBusy => "FileBusy",
             Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
@@ -393,11 +370,7 @@ impl Error {
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
             }
-            Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
             Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",

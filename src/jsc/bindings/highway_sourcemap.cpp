@@ -915,7 +915,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
 
             // Accumulate and range-check. On any out-of-range value, bail at
             // this segment's start WITHOUT committing: scalar re-decodes it
-            // and reports the exact same ParseResult::Fail as before.
+            // and reports the exact same ParseFail as before.
             const int32_t n_gen_col = WrapAdd(gen_col, d_gen);
             if (HWY_UNLIKELY(n_gen_col < 0))
                 goto bail;

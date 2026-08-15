@@ -483,6 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             name,
                                         )
                                         && name != b"__proto__"
+                                        && value.can_be_inlined_from_property_access()
                                     {
                                         return Some(value);
                                     }

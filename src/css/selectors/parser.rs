@@ -1620,19 +1620,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         unreachable!("use serializer::serialize_selector_list()");
     }
 
-    pub fn parse_with_options(input: &mut CssParser, options: &ParserOptions) -> CResult<Self> {
-        let mut parser = SelectorParser {
-            options,
-            is_nesting_allowed: true,
-        };
-        Self::parse(
-            &mut parser,
-            input,
-            ParseErrorRecovery::DiscardList,
-            NestingRequirement::None,
-        )
-    }
-
     pub fn parse(
         parser: &mut SelectorParser,
         input: &mut CssParser,
@@ -1672,61 +1659,45 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
-        let original_state = *state;
-        let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
-
-        loop {
-            // For borrowck, the closure captures a local `saw_nesting` flag
-            // and applies it to `state` after it returns (no raw `*mut`).
-            let mut saw_nesting = false;
-            let selector =
-                input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
-                    let mut selector_state = original_state;
-                    let result = parse_selector::<Impl>(
-                        parser,
-                        input2,
-                        &mut selector_state,
-                        nesting_requirement,
-                    );
-                    if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
-                        saw_nesting = true;
-                    }
-                    result
-                });
-            if saw_nesting {
-                state.insert(SelectorParsingState::AFTER_NESTING);
-            }
-
-            let was_ok = selector.is_ok();
-            match selector {
-                Ok(sel) => {
-                    values.append(sel);
-                }
-                Err(e) => match recovery {
-                    ParseErrorRecovery::DiscardList => return Err(e),
-                    ParseErrorRecovery::IgnoreInvalidSelector => {}
-                },
-            }
-
-            if let Ok(tok) = input.next() {
-                if matches!(tok, Token::Comma) {
-                    continue;
-                }
-                // Shouldn't have got a selector if getting here.
-                debug_assert!(!was_ok);
-            }
-            return Ok(Self { v: values });
-        }
+        Self::parse_list_with_state(
+            parser,
+            input,
+            state,
+            recovery,
+            nesting_requirement,
+            parse_selector::<Impl>,
+        )
     }
 
-    // Same shape as `parse_with_state()` but parses each item with
-    // `parse_relative_selector()` instead of `parse_selector()`.
     pub(crate) fn parse_relative_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
         state: &mut SelectorParsingState,
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
+    ) -> CResult<Self> {
+        Self::parse_list_with_state(
+            parser,
+            input,
+            state,
+            recovery,
+            nesting_requirement,
+            parse_relative_selector::<Impl>,
+        )
+    }
+
+    fn parse_list_with_state(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        state: &mut SelectorParsingState,
+        recovery: ParseErrorRecovery,
+        nesting_requirement: NestingRequirement,
+        parse_one: fn(
+            &mut SelectorParser,
+            &mut CssParser,
+            &mut SelectorParsingState,
+            NestingRequirement,
+        ) -> CResult<GenericSelector<Impl>>,
     ) -> CResult<Self> {
         let original_state = *state;
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
@@ -1738,12 +1709,8 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             let selector =
                 input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
                     let mut selector_state = original_state;
-                    let result = parse_relative_selector::<Impl>(
-                        parser,
-                        input2,
-                        &mut selector_state,
-                        nesting_requirement,
-                    );
+                    let result =
+                        parse_one(parser, input2, &mut selector_state, nesting_requirement);
                     if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
                         saw_nesting = true;
                     }
@@ -1925,14 +1892,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
 
     pub(crate) fn specificity(&self) -> u32 {
         self.specificity_and_flags.specificity
-    }
-
-    pub fn parse_with_options(input: &mut CssParser, options: &ParserOptions) -> CResult<Self> {
-        let mut selector_parser = SelectorParser {
-            is_nesting_allowed: true,
-            options,
-        };
-        Self::parse(&mut selector_parser, input)
     }
 
     pub(crate) fn iter_raw_match_order(&self) -> RawMatchOrderIterator<'_, Impl> {

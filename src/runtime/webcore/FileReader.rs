@@ -304,6 +304,12 @@ bun_io::impl_buffered_reader_parent! {
         #[cfg(not(windows))] { ev.r#loop() }
     };
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
+    // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
+    // as HTMLRewriter) that can drop this stream's last GC root and allocate
+    // before the read loop's frames unwind, so the reader pins its parent —
+    // and, through `increment_count`, the JS wrapper — for the duration.
+    ref_  = |this| (*(&*this).parent()).increment_count();
+    deref = |this| { let _ = Source::decrement_count((&*this).parent()); };
 }
 
 impl FileReader {
@@ -508,7 +514,9 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    self.reader().read();
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
                 }
             }
         }
@@ -574,6 +582,7 @@ impl FileReader {
             match sink.write(&chunk) {
                 streams::Writable::Backpressure(_) => {
                     self.sink_paused.set(true);
+                    self.reader().pause();
                     return;
                 }
                 streams::Writable::Err(e) => {
@@ -596,7 +605,9 @@ impl FileReader {
         }
         if !self.reader().has_pending_read() {
             self.reader().unpause();
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
     }
 
@@ -708,7 +719,12 @@ impl FileReader {
                 }
                 match wrote {
                     streams::Writable::Backpressure(_) => {
+                        // Returning `false` ends a synchronous read loop; an
+                        // event-driven reader (Windows, pollable fds) has to
+                        // be paused, or its next completion lands here again
+                        // and piles into the sink. `pull_into_sink` unpauses.
                         self.sink_paused.set(true);
+                        self.reader().pause();
                         close_if_needed!();
                         return false;
                     }
@@ -798,7 +814,7 @@ impl FileReader {
                             pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    value: self.pending_value.get().get().unwrap_or_default(),
                                     len: buffer.len() as u64, // @truncate
                                 })
                             });
@@ -824,7 +840,7 @@ impl FileReader {
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                        value: self.pending_value.get().get().unwrap_or_default(),
                         len: buf.len() as u64, // @truncate
                     };
 
@@ -1002,7 +1018,9 @@ impl FileReader {
             let buffer_len = buffer.len();
             self.read_inside_on_pull
                 .set(ReadDuringJSOnPullResult::Js(buffer));
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
 
             // `replace` resets the field before matching, covering all return paths.
             let pulled = self
@@ -1239,7 +1257,9 @@ impl FileReader {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                self.reader().read();
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
             }
         } else {
             self.reader().pause();
@@ -1254,13 +1274,12 @@ impl FileReader {
 
 pub type Source = readable_stream::NewSource<FileReader>;
 
-// Intrusive backref: `self` is always the `context` field of a heap-allocated
-// `Source`. Returns `*mut Source`
-// (NOT `&mut Source`) because `self` IS the `context` field — materializing
-// `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
-// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
-// `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+// SAFETY: `FileReader` is always the `context` field of a heap-allocated
+// `Source`. `parent` is the `raw` arm because the ref-count pin
+// (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
+// fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
+// hold `&mut Source` across other `self.*` accesses.
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
@@ -1281,7 +1300,7 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)

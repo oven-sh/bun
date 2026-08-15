@@ -698,5 +698,4 @@ class InspectorCDPAdapter {
 
 export default {
   InspectorCDPAdapter,
-  EXECUTION_CONTEXT_ID,
 };

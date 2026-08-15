@@ -21,8 +21,11 @@ import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
-export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+// Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
+export const isAndroid = process.platform === "android";
+export const isLinux = process.platform === "linux" || isAndroid;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 
 export const isArm64 = process.arch === "arm64";
 export const isX64 = process.arch === "x64";
@@ -1538,14 +1541,17 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
     return "darwin";
   }
-  if (/linux/i.test(string)) {
+  if (/linux|android/i.test(string)) {
     return "linux";
+  }
+  if (/freebsd/i.test(string)) {
+    return "freebsd";
   }
   if (/win/i.test(string)) {
     return "windows";
@@ -1554,7 +1560,7 @@ export function parseOs(string) {
 }
 
 /**
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function getOs() {
   return parseOs(process.platform);
@@ -1604,11 +1610,15 @@ export function getKernel() {
 }
 
 /**
- * @returns {"musl" | "gnu" | undefined}
+ * @returns {"musl" | "gnu" | "android" | undefined}
  */
 export function getAbi() {
   if (!isLinux) {
     return;
+  }
+
+  if (isAndroid || existsSync("/system/bin/linker64")) {
+    return "android";
   }
 
   if (existsSync("/etc/alpine-release")) {

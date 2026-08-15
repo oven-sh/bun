@@ -145,7 +145,7 @@ unsafe impl Sync for Chunk {}
 /// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
 /// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
 /// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after `worker_pool.wait_for_all()`. Wrapping each
+/// then read single-threaded after the batch's `group.wait()`. Wrapping each
 /// slot in `UnsafeCell` makes the per-task write sound through a shared view —
 /// worker callbacks never need to materialize an aliased `&mut Chunk` or
 /// `&mut [CompileResult]` to publish their result.
@@ -154,7 +154,7 @@ unsafe impl Sync for Chunk {}
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
 // SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via `wait_for_all`).
+// only after the pool join (happens-before via the batch's `group.wait()`).
 // `CompileResult` itself is `Send`.
 unsafe impl Sync for CompileResultSlots {}
 
@@ -170,7 +170,7 @@ impl CompileResultSlots {
         self.0.len()
     }
 
-    /// Post-join read view. Single-threaded callers only (after `wait_for_all`).
+    /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
     #[inline]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
         // SAFETY: reads happen only after the pool join; no concurrent writer.
@@ -282,15 +282,12 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn get_js_chunk_for_html<'a>(
-        &self,
-        chunks: &'a mut [Chunk],
-    ) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
         // Non-entry chunks created under code splitting carry a default
         // entry_point_id of 0, so the id alone is ambiguous; require
         // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
-        for other in chunks.iter_mut() {
+        for other in chunks.iter() {
             if matches!(other.content, Content::Javascript(_))
                 && other.entry_point.is_entry_point()
                 && other.entry_point.entry_point_id() == entry_point_id
@@ -301,37 +298,25 @@ impl Chunk {
         None
     }
 
-    pub(crate) fn get_css_chunk_for_html<'a>(
-        &self,
-        chunks: &'a mut [Chunk],
-    ) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        // Note: reshaped for borrowck — we scan immutably for the JS chunk, copy the
-        // css-chunk index into a local, drop the borrow, then re-borrow mutably.
         let entry_point_id = self.entry_point.entry_point_id();
-        let css_idx: Option<usize> = 'find: {
-            for other in chunks.iter() {
-                if let Content::Javascript(js) = &other.content {
-                    if other.entry_point.is_entry_point()
-                        && other.entry_point.entry_point_id() == entry_point_id
-                    {
-                        let css_chunk_indices = &js.css_chunks[..];
-                        if !css_chunk_indices.is_empty() {
-                            break 'find Some(css_chunk_indices[0] as usize);
-                        }
-                        break 'find None;
+        for other in chunks.iter() {
+            if let Content::Javascript(js) = &other.content {
+                if other.entry_point.is_entry_point()
+                    && other.entry_point.entry_point_id() == entry_point_id
+                {
+                    if let Some(&css_idx) = js.css_chunks.first() {
+                        return Some(&chunks[css_idx as usize]);
                     }
+                    break;
                 }
             }
-            None
-        };
-        if let Some(idx) = css_idx {
-            return Some(&mut chunks[idx]);
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
-        for other in chunks.iter_mut() {
+        for other in chunks.iter() {
             if matches!(other.content, Content::Css(_))
                 && other.entry_point.is_entry_point()
                 && other.entry_point.entry_point_id() == entry_point_id
@@ -936,13 +921,16 @@ impl IntermediateOutput {
                                         &mut cursor,
                                     )
                                     .expect("unreachable");
-                                    let pos = before_len - cursor.len();
-                                    remain = &mut remain[pos..];
+                                    let written = before_len - cursor.len();
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
+                                        // The placeholder was an HtmlImport unique key, which has
+                                        // the same UNIQUE_KEY_LEN as this chunk's own key.
                                         shift.before.advance(chunk.unique_key);
+                                        shift.after.advance(&remain[..written]);
                                         shifts.push(shift);
                                     }
+                                    remain = &mut remain[written..];
                                     continue;
                                 }
                                 _ => unreachable!(),
@@ -1040,14 +1028,13 @@ impl IntermediateOutput {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                         // This comment must go before the //# sourceMappingURL comment
                         let mut debug_id_fmt = Vec::new();
-                        write!(
+                        let _ = write!(
                             &mut debug_id_fmt,
                             "\n//# debugId={}\n",
                             source_map::DebugIDFormatter {
                                 id: chunk.isolated_hash
                             }
-                        )
-                        .ok();
+                        );
 
                         let _ = arena; // Note: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;
@@ -1216,7 +1203,7 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
+/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntryPoint(u64);
@@ -1226,19 +1213,19 @@ pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
+    const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
-    pub(crate) fn new(
-        source_index: u32,
-        entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
-    ) -> Self {
+    /// The chunk that entry point `entry_point_id` itself produces.
+    pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
+        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
+    }
+
+    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
+    /// CSS/HTML) that is not itself an entry point.
+    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64)
-                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
-                | ((is_entry_point as u64) << 62)
-                | ((is_html as u64) << 63),
+            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
         )
     }
 
@@ -1254,7 +1241,7 @@ impl EntryPoint {
 
     #[inline]
     pub(crate) fn is_entry_point(self) -> bool {
-        (self.0 >> 62) & 1 != 0
+        self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
     #[inline]
@@ -1607,13 +1594,6 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
-                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
-            }
-        }
         pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),

@@ -185,11 +185,10 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // present, no `rust-std`, no `lib/rustlib/multirust-channel-manifest.toml`).
   // That surfaces as either `error[E0463]: can't find crate for core` (cargo
   // ran, no std) or `error: Missing manifest in toolchain '<channel>-<host>'`
-  // (rustup-proxy refused to even resolve cargo). `rustup toolchain install
-  // --force` repairs both — `--force` reinstalls missing components rather
-  // than trusting "the dir exists, I'm done", and it's a ~70ms no-op when the
-  // toolchain is already complete (verified locally), so it's cheap to run
-  // unconditionally.
+  // (rustup-proxy refused to even resolve cargo). `rustup toolchain install`
+  // repairs both, and is an offline ~70ms no-op when the toolchain is already
+  // complete. No `--force`: that means "update even if the manifest lacks a
+  // component", which re-fetches the channel manifest on every build.
   //
   // `$rust_target_arg` is `--target <triple>` for Tier 1/2 (also installs the
   // prebuilt `rust-std-<triple>`), and empty for Tier 3 (no prebuilt; cargo
@@ -208,7 +207,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   //
   // No `--profile minimal`: the agent already has the default profile, and
   // rustup applies `--profile` to the install spec, not just first-install —
-  // requesting a *narrower* profile on a `--force` reinstall is asking for
+  // requesting a *narrower* profile on a reinstall is asking for
   // trouble. We only care that `rust-src` and `rust-std-<triple>` exist on
   // top of whatever profile is there.
   //
@@ -261,7 +260,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     // `-q` + `--no-self-update` silence the five `info:` lines rustup prints
     // on every no-op reinstall; warnings/errors still show.
     const chain =
-      `${stream} --console $env ${q(rustup)} -q toolchain install ${cfg.rustToolchain} --force --no-self-update --component rust-src $rust_target_arg && ` +
+      `${stream} --console $env ${q(rustup)} -q toolchain install ${cfg.rustToolchain} --no-self-update --component rust-src $rust_target_arg && ` +
       `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
@@ -347,6 +346,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     triple,
     "--profile",
     profile.name,
+    "--locked",
   ];
   if (tier3 || cfg.release || cfg.asan) {
     // Build std/core/alloc from source instead of linking the rustup prebuilt.
@@ -686,6 +686,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // cargo step vs 4m36s for the linker-plugin-lto build (which defers
     // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
+    // With LTO off, `codegen-units = 1` only serializes each crate's LLVM pass over the doubled IR; nothing built with ASAN ships, so take cargo's release default instead.
+    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
   }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
@@ -758,6 +760,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       triple,
       "--profile",
       "shim",
+      "--locked",
       "-Zbuild-std=core,compiler_builtins",
       "-Zbuild-std-features=compiler-builtins-mem",
     ];
@@ -835,7 +838,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   // ─── Emit build node ───
   // When the toolchain is rustup-managed and pinned, route through
-  // `rust_build_cross`, which does `rustup toolchain install --force ...`
+  // `rust_build_cross`, which does `rustup toolchain install ...`
   // before cargo. That makes the first build after a `rust-toolchain.toml`
   // channel bump (and a partially auto-installed toolchain) self-heal —
   // see the rule comment above. Tier 1/2 also pass `--target <triple>` so

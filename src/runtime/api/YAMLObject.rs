@@ -9,7 +9,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -43,7 +43,6 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
             StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
         };
     }
@@ -52,7 +51,6 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
             StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
         };
     }
@@ -165,8 +163,6 @@ pub(crate) enum StringifyError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -176,7 +172,6 @@ impl From<JsError> for StringifyError {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
             JsError::Thrown => StringifyError::JsError,
-            JsError::Terminated => StringifyError::JsTerminated,
         }
     }
 }
@@ -1033,7 +1028,9 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         true,
         false,
         |arena, log, source| {
-            let root = match YAML::parse(source, log, arena) {
+            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+            // once by pointer identity, so a cyclic graph is fine here.
+            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1082,8 +1079,6 @@ pub(crate) enum ToJsError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -1093,7 +1088,6 @@ impl From<JsError> for ToJsError {
         match e {
             JsError::OutOfMemory => ToJsError::OutOfMemory,
             JsError::Thrown => ToJsError::JsError,
-            JsError::Terminated => ToJsError::JsTerminated,
         }
     }
 }
@@ -1106,7 +1100,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,
-            Up::JSTerminated => ToJsError::JsTerminated,
             // `value_string_to_js` never yields the macro/identifier variants
             // (those come from the full `data_to_js` walker); map defensively.
             Up::CannotConvertArgumentTypeToJS
@@ -1129,7 +1122,7 @@ impl<'a> ParserCtx<'a> {
                 ctx.result = ctx.global.throw_out_of_memory_value();
                 return;
             }
-            Err(ToJsError::JsError) | Err(ToJsError::JsTerminated) => {
+            Err(ToJsError::JsError) => {
                 ctx.result = JSValue::ZERO;
                 return;
             }

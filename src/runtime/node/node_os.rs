@@ -29,7 +29,7 @@ pub(crate) fn freemem() -> u64 {
 
 // ─── gated: JSC bindings + platform syscall bodies ────────────────────────
 // Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
-// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
+// `global.throw_value`) or reaches `bun_sys::posix::sysctl_read*` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
 
@@ -321,7 +321,7 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
+            let mut line_iter = strings::tokenize(contents, b"\n");
 
             // Skip the first line (aggregate of all CPUs)
             let _ = line_iter.next();
@@ -329,9 +329,7 @@ mod _impl {
             // Read each CPU line
             while let Some(line) = line_iter.next() {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
-                let mut toks = line
-                    .split(|b| *b == b' ' || *b == b'\t')
-                    .filter(|s| !s.is_empty());
+                let mut toks = strings::tokenize_any(line, b" \t");
                 let cpu_name = toks.next();
                 if cpu_name.is_none() || !cpu_name.unwrap().starts_with(b"cpu") {
                     break; // done with CPUs
@@ -371,7 +369,7 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
+            let mut line_iter = strings::tokenize(contents, b"\n");
 
             const KEY_PROCESSOR: &[u8] = b"processor\t: ";
             const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
@@ -1712,6 +1710,6 @@ fn parse_u32(s: &[u8]) -> crate::Result<u32> {
 #[cfg(windows)]
 #[inline]
 fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
-    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let nul = bun_core::strings::index_of_scalar(buf, 0).unwrap_or(buf.len());
     &buf[..nul]
 }

@@ -3,7 +3,7 @@ title: "Writing tests"
 description: "Write tests with Bun's Jest-compatible API, including async tests, timeouts, and test modifiers"
 ---
 
-Define tests with a Jest-like API imported from the built-in `bun:test` module. Long term, Bun aims for complete Jest compatibility; a limited set of `expect` matchers is supported.
+Define tests with a Jest-like API imported from the built-in `bun:test` module. Long term, Bun aims for complete Jest compatibility; for now, it supports a limited set of `expect` matchers.
 
 ## Basic Usage
 
@@ -76,7 +76,7 @@ test("wat", async () => {
 
 In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
 
-The default timeout for each test is 5000ms (5 seconds) if not overridden by this timeout option or `jest.setTimeout()`.
+The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 
 ## Retries and Repeats
 
@@ -117,13 +117,13 @@ test(
 
 ### 🧟 Zombie Process Killer
 
-When a test times out, Bun kills any processes spawned in it with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process` that are still running, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
+When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
 
 ## Test Modifiers
 
 ### test.skip
 
-Skip individual tests with `test.skip`. These tests are not run.
+Skip individual tests with `test.skip`. Bun does not run these tests.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";
@@ -136,7 +136,7 @@ test.skip("wat", () => {
 
 ### test.todo
 
-Mark a test as a todo with `test.todo`. These tests are not run.
+Mark a test as a todo with `test.todo`. Bun does not run these tests.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";
@@ -162,7 +162,7 @@ my.test.ts:
  1 expect() calls
 ```
 
-With this flag, failing todo tests do not cause an error, but todo tests that pass are marked as failing so you can remove the todo mark or fix the test.
+With this flag, failing todo tests do not cause an error, but Bun marks todo tests that pass as failing so you can remove the todo mark or fix the test.
 
 ### test.only
 
@@ -323,10 +323,10 @@ describe.each([
 
 ### Argument Passing
 
-How arguments are passed to your test function depends on the structure of your test cases:
+How Bun passes arguments to your test function depends on the structure of your test cases:
 
-- If a table row is an array (like `[1, 2, 3]`), each element is passed as an individual argument
-- If a row is not an array (like an object), it's passed as a single argument
+- If a table row is an array (like `[1, 2, 3]`), Bun passes each element as an individual argument
+- If a row is not an array (like an object), Bun passes it as a single argument
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 // Array items passed as individual arguments
@@ -407,7 +407,7 @@ test("async work calls assertions", async () => {
 });
 ```
 
-This is especially useful in async tests, to make sure your assertions run.
+`expect.hasAssertions()` is especially useful in async tests, to make sure your assertions run.
 
 ### expect.assertions(count)
 
@@ -422,7 +422,7 @@ test("exactly two assertions", () => {
 });
 ```
 
-This helps ensure all your assertions run, especially in complex async code with multiple code paths.
+`expect.assertions(count)` helps ensure all your assertions run, especially in complex async code with multiple code paths.
 
 ## Type Testing
 
@@ -432,7 +432,7 @@ Bun includes `expectTypeOf` for testing TypeScript types, compatible with Vitest
 
 <Warning>These functions are no-ops at runtime. Run TypeScript separately to verify the type checks.</Warning>
 
-The `expectTypeOf` function provides type-level assertions that are checked by TypeScript's type checker. To test your types:
+The `expectTypeOf` function provides type-level assertions that TypeScript's type checker verifies. To test your types:
 
 1. Write your type assertions using `expectTypeOf`
 2. Run `bunx tsc --noEmit` to check that your types are correct

@@ -40,6 +40,7 @@ use crate::{
     dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
     npm as Npm,
 };
+use bun_install_types::NodeLinker::NodeLinker;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Sub-module declarations — explicit #[path] attrs for PascalCase / dotted
@@ -58,8 +59,14 @@ pub mod catalog_map;
 pub mod lockfile_json_stringify_for_debugging;
 #[path = "lockfile/OverrideMap.rs"]
 pub mod override_map;
+#[path = "lockfile/override_selector.rs"]
+pub(crate) mod override_selector;
 #[path = "lockfile/Package.rs"]
 pub mod package;
+#[path = "lockfile/pruned_workspaces.rs"]
+pub(crate) mod pruned_workspaces;
+#[path = "lockfile/reachable.rs"]
+pub mod reachable;
 #[path = "lockfile/Tree.rs"]
 pub mod tree;
 #[path = "lockfile/printer"]
@@ -316,6 +323,17 @@ pub enum LoadStep {
     Migrating,
 }
 
+impl LoadStep {
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            LoadStep::OpenFile => "open",
+            LoadStep::ReadFile => "read",
+            LoadStep::ParseFile => "parse",
+            LoadStep::Migrating => "migrate",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Migrated {
     #[default]
@@ -365,6 +383,13 @@ impl<'a> LoadResult<'a> {
     pub(crate) fn migrated_from_npm(&self) -> bool {
         match self {
             LoadResult::Ok(ok) => ok.migrated == Migrated::Npm,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn migrated_from_pnpm(&self) -> bool {
+        match self {
+            LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
             _ => false,
         }
     }
@@ -428,6 +453,20 @@ impl<'a> LoadResult<'a> {
                 Migrated::Npm => (ConfigVersion::V0, true),
                 Migrated::Yarn => (ConfigVersion::V0, true),
             },
+        }
+    }
+
+    /// Resolves `Auto` the way `bun install` picks the linker for this lockfile; never returns `Auto`.
+    pub fn node_linker(&self, configured: NodeLinker) -> NodeLinker {
+        if configured != NodeLinker::Auto {
+            return configured;
+        }
+        if self.choose_config_version().0 != ConfigVersion::V1 {
+            return NodeLinker::Hoisted;
+        }
+        match self {
+            LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0 => NodeLinker::Isolated,
+            _ => NodeLinker::Hoisted,
         }
     }
 
@@ -690,150 +729,6 @@ impl Lockfile {
         dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
     }
 
-    fn preprocess_update_requests(
-        old: &mut Lockfile,
-        manager: &mut PackageManager,
-        updates: &mut [UpdateRequest],
-        exact_versions: bool,
-    ) -> Result<(), BunError> {
-        let workspace_package_id = manager
-            .root_package_id
-            .get(old, manager.workspace_name_hash);
-        let root_deps_list: DependencySlice =
-            old.packages.items_dependencies()[workspace_package_id as usize];
-
-        if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
-            // Split-borrow: `string_builder!` only takes
-            // `old.buffers.string_bytes` + `old.string_pool`, leaving
-            // `old.packages` / `old.buffers.{dependencies,resolutions}` free.
-            let mut string_builder = string_builder!(old);
-
-            {
-                let root_deps: &[Dependency] =
-                    root_deps_list.get(old.buffers.dependencies.as_slice());
-                let old_resolutions_list =
-                    old.packages.items_resolutions()[workspace_package_id as usize];
-                let old_resolutions: &[PackageID] =
-                    old_resolutions_list.get(old.buffers.resolutions.as_slice());
-                let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-                let packages_len = old.packages.len();
-
-                for update in updates.iter() {
-                    if update.package_id == invalid_package_id {
-                        debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                        for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= packages_len {
-                                    continue;
-                                }
-                                let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
-                                {
-                                    continue;
-                                }
-
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
-
-                                let npm_ver = res.npm().version;
-                                let len = bun_core::fmt::count(format_args!(
-                                    "{}{}",
-                                    if exact_versions { "" } else { "^" },
-                                    npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                ));
-
-                                if len >= SemverString::MAX_INLINE_LEN {
-                                    string_builder.cap += len;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            string_builder.allocate()?;
-            // `string_builder.clamp()` must run once after the entire second
-            // loop completes. A scopeguard would mutably capture
-            // `string_builder`, conflicting with the `append` calls below. Call `clamp()`
-            // explicitly at the end of this block instead (the inner loop has no `?` exits;
-            // the only fallible call above is `allocate()`, which precedes this point).
-
-            {
-                let mut temp_buf = [0u8; 513];
-
-                let root_deps: &mut [Dependency] =
-                    root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
-                let old_resolutions_list_lists = old.packages.items_resolutions();
-                let old_resolutions_list =
-                    old_resolutions_list_lists[workspace_package_id as usize];
-                let old_resolutions: &[PackageID] =
-                    old_resolutions_list.get(old.buffers.resolutions.as_slice());
-                let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-                let packages_len = old.packages.len();
-
-                for update in updates.iter_mut() {
-                    if update.package_id == invalid_package_id {
-                        debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                        for (dep, &old_resolution) in
-                            root_deps.iter_mut().zip(old_resolutions.iter())
-                        {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= packages_len {
-                                    continue;
-                                }
-                                let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
-                                {
-                                    continue;
-                                }
-
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
-
-                                let npm_ver = res.npm().version;
-                                let buf = {
-                                    let mut cursor: &mut [u8] = &mut temp_buf[..];
-                                    let start_len = cursor.len();
-                                    if write!(
-                                        cursor,
-                                        "{}{}",
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                    )
-                                    .is_err()
-                                    {
-                                        break;
-                                    }
-                                    let written = start_len - cursor.len();
-                                    &temp_buf[..written]
-                                };
-
-                                let external_version = string_builder.append::<ExternalString>(buf);
-                                let sliced = external_version
-                                    .value
-                                    .sliced(string_builder.string_bytes.as_slice());
-                                dep.version = dependency::parse(
-                                    dep.name,
-                                    dep.name_hash,
-                                    sliced.slice,
-                                    &sliced,
-                                    None,
-                                    &mut *manager,
-                                )
-                                .unwrap_or_default();
-                            }
-                        }
-                    }
-
-                    update.e_string = None;
-                }
-            }
-
-            string_builder.clamp();
-        }
-        Ok(())
-    }
-
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
         if dep.version.tag != dependency::Tag::Catalog {
             return Some(dep.version.clone());
@@ -861,6 +756,24 @@ impl Lockfile {
             .root_package_id
             .get(self, manager.workspace_name_hash);
         self.packages.items_dependencies()[root_id as usize].contains(id)
+    }
+
+    /// Is `id` a direct dependency of one of the `targets` workspaces?
+    pub fn is_dependency_of_workspace_in(
+        &self,
+        targets: &[crate::package_manager::UpdateTargetWorkspace],
+        id: DependencyID,
+    ) -> bool {
+        let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
+        if pkg_id == invalid_package_id {
+            return false;
+        }
+        let is_root =
+            self.packages.items_resolution()[pkg_id as usize].tag == crate::resolution::Tag::Root;
+        let hash = self.packages.items_name_hash()[pkg_id as usize];
+        let name =
+            self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
+        targets.iter().any(|t| t.matches(is_root, hash, name))
     }
 
     /// Is this a direct dependency of any workspace (including workspace root)?
@@ -934,19 +847,66 @@ impl Lockfile {
         }
     }
 
+    /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn bind_update_requests(
+        &self,
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        updates: &mut [UpdateRequest],
+    ) {
+        // `version_buf` is a raw (ptr, len) into `self.buffers.string_bytes`, finalized by now and outliving every `UpdateRequest`.
+        let string_buf = self.buffers.string_bytes.as_slice();
+        let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
+        let slice = self.packages.slice();
+        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
+
+        'request_updated: for update in updates.iter_mut() {
+            update.e_string = None;
+            let filtered: Vec<PackageID>;
+            let workspace_ids: &[PackageID] = match pending {
+                Some(pending) => {
+                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
+                    &filtered
+                }
+                None => &cwd_workspace,
+            };
+            for &workspace_package_id in workspace_ids {
+                let dep_list = slice.items_dependencies()[workspace_package_id as usize];
+                let res_list = slice.items_resolutions()[workspace_package_id as usize];
+                let workspace_deps: &[Dependency] =
+                    dep_list.get(self.buffers.dependencies.as_slice());
+                let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
+                debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
+                for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
+                    if update.matches(dep, string_buf) {
+                        if package_id as usize > self.packages.len() {
+                            continue;
+                        }
+                        update.version_buf = string_buf_ptr;
+                        update.version = dep.version.clone();
+                        update.package_id = package_id;
+
+                        continue 'request_updated;
+                    }
+                }
+            }
+        }
+    }
+
     // `#[inline(never)]` keeps the panic/format machinery from
     // `bun_core::output` (pulled in by the cold helpers below) out of callers;
-    // the hot copy/remap loop stays in this body while the three cold sections
-    // — update-request preprocessing, verbose timer reporting, and the
-    // trusted/patched-dependency migration — are outlined so a no-change
-    // `bun install` (install/fastify bench) does not page them in.
+    // the hot copy/remap loop stays in this body while the cold sections
+    // — update-request binding (`bind_update_requests`), verbose timer
+    // reporting, and the patched-dependency migration — are outlined so a
+    // no-change `bun install` (install/fastify bench) does not page them in.
     #[inline(never)]
     pub(crate) fn clean_with_logger(
         &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
         log: &mut bun_ast::Log,
-        exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         let old: &mut Lockfile = self;
@@ -971,10 +931,6 @@ impl Lockfile {
         let preinstall_state = &mut manager.preinstall_state;
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
-
-        if !updates.is_empty() {
-            clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
-        }
 
         // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
         // it (never `Box::leak` to satisfy a lifetime).
@@ -1015,11 +971,14 @@ impl Lockfile {
         let clone_queue_ = PendingResolutions::new();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
+        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
+            optional_peers: PendingResolutions::new(),
+            keep_optional_peer_targets,
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1138,49 +1097,12 @@ impl Lockfile {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
         }
 
-        // Don't allow invalid memory to happen
         if !updates.is_empty() {
-            // `UpdateRequest.version_buf` is a raw `*const [u8]` (PORTING.md
-            // type-map: `[]const u8` struct-field, ARENA-class). The slice
-            // points into `new.buffers.string_bytes`; `new` is *returned* to
-            // the caller below and `string_bytes` is finalized at this point
-            // (cloner.flush() and the patched-dep StringBuilder have both
-            // run), so the storage outlives every `UpdateRequest` the caller
-            // threads it through. No lifetime extension — store the raw
-            // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
-            // each read site.
-            let string_buf = new.buffers.string_bytes.as_slice();
-            let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
-            let slice = new.packages.slice();
-
-            // updates might be applied to the root package.json or one
-            // of the workspace package.json files.
-            let workspace_package_id = manager
-                .root_package_id
-                .get(&new, manager.workspace_name_hash);
-
-            let dep_list = slice.items_dependencies()[workspace_package_id as usize];
-            let res_list = slice.items_resolutions()[workspace_package_id as usize];
-            let workspace_deps: &[Dependency] = dep_list.get(new.buffers.dependencies.as_slice());
-            let resolved_ids: &[PackageID] = res_list.get(new.buffers.resolutions.as_slice());
-
-            'request_updated: for update in updates.iter_mut() {
-                if update.package_id == invalid_package_id {
-                    debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
-                    for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
-                        if update.matches(dep, string_buf) {
-                            if package_id as usize > new.packages.len() {
-                                continue;
-                            }
-                            update.version_buf = string_buf_ptr;
-                            update.version = dep.version.clone();
-                            update.package_id = package_id;
-
-                            continue 'request_updated;
-                        }
-                    }
-                }
-            }
+            new.bind_update_requests(
+                manager.pending_filtered_write.as_deref(),
+                manager.workspace_name_hash,
+                updates,
+            );
         }
 
         if log_level.is_verbose() {
@@ -1194,20 +1116,9 @@ impl Lockfile {
 // ────────────────────────────────────────────────────────────────────────────
 // clean_with_logger cold helpers — outlined so the hot copy/remap loop in the
 // main body is contiguous in `.text` and the install/fastify no-change bench
-// does not fault in update-request rewriting, patched-dep migration, or the
+// does not fault in update-request binding, patched-dep migration, or the
 // verbose timer/format machinery.
 // ────────────────────────────────────────────────────────────────────────────
-
-#[cold]
-#[inline(never)]
-fn clean_preprocess_update_requests_cold(
-    old: &mut Lockfile,
-    manager: &mut PackageManager,
-    updates: &mut [UpdateRequest],
-    exact_versions: bool,
-) -> Result<(), BunError> {
-    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
-}
 
 #[cold]
 #[inline(never)]
@@ -1292,6 +1203,9 @@ impl Lockfile {
 
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
+    /// Bound in `flush`, once `clone_queue` has decided which targets survive.
+    pub(crate) optional_peers: PendingResolutions,
+    pub(crate) keep_optional_peer_targets: bool,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1316,6 +1230,14 @@ impl<'a> Cloner<'a> {
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
+        }
+
+        // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
+        for pending in self.optional_peers.drain(..) {
+            let mapping = self.mapping[pending.old_resolution as usize];
+            if (mapping as usize) < max_package_id {
+                self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
+            }
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -1345,8 +1267,10 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        Ok(())
     }
 
     pub(crate) fn filter(
@@ -1363,10 +1287,11 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-        )
+        )?;
+        Ok(())
     }
 
-    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1376,7 +1301,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
+    ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
@@ -1398,6 +1323,7 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             pending_optional_peers: Default::default(),
+            late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1416,9 +1342,10 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
+        let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(())
+        Ok(late_bound_optional_peer)
     }
 }
 
@@ -1493,14 +1420,14 @@ impl Lockfile {
                     // above); `manifests` and `lockfile` are non-overlapping
                     // fields and nothing below resizes/relocates `manifests`
                     // while `manifest` is held.
-                    let scope = mgr_ref.options.scope_for_package_name(
-                        pkg_name.slice(self.buffers.string_bytes.as_slice()),
-                    );
+                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
                     let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
+                        pkg_name_str,
                         pkg_name_hash,
                         Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
@@ -1736,20 +1663,29 @@ impl<'a> Printer<'a> {
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
-        let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        let entries: &mut Fs::DirEntry = match entries_option {
-            Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
+        // with the `&mut self` borrow `read_directory` took.
+        let entries_option: *const Fs::EntriesOption =
+            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let entries = {
+            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
+            match unsafe { &*entries_option } {
+                Fs::EntriesOption::Entries(e) => {
+                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
+                }
+                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+            }
         };
 
         let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
-        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            &*entries,
+            &entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,
@@ -1830,7 +1766,12 @@ impl Lockfile {
         Ok(())
     }
 
-    pub fn save_to_disk(&mut self, load_result: &LoadResult<'_>, options: &PackageManagerOptions) {
+    /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
+    pub fn save_to_disk(
+        &mut self,
+        load_result: &LoadResult<'_>,
+        options: &PackageManagerOptions,
+    ) -> bool {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
@@ -1879,7 +1820,17 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        // defer bun.default_allocator.free(bytes) — Vec drops at scope end.
+        if File::openat(
+            Fd::cwd(),
+            save_format.filename().as_bytes(),
+            sys::O::RDONLY,
+            0,
+        )
+        .and_then(|existing| existing.read_to_end())
+        .is_ok_and(|existing| existing == bytes)
+        {
+            return false;
+        }
 
         let mut tmpname_buf = [0u8; 512];
         let mut base64_bytes = [0u8; 8];
@@ -1959,6 +1910,7 @@ impl Lockfile {
             );
             Global::crash();
         }
+        true
     }
 
     pub(crate) fn root_package(&self) -> Option<Package> {
@@ -2476,9 +2428,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_semver::semver_string`; imported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -2611,6 +2563,15 @@ pub mod package_index {
     pub enum Entry {
         Id(PackageID),
         Ids(PackageIDList),
+    }
+
+    impl Entry {
+        pub(crate) fn as_slice(&self) -> &[PackageID] {
+            match self {
+                Entry::Id(id) => core::slice::from_ref(id),
+                Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
     }
 
     impl Default for Entry {
@@ -3071,12 +3032,8 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// --default` need not re-sort.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
     std::sync::LazyLock::new(|| {
-        const DATA: &str = include_str!("default-trusted-dependencies.txt");
-        let mut names: Vec<&'static [u8]> = DATA
-            .split([' ', '\r', '\n', '\t'])
-            .filter(|s| !s.is_empty())
-            .map(str::as_bytes)
-            .collect();
+        const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
+        let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
         names.sort_unstable();
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,

@@ -5,9 +5,14 @@ const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
 const testReferenceUnrefInFinalizer = require("./build/Debug/test_reference_unref_in_finalizer.node");
 const testReferenceUnrefInFinalizerExperimental = require("./build/Debug/test_reference_unref_in_finalizer_experimental.node");
 
-async function gcUntil(fn) {
-  const MAX = 100;
-  for (let i = 0; i < MAX; i++) {
+// Returns true once fn() is true, false if it still isn't after `max` GCs.
+// Collection of any *particular* object is not guaranteed under JSC: a
+// conservative stack/register scan can pin one address for the entire process,
+// so callers that need a collection to happen should retry with a freshly
+// allocated object (see test_remove_wrap_lifetime_with_strong_ref) rather
+// than raising `max`.
+async function tryGcUntil(fn, max = 100) {
+  for (let i = 0; i < max; i++) {
     await new Promise(resolve => {
       setTimeout(resolve, 1);
     });
@@ -18,10 +23,16 @@ async function gcUntil(fn) {
       global.gc();
     }
     if (fn()) {
-      return;
+      return true;
     }
   }
-  throw new Error(`Condition was not met after ${MAX} GC attempts`);
+  return false;
+}
+
+async function gcUntil(fn, max = 100) {
+  if (!(await tryGcUntil(fn, max))) {
+    throw new Error(`Condition was not met after ${max} GC attempts`);
+  }
 }
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
@@ -908,15 +919,8 @@ nativeTests.test_wrap_lifetime_with_strong_ref = async () => {
   assert(nativeTests.get_wrap_data(object) === 42);
 
   object = undefined;
-  // still referenced by native module so this should fail
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called());
-    throw new Error("object was garbage collected while still referenced by native code");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
-    }
-  }
+  // still referenced by native module, so these GCs must not collect it
+  assert((await tryGcUntil(() => nativeTests.was_wrap_finalize_called(), 10)) === false);
 
   // can still get the value using the ref
   assert(nativeTests.get_wrap_data_from_ref() === 42);
@@ -940,41 +944,52 @@ nativeTests.test_remove_wrap_lifetime_with_weak_ref = async () => {
   object = undefined;
 
   // ref will stop working once the object is collected
-  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+  await gcUntil(() => nativeTests.is_wrapped_object_collected());
+  assert(nativeTests.get_object_from_ref() === undefined);
 
   // finalizer shouldn't have been called
   assert(nativeTests.was_wrap_finalize_called() === false);
 };
 
 nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
-  let object = { foo: "bar" };
-  assert(createWrapWithStrongRef(object) === object);
+  // A conservative stack/register scan can pin any one address for the whole
+  // process, so "this object gets collected" is not guaranteed for a
+  // particular object. The pin is address-specific: retry with a freshly
+  // allocated object instead of running more GCs on the same one.
+  const ATTEMPTS = 4;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    let object = { foo: "bar" };
+    assert(createWrapWithStrongRef(object) === object);
 
-  assert(nativeTests.get_wrap_data(object) === 42);
+    assert(nativeTests.get_wrap_data(object) === 42);
 
-  nativeTests.remove_wrap(object);
-  assert(nativeTests.get_wrap_data(object) === undefined);
-  assert(nativeTests.get_wrap_data_from_ref() === undefined);
-  assert(nativeTests.get_object_from_ref() === object);
+    nativeTests.remove_wrap(object);
+    assert(nativeTests.get_wrap_data(object) === undefined);
+    assert(nativeTests.get_wrap_data_from_ref() === undefined);
+    assert(nativeTests.get_object_from_ref() === object);
 
-  object = undefined;
+    object = undefined;
 
-  // finalizer should not be called and object should not be freed
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
-    throw new Error("finalizer ran");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
+    // finalizer should not be called and object should not be freed
+    const collectedWhileStrong = await tryGcUntil(
+      () => nativeTests.was_wrap_finalize_called() || nativeTests.is_wrapped_object_collected(),
+      10,
+    );
+    assert(collectedWhileStrong === false);
+
+    // native code can still get the object
+    assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
+
+    // now it can be collected. An abandoned ref from a failed attempt leaks,
+    // which is fine in this fixture: its wrap was removed, so no finalizer
+    // will touch the global state.
+    nativeTests.unref_wrapped_value();
+    if (await tryGcUntil(() => nativeTests.is_wrapped_object_collected())) {
+      assert(nativeTests.get_object_from_ref() === undefined);
+      return;
     }
   }
-
-  // native code can still get the object
-  assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
-
-  // now it gets deleted
-  nativeTests.unref_wrapped_value();
-  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+  throw new Error(`wrapped object was not collected in any of ${ATTEMPTS} attempts`);
 };
 
 nativeTests.test_ref_deleted_in_cleanup = () => {
@@ -1244,6 +1259,11 @@ nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
   addon.test();
 };
 
+nativeTests.test_async_cleanup_hook_tsfn_release = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_tsfn_release.node");
+  addon.start();
+};
+
 nativeTests.test_cleanup_hook_duplicates = () => {
   const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
   addon.test();
@@ -1377,6 +1397,13 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
+// A finalizer that runs during a worker's env cleanup and registers another
+// finalizer (an external buffer's): the late one runs in that same cleanup.
+nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
+  console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
+  console.log("late=" + nativeTests.late_finalizer_run_count());
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.
@@ -1392,6 +1419,25 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
   }
 };
 
+// When napi_create_threadsafe_function is given no JS func, the call_js
+// callback receives a null js_callback (addons test `if (js_callback != NULL)`).
+nativeTests.test_tsfn_null_js_callback_driver = async () => {
+  nativeTests.test_tsfn_null_js_callback();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_tsfn_null_js_callback_ran()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  nativeTests.test_tsfn_null_js_callback_result();
+};
+
+// napi_reference_ref on a reference whose referent has been collected must
+// return 0 (and leave the count at 0) instead of incrementing.
+nativeTests.test_reference_ref_after_collect_driver = async gc => {
+  const ext = nativeTests.test_create_weak_ref_for_gc();
+  await gcUntil(() => nativeTests.test_weak_ref_is_collected(gc, ext));
+  nativeTests.test_reference_ref_after_collect(gc, ext);
+};
+
 // Microtasks queued by one threadsafe-function callback must be drained before
 // the next callback in the same dispatch, and not before the first one.
 nativeTests.test_threadsafe_function_microtask_order = async () => {
@@ -1404,6 +1450,68 @@ nativeTests.test_threadsafe_function_microtask_order = async () => {
   for (let i = 0; i < 1000 && n < 3; i++) {
     await new Promise(resolve => setImmediate(resolve));
   }
+};
+
+// A script that only ever calls the ungated napi functions (ungated-calls-
+// spin-worker.js has the worker version) still has to be stoppable when the
+// stop is requested while one of those calls is running. Several rounds, since
+// whether it lands inside a call or in the loop itself is down to timing.
+nativeTests.test_ungated_calls_vm_timeout = () => {
+  const vm = require("node:vm");
+  const spin = nativeTests.make_ungated_calls_spinner();
+  for (let i = 0; i < 5; i++) {
+    try {
+      vm.runInNewContext("for (;;) spin(bigint, string);", { spin, bigint: -7n, string: "ungated" }, { timeout: 20 });
+      console.log("returned");
+    } catch (e) {
+      console.log(e.code);
+    }
+  }
+};
+
+nativeTests.test_ungated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  for (let i = 0; i < 2; i++) {
+    const worker = new Worker(path.join(__dirname, "ungated-calls-spin-worker.js"));
+    await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    console.log("terminate() resolved with", await worker.terminate());
+  }
+};
+
+// See ungated_calls_through_timeout in standalone_tests.cpp: 200ms of ungated
+// calls under a 20ms timeout.
+nativeTests.test_ungated_calls_through_vm_timeout = () => {
+  const vm = require("node:vm");
+  try {
+    vm.runInNewContext("f(200)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 20 });
+    console.log("returned");
+  } catch (e) {
+    console.log(e.code);
+  }
+};
+
+nativeTests.test_threadsafe_function_call_js_throws = async () => {
+  // main.js exits on the first uncaught exception; this test wants all three.
+  process.removeAllListeners("uncaughtException");
+  let seen = 0;
+  const { promise, resolve } = Promise.withResolvers();
+  process.on("uncaughtException", function handler(err) {
+    seen++;
+    console.log("uncaughtException", seen, err.message);
+    Promise.resolve().then(() => console.log("microtask", seen));
+    if (seen === 3) {
+      process.removeListener("uncaughtException", handler);
+      resolve();
+    }
+  });
+  nativeTests.test_napi_threadsafe_function_call_js_throws();
+  await promise;
+  await new Promise(r => setImmediate(r));
+  console.log("done", seen);
 };
 
 module.exports = nativeTests;

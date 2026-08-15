@@ -35,8 +35,7 @@ void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
 
 void InspectorBunFrontendDevServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    m_frontendDispatcher = nullptr;
-    m_enabled = false;
+    disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::enable()

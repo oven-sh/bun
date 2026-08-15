@@ -57,16 +57,6 @@ pub(crate) struct WTFTimer {
 
 bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 
-/// # Safety
-/// `vm` must be the live `VirtualMachine` for the current thread.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
-    // SAFETY: per fn contract.
-    let el = unsafe { (*vm).event_loop() };
-    // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
-    unsafe { (*el).run_imminent_gc_timer() };
-}
-
 impl WTFTimer {
     /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.
@@ -236,12 +226,12 @@ impl WTFTimer {
     }
 
     /// # Safety
-    /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
+    /// `this` must be the unique owner of a `WTFTimer` produced by `WTFTimer__create`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };
-        // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
-        // the paired free.
+        // SAFETY: `WTFTimer__create` handed its `Box` over via `heap::into_raw`,
+        // so `heap::take` is the paired reclaim.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }

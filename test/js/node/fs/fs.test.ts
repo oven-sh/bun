@@ -797,7 +797,7 @@ describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
   async function runUnderFileSizeLimit(path: string, flag: string) {
     writeFileSync(path, Buffer.alloc(2000, "B"));
     await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" "$1" "$2" "$3"`, bunExe(), fixture, path, flag],
+      cmd: ["prlimit", "--fsize=512:512", bunExe(), fixture, path, flag],
       env: bunEnv,
       stderr: "pipe",
     });
@@ -3935,7 +3935,7 @@ describe("createWriteStream", () => {
       s.end();
     `;
     await using proc = Bun.spawn({
-      cmd: ["sh", "-c", `ulimit -f 2048; exec "${bunExe()}" -e '${script.replace(/'/g, "'\\''")}'`],
+      cmd: ["prlimit", "--fsize=1048576:1048576", bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

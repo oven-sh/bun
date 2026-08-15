@@ -287,9 +287,18 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
+    // Loads the lockfile, and migrating one rewrites the cached root package.json: do it before reading the entry.
+    let patch_commit: Option<PatchCommitResult> =
+        if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
+            let mut pathbuf = PathBuffer::uninit();
+            patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
+        } else {
+            None
+        };
+
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
-    // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
+    // `&mut *manager` for `PackageJSONEditor::edit` while still
     // holding the entry. Demote to `*mut MapEntry` and re-
     // borrow at point of use. The cache map is not mutated again until the
     // next `get_with_path` call below, so the pointer remains valid.
@@ -329,8 +338,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         };
     // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
-    // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
-    // disjoint manager fields.
+    // is taken across this borrow; `PackageJSONEditor` touches only disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
@@ -428,23 +436,17 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
         _ => {
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                let mut pathbuf = PathBuffer::uninit();
-                if let Some(stuff) =
-                    patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
-                {
-                    // we're inside a workspace package, we need to edit the
-                    // root json, not the `current_package_json`
-                    if stuff.not_in_workspace_root {
-                        not_in_workspace_root = Some(stuff);
-                    } else {
-                        PackageJSONEditor::edit_patched_dependencies(
-                            manager,
-                            &mut current_package_json_root,
-                            &stuff.patch_key,
-                            &stuff.patchfile_path,
-                        )?;
-                    }
+            if let Some(stuff) = patch_commit {
+                // Inside a workspace package the root package.json is edited below, not `current_package_json`.
+                if stuff.not_in_workspace_root {
+                    not_in_workspace_root = Some(stuff);
+                } else {
+                    PackageJSONEditor::edit_patched_dependencies(
+                        manager,
+                        &mut current_package_json_root,
+                        &stuff.patch_key,
+                        &stuff.patchfile_path,
+                    )?;
                 }
             }
         }
@@ -486,12 +488,12 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    let new_package_json_source: Vec<u8> = package_json_writer
-        .ctx
-        .written_without_trailing_zero()
-        .to_vec();
-    // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, so it needs its own copy.
-    current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
+    current_package_json.source.contents = Cow::Owned(
+        package_json_writer
+            .ctx
+            .written_without_trailing_zero()
+            .to_vec(),
+    );
     // The edits above went into a promoted copy
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
@@ -664,40 +666,34 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let (source, path): (&[u8], &ZStr) =
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                'source_and_path: {
-                    let root_package_json_entry = match manager
-                        .workspace_package_json_cache
-                        .get_with_path(
-                            manager.log_mut(),
-                            root_package_json_path.as_bytes(),
-                            GetJSONOptions::default(),
-                        )
-                        .unwrap()
-                    {
-                        Ok(e) => e,
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
-                            );
-                            Global::exit(1);
-                        }
-                    };
-
-                    break 'source_and_path (
-                        &root_package_json_entry.source.contents,
-                        root_package_json_path,
-                    );
-                }
-            } else {
-                (
-                    &new_package_json_source,
-                    manager.original_package_json_path.as_zstr(),
-                )
-            };
+        // `bun patch --commit` records the patch in the root package.json, even when run from a workspace.
+        let path: &ZStr = if matches!(manager.options.patch_features, PatchFeatures::Commit { .. })
+        {
+            root_package_json_path
+        } else {
+            manager.original_package_json_path.as_zstr()
+        };
+        // Written from the cache entry: a pnpm migration inside `install_with_manager` may have edited it since.
+        let entry = match manager
+            .workspace_package_json_cache
+            .get_with_path(
+                manager.log_mut(),
+                path.as_bytes(),
+                GetJSONOptions::default(),
+            )
+            .unwrap()
+        {
+            Ok(entry) => entry,
+            Err(err) => {
+                Output::err(
+                    err,
+                    "failed to read/parse package.json at '{s}'",
+                    (BStr::new(path.as_bytes()),),
+                );
+                Global::exit(1);
+            }
+        };
+        let source: &[u8] = &entry.source.contents;
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk

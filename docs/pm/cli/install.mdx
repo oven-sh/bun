@@ -531,7 +531,7 @@ The migration process handles:
 
 ### Workspace Configuration
 
-When a `pnpm-workspace.yaml` file exists, Bun migrates workspace settings to your root `package.json`:
+When a `pnpm-workspace.yaml` file exists, Bun migrates workspace settings to your root `package.json`. This happens together with the lockfile migration, and also when there is no `pnpm-lock.yaml` to migrate (it was never committed, or it is too old to convert), as long as `bun.lock` does not exist yet and the root `package.json` has no `workspaces` field of its own:
 
 ```yaml pnpm-workspace.yaml icon="file-code"
 packages:
@@ -596,7 +596,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - All catalog entries referenced by dependencies must exist in the catalogs definition
 - Every workspace in `pnpm-lock.yaml` must have its `package.json` on disk (in Docker, copy them in before `bun install`)
 - Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
-- If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
+- If migration fails for any of these reasons, Bun prints why and resolves from scratch instead. The `pnpm-workspace.yaml` settings above are still migrated, so workspaces, catalogs and overrides are not lost
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 

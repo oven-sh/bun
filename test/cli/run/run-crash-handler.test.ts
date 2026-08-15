@@ -1,7 +1,8 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { mkfifo } from "mkfifo";
+import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -126,6 +127,88 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// The report is written to fd 2 with many small raw write(2) calls. fd 2 is
+// often O_NONBLOCK: Bun puts the flag on a piped stderr as soon as
+// process.stderr is used, and since it lives on the open file description a
+// parent can hand down an fd that already has it. If the reader is behind at
+// that moment every write fails with EAGAIN, and the handler used to drop the
+// bytes and carry on, so the process died without printing anything. It has
+// to wait for the reader instead, like a blocking stderr would.
+describe.if(isPosix)("crash report reaches a full non-blocking stderr", () => {
+  const reportHeader = Buffer.alloc(60, "=").toString() + "\n";
+
+  test.concurrent.each([
+    ["panic", "invoked crashByPanic() handler", "SIGABRT"],
+    ["segfault", "Segmentation fault at address 0xDEADBEEF", "SIGSEGV"],
+  ] as const)("%s", async (approach, expectedReason, expectedSignal) => {
+    using dir = tempDir("crash-stderr-full", {});
+    // A fifo is a pipe whose read end this process holds without Bun.spawn
+    // draining it: the child's stderr has to stay full until the crash handler
+    // has tried to write to it.
+    const fifo = path.join(String(dir), "stderr");
+    mkfifo(fifo);
+    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    let writeEnd: number | undefined = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+    try {
+      const fill = Buffer.alloc(64 * 1024, "f");
+      let filled = 0;
+      let fillStoppedBy: string | undefined;
+      while (fillStoppedBy === undefined) {
+        try {
+          filled += writeSync(writeEnd, fill);
+        } catch (e) {
+          fillStoppedBy = (e as NodeJS.ErrnoException).code;
+        }
+      }
+      expect({ fillStoppedBy, filled: filled > 0 }).toEqual({ fillStoppedBy: "EAGAIN", filled: true });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--debug-crash-handler-use-trace-string",
+          "-e",
+          // Both requires come first: loading bun:internal-for-testing takes
+          // over a second in debug builds, and the marker has to be as close
+          // as possible to the crash itself.
+          `const { crash_handler } = require("bun:internal-for-testing");
+           const { writeSync } = require("node:fs");
+           writeSync(1, "crashing\\n");
+           crash_handler.${approach}();`,
+        ],
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", writeEnd],
+      });
+      // The child now holds the only write end, so EOF on the fifo means it died.
+      closeSync(writeEnd);
+      writeEnd = undefined;
+
+      const { value: marker } = await proc.stdout.getReader().read();
+      expect(new TextDecoder().decode(marker)).toBe("crashing\n");
+
+      // The child crashes right after the marker and has its whole report
+      // written (or, before the fix, dropped) within a millisecond or so.
+      // Nothing observable separates "still formatting" from "waiting in
+      // poll(2) for us", so give it a moment before draining the fifo: without
+      // the fix the child exits on its own, with it the race times out.
+      await Promise.race([proc.exited, Bun.sleep(1_000)]);
+
+      // Draining the fill unblocks the child; whatever follows it is the report.
+      const report = (await Bun.file(readEnd).text()).slice(filled);
+      await proc.exited;
+
+      expect(report).toStartWith(reportHeader);
+      expect(report).toContain(`panic(main thread): ${expectedReason}\n`);
+      expect(report).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.\n");
+      expect(report.trimEnd().split("\n").at(-1)).toMatch(/^ \/\d+\.\d+\.\d+\/\S+$/);
+      expect(report).toEndWith("\n\n");
+      expect(proc.signalCode).toBe(expectedSignal);
+    } finally {
+      if (writeEnd !== undefined) closeSync(writeEnd);
+      closeSync(readEnd);
+    }
   });
 });
 

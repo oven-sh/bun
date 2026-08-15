@@ -421,6 +421,11 @@ test.concurrent("default trusted dependencies require the canonical registry tar
 describe("default trusted dependencies after yarn.lock migration", () => {
   const electronIntegrity =
     "sha512-GkuwCdn6o8Krsxb3DIIqYP+TAi8Y5jYUadmseZ6nR2op2k5ssdKRYo4JjYDGopa1ACrGAcQuWViz/+vX/WjYnA==";
+  // `all-lifecycle-scripts@1.0.0`: a different package with preinstall, install
+  // and postinstall scripts of its own, used to record a tarball that is not
+  // electron's under the default-trusted name `electron`.
+  const otherIntegrity =
+    "sha512-hgU56juWYnFOQ3byQuydEgugxd+iWvaWfaoGvly4k/AxehC3dhM6IhXoDc3K7b/n1mP/II8hGIjI+LmxXFNMlw==";
 
   // Installs `electron@1.0.0` (on the default trusted list) from a yarn.lock
   // that resolves it to `resolved`, and returns the migrated bun.lock.
@@ -491,13 +496,10 @@ electron@1.0.0:
 
   test.concurrent("scripts stay blocked when the yarn.lock points the name at another tarball", async () => {
     using ctx = await setupTest();
-    // Same registry, but the tarball of a different package (which has
-    // preinstall/install/postinstall scripts of its own) recorded under the
+    // Same registry, but another package's tarball recorded under the
     // default-trusted name. Migration must keep that URL, so the canonical URL
     // check still denies the default grant.
     const otherUrl = `http://localhost:${verdaccio.port}/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz`;
-    const otherIntegrity =
-      "sha512-hgU56juWYnFOQ3byQuydEgugxd+iWvaWfaoGvly4k/AxehC3dhM6IhXoDc3K7b/n1mP/II8hGIjI+LmxXFNMlw==";
 
     const { lockfile } = await installFromYarnLock(
       ctx,
@@ -515,6 +517,77 @@ electron@1.0.0:
         exists(join(electronDir, "postinstall.txt")),
       ]),
     ).toEqual([true, false, false, false]);
+  });
+
+  // Earlier versions of the migrator wrote yarn's `#sha1` into bun.lock itself.
+  // Those lockfiles are still out there, so the canonical URL check has to look
+  // past the fragment (which never reaches the registry) while still rejecting
+  // a URL whose path is not electron's tarball.
+  test.concurrent.each([
+    [
+      "runs scripts for the canonical tarball",
+      "electron/-/electron-1.0.0.tgz#f1b8bc2c23cd7e4f1500669dfaf8757578d2e391",
+      electronIntegrity,
+      true,
+    ],
+    [
+      "keeps blocking another tarball",
+      "all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz#91cd0bd6a450b21db0078b9118c54bc0a27fccb7",
+      otherIntegrity,
+      false,
+    ],
+  ])("a bun.lock already migrated with the #sha1 suffix %s", async (_, tarball, integrity, scriptsRun) => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const url = `http://localhost:${verdaccio.port}/${tarball}`;
+
+    await Promise.all([
+      writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "electron": "1.0.0",
+          },
+        }),
+      ),
+      writeFile(
+        join(packageDir, "bun.lock"),
+        `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+        "electron": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "electron": ["electron@1.0.0", "${url}", {}, "${integrity}"],
+  }
+}
+`,
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    const electronDir = join(packageDir, "node_modules", "electron");
+    expect(
+      await Promise.all([exists(join(electronDir, "package.json")), exists(join(electronDir, "preinstall.txt"))]),
+    ).toEqual([true, scriptsRun]);
+    expect(exitCode).toBe(0);
   });
 });
 

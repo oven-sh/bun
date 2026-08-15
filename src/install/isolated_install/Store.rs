@@ -352,20 +352,17 @@ pub mod entry {
         }
     }
 
-    /// Bound on the resolution text (everything after `name@`), which for folder,
-    /// tarball and git dependencies is otherwise as long as the user's spec. The
-    /// package directory is the cwd of its lifecycle scripts, and on Windows
-    /// `CreateProcess` rejects a cwd beyond MAX_PATH (ENOENT) even though bun's
-    /// own file operations accept such paths. 80 leaves versions and
-    /// `github+owner+repo+<sha>` verbatim.
+    /// Max bytes of resolution (the text after `name@`; a folder path or git/tarball
+    /// URL otherwise makes it arbitrarily long) in an entry name. The entry is the
+    /// cwd of the package's lifecycle scripts, which Windows' `CreateProcess` rejects
+    /// past MAX_PATH (ENOENT) although bun's own file I/O accepts such paths.
+    /// 80 keeps versions and `github+owner+repo+<sha>` verbatim.
     const MAX_RESOLUTION_LEN: usize = 80;
-    /// A longer resolution becomes its leading bytes, cut at a character boundary,
-    /// plus `+<16 hex wyhash (seed 0) of the whole text>`: at most
-    /// `MAX_RESOLUTION_LEN` bytes in total.
+    /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`,
+    /// `MAX_RESOLUTION_LEN` bytes at most.
     const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
 
-    /// Keeps the first `MAX_RESOLUTION_LEN` bytes written plus the length and
-    /// hash of everything written.
+    /// The first `MAX_RESOLUTION_LEN` bytes written, plus the length and hash of all of them.
     struct ResolutionSink {
         buf: [u8; MAX_RESOLUTION_LEN],
         len: usize,

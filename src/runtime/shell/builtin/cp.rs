@@ -3,7 +3,7 @@ use bun_paths::resolve_path;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, illegal_flag, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -809,7 +809,7 @@ impl FlagParser for Opts {
                 Some(ParseFlagResult::ContinueParsing)
             }
             b'n' => Some(ParseFlagResult::ContinueParsing),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..=i])),
+            _ => Some(ParseFlagResult::IllegalOption(illegal_flag(smallflags, i))),
         }
     }
 }

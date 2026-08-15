@@ -679,6 +679,18 @@ pub enum InstructionKind {
     Function,
 }
 
+impl InstructionKind {
+    /// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
+    pub fn unhoisted(self) -> Option<InstructionKind> {
+        match self {
+            InstructionKind::HoistedLet => Some(InstructionKind::Let),
+            InstructionKind::HoistedConst => Some(InstructionKind::Const),
+            InstructionKind::HoistedFunction => Some(InstructionKind::Function),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LValue {
     pub place: Place,

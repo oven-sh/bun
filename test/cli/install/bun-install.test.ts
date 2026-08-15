@@ -218,7 +218,7 @@ describe.concurrent("bun-install", () => {
   }`,
         );
         const { stderr, exited } = spawn({
-          cmd: [bunExe(), "install", "--network-concurrency", "abcdef"],
+          cmd: [bunExe(), "install", "--network-concurrency", input],
           cwd: ctx.package_dir,
           stdout: "inherit",
           stdin: "inherit",
@@ -226,7 +226,7 @@ describe.concurrent("bun-install", () => {
           env,
         });
         const err = await stderr.text();
-        expect(err).toContain("Expected --network-concurrency to be a number between 0 and 65535");
+        expect(err).toContain(`Expected --network-concurrency to be a number between 0 and 65535: ${input}`);
         expect(await exited).toBe(1);
         expect(urls).toBeEmpty();
       });

@@ -21,7 +21,7 @@ use crate::webcore::streams;
 
 bun_core::declare_scope!(FileReader, visible);
 
-// `pending_view` and the `Js`/`Temporary` variants below borrow into a
+// `pending_view` and the `Js` variant below borrow into a
 // JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
 // Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
 // readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).

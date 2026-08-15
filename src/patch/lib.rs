@@ -253,7 +253,16 @@ impl<'a> PatchFile<'a> {
 
 /// Invariants:
 /// - Hunk parts are ordered by first to last in file
-/// - The original starting line and the patched starting line are equal in the first hunk part
+///
+/// Hunks are located using `header.original` (the "-" side), which is anchored to the
+/// pristine input file and never shifts as earlier hunks are applied. `header.patched`
+/// (the "+" side) is not used for positioning: it accumulates the net line delta of every
+/// prior hunk, and patch generators that miscount it (`yarn patch-commit` does, in practice)
+/// emit a stale value that still passes every bounds check while splicing content at the
+/// wrong line (see https://github.com/oven-sh/bun/issues/38879). Context and deletion lines
+/// are verified against the file's actual content before anything is written, so a hunk that
+/// doesn't match where `header.original` says it should errors out instead of silently
+/// applying at the wrong offset.
 ///
 /// TODO: this is a very naive and slow implementation which works by creating a list of lines
 /// we can speed it up by:
@@ -340,68 +349,73 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         debug_assert!(i == file_line_count);
     }
 
-    for hunk in &patch.hunks {
-        let mut line_cursor = (hunk.header.patched.start - 1) as usize;
+    // Rebuild the file by walking the original lines once, copying unchanged
+    // spans verbatim and splicing in each hunk at its verified position —
+    // rather than mutating `lines` in place at trusted-but-possibly-stale
+    // absolute offsets (see the fn doc comment above).
+    let mut out_lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
+    let mut src_cursor: usize = 0;
 
-        // Validate hunk start position is within bounds
-        if line_cursor > lines.len() {
+    for hunk in &patch.hunks {
+        let hunk_start = hunk.header.original.start.saturating_sub(1) as usize;
+
+        // Hunks must be in order and non-overlapping against the original file.
+        if hunk_start < src_cursor || hunk_start > lines.len() {
             return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                sys::Error::from_code(sys::E::EINVAL, sys::Tag::TODO)
                     .with_path(file_path.as_bytes()),
             );
         }
 
+        // Carry forward the unchanged span between the previous hunk (or the
+        // start of the file) and this one.
+        out_lines.extend_from_slice(&lines[src_cursor..hunk_start]);
+        src_cursor = hunk_start;
+
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
             match part.ty {
-                PartType::Context => {
-                    // TODO: check if the lines match in the original file?
-
-                    // Validate context lines exist
-                    if line_cursor + part.lines.len() > lines.len() {
+                PartType::Context | PartType::Deletion => {
+                    if src_cursor + part.lines.len() > lines.len() {
                         return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::TODO)
                                 .with_path(file_path.as_bytes()),
                         );
                     }
 
-                    line_cursor += part.lines.len();
+                    // The hunk claims these lines are present at this offset —
+                    // refuse to guess if the file doesn't actually match,
+                    // rather than splicing at a position we can't verify.
+                    let actual = &lines[src_cursor..src_cursor + part.lines.len()];
+                    if actual != part.lines.as_slice() {
+                        return sys::Result::Err(
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::TODO)
+                                .with_path(file_path.as_bytes()),
+                        );
+                    }
+
+                    if part.ty == PartType::Context {
+                        out_lines.extend_from_slice(actual);
+                    } else if part.no_newline_at_end_of_file {
+                        // Deleting the line carrying the "no newline at EOF"
+                        // pragma means the file now ends with a newline.
+                        out_lines.push(b"");
+                    }
+                    src_cursor += part.lines.len();
                 }
                 PartType::Insertion => {
-                    // Validate insertion position is within bounds
-                    if line_cursor > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
-
-                    lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
-                    line_cursor += part.lines.len();
+                    out_lines.extend_from_slice(&part.lines);
                     if part.no_newline_at_end_of_file {
-                        let _ = lines.pop();
+                        let _ = out_lines.pop();
                     }
-                }
-                PartType::Deletion => {
-                    // TODO: check if the lines match in the original file?
-
-                    // Validate deletion range is within bounds
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
-
-                    lines.drain(line_cursor..line_cursor + part.lines.len());
-                    if part.no_newline_at_end_of_file {
-                        lines.push(b"");
-                    }
-                    // line_cursor -= part.lines.len();
                 }
             }
         }
     }
+
+    // Everything after the last hunk is unchanged.
+    out_lines.extend_from_slice(&lines[src_cursor..]);
+    let lines = out_lines;
 
     let file_fd = match sys::openat(
         patch_dir,

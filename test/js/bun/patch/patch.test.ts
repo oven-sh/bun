@@ -530,6 +530,64 @@ describe("apply", () => {
 
       expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
     });
+
+    test("multi-hunk patch with a stale + offset (yarn patch-commit style) applies at the correct position", async () => {
+      // The second hunk's declared `+` start (6) doesn't account for the two
+      // lines the first hunk inserts — the correct value is 8. This is the
+      // exact miscount `yarn patch-commit` produces (see #38879). Bun must
+      // locate the hunk by its `-` context, which is always correct, rather
+      // than trust the stale `+` offset.
+      const afile = `line1
+line2
+line3
+line4
+line5
+line6
+line7
+line8
+line9
+line10
+`;
+      const bfile = `line1
+line2
+NEW-1
+NEW-2
+line3
+line4
+line5
+line6
+NEW-3
+line7
+line8
+line9
+line10
+`;
+
+      await using tempdir = tempDir("patch-test", {
+        "a/file.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/file.txt b/file.txt",
+        "--- a/file.txt",
+        "+++ b/file.txt",
+        "@@ -2,2 +2,4 @@",
+        " line2",
+        "+NEW-1",
+        "+NEW-2",
+        " line3",
+        "@@ -6,2 +6,3 @@",
+        " line6",
+        "+NEW-3",
+        " line7",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "file.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
   });
 
   describe("No newline at end of file", () => {
@@ -623,6 +681,43 @@ describe("apply", () => {
              "+++ b/target.txt",
              "@@ -1,10 +1,1 @@",
              ...body,
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("hunk context that doesn't match the target file errors instead of silently corrupting it", async () => {
+      await using dir = tempDir("patch-context-mismatch", { "target.txt": "only line\n" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const patch = [
+             "diff --git a/target.txt b/target.txt",
+             "--- a/target.txt",
+             "+++ b/target.txt",
+             "@@ -1,1 +1,2 @@",
+             " this context does not match the file",
+             "+inserted",
              "",
            ].join("\\n");
            try {

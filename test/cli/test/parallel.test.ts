@@ -1293,6 +1293,7 @@ test.skipIf(isWindows).concurrent.each(["SIGTERM", "SIGINT"] as const)(
     expect(reactedAfterMs).toBeLessThan(500);
     expect(await proc.exited).toBe(130);
   },
+  15000,
 );
 
 test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {

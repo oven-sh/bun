@@ -1463,13 +1463,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    ///
-    /// Returns `None` when the path to link does not fit `buf`; `sys::exists`
-    /// reports such a path missing, so callers record a missing bin.
-    // `is_native_binlink_redirect()` is hoisted to a parameter so the
-    // caller can drop its `&self` borrow before mutably calling
-    // `link_bin_or_create_shim`. The result borrows only `buf`, never
-    // `package_dir` (which lives in `self.abs_target_buf`).
+    /// `None`: the path does not fit `buf`; callers treat that as a missing bin.
     fn resolve_bin_target<'b>(
         is_native_binlink_redirect: bool,
         package_dir: &[u8],
@@ -1525,13 +1519,8 @@ impl<'a> Linker<'a> {
         Self::join_z_checked(package_dir, target, buf)
     }
 
-    /// `<dir>/<relative>`, normalized and NUL-terminated in `buf`, or `None`
-    /// when the normalized path does not fit. `relative` can be any length: bin
-    /// values are stored as written in package.json, and `dir` itself may be
-    /// close to the limit. Every `buf` passed here is `PathBuffer` sized, so a
-    /// path that does not fit is one `sys::exists` reports missing and
-    /// `sys::open_dir_absolute` rejects with `ENAMETOOLONG`; callers take the
-    /// branch they take for that outcome.
+    /// `<dir>/<relative>` NUL-terminated in `buf` (a `PathBuffer`), or `None` when it
+    /// does not fit, which is exactly when the `sys` wrappers would reject the path.
     fn join_z_checked<'b>(dir: &[u8], relative: &[u8], buf: &'b mut [u8]) -> Option<&'b ZStr> {
         let without_nul = buf.len() - 1;
         let len = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
@@ -1613,20 +1602,12 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // `link_bin_or_create_shim(&mut self, ..)`
-        // is called while `abs_dest` borrows `self.abs_dest_buf` (and, in the
-        // `Dir` arm, `abs_target` borrows `self.abs_target_buf`).
-        // `link_bin_or_create_shim` never reads or writes
-        // those two buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
-        // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
-        // pointer so borrowck allows the disjoint access; the SAFETY invariant
-        // is that `abs_dest_buf` is not aliased mutably for the lifetime of the
-        // detached slice. `package_dir` (`abs_target_buf[0..package_dir_len]`)
-        // is re-derived inside each arm so no detached borrow is needed for it.
+        // SAFETY (for the `ZStr::from_raw(abs_dest_buf_ptr, ..)` in each arm): the
+        // detached `abs_dest` is only live across `link_bin_or_create_shim(&mut self)`,
+        // which never touches `abs_dest_buf`.
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
 
-        // The resolved target cannot go into `self.abs_target_buf`: that holds
-        // `package_dir`, which the target is joined onto.
+        // `abs_target_buf` holds `package_dir`, the join input, so the output needs its own buffer.
         let mut resolved_target_pool_buf = path::path_buffer_pool::get();
         let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
@@ -1823,8 +1804,7 @@ impl<'a> Linker<'a> {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
-                                // `self.abs_target_buf` is free now: `package_dir` has been
-                                // folded into `abs_target_dir`.
+                                // `package_dir` is no longer needed, so `abs_target_buf` is free.
                                 let abs_target: &ZStr = {
                                     let Some(r) = Self::join_z_checked(
                                         abs_target_dir.as_bytes(),

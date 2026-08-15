@@ -373,11 +373,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("wraps a real pointer with length 0 as an attached empty Buffer and finalizes it once", async () => {
       const result = await checkSameOutput("test_external_buffer_zero_length_driver", []);
       expect(result.split(/\r?\n/)).toEqual([
-        ...[0, 1, 2, 3].flatMap(slot => [
-          `slot ${slot}: buffer_info data_is_caller_pointer=1 length=0`,
-          `slot ${slot}: typedarray_info type_is_uint8=1 data_is_caller_pointer=1 length=0 byte_offset=0`,
-          `slot ${slot}: arraybuffer detached=0 data_is_caller_pointer=1 byte_length=0`,
-        ]),
         "Buffer.isBuffer(buf): true",
         "buf.length: 0",
         "buf.buffer.detached: false",

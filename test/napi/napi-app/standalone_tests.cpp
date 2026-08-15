@@ -2587,7 +2587,8 @@ static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &i
 // Helpers for test_external_buffer_zero_length_driver (module.js): external
 // Buffers of length 0 over real pointers, one per slot, so the driver can
 // check from JS that they are attached and that each finalize_cb is delivered
-// once after the Buffer is collected.
+// once after the Buffer is collected. (What the Node-API info calls report for
+// such a Buffer is covered by test_napi_create_external_buffer_empty above.)
 static constexpr uint32_t kZeroLengthSlots = 4;
 static char zero_length_slots[kZeroLengthSlots];
 static int zero_length_finalize_calls[kZeroLengthSlots];
@@ -2606,57 +2607,20 @@ static void zero_length_external_buffer_finalizer(napi_env, void *data,
   zero_length_finalize_unexpected_args++;
 }
 
-// create_zero_length_external_buffer(slot): returns the Buffer after printing
-// what the Node-API info calls report about it.
+// create_zero_length_external_buffer(slot): a Buffer of length 0 over the
+// slot's address, with a finalize_cb that records which slot it ran for.
 static napi_value
 create_zero_length_external_buffer(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   uint32_t slot;
   NODE_API_CALL(env, napi_get_value_uint32(env, info[0], &slot));
   NODE_API_ASSERT(env, slot < kZeroLengthSlots);
-  char *caller_pointer = &zero_length_slots[slot];
 
   napi_value buffer;
   NODE_API_CALL(
-      env, napi_create_external_buffer(env, 0, caller_pointer,
+      env, napi_create_external_buffer(env, 0, &zero_length_slots[slot],
                                        zero_length_external_buffer_finalizer,
                                        zero_length_finalize_calls, &buffer));
-
-  void *buffer_data = nullptr;
-  size_t buffer_length = 999;
-  NODE_API_CALL(
-      env, napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length));
-
-  napi_typedarray_type type = napi_int8_array;
-  size_t typedarray_length = 999;
-  void *typedarray_data = nullptr;
-  napi_value arraybuffer = nullptr;
-  size_t byte_offset = 999;
-  NODE_API_CALL(env, napi_get_typedarray_info(
-                         env, buffer, &type, &typedarray_length,
-                         &typedarray_data, &arraybuffer, &byte_offset));
-
-  bool detached = true;
-  NODE_API_CALL(env, napi_is_detached_arraybuffer(env, arraybuffer, &detached));
-  void *arraybuffer_data = nullptr;
-  size_t arraybuffer_length = 999;
-  NODE_API_CALL(env,
-                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
-                                          &arraybuffer_length));
-
-  printf("slot %u: buffer_info data_is_caller_pointer=%d length=%zu\n", slot,
-         buffer_data == caller_pointer, buffer_length);
-  printf("slot %u: typedarray_info type_is_uint8=%d data_is_caller_pointer=%d "
-         "length=%zu byte_offset=%zu\n",
-         slot, type == napi_uint8_array, typedarray_data == caller_pointer,
-         typedarray_length, byte_offset);
-  printf("slot %u: arraybuffer detached=%d data_is_caller_pointer=%d "
-         "byte_length=%zu\n",
-         slot, detached, arraybuffer_data == caller_pointer,
-         arraybuffer_length);
-  // The driver's console.log output follows; the addon's CRT stdout is fully
-  // buffered on Windows when piped, so flush to keep the lines in order.
-  fflush(stdout);
   return buffer;
 }
 

@@ -7,8 +7,7 @@ const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
 const fs = require("node:fs");
-// Captured before any fuzzed script runs: scripts can replace console.log and,
-// through the require exposed below, require("bun:jsc").drainMicrotasks.
+// Captured before any fuzzed script gets a chance to replace them.
 const { drainMicrotasks } = require("bun:jsc");
 const log = console.log.bind(console);
 
@@ -46,7 +45,7 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// Status of the script currently being executed; also set by the listeners below.
+// Exit code of the script currently being executed.
 let exit_code = 0;
 
 function reportUncaught(error) {
@@ -54,8 +53,7 @@ function reportUncaught(error) {
   try {
     message = `${error}`;
   } catch {
-    // Coercing the thrown value threw. As the uncaughtException listener this
-    // function must not throw itself: that would exit the process.
+    // A throwing uncaughtException listener would exit the process.
     message = "<unprintable>";
   }
   // Print uncaught exception like workerd does
@@ -63,9 +61,7 @@ function reportUncaught(error) {
   exit_code = 1;
 }
 
-// An exception thrown from a microtask or a rejection nobody handles is not
-// thrown out of drainMicrotasks() below; it is delivered through these events,
-// so they are what fails a script whose error only surfaces asynchronously.
+// Errors from microtasks and unhandled rejections arrive here, not out of drainMicrotasks().
 process.on("uncaughtException", reportUncaught);
 process.on("unhandledRejection", reportUncaught);
 
@@ -109,11 +105,8 @@ while (true) {
     reportUncaught(_e);
   }
 
-  // This loop never yields to the event loop, so the promise reactions, await
-  // continuations and nextTicks the script queued only run if drained here,
-  // before its status and resetCoverage(), so that their coverage, crashes and
-  // failures are attributed to it (as the jsc shell's REPRL loop does). Drained
-  // even if the script threw, so nothing it queued runs as part of the next one.
+  // This loop never yields to the event loop: run what the script queued while
+  // its status and coverage are still the ones being reported.
   drainMicrotasks();
 
   // Send status back (4 bytes: exit code in REPRL format)

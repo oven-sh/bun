@@ -676,6 +676,11 @@ fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
         Color::RESET
     ));
     repl.print(format_args!(
+        "  {}PgUp/PgDn{}    Oldest history entry / back to current line\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
         "  {}Tab{}          Auto-complete\n",
         Color::CYAN,
         Color::RESET

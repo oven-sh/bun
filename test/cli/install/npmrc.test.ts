@@ -719,3 +719,103 @@ describe("--registry override", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("auth tokens containing CR, LF or NUL", () => {
+  // The token is written into `Authorization: Bearer <token>` as-is, so a token
+  // holding "\r\n" used to end that header line and send whatever followed it
+  // to the registry as additional header lines (or a second request). Such a
+  // token must be rejected where it is configured, before any request is made.
+  const token = "abc\r\nX-Injected: 1";
+
+  type Seen = { path: string; injected: string | null };
+  type Setup = { files: Record<string, string>; env?: Record<string, string>; dependency?: string };
+
+  async function install(setup: (registryUrl: string) => Setup) {
+    const seen: Seen[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.push({ path: new URL(req.url).pathname, injected: req.headers.get("x-injected") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const registryUrl = `http://127.0.0.1:${server.port}/`;
+    const { files, env: extraEnv = {}, dependency = "no-deps" } = setup(registryUrl);
+
+    using dir = tempDir("npmrc-token-crlf", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { [dependency]: "1.0.0" } }),
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { registryUrl, seen, stderr, exitCode };
+  }
+
+  test(".npmrc _authToken expanded from an environment variable", async () => {
+    const { registryUrl, seen, stderr, exitCode } = await install(url => ({
+      files: { ".npmrc": `registry=${url}\n//${url.slice("http://".length)}:_authToken=\${NPM_TOKEN}\n` },
+      env: { NPM_TOKEN: token },
+    }));
+    expect(seen).toEqual([]);
+    expect(stderr).toContain(`the auth token for registry "${registryUrl}" contains a newline or NUL byte`);
+    expect(exitCode).toBe(1);
+  });
+
+  test(".npmrc _authToken for a scoped registry", async () => {
+    const { registryUrl, seen, stderr, exitCode } = await install(url => ({
+      files: {
+        ".npmrc":
+          `registry=${url}\n` +
+          `@acme:registry=${url}acme/\n` +
+          `//${url.slice("http://".length)}acme/:_authToken=\${NPM_TOKEN}\n`,
+      },
+      env: { NPM_TOKEN: token },
+      dependency: "@acme/no-deps",
+    }));
+    expect(seen).toEqual([]);
+    expect(stderr).toContain(
+      `the auth token for the @acme registry "${registryUrl}acme/" contains a newline or NUL byte`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("bunfig.toml token expanded from an environment variable", async () => {
+    const { registryUrl, seen, stderr, exitCode } = await install(url => ({
+      files: { "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "$NPM_TOKEN" }\n` },
+      env: { NPM_TOKEN: token },
+    }));
+    expect(seen).toEqual([]);
+    expect(stderr).toContain(`the auth token for registry "${registryUrl}" contains a newline or NUL byte`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("NPM_CONFIG_TOKEN", async () => {
+    const { seen, stderr, exitCode } = await install(url => ({
+      files: { ".npmrc": `registry=${url}\n` },
+      env: { NPM_CONFIG_TOKEN: token },
+    }));
+    expect(seen).toEqual([]);
+    expect(stderr).toContain("the auth token in $NPM_CONFIG_TOKEN contains a newline or NUL byte");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["a trailing newline", '"abc\\n"'],
+    ["a carriage return", '"abc\\rdef"'],
+    ["a NUL byte", '"abc\\u0000def"'],
+  ])("bunfig.toml token with %s", async (_, tomlToken) => {
+    const { registryUrl, seen, stderr, exitCode } = await install(url => ({
+      files: { "bunfig.toml": `[install]\nregistry = { url = "${url}", token = ${tomlToken} }\n` },
+    }));
+    expect(seen).toEqual([]);
+    expect(stderr).toContain(`the auth token for registry "${registryUrl}" contains a newline or NUL byte`);
+    expect(exitCode).toBe(1);
+  });
+});

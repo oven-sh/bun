@@ -2612,17 +2612,9 @@ fn init_with_runtime_once(
         }
     }
 
-    match manager
+    manager
         .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
-    {
-        Ok(()) => {}
-        Err(e) => {
-            // only error.OutOfMemory possible
-            let _ = e;
-            bun_core::out_of_memory();
-        }
-    }
+        .load(log, env, Some(cli), bun_install, Subcommand::Install)?;
 
     manager.timestamp_for_manifest_cache_control =
         ((u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32)

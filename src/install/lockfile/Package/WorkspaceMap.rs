@@ -18,8 +18,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
-    /// Nameless members whose dependencies are therefore not installed. Only the
-    /// root package.json parse reports them; the other scans of one command stay quiet.
+    /// Relative dirs of nameless members that declare dependencies, for `warn_skipped`.
     skipped_with_dependencies: Vec<Box<[u8]>>,
 }
 

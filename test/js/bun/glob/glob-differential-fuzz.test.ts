@@ -13,8 +13,10 @@
 //   - Bun's negated classes `[!x]` / `[^x]` match `/` ("anything except the
 //     characters", docs/runtime/glob.mdx); picomatch's never cross a separator.
 //   - picomatch turns `{a}` / `{}` into literals and `{1..3}` into a range; Bun
-//     braces always group and never expand ranges. `**` touching a brace group
-//     (`**{a,b}`, `{**/a,b}`) is a globstar for one matcher and `*` for the other.
+//     braces always group and never expand ranges. A `**` inside or touching a
+//     brace group is read differently too: picomatch lets it cross separators
+//     even in `**{a,b}` and `a/{b,**}x`, where Bun (expanding the group like
+//     bash) sees `*`, while `{**/a,b}` is a globstar for Bun only.
 //   - Inside braces picomatch gives a `.` followed by `*` the guard it normally
 //     reserves for the start of a segment, so `x{?.*,b}` does not match "x.."
 //     although `x?.*` does; Bun expands braces like bash and matches both.
@@ -183,13 +185,11 @@ function deriveSegment(rng: Rng, text: string, shape: Shape, inBraces: boolean):
 function derivePattern(rng: Rng, path: string[]): string {
   const braces = rng.int(3);
   const globstarSegments = rng.chance(0.75);
-  // Known divergences, found by this fuzzer and handed off separately: a `**`
-  // that is only part of a segment is documented to mean `*`, but
-  // src/glob/matcher.rs still runs some of its globstar logic for it, so
-  // `a**/**` matches "ab" (`a*/**` does not) and `**/a**/{x,y}` matches
-  // "ab/ay" (`**/a*/{x,y}` does not). Until both are fixed, partial globstars
-  // only appear in patterns without globstar segments or braces; afterwards
-  // this can become an independent coin flip.
+  // Known divergences (pinned by PARTIAL_GLOBSTAR_BUGS below): a `**` that is
+  // only part of a segment is documented to mean `*`, but src/glob/matcher.rs
+  // still runs some of its globstar logic for it. Until the pin flips, partial
+  // globstars only appear in patterns without globstar segments or braces;
+  // afterwards this becomes an independent coin flip.
   const shape: Shape = { braces, globstarSegments, partialGlobstar: braces === 0 && !globstarSegments };
 
   const segments: string[] = [];
@@ -253,40 +253,52 @@ function mutatePath(rng: Rng, path: string[]): string[] {
   return out;
 }
 
-test(
-  `Bun.Glob#match agrees with picomatch ${fuzz.label}`,
-  () => {
-    const rng = new Rng(fuzz.seed);
-    let compared = 0;
-    let matched = 0;
-    for (let i = 0; i < fuzz.iters; i++) {
-      const basePath = genPath(rng);
-      const pattern = derivePattern(rng, basePath);
-      const reference = picomatch(pattern, PICOMATCH_OPTIONS);
-      const glob = new Glob(pattern);
+test(`Bun.Glob#match agrees with picomatch ${fuzz.label}`, () => {
+  const rng = new Rng(fuzz.seed);
+  let compared = 0;
+  let matched = 0;
+  for (let i = 0; i < fuzz.iters; i++) {
+    const basePath = genPath(rng);
+    const pattern = derivePattern(rng, basePath);
+    const reference = picomatch(pattern, PICOMATCH_OPTIONS);
+    const glob = new Glob(pattern);
 
-      const paths = [basePath];
-      while (paths.length < PATHS_PER_PATTERN) {
-        paths.push(rng.chance(0.7) ? mutatePath(rng, rng.pick(paths)) : genPath(rng));
-      }
-      for (const segments of paths) {
-        const path = segments.join("/");
-        if (path === pattern) continue;
-        const expected = reference(path);
-        const actual = glob.match(path);
-        compared++;
-        if (expected) matched++;
-        if (actual !== expected) {
-          throw new Error(
-            `new Bun.Glob(${JSON.stringify(pattern)}).match(${JSON.stringify(path)}) returned ${actual}, ` +
-              `picomatch says ${expected}. ${fuzz.repro(i)}`,
-          );
-        }
+    const paths = [basePath];
+    while (paths.length < PATHS_PER_PATTERN) {
+      paths.push(rng.chance(0.7) ? mutatePath(rng, rng.pick(paths)) : genPath(rng));
+    }
+    for (const segments of paths) {
+      const path = segments.join("/");
+      if (path === pattern) continue;
+      const expected = reference(path);
+      const actual = glob.match(path);
+      compared++;
+      if (expected) matched++;
+      if (actual !== expected) {
+        throw new Error(
+          `new Bun.Glob(${JSON.stringify(pattern)}).match(${JSON.stringify(path)}) returned ${actual}, ` +
+            `picomatch says ${expected}. ${fuzz.repro(i)}`,
+        );
       }
     }
-    console.log(`glob-differential-fuzz: ${fuzz.iters} patterns, ${compared} paths compared, ${matched} matched`);
-    expect(matched).toBeGreaterThan(0);
-    expect(matched).toBeLessThan(compared);
-  },
-  fuzz.timeout,
-);
+  }
+  console.log(`glob-differential-fuzz: ${fuzz.iters} patterns, ${compared} paths compared, ${matched} matched`);
+  expect(matched).toBeGreaterThan(0);
+  expect(matched).toBeLessThan(compared);
+});
+
+// The cases derivePattern() steers around (`a*/**` and `**/a*/{x,y}` agree).
+// Each has a fix in flight; when the last one lands this starts passing, and
+// then it should be deleted together with the partialGlobstar gating.
+const PARTIAL_GLOBSTAR_BUGS: [pattern: string, path: string][] = [
+  ["a**/**", "ab"],
+  ["**/a**/{x,y}", "ab/ay"],
+];
+
+test.failing("known divergences: a `**` that is only part of a segment still acts as a globstar", () => {
+  for (const [pattern, path] of PARTIAL_GLOBSTAR_BUGS) {
+    expect(new Glob(pattern).match(path), `${pattern} against ${path}`).toBe(
+      picomatch(pattern, PICOMATCH_OPTIONS)(path),
+    );
+  }
+});

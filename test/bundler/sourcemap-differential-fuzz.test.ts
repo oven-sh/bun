@@ -350,50 +350,60 @@ function outputName(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-test(
-  `Bun.build source maps point every mapped identifier back at itself ${fuzz.label}`,
-  async () => {
-    const rng = new Rng(fuzz.seed);
-    const generator = new ProgramGenerator(rng);
-    const stats: Stats = { mappings: 0, identifiers: 0 };
+test(`Bun.build source maps point every mapped identifier back at itself ${fuzz.label}`, async () => {
+  const rng = new Rng(fuzz.seed);
+  const generator = new ProgramGenerator(rng);
+  const stats: Stats = { mappings: 0, identifiers: 0 };
 
-    for (let first = 0; first < fuzz.iters; first += PROGRAMS_PER_BUILD) {
-      const options = BUILD_OPTIONS[(first / PROGRAMS_PER_BUILD) % BUILD_OPTIONS.length];
-      const programs: Program[] = [];
-      const files: Record<string, string> = {};
-      for (let i = first; i < Math.min(first + PROGRAMS_PER_BUILD, fuzz.iters); i++) {
-        const program = generator.program(`p${i}`);
-        programs.push(program);
-        for (const module of program.modules) files[module.file] = module.source;
-      }
-      using dir = tempDir("sourcemap-fuzz", files);
-
-      const build = await Bun.build({
-        ...options,
-        entrypoints: programs.map(p => join(String(dir), p.entry)),
-        root: String(dir),
-        sourcemap: "external",
-      });
-
-      for (const [offset, program] of programs.entries()) {
-        const iteration = first + offset;
-        const repro = `${fuzz.repro(iteration)} options=${JSON.stringify(options)}`;
-        const js = build.outputs.find(o => o.kind === "entry-point" && outputName(o.path) === program.entry);
-        expect(js, `no output for ${program.entry} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
-        // Paired by path rather than through `js.sourcemap`, which with several
-        // entrypoints currently points at the wrong artifact (handed off separately).
-        const map = build.outputs.find(o => o.kind === "sourcemap" && o.path === js!.path + ".map");
-        expect(map, `no source map for ${js!.path} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
-        await checkProgram(program, await js!.text(), await map!.json(), stats, repro);
-      }
+  for (let first = 0; first < fuzz.iters; first += PROGRAMS_PER_BUILD) {
+    const options = BUILD_OPTIONS[(first / PROGRAMS_PER_BUILD) % BUILD_OPTIONS.length];
+    const programs: Program[] = [];
+    const files: Record<string, string> = {};
+    for (let i = first; i < Math.min(first + PROGRAMS_PER_BUILD, fuzz.iters); i++) {
+      const program = generator.program(`p${i}`);
+      programs.push(program);
+      for (const module of program.modules) files[module.file] = module.source;
     }
+    using dir = tempDir("sourcemap-fuzz", files);
 
-    console.log(
-      `sourcemap-differential-fuzz: ${fuzz.iters} programs, ${stats.mappings} mappings in range, ${stats.identifiers} identifiers mapped to themselves`,
-    );
-    // Guards against the check silently going vacuous: every program has at least
-    // a console.log line worth of mapped identifiers.
-    expect(stats.identifiers).toBeGreaterThan(fuzz.iters * 4);
-  },
-  fuzz.timeout,
-);
+    const build = await Bun.build({
+      ...options,
+      entrypoints: programs.map(p => join(String(dir), p.entry)),
+      root: String(dir),
+      sourcemap: "external",
+    });
+
+    for (const [offset, program] of programs.entries()) {
+      const iteration = first + offset;
+      const repro = `${fuzz.repro(iteration)} options=${JSON.stringify(options)}`;
+      const js = build.outputs.find(o => o.kind === "entry-point" && outputName(o.path) === program.entry);
+      expect(js, `no output for ${program.entry} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
+      // Known divergence (pinned below): with several entrypoints `js.sourcemap`
+      // is the wrong artifact, so the map is paired by path instead.
+      const map = build.outputs.find(o => o.kind === "sourcemap" && o.path === js!.path + ".map");
+      expect(map, `no source map for ${js!.path} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
+      await checkProgram(program, await js!.text(), await map!.json(), stats, repro);
+    }
+  }
+
+  console.log(
+    `sourcemap-differential-fuzz: ${fuzz.iters} programs, ${stats.mappings} mappings in range, ${stats.identifiers} identifiers mapped to themselves`,
+  );
+  // Guards against the check silently going vacuous: every program has at least
+  // a console.log line worth of mapped identifiers.
+  expect(stats.identifiers).toBeGreaterThan(fuzz.iters * 4);
+});
+
+// A fix is in flight. Once this passes, delete it and read each program's map
+// through `js.sourcemap` above, so the fuzz covers that link as well.
+test.failing("known divergence: BuildArtifact.sourcemap with several entrypoints", async () => {
+  using dir = tempDir("sourcemap-fuzz-link", { "a.js": "console.log(1);\n", "b.js": "console.log(2);\n" });
+  const build = await Bun.build({
+    entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+    root: String(dir),
+    sourcemap: "external",
+  });
+  for (const js of build.outputs.filter(o => o.kind === "entry-point")) {
+    expect(js.sourcemap?.path).toBe(js.path + ".map");
+  }
+});

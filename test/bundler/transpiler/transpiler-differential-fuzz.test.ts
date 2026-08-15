@@ -63,10 +63,9 @@ const NUMBERS = [
   "9007199254740993",
   "4294967296",
   "NaN",
-  // Known divergence, found by this fuzzer and handed off separately: an
-  // infinite value is printed as `1 / 0`, which the next pass no longer treats
-  // as a primitive, so `"a" != Infinity` prints as `"a" != 1 / 0` and reprints
-  // as `1 / 0 != "a"`. Add "Infinity" and "1e999" here once that is fixed.
+  // Known divergence (pinned at the bottom of the file): infinite values are
+  // printed as `1 / 0`, which the next pass no longer treats as a primitive.
+  // Add "Infinity" and "1e999" here when the pin flips.
 ];
 
 // `+` is repeated to weight it: it is the operator with the most printing rules
@@ -122,10 +121,10 @@ function rebindsThis(scope: Scope): Scope {
 class ProgramGenerator {
   private counter = 0;
   /**
-   * Known divergence, found by this fuzzer and handed off separately: the
-   * unused-expression simplifier turns `(a, b) ? f() : 0;` into `a, b && f();`
-   * and only drops the `a,` on the next pass, so an expression statement
-   * (whose value is unused) gets no comma operators until that is fixed.
+   * Known divergence (pinned at the bottom of the file): the unused-expression
+   * simplifier needs two passes for a comma inside an unused ternary, so an
+   * expression statement (whose value is unused) gets no comma operators.
+   * Remove this flag when the pin flips.
    */
   private noComma = false;
   constructor(private rng: Rng) {}
@@ -511,25 +510,39 @@ function check(
   }
 }
 
-test(
-  `transpiler output parses, is a fixed point and behaves like its input ${fuzz.label}`,
-  () => {
-    const generator = new ProgramGenerator(new Rng(fuzz.seed));
-    let completed = 0;
-    for (let i = 0; i < fuzz.iters; i++) {
-      const source = generator.program();
-      const sections = { source, repro: fuzz.repro(i) };
-      const expected = run(source);
-      if (!expected.includes(UNCAUGHT)) completed++;
-      check(printer, "printed", source, expected, sections);
-      check(minifier, "minified", source, expected, sections);
-    }
-    console.log(
-      `transpiler-differential-fuzz: ${fuzz.iters} programs checked, ${completed} ran without an uncaught exception`,
-    );
-    // An escaping exception is compared too, but it cuts the program's output
-    // short; the generator is meant to keep programs from throwing at all.
-    expect(completed).toBeGreaterThan(fuzz.iters * 0.9);
-  },
-  fuzz.timeout,
-);
+test(`transpiler output parses, is a fixed point and behaves like its input ${fuzz.label}`, () => {
+  const generator = new ProgramGenerator(new Rng(fuzz.seed));
+  let completed = 0;
+  for (let i = 0; i < fuzz.iters; i++) {
+    const source = generator.program();
+    const sections = { source, repro: fuzz.repro(i) };
+    const expected = run(source);
+    if (!expected.includes(UNCAUGHT)) completed++;
+    check(printer, "printed", source, expected, sections);
+    check(minifier, "minified", source, expected, sections);
+  }
+  console.log(
+    `transpiler-differential-fuzz: ${fuzz.iters} programs checked, ${completed} ran without an uncaught exception`,
+  );
+  // An escaping exception is compared too, but it cuts the program's output
+  // short; the generator is meant to keep programs from throwing at all.
+  expect(completed).toBeGreaterThan(fuzz.iters * 0.9);
+});
+
+// The programs the generator steers around, put through the same checks. Each
+// has a fix in flight; when a pin starts passing, delete it and undo the
+// exclusion it names.
+function pin(source: string): void {
+  const sections = { source };
+  const expected = run(source);
+  check(printer, "printed", source, expected, sections);
+  check(minifier, "minified", source, expected, sections);
+}
+
+test.failing("known divergence: comparing against an infinite value is not a fixed point (NUMBERS)", () => {
+  pin('__out.push("a" != Infinity);\n');
+});
+
+test.failing("known divergence: an unused ternary with a comma test takes two passes to simplify (noComma)", () => {
+  pin("let a = 1, b = 2;\nconst f = () => __out.push(a);\n(a, b) ? f() : 0;\n");
+});

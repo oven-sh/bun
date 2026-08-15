@@ -6,10 +6,15 @@
  * Every oracle generates its cases from one seeded generator, so case N is the
  * same however many cases a run asks for, and every failure message carries the
  * seed and the case number. A CI failure therefore replays locally with the two
- * environment variables it prints, and a long soak is one variable away:
+ * environment variables it prints, and a long soak is one variable away (plus
+ * a test timeout to match, since the defaults are sized for a few seconds):
  *
  *     BUN_PATH_FUZZ_SEED=1234 BUN_PATH_FUZZ_ITERS=57 bun bd test path-differential-fuzz
- *     BUN_PATH_FUZZ_ITERS=20000 bun bd test path-differential-fuzz
+ *     BUN_PATH_FUZZ_ITERS=20000 bun bd test path-differential-fuzz --timeout=600000
+ *
+ * Each oracle also pins the divergences it found on main with `test.failing`
+ * next to the generator exclusion that works around them, so the fix that makes
+ * a pin pass is also told which exclusion to delete.
  */
 import { isDebug } from "harness";
 
@@ -66,12 +71,6 @@ export interface Fuzz {
   readonly iters: number;
   /** Appended to the test name, so a failure line shows what the run used. */
   readonly label: string;
-  /**
-   * Third argument for `test()`: undefined (the runner's own per-test timeout)
-   * unless the iteration count was raised for a soak, in which case the default
-   * run's budget is scaled up with it.
-   */
-  readonly timeout: number | undefined;
   /** Replay instructions, for the failure message of case `iteration` (0-based). */
   repro(iteration: number): string;
 }
@@ -86,13 +85,11 @@ export function fuzzEnv(prefix: string, defaultSeed: number, defaultIters: { rel
   const seedName = `${prefix}_SEED`;
   const itersName = `${prefix}_ITERS`;
   const seed = envSeed(seedName, defaultSeed);
-  const budget = isDebug ? defaultIters.debug : defaultIters.release;
-  const iters = envIters(itersName, budget);
+  const iters = envIters(itersName, isDebug ? defaultIters.debug : defaultIters.release);
   return {
     seed,
     iters,
     label: `(seed=${seed}, iters=${iters})`,
-    timeout: iters > budget ? Math.ceil(iters / budget) * 5_000 : undefined,
     repro(iteration: number): string {
       return `seed=${seed} iteration=${iteration} (replay: ${seedName}=${seed} ${itersName}=${iteration + 1})`;
     },

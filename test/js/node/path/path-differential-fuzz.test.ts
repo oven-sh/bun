@@ -10,7 +10,10 @@
 // the cwd or the `=D:` environment variable).
 //
 // Not generated, because node:path on main predates their handling in Node's
-// lib/path.js (oven-sh/bun#37305 brings them in; widen the generator then):
+// lib/path.js. oven-sh/bun#37305 brings them in; the test.failing pin at the
+// bottom of this file starts passing with it, which is the cue to widen the
+// generator to these (#37305's recorded node-path-parity corpus covers them
+// as fixed cases; this file is the soakable, live-node counterpart):
 //   - win32 reserved device names (CON, NUL, COM1, ...) and a `:` anywhere but
 //     in a drive prefix at the start of the path (CVE-2024-36139 `.\` prefixing);
 //   - `\\.\` and `\\?\` device roots;
@@ -195,11 +198,9 @@ function genSuffix(rng: Rng, p: string, ns: typeof path.posix): string {
     default:
       suffix = rng.pick([".js", ".d.ts", "js", ".", "", "x", "日本", "é"]);
   }
-  // Known divergence, found by this fuzzer; oven-sh/bun#37305 fixes it: node
-  // takes basename()'s suffix branch when the suffix has no more UTF-16 units
-  // than the path, main compares UTF-8 byte lengths, so on a path made only of
-  // separators basename("//", "日本") is "//" in node and "" on main. Skip the
-  // suffixes for which the two length checks disagree; delete this once it lands.
+  // Known divergence (pinned below): node takes basename()'s suffix branch when
+  // the suffix has no more UTF-16 units than the path, main compares UTF-8 byte
+  // lengths. Skip the suffixes on which the two length checks disagree.
   if (suffix.length <= p.length && Buffer.byteLength(suffix) > Buffer.byteLength(p)) return ".js";
   return suffix;
 }
@@ -282,44 +283,48 @@ const nodeMajor =
     .stdout.toString()
     .trim();
 
-test.skipIf(nodeMajor !== wantedMajor)(
-  `node:path agrees with node ${fuzz.label}`,
-  async () => {
-    const rng = new Rng(fuzz.seed);
-    let compared = 0;
-    for (let start = 0; start < fuzz.iters; start += ITERS_PER_CHILD) {
-      const cases: Case[] = [];
-      const iterationOf: number[] = [];
-      for (let i = start; i < Math.min(start + ITERS_PER_CHILD, fuzz.iters); i++) {
-        for (const ns of ["posix", "win32"] as const) {
-          for (const c of genCases(rng, ns)) {
-            cases.push(c);
-            iterationOf.push(i);
-          }
+test.skipIf(nodeMajor !== wantedMajor)(`node:path agrees with node ${fuzz.label}`, async () => {
+  const rng = new Rng(fuzz.seed);
+  let compared = 0;
+  for (let start = 0; start < fuzz.iters; start += ITERS_PER_CHILD) {
+    const cases: Case[] = [];
+    const iterationOf: number[] = [];
+    for (let i = start; i < Math.min(start + ITERS_PER_CHILD, fuzz.iters); i++) {
+      for (const ns of ["posix", "win32"] as const) {
+        for (const c of genCases(rng, ns)) {
+          cases.push(c);
+          iterationOf.push(i);
         }
       }
+    }
 
-      const bunResults = cases.map(c => evaluate(path[c.ns], c));
-      const { version, results: nodeResults } = await evaluateInNode(node!, cases);
-      expect(nodeResults).toHaveLength(cases.length);
+    const bunResults = cases.map(c => evaluate(path[c.ns], c));
+    const { version, results: nodeResults } = await evaluateInNode(node!, cases);
+    expect(nodeResults).toHaveLength(cases.length);
 
-      const mismatches: string[] = [];
-      for (let k = 0; k < cases.length && mismatches.length < 10; k++) {
-        if (bunResults[k] !== nodeResults[k]) {
-          mismatches.push(
-            `${describeCall(cases[k])}\n    bun:  ${bunResults[k]}\n    node: ${nodeResults[k]}\n    ${fuzz.repro(iterationOf[k])}`,
-          );
-        }
-      }
-      if (mismatches.length > 0) {
-        throw new Error(
-          `node:path disagrees with node v${version} (first ${mismatches.length}):\n  ${mismatches.join("\n  ")}`,
+    const mismatches: string[] = [];
+    for (let k = 0; k < cases.length && mismatches.length < 10; k++) {
+      if (bunResults[k] !== nodeResults[k]) {
+        mismatches.push(
+          `${describeCall(cases[k])}\n    bun:  ${bunResults[k]}\n    node: ${nodeResults[k]}\n    ${fuzz.repro(iterationOf[k])}`,
         );
       }
-      compared += cases.length;
     }
-    console.log(`path-differential-fuzz: ${compared} calls agree with node (${fuzz.iters} iterations)`);
-    expect(compared).toBeGreaterThan(0);
-  },
-  fuzz.timeout,
-);
+    if (mismatches.length > 0) {
+      throw new Error(
+        `node:path disagrees with node v${version} (first ${mismatches.length}):\n  ${mismatches.join("\n  ")}`,
+      );
+    }
+    compared += cases.length;
+  }
+  console.log(`path-differential-fuzz: ${compared} calls agree with node (${fuzz.iters} iterations)`);
+  expect(compared).toBeGreaterThan(0);
+});
+
+// What genSuffix() steers around; these are node's answers. oven-sh/bun#37305
+// makes this pass: delete it and the length check in genSuffix then, and widen
+// the generator to the classes listed in the header while at it.
+test.failing("known divergence: basename() measures the suffix in UTF-16 units", () => {
+  expect(path.posix.basename("//", "日本")).toBe("//");
+  expect(path.win32.basename("z:/", "日本")).toBe("/");
+});

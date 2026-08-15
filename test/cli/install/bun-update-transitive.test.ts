@@ -1177,6 +1177,75 @@ test.concurrent("a row whose range rejects where the root's copy is going moves 
   expect(exitCode).toBe(0);
 });
 
+// The root's entry is edited and `bun update` runs right away, so the update sees the old entry in bun.lock and the new one in package.json.
+test.concurrent(
+  "a row is planned on its own when the root's entry is edited out of its range before the update",
+  async () => {
+    const { dir } = await sharedWithRoot("hoist-lockfile-2");
+    await write(
+      join(dir, "package.json"),
+      stringify(pkgJson({ "hoist-lockfile-2": "1.0.0", "hoist-lockfile-shared": "^2.0.1" })),
+    );
+    const { stdout, stderr, exitCode } = await run(dir, "update");
+    expectMoved(stdout, "hoist-lockfile-shared", "1.0.1", "2.0.2");
+    expect(normalize(stdout)).toEndWith(`\n${installed(2)}\n`);
+    expectCleanStderr(stderr);
+    expect(await packageJsonOf(dir)).toStrictEqual(
+      pkgJson({ "hoist-lockfile-2": "1.0.0", "hoist-lockfile-shared": "^2.0.2" }),
+    );
+    expect(await lockedVersions(dir, "hoist-lockfile-shared")).toStrictEqual(["1.0.2", "2.0.2"]);
+    expect(await installedVersion(dir, "hoist-lockfile-shared")).toBe("2.0.2");
+    expect(await installedVersion(dir, "hoist-lockfile-2", "node_modules", "hoist-lockfile-shared")).toBe("1.0.2");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each([
+  ["bare", []],
+  ["--dry-run", ["--dry-run"]],
+])("a row is planned on its own when the root's entry is removed before the update (%s)", async (_, args) => {
+  const { dir } = await sharedWithRoot("hoist-lockfile-1");
+  const packageJson = pkgJson({ "hoist-lockfile-1": "1.0.0" });
+  await write(join(dir, "package.json"), stringify(packageJson));
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
+  expect(movedRows(stdout)).toStrictEqual([movedRow("hoist-lockfile-shared", "1.0.1", "2.0.2")]);
+  expectCleanStderr(stderr);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  if (args.length) {
+    expect(normalize(stdout)).toEndWith(`\n${wouldUpdate(1)}\n`);
+    expect(await lockedVersions(dir, "hoist-lockfile-shared")).toStrictEqual(["1.0.1"]);
+  } else {
+    expect(normalize(stdout)).toContain(`\n${installed(1)}\n`);
+    expect(await lockedVersions(dir, "hoist-lockfile-shared")).toStrictEqual(["2.0.2"]);
+    expect(await installedVersion(dir, "hoist-lockfile-shared")).toBe("2.0.2");
+    await frozen(dir);
+  }
+  expect(exitCode).toBe(0);
+});
+
+// pkg2's no-deps entry, which one-range-dep's `^1.0.0` row shares, is edited to `^2.0.0` right before the update; pkg2's
+// new package.json is only read while the update resolves, so the row can only be planned once pkg2 has moved.
+test.concurrent(
+  "a row is planned on its own when a member's entry is edited out of its range before the update",
+  async () => {
+    const { dir, pkg1 } = await staleMemberTransitive("~1.0.0");
+    await write(join(dir, "packages/pkg2/package.json"), stringify(member("pkg2", { "no-deps": "^2.0.0" })));
+    const { stdout, stderr, exitCode } = await run(dir, "update");
+    expect(movedRows(stdout)).toStrictEqual([
+      movedRow("no-deps", "1.0.0", "2.0.0"),
+      movedRow("no-deps", "1.0.0", "1.1.0"),
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(pkg1);
+    expect(await packageJsonOf(dir, "packages/pkg2")).toStrictEqual(member("pkg2", { "no-deps": "^2.0.0" }));
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0", "2.0.0"]);
+    expect(await installedVersion(dir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // peer-deps-fixed@1.0.0 declares peer `no-deps: ^1.0.0`; the root's exact no-deps@1.0.0 is its only provider.
 test.concurrent.each([
   ["bare", []],

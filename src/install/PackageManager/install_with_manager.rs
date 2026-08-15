@@ -639,8 +639,16 @@ pub fn install_with_manager(
     if manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
+        || transitive.has_deferred()
     {
-        resolve_pending_tasks(manager, &root, log_level, &mut named)?;
+        resolve_pending_tasks(
+            manager,
+            &root,
+            log_level,
+            &mut named,
+            &mut transitive,
+            &direct_deps_before,
+        )?;
     }
 
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
@@ -1977,6 +1985,8 @@ fn resolve_pending_tasks(
     root: &lockfile::Package,
     log_level: Options::LogLevel,
     named: &mut NamedUpdates,
+    transitive: &mut TransitiveUpdate,
+    direct_deps_before: &DirectDependencies,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1995,6 +2005,10 @@ fn resolve_pending_tasks(
     }
 
     wait_for_resolution(manager)?;
+
+    if transitive.plan_unanchored(manager, direct_deps_before)? {
+        wait_for_resolution(manager)?;
+    }
 
     if !named.latest_rows.is_empty() {
         let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;

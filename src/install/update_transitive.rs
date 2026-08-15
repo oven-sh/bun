@@ -26,7 +26,6 @@ use crate::{
 struct DirectRow {
     name_hash: PackageNameHash,
     behavior: Behavior,
-    dep_id: DependencyID,
     resolved: PackageID,
 }
 
@@ -54,17 +53,14 @@ impl DirectDependencies {
                 continue;
             }
             let start = out.rows.len();
-            let first_dep_id = dep_slices[owner].begin();
             out.rows.extend(
                 dep_slices[owner]
                     .get(deps)
                     .iter()
                     .zip(res_slices[owner].get(resolutions))
-                    .enumerate()
-                    .map(|(i, (dep, &resolved))| DirectRow {
+                    .map(|(dep, &resolved)| DirectRow {
                         name_hash: dep.name_hash,
                         behavior: dep.behavior,
-                        dep_id: first_dep_id + i as DependencyID,
                         resolved,
                     }),
             );
@@ -77,42 +73,15 @@ impl DirectDependencies {
         out
     }
 
-    /// What the direct rows currently resolving to `pkg_id` move to under their own (post-override/catalog) ranges or dist-tags, per `manifest`.
-    fn targets_of(
-        &self,
-        lockfile: &Lockfile,
-        manifest: &PackageManifest,
-        pkg_id: PackageID,
-        min_age: Option<f64>,
-        excludes: Option<&[&[u8]]>,
-    ) -> Vec<Semver::Version> {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let deps = lockfile.buffers.dependencies.as_slice();
-        let mut targets = Vec::new();
-        for row in self.rows.iter().filter(|row| row.resolved == pkg_id) {
-            let Some(version) =
-                dedupe::effective_version(lockfile, row.dep_id, &deps[row.dep_id as usize])
-            else {
-                continue;
-            };
-            let found = match version.tag {
-                DependencyVersionTag::Npm => manifest
-                    .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
-                    .unwrap(),
-                DependencyVersionTag::DistTag => manifest
-                    .find_by_dist_tag_with_filter(
-                        version.dist_tag().tag.slice(buf),
-                        min_age,
-                        excludes,
-                    )
-                    .unwrap(),
-                _ => None,
-            };
-            if let Some(found) = found {
-                targets.push(found.version);
+    /// One bit per package: the packages the direct rows resolve to.
+    fn resolved_packages(&self, packages_len: usize) -> DynamicBitSet {
+        let mut set = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+        for row in &self.rows {
+            if (row.resolved as usize) < packages_len {
+                set.set(row.resolved as usize);
             }
         }
-        targets
+        set
     }
 
     /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows.
@@ -311,12 +280,14 @@ struct Pin {
     to: Option<Semver::Version>,
 }
 
-/// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now.
+/// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now. A range edge sharing the package a root/workspace entry resolves to follows that entry instead (`deferred`).
 #[derive(Default)]
 pub struct TransitiveUpdate {
     pins: Vec<Pin>,
     /// Kept for `print_plan` when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
     report: Option<Report>,
+    /// Range rows left to follow the direct entry whose package they share; `plan_unanchored` plans the ones that entry did not take along.
+    deferred: Vec<DependencyID>,
 }
 
 impl TransitiveUpdate {
@@ -338,13 +309,65 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, report) = plan_edges(manager, &edges, direct)?;
-        register_moved(manager, &report.moved)?;
+        let planned = plan_edges(manager, &edges, direct)?;
+        register_moved(manager, &planned.report.moved)?;
         let printed_here = manager.options.dry_run || manager.options.lockfile_only;
         Ok(TransitiveUpdate {
-            pins,
-            report: printed_here.then_some(report),
+            pins: planned.pins,
+            report: printed_here.then_some(planned.report),
+            deferred: planned.deferred,
         })
+    }
+
+    pub fn has_deferred(&self) -> bool {
+        !self.deferred.is_empty()
+    }
+
+    /// Once the direct entries have resolved: a deferred row whose entry moved to a version the row's range accepts has followed it; one whose package no direct entry resolves to any more (the entry moved where the range does not reach, or was removed from package.json in the meantime) is planned on its own range here. Returns whether anything was enqueued, in which case the caller resolves again.
+    pub fn plan_unanchored(
+        &mut self,
+        manager: &mut PackageManager,
+        direct: &DirectDependencies,
+    ) -> crate::Result<bool> {
+        if self.deferred.is_empty() {
+            return Ok(false);
+        }
+        direct.redirect_dependents(&mut manager.lockfile);
+        let current = DirectDependencies::snapshot(&manager.lockfile);
+        let edges = {
+            let lockfile = &*manager.lockfile;
+            let packages_len = lockfile.packages.len();
+            let anchored = current.resolved_packages(packages_len);
+            let resolutions = lockfile.buffers.resolutions.as_slice();
+            let mut edges = DynamicBitSet::init_empty(resolutions.len())?;
+            for dep_id in self.deferred.drain(..) {
+                let target = resolutions[dep_id as usize] as usize;
+                if target < packages_len && !anchored.is_set(target) {
+                    edges.set(dep_id as usize);
+                }
+            }
+            edges
+        };
+        if edges.count() == 0 {
+            return Ok(false);
+        }
+        let planned = plan_edges(manager, &edges, &current)?;
+        register_moved(manager, &planned.report.moved)?;
+        if let Some(report) = &mut self.report {
+            report.rows.extend(planned.report.rows);
+            report.moved.extend(planned.report.moved);
+        }
+        if planned.pins.is_empty() {
+            return Ok(false);
+        }
+        let round = TransitiveUpdate {
+            pins: planned.pins,
+            ..Default::default()
+        };
+        round.enqueue(manager)?;
+        manager.drain_dependency_list();
+        self.pins.extend(round.pins);
+        Ok(true)
     }
 
     /// Runs after the differ's own enqueues (including its override/catalog invalidation loops) so the pins win; edges the differ moved off their package are left to it.
@@ -469,11 +492,14 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    // The direct rows are resolved by now, so this also tells the plan which copies they settled on.
+    // The direct rows are resolved by now, so the rows `plan_edges` defers are sharing a package those rows settled on and simply stay there.
     let direct = DirectDependencies::snapshot(&manager.lockfile);
-    let (pins, report) = plan_edges(manager, &edges, &direct)?;
-    register_moved(manager, &report.moved)?;
-    let update = TransitiveUpdate { pins, report: None };
+    let planned = plan_edges(manager, &edges, &direct)?;
+    register_moved(manager, &planned.report.moved)?;
+    let update = TransitiveUpdate {
+        pins: planned.pins,
+        ..Default::default()
+    };
     update.enqueue(manager)?;
     Ok(update
         .pins
@@ -1074,12 +1100,20 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag.
+#[derive(Default)]
+struct Plan {
+    pins: Vec<Pin>,
+    report: Report,
+    /// Range rows sharing a package a row of `direct` resolves to; see `TransitiveUpdate::deferred`.
+    deferred: Vec<DependencyID>,
+}
+
+/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. A range row on a package that a row of `direct` resolves to is deferred instead, since it belongs with that entry; a dist-tag row keeps following its tag.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
-) -> crate::Result<(Vec<Pin>, Report)> {
+) -> crate::Result<Plan> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
     {
@@ -1178,7 +1212,26 @@ fn plan_edges(
     }
     instances.retain(|inst| !inst.wants.is_empty());
     if instances.is_empty() {
-        return Ok((Vec::new(), Report::default()));
+        return Ok(Plan::default());
+    }
+
+    let mut plan = Plan::default();
+    let shared_with_direct = direct.resolved_packages(manager.lockfile.packages.len());
+    instances.retain_mut(|inst| {
+        if inst.held || !shared_with_direct.is_set(inst.pkg_id as usize) {
+            return true;
+        }
+        inst.wants.retain_mut(|want| {
+            if want.version.tag != DependencyVersionTag::Npm {
+                return true;
+            }
+            plan.deferred.append(&mut want.dep_ids);
+            false
+        });
+        !inst.wants.is_empty()
+    });
+    if instances.is_empty() {
+        return Ok(plan);
     }
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
@@ -1191,8 +1244,7 @@ fn plan_edges(
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
     let pkg_names = manager.lockfile.packages.items_name();
 
-    let mut pins: Vec<Pin> = Vec::new();
-    let mut report = Report::default();
+    let Plan { pins, report, .. } = &mut plan;
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
@@ -1219,22 +1271,10 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        // Rows sharing the copy a root/workspace dependency resolves to are not
-        // planned on their own while their range accepts where that dependency
-        // is going: they follow it through `redirect_dependents` (or stay put),
-        // so a `*` row never forks off the project's own `~20` copy.
-        let direct_targets =
-            direct.targets_of(&manager.lockfile, manifest, inst.pkg_id, min_age, excludes);
         let rows_before = report.rows.len();
         for want in &inst.wants {
             let (v, to, later) = if want.version.tag == DependencyVersionTag::Npm {
                 let range = &want.version.npm().version;
-                if direct_targets
-                    .iter()
-                    .any(|&target| range.satisfies(target, buf, manifest_buf))
-                {
-                    continue;
-                }
                 let Some(found) = manifest
                     .find_best_version_with_filter(range, buf, min_age, excludes)
                     .unwrap()
@@ -1300,7 +1340,7 @@ fn plan_edges(
     }
 
     sort_dedup_rows(&mut report.rows);
-    Ok((pins, report))
+    Ok(plan)
 }
 
 /// The `latest` dist-tag when it is newer than the release `v` an in-range move stops at, like the `+` rows' `(vX available)`.

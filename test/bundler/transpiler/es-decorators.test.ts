@@ -1058,6 +1058,36 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("ctx.name: Named\nNamed\n");
       expect(exitCode).toBe(0);
     });
+
+    // The statement form goes through the same static `name` member rule as
+    // expressions: a member installed with the class body keeps the block out,
+    // a decorated accessor is installed afterwards and does not.
+    test.concurrent("anonymous export default class declaring its own static name", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "entry.js": `
+          import WithGetter from "./getter.js";
+          import WithAccessor from "./accessor.js";
+          console.log(JSON.stringify([WithGetter.name, WithAccessor.seenBefore, WithAccessor.name]));
+        `,
+        "getter.js": `
+          function dec(fn, ctx) { return fn; }
+          export default class {
+            static get name() { return "own getter"; }
+            @dec m() {}
+          }
+        `,
+        "accessor.js": `
+          function dec() {}
+          export default class {
+            static seenBefore = this.name;
+            @dec static accessor name = "from accessor";
+          }
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["own getter", "default", "from accessor"]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("anonymous class expressions with reserved-word inferred names", () => {

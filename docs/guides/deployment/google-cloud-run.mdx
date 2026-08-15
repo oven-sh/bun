@@ -50,7 +50,7 @@ The Google Cloud CLI is configured and ready to use!
 
 </Step>
 <Step title="(Optional) Store your project info in environment variables">
-Set variables for your project ID and number so they're easier to reuse in the following steps.
+Set variables for your project ID and number so you can reuse them in the following steps.
 
 ```bash terminal icon="terminal"
 PROJECT_ID=$(gcloud projects list --format='value(projectId)' --filter='projectId=my-bun-app')
@@ -101,7 +101,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 ```
 
 <Note>  
-These commands enable Cloud Run (`run.googleapis.com`) and Cloud Build (`cloudbuild.googleapis.com`), which are required for deploying from source. Cloud Run runs your containerized app, while Cloud Build builds and packages it.
+These commands enable Cloud Run (`run.googleapis.com`) and Cloud Build (`cloudbuild.googleapis.com`). Deploying from source requires both. Cloud Run runs your containerized app, while Cloud Build builds and packages it.
 
 The IAM binding grants the Compute Engine service account (`$PROJECT_NUMBER-compute@developer.gserviceaccount.com`) permission to build and deploy images on your behalf.
 
@@ -129,13 +129,13 @@ CMD ["bun", "index.ts"]
 ```
 
 <Note>
-  Make sure that the start command corresponds to your application's entry point. This can also be `CMD ["bun", "run", "start"]` if you have a start script in your `package.json`.
+  Make sure that the start command corresponds to your application's entry point. The start command can also be `CMD ["bun", "run", "start"]` if you have a start script in your `package.json`.
 
-If your app doesn't have dependencies, you can omit the `COPY package.json bun.lock ./` and `RUN bun install --production --frozen-lockfile` lines (Bun doesn't write a `bun.lock` for a project with no dependencies).
+If your app doesn't have dependencies, you can omit the `COPY package.json bun.lock ./` and `RUN bun install --production --frozen-lockfile` lines. Bun doesn't write a `bun.lock` for a project with no dependencies.
 
 </Note>
 
-Create a new `.dockerignore` file in the root of your project. It lists the files and directories to _exclude_ from the container image, such as `node_modules`, which keeps builds faster and smaller:
+Create a new `.dockerignore` file in the root of your project. It lists the files and directories to _exclude_ from the container image, such as `node_modules`. Excluding them keeps builds faster and smaller:
 
 ```docker .dockerignore icon="Docker"
 node_modules

@@ -26,7 +26,7 @@ bun add discord.js
 
 ---
 
-Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Discord adds a bot user to every new application automatically; you'll find it on the **Bot** tab. Discord's [setup walkthrough](https://discordjs.guide/legacy/preparations/app-setup) has screenshots if you get lost.
+Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Discord adds a bot user to every new application automatically; it's on the **Bot** tab. Discord's [setup walkthrough](https://discordjs.guide/legacy/preparations/app-setup) has screenshots if you get lost.
 
 Copy two values from the portal:
 
@@ -35,7 +35,7 @@ Copy two values from the portal:
 
 ---
 
-A bot can't do anything in a server until you invite it. In the portal's **OAuth2** section, generate an invite URL with the `bot` and `applications.commands` scopes, open it, and add the bot to a server you manage. Slash commands need the `applications.commands` scope, so don't skip it. A personal server you make for testing is the easiest place to start, and Discord's [guide to adding a bot](https://discordjs.guide/legacy/preparations/adding-your-app) walks through it with screenshots.
+A bot can't do anything in a server until you invite it. In the portal's **OAuth2** section, generate an invite URL with the `bot` and `applications.commands` scopes, open it, and add the bot to a server you manage. Slash commands need the `applications.commands` scope, so include it. A personal server you make for testing is a good place to start, and Discord's [guide to adding a bot](https://discordjs.guide/legacy/preparations/adding-your-app) walks through it with screenshots.
 
 ---
 
@@ -53,7 +53,7 @@ DISCORD_GUILD_ID=your-server-id
 
 ---
 
-Add `.env.local` to your `.gitignore` before you commit anything. Anyone who reads the token can control your bot, so it should never land in version control.
+Add `.env.local` to your `.gitignore` before you commit anything. Anyone who reads the token can control your bot, so the token should never land in version control.
 
 ```txt .gitignore icon="file-code"
 node_modules

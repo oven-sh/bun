@@ -792,9 +792,12 @@ declare module "bun" {
     /**
      * Parse a TOML (v1.1.0) document into a JavaScript object.
      *
-     * Date/time values parse as strings of their source text. Integers
-     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
-     * represented losslessly as JavaScript numbers.
+     * Date/time values parse as Temporal objects: offset date-times as
+     * `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`,
+     * local dates as `Temporal.PlainDate`, and local times as
+     * `Temporal.PlainTime`. Integers outside `Number.MAX_SAFE_INTEGER`
+     * throw, since they cannot be represented losslessly as JavaScript
+     * numbers.
      *
      * @category Utilities
      *
@@ -810,8 +813,15 @@ declare module "bun" {
      * Serialize a JavaScript object to a TOML document.
      *
      * The top-level value must be an object (a TOML document is a table).
-     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
-     * circular structures throw, since TOML cannot represent them;
+     * `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`,
+     * and `Temporal.PlainTime` values become the corresponding TOML
+     * date/time literals, `Temporal.ZonedDateTime` becomes an offset
+     * date-time, and `Date` becomes an offset date-time in UTC; time-zone
+     * and calendar annotations are dropped, since TOML has no syntax for
+     * them. `null`, `BigInt`, circular structures, invalid `Date`s, date
+     * values outside years 0000–9999, and Temporal types with no TOML form
+     * (`Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
+     * `Temporal.Duration`) throw, since TOML cannot represent them;
      * `undefined`, function, and symbol properties are skipped (inside
      * arrays they throw, since TOML arrays cannot have holes).
      *

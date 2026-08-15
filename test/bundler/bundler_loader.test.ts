@@ -54,6 +54,73 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // The Temporal reference is a real unbound symbol: a user binding named
+      // Temporal in the same bundle gets renamed instead of capturing the
+      // `Temporal.*.from` calls the TOML module compiles to.
+      itBundled("bun/loader-toml-datetime-shadowed-temporal-global", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import cfg from './config.toml';
+        var Temporal = "shadowed";
+        console.write(Temporal + " " + cfg.ld.toString());
+      `,
+          "/config.toml": `ld = 1979-05-27`,
+        },
+        run: { stdout: "shadowed 1979-05-27" },
+      });
+      // The realistic collision: another module in the chunk imports a
+      // Temporal polyfill binding. The import gets renamed and the TOML
+      // module's calls still resolve to the native global.
+      itBundled("bun/loader-toml-datetime-imported-temporal-binding", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import { Temporal } from './polyfill.js';
+        import cfg from './config.toml';
+        console.write(Temporal.tag + " " + (cfg.ld instanceof globalThis.Temporal.PlainDate) + " " + cfg.ld.toString());
+      `,
+          "/polyfill.js": `export const Temporal = { tag: "polyfill" };`,
+          "/config.toml": `ld = 1979-05-27`,
+        },
+        run: { stdout: "polyfill true 1979-05-27" },
+      });
+      itBundled("bun/loader-toml-datetime-no-bundle", {
+        target,
+        bundling: false,
+        entryPoints: ["/config.toml"],
+        files: {
+          "/config.toml": `d = 1979-05-27\n[t]\nat = 1979-05-27T00:32:00-07:00`,
+        },
+        run: true,
+        onAfterBundle(api) {
+          const code = api.readFile("/out.js");
+          expect(code).toContain('Temporal.PlainDate.from("1979-05-27")');
+          expect(code).toContain('Temporal.Instant.from("1979-05-27T00:32:00-07:00")');
+        },
+      });
+      // TOML date/time values bundle as Temporal construction calls; the
+      // bundled module yields the same values Bun.TOML.parse returns.
+      itBundled("bun/loader-toml-datetime", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import cfg, { lt } from './config.toml';
+        console.write(JSON.stringify([
+          cfg.odt instanceof Temporal.Instant, cfg.odt.toString(),
+          cfg.ldt instanceof Temporal.PlainDateTime, cfg.ldt.toString(),
+          cfg.ld instanceof Temporal.PlainDate, cfg.ld.toString(),
+          lt instanceof Temporal.PlainTime, lt.toString(),
+          cfg.tbl.arr[0].toString(),
+        ]));
+      `,
+          "/config.toml": `odt = 1979-05-27T00:32:00-07:00\nldt = 1979-05-27 07:32\nld = 1979-05-27\nlt = 07:32:00.500\n[tbl]\narr = [ 07:32:00 ]`,
+        },
+        run: {
+          stdout:
+            '[true,"1979-05-27T07:32:00Z",true,"1979-05-27T07:32:00",true,"1979-05-27",true,"07:32:00.5","07:32:00"]',
+        },
+      });
       itBundled("bun/loader-text-file", {
         target,
         files: {

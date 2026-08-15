@@ -66,7 +66,7 @@ Bun.serve({
 });
 ```
 
-HTML imports don't just serve HTML: they run Bun's [bundler](/bundler), JavaScript transpiler, and CSS parser, so you can build frontends with React, TypeScript, and Tailwind CSS.
+HTML imports do more than serve HTML: they run Bun's [bundler](/bundler), JavaScript transpiler, and CSS parser, so you can build frontends with React, TypeScript, and Tailwind CSS.
 
 For a complete guide to building full-stack applications with HTML imports, see [fullstack dev server](/bundler/fullstack).
 
@@ -190,7 +190,7 @@ Bun.serve({
 
 When `http3` is enabled, the server listens on the same port over both TCP (HTTP/1.1) and UDP (HTTP/3). HTTP/1.1 responses include an `Alt-Svc` header advertising the HTTP/3 endpoint so capable clients can upgrade automatically.
 
-To serve HTTP/3 only — no TCP listener at all — set `http1: false`:
+To serve HTTP/3 only, with no TCP listener at all, set `http1: false`:
 
 ```ts
 Bun.serve({
@@ -207,14 +207,14 @@ Bun.serve({
 ```
 
 <Note>
-  `http3` is not supported with unix domain sockets — QUIC requires a UDP port. `http1: false` requires `http3: true`.
+  `http3` is not supported with unix domain sockets: QUIC requires a UDP port. `http1: false` requires `http3: true`.
 </Note>
 
 ---
 
 ## idleTimeout
 
-By default, `Bun.serve` closes connections after **10 seconds** of inactivity. A connection is idle when no data is being sent or received, including in-flight requests where your handler is still running but hasn't written any bytes to the response yet. Browsers and `fetch()` clients see this as a connection reset.
+By default, `Bun.serve` closes connections after **10 seconds** of inactivity. A connection is idle when no data is being sent or received. That includes in-flight requests where your handler is still running but hasn't written any bytes to the response yet. Browsers and `fetch()` clients see this as a connection reset.
 
 To configure this, set the `idleTimeout` field (in seconds). The maximum value is `255`, and `0` disables the timeout entirely.
 
@@ -253,7 +253,7 @@ export default {
 
 The type parameter `<undefined>` is the WebSocket data type. If you add a `websocket` handler that attaches custom data with `server.upgrade(req, { data: ... })`, replace `undefined` with your data type.
 
-You can run this file as-is: when Bun sees a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve`.
+You can run this file as-is: when Bun sees a file with a `default` export containing a `fetch` handler, it passes the export into `Bun.serve`.
 
 ---
 
@@ -298,7 +298,7 @@ await server.stop();
 await server.stop(true);
 ```
 
-By default, `stop()` allows in-flight requests and WebSocket connections to complete. Idle keep-alive connections are closed immediately, and connections with a request in flight close once their response has been sent. Pass `true` to immediately terminate all connections instead. The returned promise resolves once every connection has closed.
+By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead. The returned promise resolves once every connection has closed.
 
 ### `server.closeIdleConnections()`
 
@@ -309,7 +309,7 @@ const closed = server.closeIdleConnections();
 console.log(`closed ${closed} idle connections`);
 ```
 
-It returns the number of connections it closed. Connections with a request in flight and open WebSockets are untouched, and the server keeps accepting new connections. This mirrors `node:http`'s `server.closeIdleConnections()`, which returns nothing.
+It returns the number of connections it closed. Connections with a request in flight and open WebSockets are untouched, and the server keeps accepting new connections. This method mirrors `node:http`'s `server.closeIdleConnections()`, which returns nothing.
 
 ### `server.ref()` and `server.unref()`
 
@@ -348,7 +348,7 @@ server.reload({
 });
 ```
 
-Use this for development and hot reloading. Only `fetch`, `error`, `routes`, and `websocket` can be updated.
+Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, and `websocket`.
 
 ---
 

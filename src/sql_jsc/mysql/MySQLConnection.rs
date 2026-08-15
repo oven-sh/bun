@@ -131,7 +131,7 @@ impl Default for MySQLConnection {
 
 // SAFETY: `MySQLConnection` is the `connection` field embedded inside
 // `JSMySQLConnection`; never constructed standalone.
-bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; }
 
 impl MySQLConnection {
     pub(crate) fn init(
@@ -169,13 +169,28 @@ impl MySQLConnection {
     }
 
     pub(crate) fn can_pipeline(&mut self) -> bool {
-        self.queue.can_pipeline(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_pipeline(js_connection)
     }
     pub(crate) fn can_prepare_query(&mut self) -> bool {
-        self.queue.can_prepare_query(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_prepare_query(js_connection)
     }
     pub(crate) fn can_execute_query(&mut self) -> bool {
-        self.queue.can_execute_query(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_execute_query(js_connection)
     }
 
     #[inline]

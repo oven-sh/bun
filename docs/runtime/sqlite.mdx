@@ -120,7 +120,7 @@ const db = new Database();
 db.close(false);
 ```
 
-Statements created with `.query()` are owned by the `Database` and are finalized immediately either way. The underlying connection (and the database file handle) is released once the last outstanding `.prepare()` statement is finalized.
+The `Database` owns statements created with `.query()` and finalizes them immediately either way. Bun releases the underlying connection (and the database file handle) once the last outstanding `.prepare()` statement is finalized.
 
 To finalize **every** outstanding statement, release the connection immediately, and throw if SQLite reports an error while closing, call `.close(true)`:
 
@@ -130,12 +130,12 @@ const db = new Database();
 db.close(true);
 ```
 
-Using a statement that was finalized by `close()` throws `Database has closed`, except `toString()`, which returns an empty string, and `finalize()`, which stays safe to call.
+Using a statement that `close()` finalized throws `Database has closed`. Two exceptions: `toString()` returns an empty string, and `finalize()` stays safe to call.
 
 <Note>
-  `close()` is safe to call multiple times but has no effect after the first (except that `close(true)` after
-  `close(false)` still finalizes any remaining `.prepare()` statements). If a `Database` is garbage collected without
-  being closed, the connection is released once every statement created from it has also been finalized or collected.
+  `close()` is safe to call multiple times but has no effect after the first. One exception: `close(true)` after
+  `close(false)` still finalizes any remaining `.prepare()` statements. If a `Database` is garbage collected without
+  being closed, Bun releases the connection once every statement created from it has also been finalized or collected.
   The `using` statement calls `close(true)`.
 </Note>
 
@@ -180,7 +180,7 @@ const query = db.query(`select "Hello world" as message`);
 <Note>
 **What does "cached" mean?**
 
-The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL. The cache holds the `Database.MAX_QUERY_CACHE_SIZE` (default 20) most recently used SQL strings; evicted statements keep working but a later `db.query()` with the same string compiles a new one.
+The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL. The cache holds the `Database.MAX_QUERY_CACHE_SIZE` (default 20) most recently used SQL strings. Evicted statements keep working, but a later `db.query()` with the same string compiles a new one.
 
 It is safe to reuse a cached statement with different parameter values:
 
@@ -204,7 +204,7 @@ const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
 ## WAL mode
 
-SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL), which dramatically improves performance, especially with many concurrent readers and a single writer. Enabling WAL mode is recommended for most applications.
+SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL), which dramatically improves performance, especially with many concurrent readers and a single writer. We recommend enabling WAL mode for most applications.
 
 To enable WAL mode, run this pragma query at the beginning of your application:
 
@@ -213,18 +213,18 @@ db.run("PRAGMA journal_mode = WAL;");
 ```
 
 <Accordion title="What is WAL mode?">
-  In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (`-wal`). A
-  shared-memory index file (`-shm`) is also created for read coordination. The WAL file is later integrated into the
-  main database file. Think of it as a buffer for pending writes. Refer to the [SQLite
+  In WAL mode, writes to the database go directly to a separate file called the "WAL file" (`-wal`). SQLite also creates
+  a shared-memory index file (`-shm`) for read coordination. SQLite later integrates the WAL file into the main database
+  file. Think of the WAL file as a buffer for pending writes. Refer to the [SQLite
   docs](https://www.sqlite.org/wal.html) for a more detailed overview.
 </Accordion>
 
 ### WAL sidecar file cleanup
 
-When using WAL mode with a file-based database, SQLite creates two sidecar files alongside your database: a write-ahead log (`-wal`) and a shared-memory index (`-shm`). Whether these files are automatically removed after `.close()` depends on your platform:
+When using WAL mode with a file-based database, SQLite creates two sidecar files alongside your database: a write-ahead log (`-wal`) and a shared-memory index (`-shm`). Whether SQLite removes these files automatically after `.close()` depends on your platform:
 
 - **macOS**: Bun uses the system-provided SQLite, which Apple builds with persistent WAL enabled. The `-wal` and `-shm` files **persist** after close. This is not a bug — it is how Apple configured the system SQLite.
-- **Linux** and **Windows**: Bun statically links its own SQLite build, which follows upstream defaults. The sidecar files are **typically removed** after close when no other connections are open.
+- **Linux** and **Windows**: Bun statically links its own SQLite build, which follows upstream defaults. SQLite **typically removes** the sidecar files after close when no other connections are open.
 
 To ensure sidecar files are cleaned up on all platforms, disable WAL persistence and run a truncating checkpoint before closing:
 
@@ -263,7 +263,7 @@ const query = db.query(`SELECT ?1, ?2;`);
 const query = db.query(`SELECT $param1, $param2;`);
 ```
 
-Values are bound to these parameters when the query is executed. A `Statement` can be executed with several different methods, each returning the results in a different form.
+You bind values to these parameters when you execute the query. You can execute a `Statement` with several different methods, each returning the results in a different form.
 
 ### Binding values
 
@@ -330,7 +330,7 @@ query.get({ $message: "Hello world" });
 { $message: "Hello world" }
 ```
 
-Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) followed by [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it no longer returns `SQLITE_ROW`. If the query returns no rows, `null` is returned.
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) followed by [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it no longer returns `SQLITE_ROW`. If the query returns no rows, the result is `null`.
 
 ### `.run()`
 
@@ -379,9 +379,9 @@ true
 true
 ```
 
-As a performance optimization, the class constructor is not called, default initializers are not run, and private fields are not accessible. This is more like `Object.create` than `new`: the class's prototype is assigned to the object, so its methods, getters, and setters work.
+As a performance optimization, Bun does not call the class constructor or run default initializers, and private fields are not accessible. This is more like `Object.create` than `new`: Bun assigns the class's prototype to the object, so its methods, getters, and setters work.
 
-The database columns are set as properties on the class instance.
+Bun sets the database columns as properties on the class instance.
 
 ### `.iterate()` (`@@iterator`)
 
@@ -492,7 +492,7 @@ const results = query.all("hello", "goodbye");
 
 SQLite supports signed 64-bit integers, but JavaScript only supports signed 52-bit integers or arbitrary-precision integers with `bigint`.
 
-`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. This also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
+`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. The option also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
 
 ### `safeIntegers: true`
 
@@ -565,7 +565,7 @@ const insertCats = db.transaction(cats => {
 
 No cats have been inserted yet. `db.transaction()` returns a new function (`insertCats`) that _wraps_ the function that executes the queries.
 
-To execute the transaction, call this function. Arguments are passed through to the wrapped function, and the wrapped function's return value is returned by the transaction function. The wrapped function also has access to the `this` context as defined where the transaction is executed.
+To execute the transaction, call this function. The transaction function passes its arguments through to the wrapped function and returns the wrapped function's return value. The wrapped function also has access to the `this` context as defined where the transaction is executed.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const insert = db.prepare("INSERT INTO cats (name) VALUES ($name)");
@@ -579,10 +579,10 @@ const count = insertCats([{ $name: "Keanu" }, { $name: "Salem" }, { $name: "Croo
 console.log(`Inserted ${count} cats`);
 ```
 
-The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) a transaction when `insertCats` is called and commits it when the wrapped function returns. If an exception is thrown, the transaction is rolled back. The exception propagates as usual; it is not caught.
+The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) a transaction when you call `insertCats` and commits it when the wrapped function returns. If an exception is thrown, the driver rolls back the transaction. The exception propagates as usual; the driver does not catch it.
 
 <Note>
-**Nested transactions** — Transaction functions can be called from inside other transaction functions. When doing so, the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html).
+**Nested transactions** — You can call transaction functions from inside other transaction functions. When you do, the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html).
 
 <Accordion title="View nested transaction example">
 

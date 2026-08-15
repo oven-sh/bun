@@ -1639,6 +1639,12 @@ test("late keep-alive request to a node:http server after close() still dispatch
   );
 });
 
+test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
+  );
+});
+
 test("request on a connection surviving graceful stop() never reaches a collected handler", async () => {
   // Stress sibling of the late-keep-alive tests above. Each round parks two
   // keep-alive connections on a server, stops it gracefully, drops the only

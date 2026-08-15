@@ -2080,6 +2080,7 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     if manager.pending_task_count() > 0 {
         wait_for_everything_except_peers(manager)?;
     }
+    manager.lockfile.mark_settled_packages();
 
     // Resolving a peer dep can create a NEW package whose own peer deps
     // get re-queued to `peer_dependencies` during `drainDependencyList`.

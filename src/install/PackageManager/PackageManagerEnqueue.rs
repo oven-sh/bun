@@ -2078,23 +2078,18 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // Determinism: passing `version` here unconditionally lets a
-    // peer like `>= 1.0.2` collapse onto whichever sibling-appended entry
-    // (e.g. `1.0.9`) happens to be highest in the index *at this instant* — a
-    // network-order artefact that the `^1.0.2` peer-hoisting test already
-    // todoIf's on macOS. The floor guard in `get_package_id` was
-    // meant to close that, but its exact-pinned/same-major exemptions reopen
-    // it when *every* candidate is an exact-pinned same-major sibling
-    // (`uses-a-dep-1..10`). For deferred peers, suppress the satisfies-
-    // fallback so only an exact `eql(find_result)` can bind here; everything
-    // else falls through to the `is_peer && !install_peer` defer below and is
-    // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
+    // A peer not being installed yet binds now only to its exact best match
+    // (`*` also to a version every install has) and is otherwise deferred to
+    // the peer pass in `get_or_put_resolved_package`.
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+    // Which peer rows have landed on a version by any given moment depends on
+    // what has arrived (they bind on sight or in the peer pass), so only
+    // regular rows' pins are recorded (`AppendedFor::pinned`).
+    let pins = !behavior.is_peer()
+        && version.tag == dependency::version::Tag::Npm
+        && version.npm().version.is_exact();
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {
@@ -2107,6 +2102,9 @@ fn get_or_put_resolved_package_with_find_result(
             url: find_result.package.tarball_url.value,
         })),
     ) {
+        if pins {
+            this.lockfile.mark_pinned_by_reuse(id);
+        }
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),
@@ -2134,15 +2132,9 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
-    }
+    // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here; `package`
+    // was returned by value above.
+    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(package.meta.id, dependency_id, pins);
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.

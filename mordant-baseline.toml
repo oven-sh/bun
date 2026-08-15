@@ -90,7 +90,6 @@
 "same_match_twice:src/runtime/webcore/Blob.rs" = 2
 "same_match_twice:src/runtime/webcore/Body.rs" = 2
 "tuple_wants_struct:src/runtime/server/ServerWebSocket.rs" = 1
-"tuple_wants_struct:src/runtime/shell/builtin/which.rs" = 1
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2

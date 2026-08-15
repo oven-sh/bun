@@ -1641,11 +1641,12 @@ describe("peer dependencies", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const normalizedErr = normalizeBunSnapshot(err, dir);
     expect(normalizedErr).toContain("error: Invalid dependency version\n");
     expect(normalizedErr).toContain("at <dir>/package.json:");
     expect(normalizedErr).not.toContain("no matching catalog dependency");
+    expect(normalizeBunSnapshot(out, dir)).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
   });

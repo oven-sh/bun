@@ -123,10 +123,9 @@ pub mod dir_iterator {
     }
 
     impl IteratorResult {
-        /// Replaces an `Unknown` kind (the filesystem did not fill in `d_type`)
-        /// with what `lstat` reports for the entry in `dir`, the directory it was
-        /// read from, and returns the kind. `lstat` so that a symlink is reported
-        /// the way `d_type` reports it, not as its target.
+        /// Resolves an `Unknown` kind (no `d_type` from the filesystem) by `lstat`ing
+        /// the entry in `dir`, the directory it was read from. `lstat`, not `stat`,
+        /// so a symlink stays a symlink as it does with `d_type`.
         pub fn resolve_kind(&mut self, dir: Fd) -> EntryKind {
             #[cfg(not(windows))]
             {

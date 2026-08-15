@@ -340,3 +340,9 @@ new Error("asdf", {
 // are making sure that .d.ts is a module and that anything top level doesn't
 // leak to userland
 expectType<BunConsumerConvenienceMethods>();
+
+// `self` is the global object, on the main thread as well as inside a Worker
+// (with lib.dom loaded it is lib.dom's `Window & typeof globalThis`).
+expectAssignable<typeof globalThis>(self);
+expectAssignable<typeof globalThis>(self.self);
+expectType<string>(self.Bun.version);

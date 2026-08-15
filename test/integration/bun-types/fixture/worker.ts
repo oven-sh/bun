@@ -41,6 +41,12 @@ webWorker.onmessage = event => {
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.
 postMessage({ hello: "world" });
 
+// On the worker thread, `self` is the worker's global scope (this is how docs/runtime/workers.mdx uses it).
+self.addEventListener("message", event => {
+  tsd.expectType<MessageEvent>(event);
+  self.postMessage(event.data);
+});
+
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });
 

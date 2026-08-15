@@ -280,6 +280,51 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
+  // Naming a workspace member used to rewrite the entry linking it to `workspace:*`, and to add one to a root that did not declare it.
+  test.each(["workspace:^", "workspace:~", "workspace:1.0.0", "^1.0.0"])(
+    "bun update <workspace member> keeps a %s entry as written",
+    async literal => {
+      const dir = await setup(MONOREPO({}, { dependencies: { pkg1: literal } }));
+      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      await run(dir, "update", "pkg1");
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      await expectInSync(dir, ["", PKG1]);
+    },
+  );
+
+  test("bun update <workspace member> from a member declaring it keeps the entry as written", async () => {
+    const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:~" } } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir, PKG2), lockText(dir)]);
+    await runIn(dir, PKG2, "update", "pkg1");
+    expect(await pkgText(dir, PKG2)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, ["", PKG1, PKG2]);
+  });
+
+  test("bun update <workspace member> -r keeps every workspace's entry as written", async () => {
+    const dir = await setup(
+      WORKSPACES(
+        { dependencies: { pkg1: "workspace:^" } },
+        { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:1.0.0" } } },
+      ),
+    );
+    const [rootBefore, pkg2Before, lockBefore] = await Promise.all([pkgText(dir), pkgText(dir, PKG2), lockText(dir)]);
+    await run(dir, "update", "pkg1", "-r");
+    expect(await pkgText(dir)).toBe(rootBefore);
+    expect(await pkgText(dir, PKG2)).toBe(pkg2Before);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, ["", PKG1, PKG2]);
+  });
+
+  test("bun update <workspace member> does not add it to a root that does not declare it", async () => {
+    const dir = await setup(MONOREPO());
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", "pkg1");
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
   test.each([[[]], [["--latest"]]])("bun update %j leaves folder, tarball and workspace literals alone", async args => {
     const dependencies = {
       "no-deps": "^1.0.0",

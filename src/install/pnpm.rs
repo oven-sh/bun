@@ -2367,8 +2367,7 @@ fn update_package_json_after_migration(
 
     let mut copied: Vec<&'static str> = Vec::new();
 
-    // The `pnpm` block is left as it is: pnpm still reads its config from there, and bun
-    // only reads the root-level fields, so the same package.json keeps working for both.
+    // Copied, not moved: pnpm keeps reading this block, bun only reads the root-level fields.
     if let Some(pnpm_prop) = json.as_property(b"pnpm") {
         if pnpm_prop.expr.is_object() {
             let pnpm_obj = e_object(&pnpm_prop.expr);
@@ -2642,9 +2641,7 @@ fn data_store_dupe_expr_strings(expr: &mut Expr) {
     }
 }
 
-/// A separate object with the same entries. The root-level copy is edited afterwards
-/// (`rewrite_bare_patch_keys`, entries merged in from pnpm-workspace.yaml), and none of
-/// that may show up in the `pnpm` block it was copied from.
+/// The root-level copy gets edited further; an `Expr` from `get` would alias the `pnpm` block.
 fn copy_object(src: &Expr) -> Expr {
     let src_props = e_object(src).properties.slice();
     let mut properties = G::PropertyList::init_capacity(src_props.len());
@@ -2660,8 +2657,8 @@ fn copy_object(src: &Expr) -> Expr {
     )
 }
 
-/// Adds the entries of `src` to the root-level `field` object, creating it when absent.
-/// Returns `false` when `field` exists but is not an object, in which case nothing is written.
+/// Merges `src` into the root-level `field` object, creating it when absent.
+/// `false` when `field` exists but is not an object; nothing is written then.
 fn copy_into_root(
     json: &mut Expr,
     bump: &bun_alloc::Arena,

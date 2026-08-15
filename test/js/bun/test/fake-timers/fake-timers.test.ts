@@ -558,6 +558,46 @@ describe("Bun.cron() job dropped from the fake heap", () => {
       });
     },
   );
+
+  // A job whose own tick swaps the clock is out of the heap at that moment,
+  // so dropping "the heap" misses it; it has to be stopped like the rest.
+  test("a firing job whose tick installs a fresh clock is stopped with the old one", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    using job = Bun.cron("* * * * *", () => {
+      fired++;
+      vi.useFakeTimers({ now: 0 });
+    });
+    vi.advanceTimersByTime(60_000);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 0 });
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(fired).toBe(1);
+  });
+
+  test("a firing job whose tick calls useRealTimers() does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers({ now: 0 });
+         Bun.cron("* * * * *", () => { console.log("tick"); jest.useRealTimers(); });
+         jest.advanceTimersByTime(60_000);
+         console.log("exiting", jest.isFakeTimers());`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "tick\nexiting false\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 describe("isFakeTimers", () => {
   test("returns true when fake timers are active", () => {

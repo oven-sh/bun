@@ -143,9 +143,10 @@ impl ClearedTimers {
 
 impl FakeTimers {
     /// Like Jest and Vitest, every `useFakeTimers()` installs a fresh clock:
-    /// timers pending on a previous fake clock are dropped, not carried over
-    /// (a `setInterval` mid-fire is not in the heap; `TimerObjectInternals::fire`
-    /// sees the `clock_id` change and declines to reschedule it).
+    /// timers pending on a previous fake clock are dropped, not carried over.
+    /// A repeating timer mid-fire is not in the heap: its owner
+    /// (`TimerObjectInternals::fire`, `CronJob::on_timer_fire`) sees the
+    /// `clock_id` change across the callback and retires it instead.
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) -> ClearedTimers {
         let cleared = self.clear();
         self.generation = self.generation.wrapping_add(1);

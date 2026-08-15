@@ -31,6 +31,21 @@ async function runDecorator(code: string) {
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
+async function runDecoratorTS(code: string) {
+  using dir = tempDir("es-dec-ts", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": code,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {
@@ -390,21 +405,6 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
     });
-
-    async function runDecoratorTS(code: string) {
-      using dir = tempDir("es-dec-ts", {
-        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "test.ts": code,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: filterStderr(rawStderr), exitCode };
-    }
 
     test("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
@@ -1208,6 +1208,100 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // Lowering a class expression hoists its temporaries (_dec, _init, _class,
+  // accessor storage, ...) as a `var` into the nearest statement list. An enum
+  // body is visited before the statements around it, so the temporaries used to
+  // land in the list enclosing the enum's own (none at the top level, where
+  // they were dropped) instead of in the closure the enum body compiles to.
+  describe("class expressions inside enum initializers", () => {
+    test.concurrent("top-level enum", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        const kinds: string[] = [];
+        function dec(_value: any, ctx: any) { kinds.push(ctx.kind); }
+        let Decorated: any;
+        let WithAccessor: any;
+        enum E {
+          A = ((Decorated = @dec class { @dec m() {} }), 1),
+          B = ((WithAccessor = class { accessor x = "x" }), 2),
+        }
+        const instance = new WithAccessor();
+        instance.x += "!";
+        console.log(JSON.stringify([E.A, E.B, E[2], kinds, typeof Decorated, instance.x]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([1, 2, "B", ["method", "class"], "function", "x!"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("enum inside a function gets fresh temporaries per call", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        let calls = 0;
+        function dec(_value: any, _ctx: any) {
+          const id = ++calls;
+          return { init: () => id };
+        }
+        function make() {
+          let K: any;
+          enum E {
+            A = ((K = class { @dec accessor x = 0 }), 0),
+          }
+          return K;
+        }
+        const K1 = make();
+        const K2 = make();
+        console.log(new K1().x, new K2().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Each enum body gets its own temporaries, so a class created by the first
+    // enum keeps working after the second enum has been evaluated.
+    test.concurrent("sibling enums do not share temporaries", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        let A: any;
+        let B: any;
+        enum First {
+          M = ((A = class { accessor x = 1 }), 0),
+        }
+        const a = new A();
+        enum Second {
+          M = ((B = class { accessor x = 2 }), 0),
+        }
+        console.log(a.x, new B().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler declares the temporaries inside the enum closure", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const declaredInsideClosure = /\(\(E\) => \{\s*var [^;]*\b_init\b[^;]*;/;
+
+      const topLevel = transpiler.transformSync(`
+        declare const dec: any;
+        enum E {
+          A = (@dec class {}, 0),
+        }
+      `);
+      expect(topLevel).toMatch(declaredInsideClosure);
+      expect(topLevel).not.toMatch(/^var [^;]*\b_init\b/m);
+
+      const nested = transpiler.transformSync(`
+        declare const dec: any;
+        function make() {
+          enum E {
+            A = (@dec class {}, 0),
+          }
+        }
+      `);
+      expect(nested).toMatch(declaredInsideClosure);
+      expect(nested).not.toMatch(/^var /m);
     });
   });
 });

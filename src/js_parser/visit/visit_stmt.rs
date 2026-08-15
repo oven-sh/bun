@@ -2191,6 +2191,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
 
+        // `var`s hoisted out of the initializers (e.g. the temporaries of a lowered
+        // class expression) go at the top of the closure the body compiles to. The
+        // enclosing statement list is not usable here: enums are visited ahead of
+        // their siblings, before `visit_stmts` installs it, and at the top level
+        // there is none at all, which used to drop the declarations.
+        let mut hoisted_stmts: StmtList<'a> = BumpVec::new_in(p.arena);
+        let prev_nearest_stmt_list = p.nearest_stmt_list;
+        p.nearest_stmt_list = core::ptr::NonNull::new(core::ptr::addr_of_mut!(hoisted_stmts));
+
         // Create an assignment for each enum value
         for value in values.iter_mut() {
             let name: &'a [u8] = value.name.slice();
@@ -2313,11 +2322,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        p.nearest_stmt_list = prev_nearest_stmt_list;
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
 
-        let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
+        let mut value_stmts: StmtList<'a> = hoisted_stmts;
+        value_stmts.reserve(value_exprs.len());
         // Generate statements from expressions
         for expr in value_exprs.iter() {
             value_stmts.push(p.s(

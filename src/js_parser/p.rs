@@ -598,7 +598,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
-    /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
+    /// Statement list that declarations hoisted out of the expression being
+    /// visited are appended to (react refresh's `const _s = $RefreshSig$();`,
+    /// the `var` temporaries of a lowered class expression). Points at the
+    /// `before` list of the `visit_stmts` in progress, or at the body of the
+    /// closure an enum compiles to while its members are visited (`s_enum`).
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
     /// Name from assignment context for anonymous decorated class expressions.
@@ -660,9 +664,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Safe mutable projection of `nearest_stmt_list`.
     ///
-    /// The pointer targets a `ListManaged` living on a parent
-    /// `visit_stmts_and_prepend_temp_refs` stack frame (saved/restored around
-    /// each visit), disjoint from `*self`, so a transient `&mut` tied to
+    /// The pointer targets a `ListManaged` living on an enclosing `visit_stmts`
+    /// or `s_enum` stack frame (saved/restored around each visit), disjoint
+    /// from `*self`, so a transient `&mut` tied to
     /// `&mut self` cannot alias any other live borrow. Centralises the
     /// `unsafe` so call sites stay safe.
     #[inline]

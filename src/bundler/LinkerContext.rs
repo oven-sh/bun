@@ -1592,28 +1592,35 @@ pub struct ChunkMeta {
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
-/// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
+/// Note: pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only.
+/// thread. The per-chunk `each_ptr` passes (`generate_js_renamer`,
+/// `generate_chunk`) receive their own chunk as a separate `*mut Chunk` and
+/// only write to that; reads of `c`/`chunks` are read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
-    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
+    /// Shared view of the full `chunks` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
-    /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Read-only: each task writes only through its own
-    /// `*mut Chunk`.
+    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so
+    /// [`bun_ptr::BackRef`]'s owner-outlives-holder invariant holds and reads
+    /// go through safe `Deref`.
     pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
-    /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
-    /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
-    /// provenance; per-task slot writes recover the raw `*mut Chunk` via
-    /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
+    /// Shared view of this context's `Chunk` (an element of `chunks`), for the
+    /// part-range fan-out: every `PendingPartRange` of the chunk reads through
+    /// it and publishes its result via
+    /// [`CompileResultSlots::write`](crate::chunk::CompileResultSlots::write),
+    /// so no task ever needs write access to the chunk itself.
+    ///
+    /// Both views are taken in `generate_chunks_in_parallel` *after* the
+    /// owner's last write to the chunks (sizing `compile_results_for_chunk`),
+    /// and the owner only reads the slice until the fan-out is joined: a view
+    /// taken earlier would be invalidated by those writes under Rust's
+    /// aliasing rules even though it would still point at the same bytes.
+    pub(crate) chunk: bun_ptr::BackRef<Chunk>,
 }
-// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
-// shared reads are read-only.
+// SAFETY: see note above — the shared views are only read through, and each
+// `each_ptr` task writes only the chunk it was handed separately.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
@@ -1656,50 +1663,48 @@ pub struct PendingPartRange<'a> {
     pub(crate) i: u32,
 }
 
-/// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
-/// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
-/// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
-/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
+/// Shared prologue for the `generate_compile_result_for_{js,css,html}_chunk`
+/// thread-pool callbacks: recover the intrusive [`PendingPartRange`] from
+/// `task`, borrow the `LinkerContext` and this task's `Chunk` from its
+/// [`GenerateChunkCtx`], and acquire the per-thread
+/// [`Worker`](crate::thread_pool::Worker) (returned as a scopeguard that calls
+/// `unget()` on drop).
 ///
-/// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
-/// through `&GenerateChunkCtx` preserves the mutable provenance they were
-/// constructed with in `generate_chunks_in_parallel` — many `PendingPartRange`
-/// tasks share one `chunk_ctx` across worker threads.
+/// CONCURRENCY: every part range of every chunk is in flight at once, so the
+/// callbacks get `&LinkerContext` / `&Chunk` and nothing stronger. That is
+/// all they need: the only writes in this phase are each task's own
+/// `compile_results_for_chunk` slot
+/// ([`CompileResultSlots::write`](crate::chunk::CompileResultSlots::write))
+/// and the `files_with_parts_in_chunk` atomics, both of which go through
+/// interior mutability behind the shared borrow. The owner holds
+/// `&mut LinkerContext` / `&mut [Chunk]` across the fan-out but only reads
+/// through them until the batch is joined (see the views' derivation note on
+/// [`GenerateChunkCtx::chunk`]).
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
-/// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
-/// the task allocation for the callback's duration; the returned raw pointers
-/// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
-/// Callers uphold the disjoint-write contract:
-///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
-///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
-///     `UnsafeCell` slot write — never `&mut Chunk`),
-///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
-///   - all other access through `c` / `chunk` during codegen is read-only.
+/// by `generate_chunks_in_parallel`; the returned borrows are valid until the
+/// callback returns, which happens before the owner's `group.wait()` returns.
 #[inline]
 #[allow(clippy::type_complexity)]
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (
     &'a PendingPartRange<'a>,
-    *mut LinkerContext<'a>,
-    *mut Chunk,
+    &'a LinkerContext<'a>,
+    &'a Chunk,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,
         impl FnOnce(&'static mut crate::thread_pool::Worker),
     >,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
-    let part_range: &PendingPartRange =
+    let part_range: &'a PendingPartRange<'a> =
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
-    let ctx = part_range.ctx;
-    let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
+    let ctx: &'a GenerateChunkCtx<'a> = part_range.ctx;
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
-    (part_range, c_ptr, chunk_ptr, worker)
+    (part_range, ctx.c.get(), ctx.chunk.get(), worker)
 }
 
 impl<'a> LinkerContext<'a> {

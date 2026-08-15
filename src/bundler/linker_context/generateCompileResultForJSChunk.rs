@@ -18,13 +18,14 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 // once against the same `LinkerContext` (and, per chunk, the same `Chunk`).
 // Writes: `chunk.compile_results_for_chunk[i]` (disjoint by per-task `i`),
 // `chunk.files_with_parts_in_chunk[source].counter` (atomic RMW). Reads
-// `c.graph`/`c.parse_graph` SoA columns and `chunk.renamer` shared. Never
-// forms `&mut LinkerContext` or `&mut Chunk`: the whole impl chain
+// `c.graph`/`c.parse_graph` SoA columns and `chunk.renamer` shared. The
+// prologue hands out `&LinkerContext` / `&Chunk` and the whole impl chain
 // (`generate_code_for_file_in_chunk_js`, `convert_stmts_for_chunk*`,
 // `print_code_for_file_in_chunk_js`) takes `&`, exactly like the CSS and
-// HTML callbacks. `PendingPartRange` is `Send` because its only
-// non-auto-`Send` field is `&GenerateChunkCtx` whose pointee is
-// `unsafe impl Send + Sync`.
+// HTML callbacks; nothing here may form `&mut` to either (see
+// test/internal/source-lints/chunk-codegen-shared-borrows.test.ts).
+// `PendingPartRange` is `Send` because its only non-auto-`Send` field is
+// `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
 //
 /// # Safety
 ///
@@ -34,32 +35,19 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, c_ptr, chunk_ptr, mut worker) =
+    let (part_range, c, chunk, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
 
-    // The `&` borrows are scoped to the impl call so they do not overlap the
-    // raw slot write that follows.
-    let result = {
-        // SAFETY: `c_ptr` is the live `LinkerContext` returned by
-        // `pending_part_range_prologue`; peer tasks only ever form `&` to it
-        // too (see its contract), so a shared borrow is valid here.
-        let c_ref: &LinkerContext = unsafe { &*c_ptr };
-        // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; the
-        // only concurrent writes into it go through `UnsafeCell` slots and
-        // atomics (see `unsafe impl Sync for Chunk`), so `&Chunk` is valid.
-        let chunk_ref: &Chunk = unsafe { &*chunk_ptr };
-        generate_compile_result_for_js_chunk_impl(
-            &mut **worker,
-            c_ref,
-            chunk_ref,
-            part_range.part_range,
-        )
-    };
+    let result =
+        generate_compile_result_for_js_chunk_impl(&mut **worker, c, chunk, part_range.part_range);
 
-    // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
-    // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
-    // never materializes `&mut Chunk` / `&mut [CompileResult]`.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
+    // SAFETY: `part_range.i` is unique among this chunk's tasks and nothing
+    // reads the slot before the pool join; see `CompileResultSlots::write`.
+    unsafe {
+        chunk
+            .compile_results_for_chunk
+            .write(part_range.i as usize, result)
+    };
 }
 
 fn generate_compile_result_for_js_chunk_impl(

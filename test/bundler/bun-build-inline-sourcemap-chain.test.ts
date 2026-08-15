@@ -424,4 +424,51 @@ describe.concurrent("Bun.build chains inline input sourcemaps", () => {
     const authoredIdx = parsed.sources.findIndex((s: string) => s.endsWith("original-authored.custom"));
     expect(parsed.sourcesContent[authoredIdx]).toBe(authoredContent);
   });
+
+  // A virtual module (onResolve custom namespace) has no on-disk directory
+  // to resolve inner names against; they must surface verbatim instead of
+  // being joined with a bogus base.
+  test("virtual-namespace module with inline sourcemap keeps inner names verbatim", async () => {
+    const dir = tempDirWithFiles("bun-build-virtual-chained-sourcemap", {
+      "entry.ts": `import { v } from 'virt:mod';\nconsole.log(v);\n`,
+    });
+
+    const authoredContent = "export const v = 7;\n";
+    const innerMap = {
+      version: 3,
+      sources: ["virtual-authored.src"],
+      sourcesContent: [authoredContent],
+      names: [],
+      mappings: "AAAA;",
+    };
+    const inlineComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+      plugins: [
+        {
+          name: "virtual",
+          setup(build) {
+            build.onResolve({ filter: /^virt:/ }, args => ({ namespace: "virt", path: args.path.slice(5) }));
+            build.onLoad({ filter: /.*/, namespace: "virt" }, () => ({
+              contents: "export const v = 7;\n" + inlineComment,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // The inner name survives untouched (no join against a bogus base).
+    expect(parsed.sources).toContain("virtual-authored.src");
+  });
 });

@@ -1243,9 +1243,6 @@ fn write_sources_for(
     // 2) inner sources: resolve each against the intermediate's dir, then
     // re-relativize to `chunk_abs_dir` for the emitted JSON.
     if let Some(ism) = input_map {
-        let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
-            outer_path.text,
-        );
         let emit = |joiner: &mut StringJoiner, p: &[u8]| -> Result<(), BunError> {
             let mut quote_buf = MutableString::init(p.len() + ", ".len() + 2)?;
             quote_buf.append_assume_capacity(b", ");
@@ -1253,6 +1250,17 @@ fn write_sources_for(
             joiner.push_owned(quote_buf.to_default_owned());
             Ok(())
         };
+        // A non-file intermediate (plugin virtual module) has no directory
+        // to resolve against; emit inner names verbatim.
+        if !outer_path.is_file() {
+            for name in ism.map.external_source_names.iter() {
+                emit(joiner, name.as_ref())?;
+            }
+            return Ok(());
+        }
+        let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
+            outer_path.text,
+        );
         let mut join_buf = bun_paths::path_buffer_pool::get();
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();

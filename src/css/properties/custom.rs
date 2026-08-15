@@ -979,13 +979,14 @@ impl UnresolvedColor {
         depth: usize,
     ) -> Result<UnresolvedColor> {
         use css_values::color::{
-            ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
+            ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
+            parse_rgb_components,
         };
         let mut parser = ComponentParser::new(false);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                    let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }

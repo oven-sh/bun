@@ -1127,17 +1127,15 @@ impl Tree {
         })) // 2
     }
 
-    /// The bundling package and the regular dependencies nested under `hoist_root` resolve
-    /// `name_hash` through it, and a loaded `bun.lock` rebinds their edges by walking up the saved
-    /// paths, so `package_id` can only go there if those edges already resolve to it.
-    ///
-    /// An unbound optional peer saves no path; once bound, `Lockfile::resolve` hoists again.
+    /// Whether an edge for `name_hash` that a loaded `bun.lock` would rebind to an entry at
+    /// `hoist_root` (the bundling package's, or a dependency's nested under it) resolves elsewhere.
     fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
         hoist_root: Id,
         package_id: PackageID,
         name_hash: PackageNameHash,
         builder: &Builder<'_, METHOD>,
     ) -> bool {
+        // an unbound optional peer saves no entry; once bound, `Lockfile::resolve` hoists again
         if package_id == invalid_package_id {
             return false;
         }

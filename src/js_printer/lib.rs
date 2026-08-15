@@ -1306,8 +1306,6 @@ impl Default for RequireOrImportMetaCallback {
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
-/// `&self` because the bundler prints many part ranges of one `LinkerContext`
-/// concurrently.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
         &self,

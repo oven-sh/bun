@@ -122,9 +122,7 @@ unsafe impl Send for Chunk {}
 // is written only by the single-threaded owner before and after the fan-out.
 unsafe impl Sync for Chunk {}
 
-/// One output slot per `PendingPartRange` of the chunk, sized before the
-/// fan-out, written concurrently through [`CompileResultSlots::write`], and
-/// read after the pool join.
+/// One slot per `PendingPartRange` of the chunk; see [`CompileResultSlots::write`].
 #[derive(Default)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 

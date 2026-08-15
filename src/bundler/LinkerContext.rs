@@ -1602,9 +1602,8 @@ pub struct GenerateChunkCtx<'a> {
     /// All chunks, outliving every ctx (`generate_chunks_in_parallel` joins
     /// each pass before returning).
     pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
-    /// This ctx's chunk, shared by all of its part-range tasks; they publish
-    /// through `compile_results_for_chunk` and never need `&mut Chunk`. Both
-    /// views are taken after the owner's last write to the chunks (see
+    /// This ctx's chunk, shared by all of its part-range tasks. Both views are
+    /// taken after the owner's last write to the chunks (see
     /// `generate_chunks_in_parallel`).
     pub(crate) chunk: bun_ptr::BackRef<Chunk>,
 }
@@ -1653,12 +1652,9 @@ pub struct PendingPartRange<'a> {
 
 /// Shared prologue for the `generate_compile_result_for_*_chunk` thread-pool
 /// callbacks: recovers the [`PendingPartRange`] from `task` and acquires the
-/// per-thread [`Worker`](crate::thread_pool::Worker) (released on drop).
-///
-/// Every part range of every chunk is in flight at once, so the callbacks get
-/// `&LinkerContext` / `&Chunk`; their only writes are their own
-/// `compile_results_for_chunk` slot and the `files_with_parts_in_chunk`
-/// atomics (see `unsafe impl Sync for Chunk`).
+/// per-thread [`Worker`](crate::thread_pool::Worker) (released on drop). All
+/// part ranges run at once, so the callbacks get `&LinkerContext` / `&Chunk`
+/// (what they may write through those is spelled out on `impl Sync for Chunk`).
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
@@ -2133,8 +2129,6 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    // Runs on every JS part-range task at once; `&self` (including in the
-    // `require_or_import_meta_for_source` callback below) is load-bearing.
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,

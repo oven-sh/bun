@@ -157,8 +157,6 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    /// Returns `&'r` (the renamer's borrow, not this value's) so the printer
-    /// can hold a name across its own `&mut self` calls.
     pub fn name_for_symbol(&self, ref_: Ref) -> &'r [u8] {
         match *self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),

@@ -1,7 +1,8 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { closeSync, openSync, readSync, rmSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -547,6 +548,213 @@ describe("automatic crash reporter", () => {
       expect(sent).toBe(true);
     });
   }
+});
+
+// A trace string names the build it came from. The sha alone is not enough:
+// one commit can be published as more than one link of the same platform
+// (the x64 and x64-baseline zips, or a re-run of the release step), and
+// bun.report symbolizing against the wrong link's debug info produces
+// plausible-looking nonsense. So after the sha the string carries the id the
+// linker stamped into the executable and its debug info. Layout (must stay in
+// sync with `encode_trace_string` in src/crash_handler/lib.rs and bun.report's
+// lib/parser.ts):
+//
+//   {platform}{command}4{sha7}{build flags VLQ}{id byte count VLQ}{id hex}{features 2 VLQs}{frames}A{reason}
+describe.concurrent("trace string identifies the build", () => {
+  async function tracePayload(approach: string): Promise<string> {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("OK") });
+    const base = new URL(server.url).origin;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
+      env: mergeWindowEnvs([bunEnv, { BUN_CRASH_REPORT_URL: base, BUN_ENABLE_CRASH_REPORTING: "1" }]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+
+    // {base}/{bun version}/{payload}. The payload itself may contain '/'
+    // (it is in the VLQ alphabet), so cut at the slash after the version.
+    const trace = stderr.match(new RegExp(`${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(\\S+)`));
+    expect(trace).not.toBeNull();
+    const afterBase = trace![1];
+    return afterBase.slice(afterBase.indexOf("/") + 1);
+  }
+
+  const VLQ_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  /**
+   * Reads one source-map style VLQ (sign-magnitude i32, as `bun_base64::VLQ`
+   * writes it and bun.report's `decodePart` reads it) at `i`; returns the value
+   * and the index after it.
+   */
+  function vlq(s: string, i: number): [value: number, next: number] {
+    let word = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = VLQ_ALPHABET.indexOf(s[i++]);
+      if (digit < 0) throw new Error(`not a VLQ digit at ${i - 1} in ${JSON.stringify(s)}`);
+      word += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) break;
+    }
+    const magnitude = Math.floor(word / 2);
+    if (word % 2 === 0) return [magnitude, i];
+    return [magnitude === 0 ? -0x80000000 : -magnitude, i];
+  }
+
+  /** `write_u64_as_two_vlqs`: high and low 32-bit halves, each reinterpreted as an i32. */
+  function u64(s: string, i: number): [value: bigint, next: number] {
+    const [hi, j] = vlq(s, i);
+    const [lo, k] = vlq(s, j);
+    return [(BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0), k];
+  }
+
+  function readAt(fd: number, position: number, length: number): Buffer {
+    const buffer = Buffer.alloc(length);
+    for (let done = 0; done < length; ) {
+      const n = readSync(fd, buffer, done, length - done, position + done);
+      if (n === 0) throw new Error(`short read at ${position}`);
+      done += n;
+    }
+    return buffer;
+  }
+
+  /**
+   * The id as the platform's own tools print it (`readelf -n`, `dumpbin
+   * /headers`, `dwarfdump --uuid`), lowercase and without dashes. Read from
+   * the file on disk, independently of the crash handler's in-memory walk.
+   */
+  function debugIdOfExecutable(file: string): string {
+    const fd = openSync(file, "r");
+    try {
+      const magic = readAt(fd, 0, 4);
+      if (magic.toString("latin1") === "\x7fELF") return elfBuildId(fd);
+      if (magic.toString("latin1", 0, 2) === "MZ") return peCodeViewGuid(fd);
+      if (magic.readUInt32LE(0) === 0xfeedfacf) return machoUuid(fd);
+      throw new Error(`unrecognized executable format: ${magic.toString("hex")}`);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  function elfBuildId(fd: number): string {
+    const header = readAt(fd, 0, 64);
+    const phoff = Number(header.readBigUInt64LE(0x20));
+    const phentsize = header.readUInt16LE(0x36);
+    const phnum = header.readUInt16LE(0x38);
+    const phdrs = readAt(fd, phoff, phentsize * phnum);
+    for (let n = 0; n < phnum; n++) {
+      const phdr = phdrs.subarray(n * phentsize);
+      if (phdr.readUInt32LE(0) !== 4 /* PT_NOTE */) continue;
+      const notes = readAt(fd, Number(phdr.readBigUInt64LE(8)), Number(phdr.readBigUInt64LE(32)));
+      for (let off = 0; off + 12 <= notes.length; ) {
+        const nameSize = notes.readUInt32LE(off);
+        const descSize = notes.readUInt32LE(off + 4);
+        const type = notes.readUInt32LE(off + 8);
+        const descStart = (off + 12 + nameSize + 3) & ~3;
+        if (type === 3 /* NT_GNU_BUILD_ID */ && notes.toString("latin1", off + 12, off + 12 + nameSize) === "GNU\0") {
+          return notes.toString("hex", descStart, descStart + descSize);
+        }
+        off = (descStart + descSize + 3) & ~3;
+      }
+    }
+    throw new Error("executable has no NT_GNU_BUILD_ID note");
+  }
+
+  function peCodeViewGuid(fd: number): string {
+    const peOffset = readAt(fd, 0x3c, 4).readUInt32LE(0);
+    const fileHeader = readAt(fd, peOffset, 24);
+    expect(fileHeader.toString("latin1", 0, 4)).toBe("PE\0\0");
+    const sectionCount = fileHeader.readUInt16LE(6);
+    const optionalHeaderSize = fileHeader.readUInt16LE(20);
+    const optionalHeader = readAt(fd, peOffset + 24, optionalHeaderSize);
+    expect(optionalHeader.readUInt16LE(0)).toBe(0x20b); // PE32+
+    // Data directory 6 is IMAGE_DIRECTORY_ENTRY_DEBUG.
+    const debugRva = optionalHeader.readUInt32LE(112 + 6 * 8);
+    const debugSize = optionalHeader.readUInt32LE(112 + 6 * 8 + 4);
+    const sections = readAt(fd, peOffset + 24 + optionalHeaderSize, sectionCount * 40);
+    let debugOffset = -1;
+    for (let n = 0; n < sectionCount; n++) {
+      const section = sections.subarray(n * 40);
+      const virtualAddress = section.readUInt32LE(12);
+      if (debugRva >= virtualAddress && debugRva < virtualAddress + section.readUInt32LE(16)) {
+        debugOffset = debugRva - virtualAddress + section.readUInt32LE(20);
+      }
+    }
+    expect(debugOffset).not.toBe(-1);
+    const entries = readAt(fd, debugOffset, debugSize);
+    for (let off = 0; off + 28 <= entries.length; off += 28) {
+      if (entries.readUInt32LE(off + 12) !== 2 /* IMAGE_DEBUG_TYPE_CODEVIEW */) continue;
+      // PointerToRawData is a file offset; the crash handler uses the RVA next to it.
+      const codeView = readAt(fd, entries.readUInt32LE(off + 24), 20);
+      expect(codeView.toString("latin1", 0, 4)).toBe("RSDS");
+      const g = codeView.subarray(4, 20);
+      // The first three GUID fields are little-endian in the file; tools print them big-endian.
+      return Buffer.from([g[3], g[2], g[1], g[0], g[5], g[4], g[7], g[6], ...g.subarray(8, 16)]).toString("hex");
+    }
+    throw new Error("executable has no CodeView debug directory entry");
+  }
+
+  function machoUuid(fd: number): string {
+    const header = readAt(fd, 0, 32);
+    const commands = readAt(fd, 32, header.readUInt32LE(20));
+    for (let n = 0, off = 0; n < header.readUInt32LE(16); n++, off += commands.readUInt32LE(off + 4)) {
+      if (commands.readUInt32LE(off) === 0x1b /* LC_UUID */) return commands.toString("hex", off + 8, off + 24);
+    }
+    throw new Error("executable has no LC_UUID load command");
+  }
+
+  test.each(["panic", "segfault"])("%s: the trace string carries this executable's debug id", async approach => {
+    const payload = await tracePayload(approach);
+    const { revision, is_canary } = crash_handler.getFeatureData();
+
+    let i = 2; // platform char, command char
+    expect(payload[i++]).toBe("4");
+    expect(payload.slice(i, i + 7)).toBe(revision ? revision.slice(0, 7) : "unknown");
+    i += 7;
+
+    let buildFlags: number;
+    [buildFlags, i] = vlq(payload, i);
+    expect(buildFlags).toBe(is_canary ? 1 : 0);
+
+    let idLength: number;
+    [idLength, i] = vlq(payload, i);
+    const expectedId = debugIdOfExecutable(bunExe());
+    expect(idLength).toBe(expectedId.length / 2);
+    expect(payload.slice(i, i + 2 * idLength)).toBe(expectedId);
+    i += 2 * idLength;
+
+    // Everything after the new fields must still be where the decoder expects
+    // it: features, the frame list, and a reason whose payload round-trips.
+    [, i] = vlq(payload, i);
+    [, i] = vlq(payload, i);
+    for (;;) {
+      if (payload[i] === "_") {
+        i++;
+        continue;
+      }
+      let address: number;
+      [address, i] = vlq(payload, i);
+      if (address === 0) break;
+      if (address === 1) {
+        let nameLength: number;
+        [nameLength, i] = vlq(payload, i);
+        i += nameLength;
+        [, i] = vlq(payload, i);
+      }
+    }
+
+    if (approach === "panic") {
+      expect(payload[i++]).toBe("0");
+      expect(inflateSync(Buffer.from(payload.slice(i), "base64")).toString()).toContain(
+        "invoked crashByPanic() handler",
+      );
+    } else {
+      expect(payload[i++]).toBe("2");
+      const [faultAddress, end] = u64(payload, i);
+      expect(faultAddress).toBe(0xdeadbeefn);
+      expect(payload.slice(end)).toBe("");
+    }
+  });
 });
 
 test.if(isWindows)(

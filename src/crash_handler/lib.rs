@@ -2,10 +2,12 @@
 //! print backtraces that are mapped to source code. In release builds, we do
 //! not have debug symbols in the binary. Bun's solution to this is called
 //! a "trace string", a url with compressed encoding of the captured
-//! backtrace. Version 1 trace strings contain the following information:
+//! backtrace. Trace strings contain the following information:
 //!
 //! - What version and commit of Bun captured the backtrace.
 //! - The platform the backtrace was captured on.
+//! - The debug id of the executable, naming the exact link of that commit
+//!   whose debug info the addresses below must be remapped with.
 //! - The list of addresses with ASLR removed, ready to be remapped.
 //! - If panicking, the message that was panicked with.
 //!
@@ -25,6 +27,8 @@
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
+
+mod debug_id;
 
 #[path = "handle_oom.rs"]
 pub mod handle_oom;
@@ -509,6 +513,7 @@ mod draft {
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
+    use super::debug_id;
 
     /// Print an argv vector as a shell-ish line.
     /// Called when the addr2line spawn fails.
@@ -2394,13 +2399,34 @@ mod draft {
     }
 
     /// Note to the decoder on how to process this string. This ensures backwards
-    /// compatibility with older versions of the tracestring.
+    /// compatibility with older versions of the tracestring. Must be kept in
+    /// sync with `lib/parser.ts` in bun.report.
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    const VERSION_CHAR: &str = if Environment::IS_CANARY { "2" } else { "1" };
+    /// '3' - defined by the decoder (build flags + fault registers), never emitted
+    /// '4' - '1' with two fields between the hash and the features: one VLQ of
+    ///       `BuildFlags` (replaces the '1'/'2' split), then the executable's
+    ///       debug id as a VLQ byte count followed by that many bytes in
+    ///       lowercase hex (count 0 when the executable has none). Hex rather
+    ///       than VLQs so the id can be compared with `readelf -n` / `dumpbin`
+    ///       / `dwarfdump --uuid` output straight from the URL.
+    const VERSION_CHAR: &str = "4";
 
-    // The v1/v2 trace-string
+    bitflags::bitflags! {
+        #[derive(Clone, Copy)]
+        struct BuildFlags: u32 {
+            const CANARY = 1 << 0;
+        }
+    }
+
+    const BUILD_FLAGS: BuildFlags = if Environment::IS_CANARY {
+        BuildFlags::CANARY
+    } else {
+        BuildFlags::empty()
+    };
+
+    // The trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
     // shift every following VLQ byte, making bun.report unable to decode the URL.
     const GIT_SHA: &str = {
@@ -2625,6 +2651,14 @@ mod draft {
 
         writer.write_all(VERSION_CHAR.as_bytes())?;
         writer.write_all(GIT_SHA.as_bytes())?;
+        writer.write_all(VLQ::encode(BUILD_FLAGS.bits() as i32).slice())?;
+
+        let id = debug_id::of_running_executable();
+        let id: &[u8] = id.as_deref().unwrap_or(&[]);
+        writer.write_all(VLQ::encode(id.len() as i32).slice())?;
+        let mut hex = [0u8; 2 * debug_id::MAX_LEN];
+        let hex_len = bun_fmt::bytes_to_hex_lower(id, &mut hex);
+        writer.write_all(&hex[..hex_len])?;
 
         let packed_features: u64 = bun_analytics::packed_features().bits();
         write_u64_as_two_vlqs(writer, packed_features as usize)?;

@@ -110,12 +110,9 @@ Ref<SourceProvider> SourceProvider::create(
                 Bun::defaultAllocatorFree(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
-                // no-op, for borrowed bytecode (--compile embedded section,
-                // node compile cache).
+                // no-op, for borrowed bytecode (--compile embedded section, node compile cache).
             };
-            // Not `needsDeref`: that flag tracks source_code ownership and is
-            // cleared (above, and in AsyncModule::fulfill) before we get here,
-            // which used to leak every owned sidecar buffer.
+            // Not needsDeref: that flag tracks source_code ownership and is already cleared by this point, which used to leak every owned sidecar buffer.
             const auto destructor = resolvedSource.bytecode_cache_is_owned ? destructorPtr : destructorNoOp;
 
             auto origin = getSourceOrigin();

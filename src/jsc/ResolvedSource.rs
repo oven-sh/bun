@@ -45,9 +45,7 @@ pub struct ResolvedSource {
     // -- Bytecode cache fields --
     pub bytecode_cache: *mut u8,
     pub bytecode_cache_size: usize,
-    /// `bytecode_cache` is a `heap::into_raw`'d `Box<[u8]>` the consumer must
-    /// free (`.jsc` sidecar reads). `false` for borrowed memory: the
-    /// `--compile` embedded section and the node compile cache's entry blob.
+    /// True when `bytecode_cache` is an `into_raw`'d `Box<[u8]>` the consumer must free; false for borrowed memory (`--compile` embedded section, node compile cache).
     pub bytecode_cache_is_owned: bool,
     pub module_info: *mut c_void,
     /// The file path used as the source origin for bytecode cache validation.

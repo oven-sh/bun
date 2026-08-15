@@ -130,9 +130,7 @@ typedef struct ResolvedSource {
     // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    // True when bytecode_cache is an owned heap buffer the consumer must free
-    // (.jsc sidecar reads); false for borrowed memory (--compile embedded
-    // section, node compile cache).
+    // True when bytecode_cache is an owned heap buffer the consumer must free; false for borrowed memory (--compile embedded section, node compile cache).
     bool bytecode_cache_is_owned;
     void* module_info;
     // File path used as source origin for bytecode cache validation.

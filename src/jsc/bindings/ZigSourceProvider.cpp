@@ -198,11 +198,13 @@ static JSC::VM& getVMForBytecodeCache()
 
 // Mirrors `BytecodeSourceEncoding` in CachedBytecode.rs.
 enum class BytecodeSourceEncoding : uint8_t {
-    // Bytes written to disk by the bundler (`--bytecode`); the loader reads
-    // them back with `String::clone_utf8` -> `BunString__fromBytes`.
+    // Bytes decoded as UTF-8 (`BunString__fromBytes` semantics). No caller
+    // passes this yet: every current load path builds its runtime string as
+    // Latin-1 or UTF-16.
     Utf8 = 0,
-    // A compiled executable's stored module text: one Latin-1 character per
-    // byte ...
+    // One Latin-1 character per byte: on-disk `.jsc` source (the loader's
+    // `already_bundled` path uses `clone_latin1`) and a compiled executable's
+    // Latin-1-stored module text ...
     Latin1 = 1,
     // ... or native-endian UTF-16 code units, two bytes each.
     Utf16 = 2,

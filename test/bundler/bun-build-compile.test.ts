@@ -855,4 +855,30 @@ console.log("size", statSync(import.meta.path).size === Buffer.byteLength(text, 
     expect(stdout).toBe("banner intact\nblob same\nsize matches\n");
     expect(exitCode).toBe(0);
   });
+
+  // Not --compile: the on-disk .jsc sidecar's key is computed from the raw
+  // bytes read as Latin-1, matching the loader's already_bundled path.
+  test("on-disk .jsc bytecode cache hits with a non-ASCII banner", async () => {
+    using dir = tempDir("jsc-sidecar-nonascii", { "main.js": `console.log("ok");` });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--bytecode", "--target=bun", "--banner", "// café", "main.js", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join("out", "main.js")],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("ok");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1085,7 +1085,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         strings::EncodingNonAscii::Latin1
                                     },
                                 ),
-                                None => (&code_result.buffer, strings::EncodingNonAscii::Utf8),
+                                // On-disk `.jsc` sidecars (and compile-mode
+                                // pure-ASCII text, identical either way): the
+                                // loader's `already_bundled` path builds its
+                                // runtime string with `clone_latin1`, so the
+                                // key must be computed the same way.
+                                None => (&code_result.buffer, strings::EncodingNonAscii::Latin1),
                             };
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(

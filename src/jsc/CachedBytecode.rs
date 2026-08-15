@@ -13,9 +13,10 @@ bun_opaque::opaque_ffi! {
 /// ZigSourceProvider.cpp and the two must stay in step. JSC only accepts
 /// bytecode generated from a string equal to the one the module loader builds,
 /// so the generator has to decode the bytes the same way the load path for
-/// that kind of source does: bundler output on disk is UTF-8, while a compiled
-/// executable stores module text in its final width (see
-/// `stores_transcoded_contents` in `StandaloneModuleGraph.rs`).
+/// that kind of source does: the on-disk `.jsc` loader reads raw bytes as
+/// Latin-1 (`clone_latin1`), while a compiled executable stores module text in
+/// its final width (see `stores_transcoded_contents` in
+/// `StandaloneModuleGraph.rs`).
 #[repr(u8)]
 #[derive(Clone, Copy)]
 enum BytecodeSourceEncoding {

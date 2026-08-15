@@ -1007,6 +1007,14 @@ pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
     str.is_empty() || self_.ends_with(str)
 }
 
+/// Case-insensitive (ASCII-only) sibling of [`ends_with`] — mirrors
+/// [`starts_with_case_insensitive_ascii`] for suffix matching.
+#[inline]
+pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
+    self_.len() >= suffix.len()
+        && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, false)
+}
+
 #[inline]
 pub fn starts_with_char(self_: &[u8], char: u8) -> bool {
     !self_.is_empty() && self_[0] == char
@@ -2737,6 +2745,17 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn ends_with_case_insensitive_ascii_matches_case_variants() {
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx.EXE", b"bunx.exe"));
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx.exe", b"bunx.exe"));
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx.EXE", b"bunx"));
+        assert!(super::ends_with_case_insensitive_ascii(b"BUNX", b"bunx"));
+        assert!(!super::ends_with_case_insensitive_ascii(b"bun.exe", b"bunx"));
+        assert!(!super::ends_with_case_insensitive_ascii(b"xbunx", b"bunx.exe"));
+        assert!(!super::ends_with_case_insensitive_ascii(b"bunx", b"bunx.exe"));
     }
 
     #[test]

@@ -2296,7 +2296,8 @@ export function readElfInterp(path: string): { interp: string; p_filesz: number 
     closeSync(fd);
   }
   const image = head.subarray(0, n);
-  if (image.length < 64 || image.toString("latin1", 0, 4) !== "\x7fELF") return null;
+  const ELFCLASS64 = 2;
+  if (image.length < 64 || image.toString("latin1", 0, 4) !== "\x7fELF" || image[4] !== ELFCLASS64) return null;
   const PT_INTERP = 3;
   const e_phoff = Number(image.readBigUInt64LE(32));
   const e_phnum = image.readUInt16LE(56);

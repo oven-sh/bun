@@ -63,22 +63,21 @@ impl ElfFile {
         if host_uses_nix_store_interpreter() {
             return;
         }
+        // Best-effort: a template whose headers cannot be read is compiled as it is.
+        if let Err(err) = self.rewrite_store_interpreter() {
+            bun_core::scoped_log!(elf, "leaving PT_INTERP alone: {}", err);
+        }
+    }
 
+    fn rewrite_store_interpreter(&mut self) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
-        // Best-effort: a template whose headers do not fit in the file is left alone.
-        let Ok(phdrs) = phdr_table(&self.data, ehdr) else {
-            return;
-        };
-
-        for phdr_offset in phdrs.step_by(PHDR_SIZE) {
+        for phdr_offset in phdr_table(&self.data, ehdr)?.step_by(PHDR_SIZE) {
             let phdr = read_phdr(&self.data, phdr_offset);
             if phdr.p_type != PT_INTERP {
                 continue;
             }
 
-            let Ok(interp) = file_range(&self.data, phdr.p_offset, phdr.p_filesz) else {
-                return;
-            };
+            let interp = file_range(&self.data, phdr.p_offset, phdr.p_filesz)?;
 
             // reshaped for borrowck — compute replacement under an
             // immutable borrow, then take a mutable borrow for the writes.
@@ -86,11 +85,11 @@ impl ElfFile {
                 let current = slice_to_nul(&self.data[interp.clone()]);
 
                 if !current.starts_with(b"/nix/store/") && !current.starts_with(b"/gnu/store/") {
-                    return;
+                    return Ok(());
                 }
 
                 let Some(last_slash) = strings::last_index_of_char(current, b'/') else {
-                    return;
+                    return Ok(());
                 };
                 let basename = &current[last_slash + 1..];
 
@@ -102,13 +101,13 @@ impl ElfFile {
                     }
                 }
                 let Some(replacement) = found else {
-                    return;
+                    return Ok(());
                 };
 
                 // FHS path + NUL must fit in the existing segment (always true for
                 // store paths: 32-char hash + pname + "/lib/" alone exceeds any FHS path).
                 if replacement.len() + 1 > interp.len() {
-                    return;
+                    return Ok(());
                 }
 
                 bun_core::scoped_log!(
@@ -132,25 +131,30 @@ impl ElfFile {
             write_u64_le(&mut self.data[phdr_offset + 32..][..8], new_size);
             write_u64_le(&mut self.data[phdr_offset + 40..][..8], new_size);
 
-            self.update_interp_section_size(ehdr, new_size);
-            return;
+            // Metadata for readelf only; the rewrite above stands either way.
+            if let Err(err) = self.update_interp_section_size(ehdr, new_size) {
+                bun_core::scoped_log!(elf, "leaving the .interp section header alone: {}", err);
+            }
+            return Ok(());
         }
+        Ok(())
     }
 
-    /// Best-effort: keep the `.interp` section header's `sh_size` consistent with
-    /// the rewritten PT_INTERP so `readelf -S` shows accurate metadata. The kernel
-    /// only consults PT_INTERP, so any failure here is silently ignored.
-    fn update_interp_section_size(&mut self, ehdr: Elf64_Ehdr, new_size: u64) {
-        if ehdr.e_shstrndx >= ehdr.e_shnum {
-            return;
+    /// Keeps the `.interp` section header's `sh_size` consistent with the rewritten PT_INTERP.
+    fn update_interp_section_size(
+        &mut self,
+        ehdr: Elf64_Ehdr,
+        new_size: u64,
+    ) -> Result<(), ElfError> {
+        if ehdr.e_shnum == 0 {
+            return Ok(());
         }
-        let Ok(shdrs) = shdr_table(&self.data, ehdr) else {
-            return;
-        };
+        if ehdr.e_shstrndx >= ehdr.e_shnum {
+            return Err(ElfError::InvalidElfFile);
+        }
+        let shdrs = shdr_table(&self.data, ehdr)?;
         let strtab_shdr = read_shdr(&self.data, &shdrs, ehdr.e_shstrndx);
-        let Ok(strtab) = file_range(&self.data, strtab_shdr.sh_offset, strtab_shdr.sh_size) else {
-            return;
-        };
+        let strtab = file_range(&self.data, strtab_shdr.sh_offset, strtab_shdr.sh_size)?;
 
         for i in 0..ehdr.e_shnum {
             let shdr = read_shdr(&self.data, &shdrs, i);
@@ -165,8 +169,9 @@ impl ElfFile {
             // sh_size @ +32 in Elf64_Shdr
             let entry = shdr_offset(&shdrs, i);
             write_u64_le(&mut self.data[entry + 32..][..8], new_size);
-            return;
+            return Ok(());
         }
+        Ok(())
     }
 
     /// Find the `.bun` section and write `payload` so the kernel `mmap`s it at

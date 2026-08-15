@@ -47,10 +47,8 @@ use bun_jsc::{JSGlobalObject, JsResult};
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
 /// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
 /// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-///
-/// Not Windows-gated: the tags exist on every platform, and every consumer
-/// (the `run_task` arm, the shutdown-release arm) generates its outer
-/// or-pattern from this one table so the guards cannot drift apart.
+/// Un-gated: the tags exist on every platform, and non-Windows match arms
+/// use it for their or-patterns.
 macro_rules! for_each_fs_uv_op {
     ($m:ident) => {
         $m! {

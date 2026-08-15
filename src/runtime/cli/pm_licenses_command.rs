@@ -155,7 +155,7 @@ impl PmLicensesCommand {
         };
 
         // After the exits above so error output keeps a clean stdout.
-        if not_silent && !json_output {
+        if pm.options.should_print_command_name() && !json_output {
             bun_core::pretty!(
                 "<r><b>bun pm licenses <r><d>v{}<r>\n\n",
                 Global::package_json_version_with_sha
@@ -309,7 +309,7 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long, checked, not_silent);
+            print_text(&entries, flags.long, checked, pm.options.should_print_command_name());
         }
 
         Output::flush();

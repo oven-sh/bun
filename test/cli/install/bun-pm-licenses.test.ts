@@ -1275,6 +1275,23 @@ describe("bun pm licenses", () => {
     expect(jsonExit).toBe(0);
   });
 
+  test.concurrent("--no-summary prints the bare listing without banner or summary", async () => {
+    const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--no-summary");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "MIT (2)
+      ├── path-parse@1.0.6
+      └── resolve@1.9.0
+
+      Unknown (4)
+      ├── a-dep@1.0.1 (dev)
+      ├── no-deps@1.0.0
+      ├── no-deps@1.0.1
+      └── one-dep@1.0.0"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("--silent still prints the listing but no diagnostics", async () => {
     const dir = await setup();
     rmSync(nm(dir, "path-parse"), { recursive: true });

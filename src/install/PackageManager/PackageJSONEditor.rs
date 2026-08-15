@@ -1131,9 +1131,14 @@ pub(crate) fn edit(
     }
 
     // `bun update <name>` never adds `<name>`: a name this file does not declare only moves in the lockfile.
-    // (`package_id` is no substitute for this check: the root's rows include every workspace member, declared or not.)
-    if manager.subcommand == Subcommand::Update {
-        remaining = 0;
+    let update_in_place = manager.subcommand == Subcommand::Update;
+    if update_in_place {
+        remaining -= updates
+            .iter()
+            .filter(|request| {
+                request.e_string.is_none() && request.package_id == INVALID_PACKAGE_ID
+            })
+            .count();
     }
 
     if remaining != 0 {
@@ -1155,7 +1160,9 @@ pub(crate) fn edit(
         };
 
         for request in updates.iter_mut() {
-            if request.e_string.is_some() {
+            if request.e_string.is_some()
+                || (update_in_place && request.package_id == INVALID_PACKAGE_ID)
+            {
                 continue;
             }
 
@@ -1329,9 +1336,13 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
+            // `bun update <pkg>` keeps a `catalog:` reference or a `workspace:` range as written, in both passes:
+            // before the install so neither --latest nor `<pkg>@<range>` replaces it; `bun add` still replaces it.
             if manager.subcommand == Subcommand::Update
-                && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
+                && matches!(
+                    dependency::Tag::infer(e_string.data.slice()),
+                    dependency::Tag::Catalog | dependency::Tag::Workspace
+                )
             {
                 continue;
             }
@@ -1444,8 +1455,8 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                // `bun update <name>` leaves an entry that links a workspace member as written (`workspace:^`,
-                // `workspace:1.2.3`, a plain range), like the bare update does; `workspace:*` is what `bun add` writes.
+                // A range or dist-tag that linked a workspace member has nothing to move to: `bun update <name>`
+                // leaves it as written, like the bare update does. `workspace:*` is what `bun add` writes.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
                 resolution::Tag::Workspace => b"workspace:*",
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),

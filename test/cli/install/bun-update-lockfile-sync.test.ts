@@ -280,18 +280,24 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
-  // Naming a workspace member used to rewrite the entry linking it to `workspace:*`, and to add one to a root that did not declare it.
-  test.each(["workspace:^", "workspace:~", "workspace:1.0.0", "^1.0.0"])(
-    "bun update <workspace member> keeps a %s entry as written",
-    async literal => {
-      const dir = await setup(MONOREPO({}, { dependencies: { pkg1: literal } }));
-      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
-      await run(dir, "update", "pkg1");
-      expect(await pkgText(dir)).toBe(pkgBefore);
-      expect(await lockText(dir)).toBe(lockBefore);
-      await expectInSync(dir, ["", PKG1]);
-    },
-  );
+  // Naming a workspace member used to rewrite the entry linking it to `workspace:*` (or, with --latest / an explicit
+  // range, to send the name to the registry), and to add an entry to a root that did not declare the member.
+  test.each([
+    ["workspace:^", ["pkg1"]],
+    ["workspace:~", ["pkg1"]],
+    ["workspace:1.0.0", ["pkg1"]],
+    ["^1.0.0", ["pkg1"]],
+    ["workspace:^", ["pkg1", "--latest"]],
+    ["workspace:^", ["pkg1@^1.0.0"]],
+    ["workspace:^", ["pkg1@latest"]],
+  ])("a %s entry linking a workspace member is kept as written by bun update %j", async (literal, args) => {
+    const dir = await setup(MONOREPO({}, { dependencies: { pkg1: literal } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", ...args);
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, ["", PKG1]);
+  });
 
   test("bun update <workspace member> from a member declaring it keeps the entry as written", async () => {
     const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:~" } } }));

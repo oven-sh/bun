@@ -1051,8 +1051,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
-/// `jsx` is a parameter because `src.jsx` has the cwd tsconfig merged in
-/// (`configure_linker`), and the resolver merges each file's own tsconfig over it.
+/// `jsx` is the base each file's own tsconfig is merged over; `src.jsx` has the cwd's merged in.
 ///
 /// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type

@@ -61,8 +61,6 @@
 #include "NodeVMScriptFetcher.h"
 #include "wtf/FileHandle.h"
 
-#include "../vm/SigintWatcher.h"
-
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
@@ -1103,10 +1101,7 @@ void NodeVMGlobalObject::destroy(JSCell* cell)
     static_cast<NodeVMGlobalObject*>(cell)->~NodeVMGlobalObject();
 }
 
-NodeVMGlobalObject::~NodeVMGlobalObject()
-{
-    SigintWatcher::get().unregisterGlobalObject(this);
-}
+NodeVMGlobalObject::~NodeVMGlobalObject() = default;
 
 void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject)
 {

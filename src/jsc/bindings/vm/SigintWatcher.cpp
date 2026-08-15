@@ -25,7 +25,6 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 SigintWatcher::SigintWatcher()
     : m_semaphore(1)
 {
-    m_globalObjects.reserveInitialCapacity(16);
 }
 
 SigintWatcher::~SigintWatcher()
@@ -112,78 +111,24 @@ void SigintWatcher::signalReceived()
     }
 }
 
-void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
-{
-    if (globalObject == nullptr) {
-        return;
-    }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-    // One entry per registration, so nested holds of the same realm each keep it registered until they end.
-    m_globalObjects.append(globalObject);
-}
-
-void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)
-{
-    if (globalObject == nullptr) {
-        return;
-    }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-
-    auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
-    if (iter == m_globalObjects.end()) {
-        return;
-    }
-
-    std::swap(*iter, m_globalObjects.last());
-    m_globalObjects.removeLast();
-}
-
-void SigintWatcher::registerReceiver(SigintReceiver* module)
-{
-    if (module == nullptr) {
-        return;
-    }
-
-    WTF::Locker lock(m_receiversMutex);
-    m_receivers.appendIfNotContains(module);
-}
-
-void SigintWatcher::unregisterReceiver(SigintReceiver* module)
+void SigintWatcher::registerReceiver(SigintReceiver* receiver)
 {
     WTF::Locker lock(m_receiversMutex);
-
-    auto iter = std::find(m_receivers.begin(), m_receivers.end(), module);
-    if (iter == m_receivers.end()) {
-        return;
-    }
-
-    std::swap(*iter, m_receivers.last());
-    m_receivers.removeLast();
-}
-
-void SigintWatcher::ref()
-{
-    // ref()/deref() race across worker_threads (each worker registers its own
-    // global while running vm code with breakOnSigint). The lock makes the
-    // count and the paired install()/uninstall() transition atomic; a lost
-    // increment would otherwise let one worker's deref() tear down the
-    // watcher thread while another worker still holds a reference, and the
-    // underflowing count would trip the ASSERT below.
-    WTF::Locker locker { m_refCountMutex };
-    if (m_refCount++ == 0) {
+    if (m_receivers.isEmpty())
         install();
-    }
+    m_receivers.append(receiver);
 }
 
-void SigintWatcher::deref()
+void SigintWatcher::unregisterReceiver(SigintReceiver* receiver)
 {
-    WTF::Locker locker { m_refCountMutex };
-    ASSERT(m_refCount > 0);
-    if (--m_refCount == 0) {
+    WTF::Locker lock(m_receiversMutex);
+    auto index = m_receivers.reverseFind(receiver);
+    ASSERT(index != notFound);
+    if (index == notFound)
+        return;
+    m_receivers.removeAt(index);
+    if (m_receivers.isEmpty())
         uninstall();
-    }
 }
 
 SigintWatcher& SigintWatcher::get()
@@ -194,23 +139,13 @@ SigintWatcher& SigintWatcher::get()
 
 bool SigintWatcher::signalAll()
 {
-    {
-        WTF::Locker lock(m_receiversMutex);
-        for (auto* receiver : m_receivers) {
-            receiver->setSigintReceived();
-        }
-    }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-
-    if (m_globalObjects.isEmpty()) {
+    WTF::Locker lock(m_receiversMutex);
+    if (m_receivers.isEmpty())
         return false;
+    for (auto* receiver : m_receivers) {
+        receiver->setSigintReceived();
+        receiver->sigintVM().notifyNeedTermination();
     }
-
-    for (JSGlobalObject* globalObject : m_globalObjects) {
-        globalObject->vm().notifyNeedTermination();
-    }
-
     return true;
 }
 

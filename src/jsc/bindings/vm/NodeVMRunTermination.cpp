@@ -3,6 +3,7 @@
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "NodeVM.h"
+#include "SigintWatcher.h"
 
 #include <JavaScriptCore/MicrotaskQueueInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -15,19 +16,19 @@ using namespace JSC;
 
 static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
 
-NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* sigintRealm, std::optional<Seconds> timeout, bool breakOnSigint)
-    : m_vm(sigintRealm->vm())
+NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
+    : SigintReceiver(realm->vm())
     , m_timeout(timeout)
     , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
     if (breakOnSigint) {
         // Requested from the signal thread by then: the exception object it needs must exist.
-        m_vm.ensureTerminationException();
-        // Receiver before realm: a SIGINT landing between the two must not notify the VM unrecorded.
-        m_sigintHold.emplace(static_cast<SigintReceiver*>(this), sigintRealm);
+        m_sigintVM.ensureTerminationException();
+        SigintWatcher::get().registerReceiver(this);
+        m_listeningForSigint = true;
     }
     if (m_timeout)
-        m_deadline = m_vm.addTerminationDeadline(MonotonicTime::now() + *m_timeout);
+        m_deadline = m_sigintVM.addTerminationDeadline(MonotonicTime::now() + *m_timeout);
 }
 
 NodeVMRunTermination::~NodeVMRunTermination()
@@ -41,28 +42,23 @@ void NodeVMRunTermination::withdraw()
 {
     if (std::exchange(m_withdrawn, true))
         return;
-    // Unregister first (the realm before the receiver, the reverse of registration), then read: after this
-    // either the watcher has already flagged us — before it notified the VM, if it did — or it never will.
-    m_sigintHold.reset();
-    if (m_deadline) {
-        m_deadline->cancel(m_vm);
-        m_timedOut = m_deadline->didFire();
-    }
-}
-
-bool NodeVMRunTermination::wasCutShort() const
-{
-    return (m_deadline && m_deadline->didFire()) || m_sigintReceived;
+    if (std::exchange(m_listeningForSigint, false))
+        SigintWatcher::get().unregisterReceiver(this);
+    if (m_deadline)
+        m_deadline->cancel(m_sigintVM);
+    // From here m_sigintReceived and didFire() are final.
 }
 
 void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope, JSGlobalObject* microtaskContext)
 {
     ASSERT(!m_withdrawn);
+    // The caller has observed whatever the run left on `scope` (this satisfies the exception-check validator
+    // for it); what happens to it is decided below.
+    std::ignore = scope.exception();
     withdraw();
-    bool interrupted = m_sigintReceived;
-    if (!m_timedOut && !interrupted)
+    if (!wasCutShort())
         return;
-    VM& vm = m_vm;
+    VM& vm = m_sigintVM;
     // The VM has been asked to stop as a whole meanwhile: that request is indistinguishable from ours and wins.
     if (!WebCore::clientData(vm)->scriptAllowed())
         return;
@@ -83,7 +79,7 @@ void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope,
             top.clearException();
     }
 
-    if (m_timedOut)
+    if (timedOut())
         throwError(errorRealm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s));
     else
         throwError(errorRealm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);

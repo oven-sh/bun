@@ -332,18 +332,14 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
+    {
+        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
         // Node performs the afterEvaluate microtask checkpoint inside the
         // timeout/SIGINT scope, so a `timeout` also bounds microtasks the script
         // scheduled on the context's own queue (e.g. promise jobs).
         if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
             globalObject->drainOwnMicrotasks();
-    };
-
-    {
-        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
-        run();
         termination.finish(globalObject, scope, globalObject);
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -383,13 +379,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
-
     {
         NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
-        run();
+        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
         termination.finish(globalObject, scope, nullptr);
     }
     RETURN_IF_EXCEPTION(scope, {});

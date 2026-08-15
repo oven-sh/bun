@@ -128,6 +128,7 @@ public:
     enum class RequestKind : uint8_t { Resolve = 0,
         Load = 1 };
     void holdRequest(RequestKind kind, void* context) { held(kind).add(context); }
+    bool holdsRequest(RequestKind kind, void* context) { return held(kind).contains(context); }
     // True if the request was still held (and no longer is): the caller produces its answer.
     bool takeRequest(RequestKind kind, void* context) { return held(kind).remove(context); }
     // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,

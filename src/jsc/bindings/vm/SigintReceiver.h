@@ -2,20 +2,27 @@
 
 #include <atomic>
 
+namespace JSC {
+class VM;
+}
+
 namespace Bun {
 
-// What SigintWatcher notifies of a SIGINT (a NodeVMRunTermination, for a breakOnSigint run).
+// What SigintWatcher notifies of a SIGINT: a NodeVMRunTermination, for a breakOnSigint run. The watcher's
+// signal thread records the SIGINT on the receiver and requests its VM's termination in one step, under
+// the watcher's lock; the receiver reads m_sigintReceived on its own thread once it has unregistered.
 class SigintReceiver {
 public:
-    SigintReceiver() = default;
-
-    // From SigintWatcher's signal thread; the receiver reads m_sigintReceived on its own thread.
-    void setSigintReceived()
+    explicit SigintReceiver(JSC::VM& vm)
+        : m_sigintVM(vm)
     {
-        m_sigintReceived = true;
     }
 
+    JSC::VM& sigintVM() const { return m_sigintVM; }
+    void setSigintReceived() { m_sigintReceived = true; }
+
 protected:
+    JSC::VM& m_sigintVM;
     std::atomic<bool> m_sigintReceived = false;
 };
 

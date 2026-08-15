@@ -660,11 +660,17 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        self.flags.in_close = true;
-        socket.close(uws::CloseCode::Normal);
-        self.flags.in_close = false;
-        if core::mem::take(&mut self.flags.close_event_threw) {
-            return Err(bun_jsc::JsError::Thrown);
+        // The close event re-enters `*self` through the socket's ext pointer, not through this
+        // borrow: launder `self` so the flag handshake is not optimised as if nothing could see it.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is `self`; volatile so the stores/loads survive the opaque re-entry.
+        unsafe {
+            core::ptr::addr_of_mut!((*this).flags.in_close).write_volatile(true);
+            socket.close(uws::CloseCode::Normal);
+            core::ptr::addr_of_mut!((*this).flags.in_close).write_volatile(false);
+            if core::ptr::addr_of_mut!((*this).flags.close_event_threw).replace(false) {
+                return Err(bun_jsc::JsError::Thrown);
+            }
         }
         if is_semi_socket {
             self.status = Status::Disconnected;

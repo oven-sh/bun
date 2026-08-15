@@ -3,7 +3,6 @@
 #include "root.h"
 
 #include "SigintReceiver.h"
-#include "SigintWatcher.h"
 
 #include <JavaScriptCore/TerminationDeadline.h>
 #include <JavaScriptCore/ThrowScope.h>
@@ -24,8 +23,8 @@ class NodeVMRunTermination final : private SigintReceiver {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    // `sigintRealm`: the realm being run, whose VM a SIGINT interrupts (only used with breakOnSigint).
-    NodeVMRunTermination(JSC::JSGlobalObject* sigintRealm, std::optional<Seconds> timeout, bool breakOnSigint);
+    // `realm`: the realm being run; its VM is what the timeout / a SIGINT terminates.
+    NodeVMRunTermination(JSC::JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint);
     ~NodeVMRunTermination();
 
     // Call once, right after the run (and any microtask checkpoint it bounds). If the run was cut short
@@ -38,15 +37,15 @@ public:
 
 private:
     void withdraw(); // stop listening: nothing of this run's can fire once it returns
-    bool wasCutShort() const; // this run's deadline fired or its SIGINT arrived
+    bool timedOut() const { return m_deadline && m_deadline->didFire(); }
+    bool wasCutShort() const { return timedOut() || m_sigintReceived; }
 
-    JSC::VM& m_vm;
     const std::optional<Seconds> m_timeout;
     RefPtr<JSC::TerminationDeadline> m_deadline;
-    std::optional<SigintWatcher::GlobalObjectHolder> m_sigintHold;
-    NodeVMRunTermination* const m_enclosing; // the run this one is nested in on this thread, if any
+    bool m_listeningForSigint { false };
+    // The run this one is nested in, if any: runs nest on the stack, so the innermost is tracked per thread.
+    NodeVMRunTermination* const m_enclosing;
     bool m_withdrawn { false };
-    bool m_timedOut { false };
 };
 
 } // namespace Bun

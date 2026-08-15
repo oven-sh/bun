@@ -90,9 +90,6 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             {
                 NodeVMRunTermination termination(nodeVmGlobalObject, timeoutSeconds, breakOnSigint);
                 nodeVmGlobalObject->drainOwnMicrotasks();
-                // The drain may legitimately leave the termination exception pending (fired
-                // mid-checkpoint); observe it so the exception-check validator is satisfied.
-                std::ignore = scope.exception();
                 termination.finish(globalObject, scope, nodeVmGlobalObject);
             }
             RETURN_IF_EXCEPTION(scope, {});
@@ -207,11 +204,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         NodeVMRunTermination termination(globalObject, timeoutSeconds, breakOnSigint);
         run();
         drainAfterEvaluate();
-        // Evaluation (or the afterEvaluate drain) may leave an exception pending. Observe it so the
-        // exception-check validator is satisfied; then this run's own termination is converted to
-        // ERR_SCRIPT_EXECUTION_* by finish(), and that error, like a regular one, marks the module
-        // errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
-        std::ignore = scope.exception();
+        // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,
+        // marks the module errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
         termination.finish(globalObject, scope, nodeVmGlobalObject);
     }
 

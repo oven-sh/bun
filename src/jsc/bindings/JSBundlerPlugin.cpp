@@ -480,9 +480,15 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundle
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* plugin = (JSBundlerPlugin*)UNWRAP_BUNDLER_PLUGIN(callFrame);
-    JSC::EncodedJSValue encoded_defer_promise = JSBundlerPlugin__onDefer(plugin, globalObject);
-    return encoded_defer_promise;
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
+    // Only a request the plugins still hold can defer: once answered it is the bundle thread's again.
+    if (!thisObject->plugin.holdsRequest(BundlerPlugin::RequestKind::Load, context)) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, ".defer() called after the onLoad callback settled"_s);
+    }
+    return JSBundlerPlugin__onDefer(context, globalObject);
 }
 
 void JSBundlerPlugin::finishCreation(JSC::VM& vm)

@@ -13,7 +13,6 @@
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
-"same_match_twice:src/install/PackageManager/install_with_manager.rs" = 1
 
 [bun_js_parser]
 "same_match_twice:src/js_parser/p.rs" = 3

@@ -1847,8 +1847,6 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
-/// A copy of the root package.json source. A read or parse failure exits the
-/// process; `Err` only means printing the log failed first.
 fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,

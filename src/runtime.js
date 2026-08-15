@@ -233,6 +233,26 @@ export var __privateSet = (obj, member, value, setter) => (
 );
 export var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
+// `super.key` inside a method that decorator lowering moved out of its class.
+// `home` is the class (static members) or its prototype (instance members),
+// i.e. the method's [[HomeObject]]; `obj` is the method's `this`. Class bodies
+// are strict code, so a failed assignment throws like `super.key = value` does.
+var __reflectGet = Reflect.get;
+var __reflectSet = Reflect.set;
+export var __superGet = (home, obj, key) => __reflectGet(__getProtoOf(home), key, obj);
+export var __superSet = (home, obj, key, value) => (
+  __reflectSet(__getProtoOf(home), key, value, obj) || __typeError("Cannot assign to super property " + String(key)),
+  value
+);
+export var __superWrapper = (home, obj, key) => ({
+  get _() {
+    return __superGet(home, obj, key);
+  },
+  set _(value) {
+    __superSet(home, obj, key, value);
+  },
+});
+
 export var __decoratorStart = base => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];
 var __expectFn = fn => (fn !== void 0 && typeof fn !== "function" ? __typeError("Function expected") : fn);

@@ -880,6 +880,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
       expect(output).toContain(`frozen writable: status=0 keys=[]`);
     });
+    it("reports a trap that throws while filtering instead of leaving it pending", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_trap", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "own_only proxy: threw getOwnPropertyDescriptor trap",
+        "include_prototypes proxy-proto: threw getOwnPropertyDescriptor trap",
+      ]);
+    });
+    it("reports a getPrototypeOf trap that throws while filtering", async () => {
+      const output = await runOn(bunExe(), "test_get_all_property_names_throwing_get_prototype_of", []);
+      expect(output.trim()).toBe("threw getPrototypeOf trap");
+    });
   });
 
   describe("napi_value <=> integer conversion", () => {

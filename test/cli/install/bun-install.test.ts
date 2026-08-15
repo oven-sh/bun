@@ -4966,6 +4966,79 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // The root package.json is read on two paths: against a bun.lock that already lists
+  // dependencies, and when the lockfile has to be created. Both report it the same way.
+  describe.concurrent("root package.json that cannot be read or parsed", () => {
+    async function installWithBrokenRootPackageJson(
+      withLockfile: boolean,
+      breakPackageJson: (packageJsonPath: string) => Promise<void>,
+    ) {
+      using dir = tempDir("broken-root-package-json", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { dep: "file:./dep" } }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      });
+      if (withLockfile) {
+        await using first = spawn({
+          cmd: [bunExe(), "install", "--lockfile-only"],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [firstStdout, firstStderr, firstExitCode] = await Promise.all([
+          first.stdout.text(),
+          first.stderr.text(),
+          first.exited,
+        ]);
+        expect(firstExitCode, `bun install --lockfile-only failed: ${firstStdout}${firstStderr}`).toBe(0);
+        expect(await exists(join(String(dir), "bun.lock"))).toBe(true);
+      }
+      await breakPackageJson(join(String(dir), "package.json"));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toStartWith("bun install v1.");
+      return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+    }
+
+    const unparseable = (packageJsonPath: string) => writeFile(packageJsonPath, "foo");
+    const unreadable = async (packageJsonPath: string) => {
+      await rm(packageJsonPath);
+      await mkdir(packageJsonPath);
+    };
+
+    for (const [lockfile, withLockfile] of [
+      ["with a bun.lock", true],
+      ["without a bun.lock", false],
+    ] as const) {
+      it(`prints the parse error and the path ${lockfile}`, async () => {
+        const { stderr, exitCode } = await installWithBrokenRootPackageJson(withLockfile, unparseable);
+        expect(stderr).toBe(
+          [
+            "1 | foo",
+            "    ^",
+            "error: Unexpected foo",
+            "    at <dir>/package.json:1:1",
+            "ParserError: failed to parse '<dir>/package.json'",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      });
+
+      it(`prints the read error and the path ${lockfile}`, async () => {
+        const { stderr, exitCode } = await installWithBrokenRootPackageJson(withLockfile, unreadable);
+        expect(stderr).toBe("EISDIR: failed to read '<dir>/package.json'");
+        expect(exitCode).toBe(1);
+      });
+    }
+  });
+
   test.serial("should report error on invalid format for dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

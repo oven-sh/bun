@@ -725,7 +725,6 @@ pub(crate) fn lookup(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
-        query,
         global_this,
         PendingCacheField::PendingHostCacheNative,
     );
@@ -742,8 +741,7 @@ pub(crate) fn lookup(
     ) else {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
-            if (*request).cache.pending_cache() {
-                let pos = (*request).cache.pos_in_pending();
+            if let Some(pos) = (*request).pending_slot {
                 this.pending_host_cache_native.with_mut(|c| {
                     let slot = c.ptr_at(pos as usize);
                     // SAFETY: `pos` was alloc'd; no other token outstanding.

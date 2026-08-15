@@ -983,11 +983,18 @@ test("--parallel: back-to-back huge result lines drain in linear time without co
   expect(exitCode).toBe(1);
 }, 90_000);
 
-test("--parallel: a test writing garbage to fd 3 does not hang the coordinator", async () => {
+test("--parallel: a test writing garbage to fd 3 gets its worker killed and the run continues", async () => {
+  const passing = (name: string) =>
+    `import {test,expect} from "bun:test"; test(${JSON.stringify(name)},()=>expect(1).toBe(1));`;
+  // Files are dispatched in sorted order: a-bad goes out first, so a-next is
+  // still undispatched when its worker is killed and only runs if the run
+  // carries on (respawn or a steal by the other worker).
   using dir = tempDir("parallel-hostile-fd3", {
-    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
-    "bad.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+    "a-bad.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
       test("bad",()=>{ writeSync(3, Buffer.from([0xff,0xff,0xff,0xff,0x42])); });`,
+    "a-next.test.js": passing("next"),
+    "b1.test.js": passing("b1"),
+    "b2.test.js": passing("b2"),
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
@@ -996,19 +1003,24 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
     stderr: "pipe",
     stdout: "pipe",
   });
-  const result = await Promise.race([
-    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    Bun.sleep(15000).then(() => "TIMEOUT" as const),
-  ]);
-  expect(result).not.toBe("TIMEOUT");
-  const [stdout, stderr, exitCode] = result as [string, string, number];
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed
-  // once its IPC pipe is dropped — no retry, so the run is deterministically
-  // 1 pass / 1 fail. The coordinator kill(9)s the hostile worker, which on
-  // POSIX surfaces as SIGKILL (non-panic → no whole-run abort).
+  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
+  // decoder rejects the bytes; on Windows they break libuv's IPC framing
+  // underneath it and surface as a read error. Both must end the same way:
+  // the coordinator kills that worker and says so, rather than printing the
+  // status the kill produced (SIGKILL) or, when the kill was skipped, the
+  // "exit code 0" of a worker that later shut itself down. Writing to the
+  // channel is not a Bun crash, so the rest of the run still completes.
+  expect(stderr).toContain("a-bad.test.js (worker killed: corrupt IPC frame, something wrote to fd 3)");
+  expect(stderr).not.toContain("worker crashed");
+  expect(stderr).not.toContain("Aborting");
   expect(stderr).not.toContain("retrying");
-  expect(stderr).toContain("Ran ");
+  expect(stderr).toContain("(pass) next");
+  expect(stderr).toContain("(pass) b1");
+  expect(stderr).toContain("(pass) b2");
+  expect(stderr).toContain("\n 3 pass\n 1 fail\n");
+  expect(stderr).toContain("Ran 4 tests across 4 files.");
   expect(exitCode).toBe(1);
 });
 

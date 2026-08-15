@@ -297,7 +297,15 @@ impl Execution {
 
     pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
+        self.kill_dangling_processes_on_timeout(global_this);
+        let buntest = self.bun_test();
+        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
+        unsafe { (*buntest).add_result(RefDataValue::Start) };
+        Ok(())
+    }
 
+    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
@@ -326,11 +334,6 @@ impl Execution {
                 }
             }
         }
-
-        let buntest = self.bun_test();
-        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest).add_result(RefDataValue::Start) };
-        Ok(())
     }
 
     pub(crate) fn step(
@@ -570,7 +573,11 @@ impl Execution {
 
     fn on_group_completed(global_this: &JSGlobalObject) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.disable();
+        let vm = global_this.bun_vm().as_mut();
+        // Under --isolate the swap between files kills and clears the tracked set.
+        if !vm.test_isolation_enabled {
+            vm.auto_killer.disable();
+        }
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {

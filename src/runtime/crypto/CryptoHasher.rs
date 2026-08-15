@@ -40,11 +40,11 @@ fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
         .cast::<boring_ssl::ENGINE>()
 }
 
-/// Local helper replacing `input == .blob && input.blob.isBunFile()`.
+/// The synchronous hashers only accept in-memory input, not a `Bun.file()`.
 #[inline]
 fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
     match input {
-        BlobOrStringOrBuffer::Blob(b) => b.is_bun_file(),
+        BlobOrStringOrBuffer::Blob(b) => b.needs_to_read_file(),
         _ => false,
     }
 }

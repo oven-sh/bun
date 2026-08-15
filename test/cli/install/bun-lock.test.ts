@@ -1607,3 +1607,181 @@ it("an optional peer is rebound when another version of its package takes the sl
   await run(["install", "--lockfile-only"]);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
+
+// https://github.com/oven-sh/bun/issues/26046
+// A required peer that nothing in the tree provides and that no published
+// version satisfies stays unresolved. The bun.lock written afterwards has to
+// load back, and resolving it again with every manifest already in the cache
+// has to finish (it used to retry the cached manifest forever).
+describe.each(["hoisted", "isolated"] as const)("peer no published version satisfies (%s linker)", linker => {
+  const manifests: Record<string, Record<string, Record<string, unknown>>> = {
+    "has-unmet-peer": { "1.0.0": { peerDependencies: { "peer-target": "^1.0.1" } } },
+    "peer-target": { "2.0.1": {} },
+  };
+
+  const unmetPeerWarning =
+    'warn: No version matching "^1.0.1" found for peer dependency "peer-target" (but package exists)';
+
+  async function serveRegistry() {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, versions] of Object.entries(manifests)) {
+      for (const [version, extra] of Object.entries(versions)) {
+        const archive = new Bun.Archive(
+          { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+          { compress: "gzip" },
+        );
+        tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+      }
+    }
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        requests.push(pathname);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const name = pathname.slice(1);
+        const entry = manifests[name];
+        if (!entry) return new Response("not found", { status: 404 });
+        const versions: Record<string, unknown> = {};
+        for (const [version, extra] of Object.entries(entry)) {
+          versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+        }
+        return Response.json(
+          { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
+          // Like registry.npmjs.org. Within this window bun resolves from the
+          // manifest cache without going back to the registry.
+          { headers: { "cache-control": "public, max-age=300" } },
+        );
+      },
+    });
+    return {
+      url: server.url.href,
+      origin: server.url.origin,
+      requests,
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  function createProject(registryUrl: string, files: Record<string, string>) {
+    return tempDir("unmet-peer-", {
+      ...files,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryUrl, linker } }),
+    });
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      // The request assertions below need a cache of their own per project: the
+      // environment's cache dir takes precedence over bunfig, and a package
+      // extracted there by one of the concurrent tests is not downloaded again.
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Only matters if an install never returns.
+      timeout: 30_000,
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  it.concurrent("declared by a registry package", async () => {
+    using registry = await serveRegistry();
+    using dir = createProject(registry.url, {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "has-unmet-peer": "1.0.0" } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    let { err } = await install(String(dir));
+    expect(err).toContain(unmetPeerWarning);
+    expect(err).toContain("Saved lockfile");
+    expect(registry.requests.toSorted()).toEqual(["/has-unmet-peer", "/has-unmet-peer-1.0.0.tgz", "/peer-target"]);
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile.replaceAll(registry.origin, "<registry>")).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 1,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "app",
+            "dependencies": {
+              "has-unmet-peer": "1.0.0",
+            },
+          },
+        },
+        "packages": {
+          "has-unmet-peer": ["has-unmet-peer@1.0.0", "<registry>/has-unmet-peer-1.0.0.tgz", { "peerDependencies": { "peer-target": "^1.0.1" } }, ""],
+        }
+      }
+      "
+    `);
+    expect(await exists(join(String(dir), "node_modules", "peer-target"))).toBeFalse();
+
+    ({ err } = await install(String(dir), "--frozen-lockfile"));
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+
+    // Resolve from scratch again. Both manifests are cached now, so the peer
+    // is looked up synchronously instead of through a network task.
+    await rm(lockfilePath);
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    registry.requests.length = 0;
+    ({ err } = await install(String(dir)));
+    expect(err).toContain(unmetPeerWarning);
+    expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  it.concurrent("declared by the root package and a workspace", async () => {
+    using registry = await serveRegistry();
+    using dir = createProject(registry.url, {
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: ["packages/*"],
+        peerDependencies: { "peer-target": "^1.0.1" },
+      }),
+      "packages/ws/package.json": JSON.stringify({ name: "ws", peerDependencies: { "peer-target": "^1.0.1" } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    let { err } = await install(String(dir));
+    expect(err).toContain(unmetPeerWarning);
+    expect(err).toContain("Saved lockfile");
+    expect(registry.requests).toEqual(["/peer-target"]);
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "app",
+            "peerDependencies": {
+              "peer-target": "^1.0.1",
+            },
+          },
+          "packages/ws": {
+            "name": "ws",
+            "peerDependencies": {
+              "peer-target": "^1.0.1",
+            },
+          },
+        },
+        "packages": {
+          "ws": ["ws@workspace:packages/ws"],
+        }
+      }
+      "
+    `);
+
+    ({ err } = await install(String(dir), "--frozen-lockfile"));
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+});

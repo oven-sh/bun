@@ -325,8 +325,7 @@ impl PackageManager {
                     continue;
                 }
 
-                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }

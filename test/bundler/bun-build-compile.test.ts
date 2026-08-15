@@ -788,7 +788,11 @@ console.log("value", "café 😀");
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+    const [, buildStderr, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
     expect(buildStderr).not.toContain("error:");
     expect(buildExit).toBe(0);
 

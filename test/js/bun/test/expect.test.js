@@ -3623,6 +3623,22 @@ describe("expect()", () => {
       cyclicMatcher.self = cyclicMatcher;
       expect(cyclic).toMatchObject(cyclicMatcher);
       expect(cyclic).toMatchObject({ self: { self: { x: expect.any(Number) } } });
+
+      // A cycle on one side does not skip what the other side still asks for.
+      expect(cyclic).not.toMatchObject({ self: { self: { x: expect.any(String) } } });
+      expect({ x: 1, self: { x: 1, self: { x: 1 } } }).not.toMatchObject(cyclicMatcher);
+
+      // Objects shared at every level of both sides are checked once per pair.
+      let value = { leaf: 1 };
+      let pattern = { leaf: expect.any(Number) };
+      let wrongPattern = { leaf: expect.any(String) };
+      for (let i = 0; i < 64; i++) {
+        value = { a: value, b: value };
+        pattern = { a: pattern, b: pattern };
+        wrongPattern = { a: wrongPattern, b: wrongPattern };
+      }
+      expect(value).toMatchObject(pattern);
+      expect(value).not.toMatchObject(wrongPattern);
     });
   });
 

@@ -234,9 +234,8 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 // Ensure we instantiate the true and false variants of this function
 template bool Bun__deepMatch<true>(
     JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
     JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
+    DeepMatchSeenPairs* seenPairs,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
@@ -244,9 +243,8 @@ template bool Bun__deepMatch<true>(
 
 template bool Bun__deepMatch<false>(
     JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
     JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
+    DeepMatchSeenPairs* seenPairs,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
@@ -535,7 +533,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 // SAFETY: visited property sets are not required when
                 // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
                 // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, true);
+                bool match = Bun__deepMatch<true>(otherProp, patternObject, nullptr, globalObject, throwScope, nullptr, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -2032,10 +2030,9 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  * @brief `Bun.deepMatch(a, b)`
  *
  * @note
- * The sets recording already visited properties (`seenObjProperties`,
- * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
- * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
- * this case, it is safe to pass a `nullptr`.
+ * `seenPairs` and `gcBuffer` are not needed when both `enableAsymmetricMatchers`
+ * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
+ * `nullptr`.
  *
  * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
  * properties currently within those stacks. Likely unnecessary, but better to
@@ -2043,9 +2040,8 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
- * @param seenObjProperties objects of `objValue` on the current recursion path (cycle guard).
  * @param subsetValue
- * @param seenSubsetProperties objects of `subsetValue` on the current recursion path (cycle guard).
+ * @param seenPairs a (object, subset) pair met again is a cycle, or was already checked, and is skipped; an object is still checked against every other subset object it is paired with.
  * @param globalObject
  * @param throwScope
  * @param gcBuffer
@@ -2057,9 +2053,8 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
     JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
+    DeepMatchSeenPairs* seenPairs,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
@@ -2149,23 +2144,13 @@ bool Bun__deepMatch(
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!eql) return false;
             } else {
-                ASSERT(seenObjProperties != nullptr);
-                ASSERT(seenSubsetProperties != nullptr);
+                ASSERT(seenPairs != nullptr);
                 ASSERT(gcBuffer != nullptr);
                 gcBuffer->append(prop);
                 gcBuffer->append(subsetProp);
-                // The seen sets track the current path only, so a sub-object
-                // reached through two properties is checked at both.
-                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
-                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
-                if (!didInsertProp.second || !didInsertSubset.second) {
-                    if (didInsertProp.second) seenObjProperties->erase(didInsertProp.first);
-                    if (didInsertSubset.second) seenSubsetProperties->erase(didInsertSubset.first);
-                    continue;
-                }
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, isMatchingObjectContaining);
-                seenObjProperties->erase(JSC::JSValue::encode(prop));
-                seenSubsetProperties->erase(JSC::JSValue::encode(subsetProp));
+                // Met again: a cycle, or already checked. A new pairing of a shared object is still checked.
+                if (!seenPairs->insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, seenPairs, globalObject, throwScope, gcBuffer, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
@@ -2210,7 +2195,7 @@ bool isAsymmetricMatcher(JSValue v)
 
 // Builds the value `toMatchSnapshot(propertyMatchers)` serializes: the walk
 // `Bun__deepMatch<true>` just made over (received, matchers), replayed with the
-// same enumeration and cycle rules, writing each matcher it checked onto a
+// same enumeration and seen-pair rules, writing each matcher it checked onto a
 // clone of the received object at that position.
 struct AsymmetricMatcherSubstitution {
     JSGlobalObject* globalObject;
@@ -2218,9 +2203,8 @@ struct AsymmetricMatcherSubstitution {
     MarkedArgumentBuffer& gcBuffer;
     // One clone per received object (see redirectToClones).
     std::unordered_map<EncodedJSValue, JSObject*> clones;
-    // deepMatch's seen sets.
-    std::set<EncodedJSValue> receivedPath;
-    std::set<EncodedJSValue> matcherPath;
+    // deepMatch's seen pairs.
+    DeepMatchSeenPairs seenPairs;
 
     // nullptr for kinds the formatter renders from internal state rather than
     // from properties (Date, Map, ...): a matcher put on one of those is invisible.
@@ -2358,18 +2342,10 @@ struct AsymmetricMatcherSubstitution {
             // Compared as a whole; a received-side matcher already prints as one.
             if (isAsymmetricMatcher(receivedProp) || !receivedProp.isObject() || !matcherProp.isObject()) continue;
 
-            auto onReceivedPath = receivedPath.insert(JSValue::encode(receivedProp));
-            auto onMatcherPath = matcherPath.insert(JSValue::encode(matcherProp));
-            if (!onReceivedPath.second || !onMatcherPath.second) {
-                // Cycle: deepMatch checked nothing below here.
-                if (onReceivedPath.second) receivedPath.erase(onReceivedPath.first);
-                if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
-                continue;
-            }
+            // Skipped by deepMatch too (a cycle, or a pair it had already checked).
+            if (!seenPairs.insert({ JSValue::encode(receivedProp), JSValue::encode(matcherProp) }).second) continue;
             // redirectToClones repoints the copied reference to the child at its clone.
             substitute(receivedProp.getObject(), matcherProp.getObject());
-            receivedPath.erase(JSValue::encode(receivedProp));
-            matcherPath.erase(JSValue::encode(matcherProp));
             RETURN_IF_EXCEPTION(throwScope, );
         }
     }
@@ -3391,10 +3367,9 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
+    DeepMatchSeenPairs seenPairs;
     MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false));
+    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, subset, &seenPairs, globalObject, scope, &gcBuffer, false));
 }
 
 // Call after `JSC__JSValue__jestDeepMatch(received, matchers)` passed; both are objects.

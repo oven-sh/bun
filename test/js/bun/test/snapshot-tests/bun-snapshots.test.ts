@@ -164,6 +164,13 @@ test("snapshot records the matchers that were checked", () => {
   const user = { id: 7 };
   expect({ current: user, log: [{ user }] }).toMatchSnapshot({ current: { id: expect.any(Number) } });
   expect(user.id).toBe(7);
+
+  // A cyclic received object is checked against every matcher object it is
+  // paired with, so a matcher one lap into the cycle is checked and recorded.
+  const ring: any = { id: 1 };
+  ring.self = ring;
+  expect(ring).toMatchSnapshot({ self: { self: { id: expect.any(Number) } } });
+  expect(ring.id).toBe(1);
 });
 
 // The matcher is recorded on the object the getter returns, which the snapshot

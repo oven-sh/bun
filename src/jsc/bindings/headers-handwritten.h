@@ -404,6 +404,9 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
+/// (object, subset) pairs `Bun__deepMatch` has recursed into.
+using DeepMatchSeenPairs = std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>>;
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
@@ -412,8 +415,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * if either `object` or `subset` are not `JSCCell`.
  *
  * @note
- * The sets recording already visited properties (`seenObjProperties` and
- * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
+ * `seenPairs` and `gcBuffer` are not needed when both `enableAsymmetricMatchers`
  * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
  * `nullptr`.
  *
@@ -424,9 +426,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
- * @param seenObjProperties objects of `objValue` on the current recursion path (cycle guard).
  * @param subsetValue
- * @param seenSubsetProperties objects of `subsetValue` on the current recursion path (cycle guard).
+ * @param seenPairs a (object, subset) pair met again is a cycle, or was already checked, and is skipped; an object is still checked against every other subset object it is paired with.
  * @param globalObject
  * @param Scope
  * @param gcBuffer
@@ -438,9 +439,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSC::JSValue object,
-    std::set<JSC::EncodedJSValue>* seenObjProperties,
     JSC::JSValue subset,
-    std::set<JSC::EncodedJSValue>* seenSubsetProperties,
+    DeepMatchSeenPairs* seenPairs,
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,

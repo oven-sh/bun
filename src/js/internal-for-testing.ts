@@ -122,6 +122,10 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
   panic: () => void;
+  /** A real Rust `panic!`, reported through the `std::panic` hook (`panic()` above calls the crash handler directly). */
+  rustPanic: () => void;
+  /** A real `Result::unwrap()` on an `Err`, also reported through the `std::panic` hook. */
+  rustUnwrap: () => void;
   rootError: () => void;
   outOfMemory: () => void;
   abort: () => void;

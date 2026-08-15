@@ -24,6 +24,8 @@ pub(crate) mod js_bindings {
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
+            ("rustPanic", __jsc_host_js_rust_panic),
+            ("rustUnwrap", __jsc_host_js_rust_unwrap),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             ("abort", __jsc_host_js_abort),
@@ -130,6 +132,27 @@ pub(crate) mod js_bindings {
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
+    }
+
+    /// Unlike `js_panic`, which calls `panic_impl` directly, this is a real
+    /// `panic!`, so it goes through the `std::panic` hook the crash handler
+    /// installs. A literal message reaches the hook as a `&'static str` payload.
+    #[bun_jsc::host_fn]
+    fn js_rust_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        panic!("invoked crashByRustPanic() handler");
+    }
+
+    /// `Result::unwrap()` on an `Err`, the shape of the `.unwrap()` sites that
+    /// reach the panic hook in production. std formats the `Err` into the
+    /// message, so this one reaches the hook as a `String` payload.
+    #[bun_jsc::host_fn]
+    fn js_rust_unwrap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        let result: Result<(), &str> =
+            core::hint::black_box(Err("invoked crashByRustUnwrap() handler"));
+        result.unwrap();
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

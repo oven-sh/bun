@@ -1709,144 +1709,38 @@ mod draft {
         std::panic::set_hook(Box::new(rust_panic_hook));
     }
 
-    /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
-    /// `crash_handler()` path, then **abort**.
-    /// With `panic = "abort"` no unwind starts after this hook returns, so there
-    /// are no `catch_unwind` boundaries to reach.
+    /// `std::panic` hook. A Rust `panic!` (`unwrap()` on `None`/`Err`, a failed
+    /// `assert!`, `unreachable!()`, …) is a bug in Bun, so it is reported through
+    /// the same `crash_handler()` every other crash goes through: same header,
+    /// same `panic(main thread): <message>` line, same trace string and upload,
+    /// same multi-thread/re-entrancy bookkeeping, same SIGABRT at the end.
+    /// `crash_handler` never returns, so nothing unwinds past this hook.
+    ///
+    /// Only the message is reported, not `info.location()`: the call site is in
+    /// the captured trace, and release builds compile with
+    /// `-Zlocation-detail=none` so the location would read `<redacted>:0:0`.
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
-        // Re-entry guard: if the hook itself panics (formatter, write, …), the
-        // recursive entry sees stage>0, prints a one-liner, and returns so the
-        // inner unwind tears the process down rather than looping.
-        let stage = PANIC_STAGE.with(|s| s.get());
-        if stage != 0 {
-            PANIC_STAGE.with(|s| s.set(stage + 1));
-            let stderr = &mut stderr_writer();
-            let _ = write!(
-                stderr,
-                "\npanic: {info}\npanicked during a panic. Aborting.\n"
-            );
-            return;
-        }
-        PANIC_STAGE.with(|s| s.set(1));
-
-        // Just the panic message — no `(file:line:col)` suffix. The call site is
-        // captured in the backtrace and symbolized there. With `-Zlocation-detail=none`
-        // in release the location would be `<redacted>:0:0` anyway.
-        let mut msg_buf = BoundedArray::<u8, 1024>::default();
-        {
-            let payload = info.payload();
-            let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s
-            } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
-                s.as_str()
-            } else {
-                "<non-string panic payload>"
-            };
-            let _ = write!(msg_buf.writer(), "{msg}");
-        }
-        // SAFETY: `CrashReason::Panic` stores `&'static [u8]` (it was designed for
-        // the `-> !` path). `msg_buf` outlives every read of `reason` below — the
-        // borrow is fully consumed by the `Display`/`TraceString` writes inside
-        // this frame and never escapes.
+        // `panic!` in Rust 2021 always carries a `&'static str` or `String`
+        // payload; only `std::panic::panic_any` can produce anything else.
+        let msg = info
+            .payload_as_str()
+            .unwrap_or("<non-string panic payload>");
+        // `encode_trace_string` has to fit the compressed message into the
+        // fixed-size trace string buffer; cap it so a huge assertion dump still
+        // yields a usable report.
+        let msg = &msg[..msg.floor_char_boundary(1024)];
+        // SAFETY: `CrashReason::Panic` holds a `&'static [u8]` because every
+        // path that builds one ends in `crash_handler`, which never returns.
+        // The payload is owned by the std panic machinery's frames below this
+        // one (or is a string literal), so it stays live for as long as the
+        // process does, and nothing takes a `&mut` to it while the hook runs.
         let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
-
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
-        {
-            let _panic_guard = PANIC_MUTEX.lock();
-            let writer = &mut stderr_writer();
-
-            let debug_trace = Environment::SHOW_CRASH_TRACE
-                && 'check_flag: {
-                    for arg in bun_core::argv() {
-                        if arg == &b"--debug-crash-handler-use-trace-string"[..] {
-                            break 'check_flag false;
-                        }
-                    }
-                    if is_reporting_enabled() {
-                        break 'check_flag false;
-                    }
-                    true
-                };
-
-            Output::flush();
-            let _ =
-                writer.write_all(b"============================================================\n");
-            let _ = print_metadata(writer);
-
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<red>"));
-            }
-            let _ = writer.write_all(b"panic");
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
-            }
-            let _ = writeln!(writer, ": {}", reason);
-
-            if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
-                let _ = writeln!(writer, "Crashed while {}", action);
-            }
-
-            let mut addr_buf: [usize; 20] = [0; 20];
-            let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
-            let trace = StackTrace {
-                index: idx,
-                instruction_addresses: &addr_buf,
-            };
-
-            if debug_trace {
-                dump_stack_trace(&trace, WriteStackTraceLimits::default());
-                let _ = write!(
-                    trace_str_buf.writer(),
-                    "{}",
-                    TraceString {
-                        trace: &trace,
-                        reason,
-                        action: TraceStringAction::ViewTrace,
-                    }
-                );
-            } else {
-                let _ = writer.write_all(b"oh no");
-                if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "));
-                } else {
-                    let _ = writer.write_all(b": ");
-                }
-                let _ = writer.write_all(
-                    b"Bun has crashed. This indicates a bug in Bun, not your code.\n\n\
-                  To send a redacted crash report to Bun's team,\n\
-                  please file a GitHub issue using the link below:\n\n ",
-                );
-                if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<cyan>"));
-                }
-                let _ = write!(
-                    trace_str_buf.writer(),
-                    "{}",
-                    TraceString {
-                        trace: &trace,
-                        reason,
-                        action: TraceStringAction::OpenIssue,
-                    }
-                );
-                let _ = writer.write_all(trace_str_buf.const_slice());
-                let _ = writer.write_all(b"\n");
-            }
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>\n"));
-            } else {
-                let _ = writer.write_all(b"\n");
-            }
-        }
-
-        report(trace_str_buf.const_slice());
-
-        // A Rust `panic!` is a bug. The process must not continue — with
-        // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
-        // unreachable for Rust panics.
-        crash(reason);
+            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg.as_bytes()) });
+        // Read in this frame (not inside a closure) so the trim anchor is a
+        // frame that is still on the stack when the trace is captured.
+        crash_handler(reason, TraceSeed::BeginAddr(debug::return_address()));
     }
 
     /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers

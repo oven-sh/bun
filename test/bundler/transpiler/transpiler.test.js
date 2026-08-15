@@ -328,6 +328,10 @@ describe("Bun.Transpiler", () => {
       exp("class A { declare 1n: number; x = 1 }", "class A {\n  x = 1;\n}");
       exp("class A { declare static 1n: number; x = 1 }", "class A {\n  x = 1;\n}");
       exp("abstract class A { abstract 1n: number; abstract 2n(): void; x = 1 }", "class A {\n  x = 1;\n}");
+      exp(
+        "interface I { 1n(): void }\nclass A implements I { static 1n() {} 1n() {} }",
+        "class A {\n  static 1n() {}\n  1n() {}\n}",
+      );
     });
 
     it("contextual keywords followed by a newline apply ASI instead of acting as modifiers", () => {
@@ -1022,6 +1026,9 @@ function foo() {}
       exp("type x = [-1, 0, 1]\na([])", "a([]);\n");
       exp("type x = [-1n, 0n, 1n]\na([])", "a([]);\n");
       exp("type x = {0: number, readonly 1: boolean}\na([])", "a([]);\n");
+      exp("type x = {0n: number, readonly 1n: boolean, 2n?: string}\na([])", "a([]);\n");
+      exp("type x = {0n(): void, get 1n(): number, set 1n(v: number), 2n?(): void}\na([])", "a([]);\n");
+      exp("interface x {0n: number, 1n(): void}\na([])", "a([]);\n");
       exp("type x = {'a': number, readonly 'b': boolean}\na([])", "a([]);\n");
       exp("type\nFoo = {}", "type;\nFoo = {};\n");
       err("export type\nFoo = {}", 'Unexpected newline after "type"');
@@ -1052,6 +1059,10 @@ function foo() {}
       err("let x: {[typeof: string]: number}", 'Expected identifier but found ":"');
       exp("let x: () => void = Foo", "let x = Foo;\n");
       exp("let x: new () => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ 1: a, 'b': b }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ 1n: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: new ({ 1n: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("type x = {m({ 1n: a }: T): void}\na([])", "a([]);\n");
       exp("let x = 'x' as keyof T", 'let x = "x";\n');
       exp("let x = [1] as readonly [number]", "let x = [1];\n");
       exp("let x = 'x' as keyof typeof Foo", 'let x = "x";\n');

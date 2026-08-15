@@ -814,6 +814,49 @@ describe("bounded output per input chunk", () => {
     await expect(writer.closed).rejects.toThrow("too large");
   });
 
+  // The producer giving up is the other way a pending chunk can end: the abort
+  // has to wait for the in-flight write, so the chunk is given up when the
+  // writable starts erroring, even though nobody is reading.
+  test("writer.abort() mid-expansion settles and errors the readable", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    await writer.abort(new Error("stop"));
+    expect(await write).toBeUndefined();
+    await expect(writer.closed).rejects.toThrow("stop");
+    // The abort algorithm errored the readable (dropping the piece it still held).
+    await expect(reader.read()).rejects.toThrow("stop");
+  });
+
+  // An abort during close() is different: the close in progress wins, so a flush
+  // being drained keeps going and the reader still gets all of it.
+  test("writer.abort() during a multi-step flush does not truncate it", async () => {
+    const input = randomBytes(100 * 1024);
+    const cs = new CompressionStream("zstd");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    await writer.write(input);
+    const closed = writer.close();
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBe(kDefaultHighWaterMark);
+    const aborted = writer.abort(new Error("stop"));
+
+    const pieces = [first.value!];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pieces.push(value);
+    }
+    expect(zlib.zstdDecompressSync(Buffer.concat(pieces)).equals(input)).toBe(true);
+    expect(await Promise.all([closed, aborted])).toEqual([undefined, undefined]);
+  });
+
   test("a request body bomb trips a streaming size guard after one step, not after the whole expansion", async () => {
     const limit = 256 * 1024;
     await using server = Bun.serve({

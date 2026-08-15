@@ -514,8 +514,9 @@ JSC::JSPromise* compressionStreamFlush(JSC::JSGlobalObject*, JSCompressionStream
 JSC::JSPromise* decompressionStreamTransform(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStreamShared.cpp
 JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
 // A codec chunk whose output is still pending (stream->m_codecPromise set) is driven by its
-// consumer: the readable's pull algorithm / the native sink's onReady continue it; the
-// error and cancel terminals and a sink detach abandon it (no-ops when nothing is pending).
+// consumer: the readable's pull algorithm / the native sink's onReady continue it; the writable
+// starting to error with the write in flight, a readable cancel, or a sink detach abandon it
+// (no-ops when nothing is pending).
 void nativeCodecContinue(JSC::JSGlobalObject*, JSTransformStream*); // userJS: yes (enqueues) — JSCompressionStreamShared.cpp
 void nativeCodecAbandon(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — JSCompressionStreamShared.cpp
 

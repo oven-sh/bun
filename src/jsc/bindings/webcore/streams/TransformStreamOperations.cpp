@@ -161,7 +161,6 @@ void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, J
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    nativeCodecAbandon(globalObject, stream);
     transformStreamDefaultControllerClearAlgorithms(stream->m_controller.get());
     writableStreamDefaultControllerErrorIfNeeded(globalObject, stream->m_writable->m_controller.get(), error);
     RETURN_IF_EXCEPTION(scope, void());

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunRun, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled } from "./expectBundled";
 
@@ -452,6 +452,93 @@ console.log("About manifest:", aboutHtml);
         { token: "console.log(", source: "server.ts", ...lineColumn(source, source.indexOf("console.")) },
       ]);
     });
+  });
+
+  // A chunk built for bun starts with `// @bun`, which makes the runtime load it
+  // as Latin-1 without re-parsing it, so everything in it has to be ASCII. The
+  // printer escapes the code it prints; the manifest module (whose default
+  // export is named after the HTML file) and the manifest JSON spliced in
+  // afterwards have to be escaped the same way, or a non-ASCII file name shows
+  // up as raw UTF-8: the identifier is a syntax error and the paths inside the
+  // manifest decode as mojibake.
+  test("html-import/non-ascii-file-name-loads-under-target-bun", async () => {
+    await using dir = tempDir("html-import-non-ascii", {
+      "server.ts": `import page from "./sidé.html";\nconsole.log(JSON.stringify(page));\n`,
+      "sidé.html": `<!doctype html><script type="module" src="./sidé.ts"></script>`,
+      "sidé.ts": `console.log("client");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+    });
+    expect(build.logs).toBeEmpty();
+
+    const server = build.outputs.find(o => basename(o.path) === "server.js")!;
+    // Only the `/* path */` comments in front of each module may carry the
+    // file name verbatim; the code itself has to be ASCII.
+    const code = (await server.text())
+      .split("\n")
+      .filter(line => !line.startsWith("/* ") && !line.startsWith("// "))
+      .join("\n");
+    expect(code).toContain("__jsonParse(");
+    expect(code).toMatch(/^[\x00-\x7f]*$/);
+
+    const result = await bunRun(server.path);
+    expect(result).toSpawn();
+    const manifest = JSON.parse(result.stdout);
+    expect(manifest.index).toBe("./sidé.html");
+    expect(manifest.files.map(({ path, loader }: any) => ({ path, loader }))).toEqual([
+      { path: expect.stringMatching(/\.js$/), loader: "js" },
+      { path: "./sidé.html", loader: "html" },
+    ]);
+  });
+
+  // Same idea as source-map-columns-after-manifest, but with a non-ASCII HTML
+  // file name, which puts non-ASCII into the spliced manifest unless it is
+  // escaped. The runtime reads the chunk as Latin-1, so the columns in its stack
+  // traces count bytes; the shift recorded for the manifest only matches that
+  // when the manifest was spliced in as ASCII. (Full minification so that the
+  // identifier named after the file does not fail the load first; that is
+  // covered above.)
+  test("html-import/non-ascii-file-name-source-map-columns", async () => {
+    const source = [
+      `import page from "./sidé.html";`,
+      `function boom() {`,
+      `  throw new Error(page.index);`,
+      `}`,
+      `boom();`,
+      ``,
+    ].join("\n");
+    await using dir = tempDir("html-import-non-ascii-sourcemap", {
+      "server.ts": source,
+      "sidé.html": `<!doctype html><script type="module" src="./sidé.ts"></script>`,
+      "sidé.ts": `console.log("client");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      sourcemap: "inline",
+      minify: true,
+    });
+    expect(build.logs).toBeEmpty();
+
+    const result = await bunRun(build.outputs.find(o => basename(o.path) === "server.js")!.path);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("error: ./sidé.html");
+    // 1-based line:column of the Error construction inside boom() (`new` is
+    // minified away, so the frame points at `Error`) and of the boom() call.
+    const lines = source.split("\n");
+    const position = (token: string) => {
+      const line = lines.findIndex(l => l.includes(token));
+      return `${line + 1}:${lines[line].indexOf(token) + 1}`;
+    };
+    const frames = [...result.stderr.matchAll(/server\.ts:(\d+:\d+)/g)].map(m => m[1]);
+    expect(frames.slice(0, 2)).toEqual([position("Error("), position("boom();")]);
+    expect(result.exitCode).toBe(1);
   });
 
   // Test that import with {type: 'file'} still works as a file import

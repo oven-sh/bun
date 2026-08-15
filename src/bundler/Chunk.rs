@@ -22,7 +22,7 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
-use crate::html_import_manifest as HTMLImportManifest;
+use crate::HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
     AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
@@ -459,6 +459,34 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// How the text replacing a placeholder is written into the output.
+#[derive(Clone, Copy)]
+enum SpliceEscape {
+    /// CSS and HTML chunks (`url()`s and attributes).
+    Raw,
+    /// JS chunks: the placeholder is the body of a `"..."` literal. Chunks with
+    /// the `// @bun` pragma are loaded as Latin-1, so they must also stay ASCII.
+    JsString { ascii_only: bool },
+    /// The metafile: the placeholder is the body of a JSON string.
+    JsonString,
+}
+
+impl SpliceEscape {
+    fn for_chunk(chunk: &Chunk, linker_graph: &LinkerGraph<'_>) -> Self {
+        if !chunk.content.is_javascript() {
+            return Self::Raw;
+        }
+        Self::JsString {
+            ascii_only: linker_graph.ast.items_target()[chunk.entry_point.source_index() as usize]
+                .is_bun(),
+        }
+    }
+
+    fn ascii_only(self) -> bool {
+        matches!(self, Self::JsString { ascii_only: true })
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -520,6 +548,54 @@ impl IntermediateOutput {
         dst
     }
 
+    /// The (prefix, path) pair that replaces a chunk/asset placeholder. Shared by
+    /// the sizing and the writing pass so that both see the same bytes.
+    fn spliced_path_parts<'a>(
+        file_path: &[u8],
+        import_prefix: &'a [u8],
+        from_chunk_dir: &[u8],
+        use_outdir_relative_path: bool,
+        file_path_buf: &'a mut [u8],
+        relative_platform_buf: &'a mut [u8],
+    ) -> [&'a [u8]; 2] {
+        // Normalize Windows separators on a copy; the path belongs to the graph.
+        let file_path: &'a [u8] = {
+            let dst = &mut file_path_buf[..file_path.len()];
+            dst.copy_from_slice(file_path);
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+            dst
+        };
+        cheap_prefix_normalizer(
+            import_prefix,
+            if use_outdir_relative_path {
+                file_path
+            } else {
+                bun_paths::resolve_path::relative_platform_buf::<bun_paths::platform::Posix, false>(
+                    relative_platform_buf,
+                    from_chunk_dir,
+                    file_path,
+                )
+            },
+        )
+    }
+
+    /// Writes one of the slices from `spliced_path_parts`.
+    fn write_spliced_path<W: bun_io::Write>(
+        writer: &mut W,
+        path: &[u8],
+        escape: SpliceEscape,
+    ) -> Result<(), crate::Error> {
+        let (ascii_only, json) = match escape {
+            SpliceEscape::Raw => return Ok(writer.write_all(path)?),
+            SpliceEscape::JsString { ascii_only } => (ascii_only, false),
+            SpliceEscape::JsonString => (false, true),
+        };
+        bun_js_printer::write_pre_quoted_string_inner::<_, { bun_js_printer::Encoding::Utf8 }>(
+            path, writer, b'"', ascii_only, json,
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn get_size(&self) -> usize {
         match self {
             IntermediateOutput::Pieces(pieces) => {
@@ -553,6 +629,7 @@ impl IntermediateOutput {
         enable_source_map_shifts: bool,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk, linker_graph);
         // switch (enable_source_map_shifts) { inline else => |b| ... }
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(
@@ -565,6 +642,7 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 None,
+                escape,
             )
         } else {
             self.code_with_source_map_shifts::<false>(
@@ -577,8 +655,32 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 None,
+                escape,
             )
         }
+    }
+
+    /// `code()` for the metafile, whose placeholders sit inside JSON strings;
+    /// `chunk` only supplies the directory that paths are made relative to.
+    pub(crate) fn code_for_metafile(
+        &mut self,
+        parse_graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunk: &Chunk,
+        chunks: &[Chunk],
+    ) -> Result<CodeResult, AllocError> {
+        self.code_with_source_map_shifts::<false>(
+            None,
+            parse_graph,
+            linker_graph,
+            b"",
+            chunk,
+            chunks,
+            None,
+            false,
+            None,
+            SpliceEscape::JsonString,
+        )
     }
 
     /// Like `code()` but with standalone HTML support.
@@ -603,6 +705,7 @@ impl IntermediateOutput {
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk, linker_graph);
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
@@ -614,6 +717,7 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 Some(standalone_chunk_contents),
+                escape,
             )
         } else {
             self.code_with_source_map_shifts::<false>(
@@ -626,12 +730,13 @@ impl IntermediateOutput {
                 display_size,
                 force_absolute_path,
                 Some(standalone_chunk_contents),
+                escape,
             )
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
+    fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
@@ -643,6 +748,7 @@ impl IntermediateOutput {
         display_size: Option<&mut usize>,
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
+        escape: SpliceEscape,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
@@ -750,34 +856,35 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    count += bun_core::fmt::count(format_args!(
-                                        "{}",
-                                        HTMLImportManifest::format_escaped_json(
-                                            piece.query.index(),
-                                            graph,
-                                            chunks,
-                                            linker_graph,
-                                        )
-                                    ));
+                                    let mut counter = bun_io::DiscardingWriter::new();
+                                    HTMLImportManifest::write_escaped_json(
+                                        piece.query.index(),
+                                        graph,
+                                        linker_graph,
+                                        chunks,
+                                        escape.ascii_only(),
+                                        &mut counter,
+                                    )
+                                    .expect("unreachable");
+                                    count += counter.count;
                                     continue;
                                 }
                                 QueryKind::None => unreachable!(),
                             };
 
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
-                                },
-                            );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_buf[..],
+                                &mut relative_platform_buf[..],
+                            ) {
+                                let mut counter = bun_io::DiscardingWriter::new();
+                                Self::write_spliced_path(&mut counter, part, escape)
+                                    .expect("unreachable");
+                                count += counter.count;
+                            }
                         }
                         QueryKind::None => {}
                     }
@@ -911,17 +1018,20 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    let mut cursor: &mut [u8] = remain;
-                                    let before_len = cursor.len();
-                                    HTMLImportManifest::write_escaped_json(
-                                        piece.query.index(),
-                                        graph,
-                                        linker_graph,
-                                        chunks,
-                                        &mut cursor,
-                                    )
-                                    .expect("unreachable");
-                                    let written = before_len - cursor.len();
+                                    let written = {
+                                        let mut stream =
+                                            bun_io::FixedBufferStream::new_mut(&mut *remain);
+                                        HTMLImportManifest::write_escaped_json(
+                                            piece.query.index(),
+                                            graph,
+                                            linker_graph,
+                                            chunks,
+                                            escape.ascii_only(),
+                                            &mut stream,
+                                        )
+                                        .expect("unreachable");
+                                        stream.pos
+                                    };
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         // The placeholder was an HtmlImport unique key, which has
@@ -936,48 +1046,25 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
-                                },
-                            );
-
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_buf[..],
+                                &mut relative_platform_buf[..],
+                            ) {
+                                let written = {
+                                    let mut stream =
+                                        bun_io::FixedBufferStream::new_mut(&mut *remain);
+                                    Self::write_spliced_path(&mut stream, part, escape)
+                                        .expect("unreachable");
+                                    stream.pos
+                                };
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                                    shift.after.advance(&remain[..written]);
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
-                                }
+                                remain = &mut remain[written..];
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

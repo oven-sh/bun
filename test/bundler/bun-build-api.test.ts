@@ -1075,6 +1075,73 @@ describe.concurrent("sourcemap positions", () => {
       }
     });
   });
+
+  // Asset and chunk paths are spliced into the chunk after it was printed, and
+  // the mappings behind each splice are shifted by the size difference. The
+  // splice position is found by walking the printed text in front of it, which
+  // used to lose the ASCII run in front of every non-ASCII character, so a
+  // non-ASCII string earlier on the line moved the boundary left and shifted
+  // mappings that sit before the splice.
+  test("generated columns before and after a spliced asset path on a line with non-ASCII text", async () => {
+    const lib = [
+      `export function first() { return "${Buffer.alloc(80, "a").toString()}"; }`,
+      `export function second() { return "é"; }`,
+      ``,
+    ].join("\n");
+    const entry = [
+      `import { first, second } from "./lib";`,
+      `import asset from "./asset.bin";`,
+      `export function third() { return [first(), second(), asset]; }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-shift-after-non-ascii", {
+      "lib.ts": lib,
+      "entry.ts": entry,
+      "asset.bin": "asset",
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+      minify: { whitespace: true },
+    });
+    expect(build.logs).toBeEmpty();
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // lib.ts, the asset path, and entry.ts all share the first generated line,
+    // in that order.
+    const splice = generated.indexOf('asset_default="./asset-');
+    expect(generated.slice(0, splice)).toContain('"é"');
+    expect(generated.slice(0, splice)).not.toContain("\n");
+
+    const lineColumn = (text: string, index: number) => {
+      expect(index).not.toBe(-1);
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      const positions = [
+        { token: "function first(", file: "lib.ts", source: lib },
+        { token: "function second(", file: "lib.ts", source: lib },
+        { token: "function third(", file: "entry.ts", source: entry },
+      ].map(({ token, file, source }) => {
+        const mapped = consumer.generatedPositionFor({
+          source: consumer.sources.find(s => s.endsWith(file))!,
+          ...lineColumn(source, source.indexOf(token)),
+        });
+        return { token, line: mapped.line, column: mapped.column };
+      });
+      expect(positions).toEqual([
+        { token: "function first(", ...lineColumn(generated, generated.indexOf("function first(")) },
+        { token: "function second(", ...lineColumn(generated, generated.indexOf("function second(")) },
+        { token: "function third(", ...lineColumn(generated, generated.indexOf("function third(")) },
+      ]);
+    });
+  });
 });
 
 const originalCwd = process.cwd() + "";

@@ -6870,7 +6870,7 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
-            let ast_for_html_entrypoint = JSAst::init(
+            let mut ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
@@ -6891,6 +6891,8 @@ pub mod bv2_impl {
                 )?
                 .ok_or(Error::ParserError)?,
             );
+            // The parser defaults `target` to browser; this module belongs to the importing side.
+            ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),

@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -515,6 +516,31 @@ describe("bundler", async () => {
         onAfterBundle(api) {
           const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
           const module = require(join(api.outdir, jsFile));
+          api.assertFileExists(join("out", module.default));
+        },
+      });
+    }
+  });
+
+  // The asset path is spliced into the chunk after printing, in place of a
+  // placeholder inside a double-quoted literal, so a quote in it has to be
+  // escaped the way the printer would have escaped it. (Windows file names
+  // cannot contain a quote.)
+  describe.skipIf(isWindows)("file loader escapes the asset path", () => {
+    for (const target of ["bun", "node", "browser"] as const) {
+      itBundled(`${target}/loader-file-path-with-quote`, {
+        target,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+          import asset from './q"b.txt' with {type: "file"};
+          export default asset;
+        `,
+          '/q"b.txt': "asset",
+        },
+        onAfterBundle(api) {
+          api.expectFile("out/entry.js").toContain('"./q\\"b-');
+          const module = require(join(api.outdir, "entry.js"));
           api.assertFileExists(join("out", module.default));
         },
       });

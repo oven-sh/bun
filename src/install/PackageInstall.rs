@@ -1181,9 +1181,11 @@ impl<'a> PackageInstall<'a> {
             &[]
         };
 
-        let mut walker =
-            walker_skippable::walk_owned(cached_package_dir, &[] as &[&OSPathSlice], skip_dirs)
-                .expect("oom"); // bun.handleOom
+        let mut walker = bun_core::handle_oom(walker_skippable::walk_owned(
+            cached_package_dir,
+            &[] as &[&OSPathSlice],
+            skip_dirs,
+        ));
         walker.resolve_unknown_entry_types = true;
 
         #[cfg(not(windows))]

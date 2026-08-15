@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // Two versions of one small package, packed with `bun pm pack` and served from a
@@ -31,7 +31,13 @@ let root: ReturnType<typeof tempDir>;
 let tarballs: Record<string, string> = {};
 
 async function pack(dir: string) {
-  await using p = Bun.spawn({ cmd: [bunExe(), "pm", "pack", "--quiet"], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", "--quiet"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   await p.exited;
   const tgz = readdirSync(dir).find(f => f.endsWith(".tgz"));
   if (!tgz) throw new Error("pack failed: " + (await p.stderr.text()));
@@ -39,7 +45,11 @@ async function pack(dir: string) {
 }
 
 beforeAll(async () => {
-  root = tempDir("pm-diff", { "v1": v1, "v2": v2, "proj/package.json": JSON.stringify({ name: "proj", dependencies: { diffme: "1.0.0" } }) });
+  root = tempDir("pm-diff", {
+    "v1": v1,
+    "v2": v2,
+    "proj/package.json": JSON.stringify({ name: "proj", dependencies: { diffme: "1.0.0" } }),
+  });
   tarballs["1.0.0"] = await pack(join(String(root), "v1"));
   tarballs["2.0.0"] = await pack(join(String(root), "v2"));
   server = Bun.serve({

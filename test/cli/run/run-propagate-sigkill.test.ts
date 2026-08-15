@@ -97,15 +97,24 @@ const entryPoints: [name: string, cmd: string[], reports: string][] = [
   ],
 ];
 
-async function ending(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+type Proc = Bun.Subprocess<"ignore", "pipe", "pipe">;
+
+async function ending(proc: Proc) {
   const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { exitCode: proc.exitCode, signalCode: proc.signalCode, stderr };
 }
+
+type Ending = Awaited<ReturnType<typeof ending>>;
 
 async function run(cmd: string[], cwd: string, env: NodeJS.Dict<string> = bunEnv) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
   // `await`ed here, or leaving the scope kills the process mid-run.
   return await ending(proc);
+}
+
+function expectEnding({ stderr, ...status }: Ending, reports: string, expected: Omit<Ending, "stderr">) {
+  expect(stderr).toContain(reports);
+  expect(status, stderr).toEqual(expected);
 }
 
 const cc = isPosix ? Bun.which("cc") || Bun.which("clang") || Bun.which("gcc") : null;
@@ -121,9 +130,10 @@ describe.concurrent.skipIf(!cc)("dies from the child's signal when bun inherited
     const sigmask = join(String(dir), "sigmask");
     await compile(String(dir), ["-o", sigmask, "sigmask.c"]);
 
-    const { stderr, ...status } = await run([sigmask, "block", ...cmd], String(dir));
-    expect(stderr).toContain(reports);
-    expect(status).toEqual({ exitCode: null, signalCode: "SIGTERM" });
+    expectEnding(await run([sigmask, "block", ...cmd], String(dir)), reports, {
+      exitCode: null,
+      signalCode: "SIGTERM",
+    });
   });
 });
 
@@ -139,9 +149,8 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
     const preload = join(String(dir), "libraise.so");
     await compile(String(dir), ["-shared", "-fPIC", "-o", preload, "raise.c"]);
 
-    const { stderr, ...status } = await run(cmd, String(dir), { ...bunEnv, LD_PRELOAD: preload });
-    expect(stderr).toContain(reports);
-    expect(status).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
+    const ended = await run(cmd, String(dir), { ...bunEnv, LD_PRELOAD: preload });
+    expectEnding(ended, reports, { exitCode: 128 + SIGTERM, signalCode: null });
   });
 });
 
@@ -160,29 +169,40 @@ const canBecomePid1 =
     }
   })();
 
-/** Direct children of `pid`, whichever of its threads forked them. None while `pid` is still starting up. */
-function childrenOf(pid: number): number[] {
+/** A file under /proc, or "" while the process it belongs to is not (or no longer) there. */
+function procRead(path: string): string {
   try {
-    return readdirSync(`/proc/${pid}/task`).flatMap(tid =>
-      readFileSync(`/proc/${pid}/task/${tid}/children`, "utf8").split(/\s+/).filter(Boolean).map(Number),
-    );
+    return readFileSync(`/proc/${path}`, "utf8");
   } catch {
-    return [];
+    return "";
   }
 }
 
+/** Direct children of `pid`, whichever of its threads forked them. */
+function childrenOf(pid: number): number[] {
+  let tids: string[];
+  try {
+    tids = readdirSync(`/proc/${pid}/task`);
+  } catch {
+    return [];
+  }
+  return tids.flatMap(tid => procRead(`${pid}/task/${tid}/children`).split(/\s+/).filter(Boolean).map(Number));
+}
+
 /**
- * `unsharePid`'s child is bun, PID 1 inside the namespace; bun's child is the
- * script, which is up once it has exec'd into `sleep`. Both pids are the ones
- * seen from out here.
+ * Resolves once everything under `proc` (unshare) is up: its child is bun,
+ * PID 1 inside the namespace, and bun's child is the script, which has exec'd
+ * into `sleep`. Both pids are the ones seen from out here.
  */
-async function waitForScript(unsharePid: number): Promise<{ bun: number; script: number }> {
-  while (true) {
-    const [bun] = childrenOf(unsharePid);
+async function waitForScript(proc: Proc): Promise<{ bun: number; script: number }> {
+  while (proc.exitCode === null && proc.signalCode === null) {
+    const [bun] = childrenOf(proc.pid);
     const [script] = bun === undefined ? [] : childrenOf(bun);
-    if (script !== undefined && readFileSync(`/proc/${script}/comm`, "utf8") === "sleep\n") return { bun, script };
+    if (script !== undefined && procRead(`${script}/comm`) === "sleep\n") return { bun, script };
     await Bun.sleep(10);
   }
+  const { stderr, ...status } = await ending(proc);
+  throw new Error(`exited before the script was up: ${JSON.stringify(status)}\n${stderr}`);
 }
 
 describe.concurrent.skipIf(!canBecomePid1)("as PID 1 of a pid namespace", () => {
@@ -210,23 +230,22 @@ describe.concurrent.skipIf(!canBecomePid1)("as PID 1 of a pid namespace", () => 
   ] as const)("bun run <package.json script> forwards %s and exits 128 + signo", async (signal, signo, reports) => {
     using dir = pid1Project();
     await using proc = spawnAsPid1([bunExe(), "run", "start"], String(dir));
-    const { bun } = await waitForScript(proc.pid);
+    const { bun } = await waitForScript(proc);
     process.kill(bun, signal);
 
-    const { stderr, ...status } = await ending(proc);
-    expect(stderr).toContain(reports);
-    expect(status).toEqual({ exitCode: 128 + signo, signalCode: null });
+    expectEnding(await ending(proc), reports, { exitCode: 128 + signo, signalCode: null });
   });
 
   test("bun run <binary> forwards SIGTERM and exits 128 + signo", async () => {
     using dir = pid1Project();
     await using proc = spawnAsPid1([bunExe(), "run", "sh", "-c", script], String(dir));
-    const { bun } = await waitForScript(proc.pid);
+    const { bun } = await waitForScript(proc);
     process.kill(bun, "SIGTERM");
 
-    const { stderr, ...status } = await ending(proc);
-    expect(stderr).toContain('error: Failed to run "sh" due to signal SIGTERM');
-    expect(status).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
+    expectEnding(await ending(proc), 'error: Failed to run "sh" due to signal SIGTERM', {
+      exitCode: 128 + SIGTERM,
+      signalCode: null,
+    });
   });
 
   // Nothing is forwarded to lifecycle scripts: this is the script itself being
@@ -234,11 +253,12 @@ describe.concurrent.skipIf(!canBecomePid1)("as PID 1 of a pid namespace", () => 
   test("bun install exits 128 + signo when a lifecycle script is killed", async () => {
     using dir = pid1Project();
     await using proc = spawnAsPid1([bunExe(), "install"], String(dir));
-    const { script: scriptPid } = await waitForScript(proc.pid);
+    const { script: scriptPid } = await waitForScript(proc);
     process.kill(scriptPid, "SIGTERM");
 
-    const { stderr, ...status } = await ending(proc);
-    expect(stderr).toContain('error: postinstall script from "propagate-signal" terminated by SIGTERM');
-    expect(status).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
+    expectEnding(await ending(proc), 'error: postinstall script from "propagate-signal" terminated by SIGTERM', {
+      exitCode: 128 + SIGTERM,
+      signalCode: null,
+    });
   });
 });

@@ -135,9 +135,15 @@ const slowest = file => {
   const known = Object.values(entry).filter(ms => typeof ms === "number");
   return known.length ? Math.max(...known) : undefined;
 };
+// bun install / link / global tests share the user-level bin and cache dirs;
+// run together they race on linking (EEXIST) even though each passes alone.
+const sharedStatePrefixes = ["cli/install/"];
+const sharedStateExempt = ["cli/install/hosted-git-info/", "cli/install/migration/"];
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix))) return false;
   if (/stress/i.test(file)) return false;
+  if (sharedStatePrefixes.some(p => file.startsWith(p)) && !sharedStateExempt.some(p => file.startsWith(p)))
+    return false;
   if (flakeCounts.has(file)) return false;
   const ms = slowest(file);
   return ms === undefined || ms <= FAST_MS;
@@ -172,7 +178,7 @@ const out = {
     builds_scanned: builds.length,
     build_range: [Math.min(...builds), Math.max(...builds)],
     fast_ms: FAST_MS,
-    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service and stress-named tests never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
+    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
     stats: { dirs: dirs.length, files: eligibleFiles, excluded: excludeFiles.length },
   },
   dirs,

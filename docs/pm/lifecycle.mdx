@@ -75,11 +75,12 @@ Bun does not run that script until you add the package to `trustedDependencies`.
 
 For a trusted git dependency with a `preprepare`, `prepare`, or `postprepare` script, Bun:
 
-1. Runs `bun install --ignore-scripts` inside the installed package. This installs the package's `dependencies` and `devDependencies` into the package's own `node_modules` folder, using your project's registry and cache directory.
-2. Runs the package's `preprepare`, `prepare`, and `postprepare` scripts.
-3. Removes the `node_modules` folder from step 1. The package uses the dependencies your project installed at runtime.
+1. Moves a `node_modules` folder that the package already has out of the way.
+2. Runs `bun install --ignore-scripts --no-save` inside the package. This installs the package's `dependencies` and `devDependencies` into a new `node_modules` folder there, using your project's registry and cache directory. The package's `package.json` and a lockfile committed to the repository stay unchanged.
+3. Runs the package's `preprepare`, `prepare`, and `postprepare` scripts.
+4. Removes the `node_modules` folder from step 2 and moves the one from step 1 back. At runtime, the package uses the dependencies your project installed.
 
-Because of `--ignore-scripts` in step 1, the lifecycle scripts of the package's own dependencies do not run.
+Because of `--ignore-scripts` in step 2, the lifecycle scripts of the package's own dependencies do not run.
 
 ---
 

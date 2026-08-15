@@ -424,14 +424,15 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
-    /// A git dependency is installed straight from its checkout, so the build
-    /// tools its `prepare` scripts need (usually `devDependencies`) are not
-    /// installed anywhere. When set, the script runner runs `bun install`
-    /// inside `cwd` before the first `(pre|post)prepare` script and removes
-    /// the resulting `node_modules` once the scripts are done, like npm does
-    /// for git dependencies.
+    /// Git dependency with prepare scripts: nothing installs the devDependencies
+    /// those build with, so the runner runs `bun install` in `cwd` first (like npm).
     pub(crate) install_dependencies_for_prepare: bool,
 }
+
+const _: () = assert!(matches!(
+    LockfileScripts::NAMES[List::FIRST_PREPARE_INDEX].as_bytes(),
+    b"preprepare"
+));
 
 impl List {
     /// Index of `preprepare` in `items`; `prepare` and `postprepare` follow it.

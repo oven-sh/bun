@@ -14,7 +14,7 @@ use bun_io::heap as io_heap;
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
-use bun_paths::AutoAbsPath;
+use bun_paths::AutoAbsPathChecked;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
@@ -270,8 +270,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
-    /// Environment for the `bun install` of a git dependency's own
-    /// dependencies (`Some` iff `scripts.install_dependencies_for_prepare`).
+    /// `Some` iff `scripts.install_dependencies_for_prepare`.
     pub(crate) install_envp: Option<bun_dotenv::NullDelimitedEnvMap>,
     pub(crate) prepare_dependencies: PrepareDependencies,
     pub(crate) shell_bin: Option<&'a ZStr>,
@@ -311,85 +310,84 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-/// Where a git dependency is in getting its own dependencies installed for
-/// its `prepare` scripts (see `List::install_dependencies_for_prepare`).
+/// See `List::install_dependencies_for_prepare`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrepareDependencies {
     NotNeeded,
-    /// `bun install` still has to run before the first prepare script.
     Pending,
-    /// The running subprocess is `bun install`; `current_script_index` is the
-    /// prepare script that runs once it succeeds.
+    /// `bun install` is running; `current_script_index` is the script that follows it.
     Installing(NestedInstallCleanup),
-    /// `bun install` succeeded. The cleanup runs once the scripts are done
-    /// (or one of them failed).
+    /// Cleaned up once the scripts are done or one of them failed.
     Installed(NestedInstallCleanup),
 }
 
-/// While the nested `bun install` and the prepare scripts run, this directory
-/// inside the package holds the package's previous `node_modules` (with the
-/// hoisted linker: the dependencies whose versions conflict with the ones
-/// hoisted above it; or one committed to the repository), or is empty if there
-/// was none. It exists for exactly that duration, so finding it at the start
-/// means an earlier run was interrupted: it still holds the original, and the
-/// package's `node_modules` is whatever that run left behind.
+/// Holds the package's own `node_modules` (or is empty) while the nested install
+/// and the prepare scripts run. Already existing at the start means an earlier
+/// run was interrupted: it has the original and `node_modules` is that run's leftovers.
 const PREVIOUS_NODE_MODULES_NAME: &[u8] = b".bun-prepare-node_modules";
 
-/// Arguments of the `bun` spawned for `PrepareDependencies::Installing`.
-/// `--ignore-scripts` because the package's own lifecycle scripts are what this
-/// runner is in the middle of executing; `--no-save` so the package.json and a
-/// committed lockfile stay as they are.
+/// `--ignore-scripts`: this runner is already running the package's scripts.
+/// `--no-save`: leave the package.json and a committed lockfile alone.
 const INSTALL_DEPENDENCIES_ARGS: [&core::ffi::CStr; 3] =
     [c"install", c"--ignore-scripts", c"--no-save"];
-/// `INSTALL_DEPENDENCIES_ARGS` as shown in logs and error messages.
 const INSTALL_DEPENDENCIES_COMMAND_LINE: &[u8] = b"bun install --ignore-scripts --no-save";
 
-/// What the nested `bun install` leaves in the package directory that has to
-/// go again. The package's runtime dependencies live in the node_modules above
-/// it (or next to it in the isolated store), so everything the nested install
-/// puts here would only shadow them with duplicate copies.
+/// What to undo in the package directory after the nested install. Its runtime
+/// dependencies are installed outside the package, so everything left inside would
+/// only shadow them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NestedInstallCleanup {
-    /// The previous `node_modules` is in [`PREVIOUS_NODE_MODULES_NAME`]. When
-    /// it could not be moved there, the nested install shares it and it is
-    /// left alone afterwards.
+    /// False when the previous `node_modules` could not be moved out of the way.
     restore_node_modules: bool,
-    /// The checkout had no `bun.lock`. `--no-save` keeps the nested install
-    /// from writing one, except that a `package-lock.json`/`yarn.lock`/... it
-    /// migrates is always saved (`saves_migrated_lockfile`).
+    /// `--no-save` still writes `bun.lock` when it migrates a `package-lock.json`
+    /// (`saves_migrated_lockfile`).
     remove_lockfile: bool,
 }
 
-fn path_in_package(cwd: &[u8], name: &[u8]) -> AutoAbsPath {
-    let mut path = AutoAbsPath::init();
-    let _ = path.append(cwd);
-    let _ = path.append(name);
-    path
+fn path_in_package(cwd: &[u8], name: &[u8]) -> bun_sys::Result<AutoAbsPathChecked> {
+    let mut path = AutoAbsPathChecked::init();
+    if path.append(cwd).is_err() || path.append(name).is_err() {
+        return Err(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::rename)
+                .with_path(name),
+        );
+    }
+    Ok(path)
+}
+
+fn set_aside_node_modules(cwd: &[u8]) -> bun_sys::Result<()> {
+    let mut node_modules = path_in_package(cwd, b"node_modules")?;
+    let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME)?;
+    if bun_sys::exists(previous.slice()) {
+        return Fd::cwd().delete_tree(node_modules.slice());
+    }
+    match bun_sys::renameat(
+        Fd::cwd(),
+        node_modules.slice_z(),
+        Fd::cwd(),
+        previous.slice_z(),
+    ) {
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+            bun_sys::mkdir(previous.slice_z(), 0o755)
+        }
+        result => result,
+    }
 }
 
 impl NestedInstallCleanup {
-    /// Gets the package directory ready for the nested install and records
-    /// what to undo afterwards.
-    fn begin(cwd: &[u8]) -> Self {
-        let remove_lockfile = !bun_sys::exists(path_in_package(cwd, b"bun.lock").slice());
+    fn begin(cwd: &[u8], package_name: &[u8]) -> Self {
+        let remove_lockfile = path_in_package(cwd, b"bun.lock")
+            .is_ok_and(|lockfile| !bun_sys::exists(lockfile.slice()));
 
-        let mut node_modules = path_in_package(cwd, b"node_modules");
-        let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME);
-        let restore_node_modules = if bun_sys::exists(previous.slice()) {
-            let _ = Fd::cwd().delete_tree(node_modules.slice());
-            true
-        } else {
-            match bun_sys::renameat(
-                Fd::cwd(),
-                node_modules.slice_z(),
-                Fd::cwd(),
-                previous.slice_z(),
-            ) {
-                Ok(()) => true,
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                    bun_sys::mkdir(previous.slice_z(), 0o755).is_ok()
-                }
-                Err(_) => false,
+        let restore_node_modules = match set_aside_node_modules(cwd) {
+            Ok(()) => true,
+            Err(err) => {
+                bun_core::warn!(
+                    "failed to set aside the node_modules of \"{}\" ({}); the dependencies installed for its prepare scripts will be left in it",
+                    bstr::BStr::new(package_name),
+                    err,
+                );
+                false
             }
         };
 
@@ -400,15 +398,23 @@ impl NestedInstallCleanup {
     }
 
     fn finish(self, cwd: &[u8], package_name: &[u8]) {
-        if self.remove_lockfile {
-            let _ = Fd::cwd().delete_tree(path_in_package(cwd, b"bun.lock").slice());
+        if self.remove_lockfile
+            && let Ok(lockfile) = path_in_package(cwd, b"bun.lock")
+        {
+            let _ = Fd::cwd().delete_tree(lockfile.slice());
         }
 
         if !self.restore_node_modules {
             return;
         }
+        // Both paths were built by `set_aside_node_modules` already.
+        let (Ok(mut node_modules), Ok(mut previous)) = (
+            path_in_package(cwd, b"node_modules"),
+            path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME),
+        ) else {
+            return;
+        };
 
-        let mut node_modules = path_in_package(cwd, b"node_modules");
         if let Err(err) = Fd::cwd().delete_tree(node_modules.slice()) {
             bun_core::warn!(
                 "failed to remove the dependencies installed for the prepare scripts of \"{}\": {}",
@@ -417,7 +423,6 @@ impl NestedInstallCleanup {
             );
         }
 
-        let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME);
         if let Err(err) = bun_sys::renameat(
             Fd::cwd(),
             previous.slice_z(),
@@ -431,8 +436,7 @@ impl NestedInstallCleanup {
             );
             return;
         }
-        // Only succeeds for the empty placeholder `begin` created when the
-        // package had no node_modules of its own.
+        // Removes the empty placeholder from `set_aside_node_modules`; fails on a real one.
         let _ = bun_sys::rmdir(node_modules.slice_z());
     }
 }
@@ -668,8 +672,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // raw pointers are already nullable, and `Option<*const T>` is a 2-word
             // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
             // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            // Sized for the longer of the two argvs below (executable, the
-            // install arguments, null).
+            // Sized for the longer of the two argvs built below.
             const ARGV_LEN: usize = INSTALL_DEPENDENCIES_ARGS.len() + 2;
             let mut argv: [*const c_char; ARGV_LEN] = [core::ptr::null(); ARGV_LEN];
             const _: () = assert!(
@@ -680,8 +683,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // Owns the script bytes `argv` points into until the spawn below.
             let mut copy_script: Vec<u8> = Vec::new();
             let command_line: &[u8] = if installing_dependencies {
-                (*this).prepare_dependencies =
-                    PrepareDependencies::Installing(NestedInstallCleanup::begin(cwd));
+                (*this).prepare_dependencies = PrepareDependencies::Installing(
+                    NestedInstallCleanup::begin(cwd, &(*this).package_name),
+                );
                 argv[0] = bun_core::self_exe_path()?.as_ptr();
                 for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
                     *slot = arg.as_ptr();
@@ -1317,9 +1321,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         Ok(())
     }
 
-    /// The start of every failure message: `error: <what was running>`, which
-    /// is either one of the package's scripts or the `bun install` that
-    /// fetches a git dependency's own dependencies for its prepare scripts.
+    /// `error: <what was running>`; the caller appends how it ended.
     fn print_failure_subject(&self) {
         if matches!(
             self.prepare_dependencies,

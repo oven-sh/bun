@@ -55,7 +55,8 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-const EXPECTED_VERSION: u32 = 27;
+/// Version 28: CommonJS entries store `Ast.commonjs_static_exports` in the record slot.
+const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -232,6 +233,9 @@ pub struct Entry {
     pub metadata: Metadata,
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
+    /// `module_type == Esm`: the serialized `ModuleInfo` (may be empty when the
+    /// entry was written without the isolation cache enabled).
+    /// `module_type == Cjs`: `Ast.commonjs_static_exports`, verbatim.
     pub esm_record: Box<[u8]>,
 }
 

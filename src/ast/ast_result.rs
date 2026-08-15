@@ -86,6 +86,12 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
+    /// Export names and re-export specifiers detected lexically in a CommonJS
+    /// module that the runtime will wrap (`bun_js_parser::commonjs_static_exports`
+    /// documents the format). The module loader hands it to `JSCommonJSModule` so
+    /// `import { x } from "./cjs"` links for names the evaluated `module.exports`
+    /// lacks, as in Node.js. Empty for ES modules and when bundling.
+    pub commonjs_static_exports: StoreStr,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
 }
@@ -127,6 +133,7 @@ impl<'a> Ast<'a> {
             target: Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
+            commonjs_static_exports: StoreStr::EMPTY,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
         }

@@ -15,6 +15,7 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
+pub(crate) mod commonjs_static_exports;
 pub(crate) mod fold;
 pub mod lower;
 pub mod p;

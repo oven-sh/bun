@@ -293,6 +293,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used by commonjs_at_runtime
     pub(crate) has_commonjs_export_names: bool,
 
+    /// Export names detected lexically for `import { x } from "./cjs"`; see
+    /// `commonjs_static_exports.rs`. Only collected with `commonjs_at_runtime`.
+    pub(crate) commonjs_static_exports: crate::commonjs_static_exports::CommonJSStaticExports<'a>,
+
     pub(crate) stack_check: bun_core::StackCheck,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
@@ -8359,6 +8363,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
+            commonjs_static_exports: if wrap_mode == WrapMode::BunCommonjs {
+                self.commonjs_static_exports.serialize(arena)
+            } else {
+                bun_ast::StoreStr::EMPTY
+            },
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
@@ -8701,6 +8710,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
+            commonjs_static_exports: crate::commonjs_static_exports::CommonJSStaticExports::new_in(
+                arena,
+            ),
             should_fold_typescript_constant_expressions: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),

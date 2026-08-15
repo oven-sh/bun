@@ -49,6 +49,13 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    // ResolvedSource::commonjs_static_exports, taken at create().
+    WTF::String m_commonJSStaticExports;
+
+    bool ignoreESModuleAnnotation() const
+    {
+        return m_tag == ResolvedSourceTagPackageJSONTypeModule;
+    }
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
@@ -59,6 +66,7 @@ private:
         , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
+        , m_commonJSStaticExports(resolvedSource.commonjs_static_exports.transferToWTFString())
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {

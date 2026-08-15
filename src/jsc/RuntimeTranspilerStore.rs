@@ -965,11 +965,19 @@ impl TranspilerJob {
                 None
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+            let commonjs_static_exports = if is_commonjs_module {
+                String::clone_utf8(&entry.esm_record)
+            } else {
+                String::EMPTY
+            };
+
             self.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
                 module_info,
                 tag: this_tag,
+                commonjs_static_exports,
                 ..Default::default()
             };
 
@@ -1051,6 +1059,8 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        // Arena-backed; read before `print_with_source_map` consumes the AST.
+        let commonjs_static_exports = parse_result.ast.commonjs_static_exports;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1157,6 +1167,7 @@ impl TranspilerJob {
                 mi.into_deserialized()
             }),
             tag: this_tag,
+            commonjs_static_exports: String::clone_utf8(commonjs_static_exports.slice()),
             ..Default::default()
         };
 

@@ -140,8 +140,10 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
+    // See ResolvedSource.rs. Whoever takes it leaves the field empty.
+    BunString commonjs_static_exports;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 160, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -164,13 +166,14 @@ public:
         result.value.source_code.deref();
         result.value.source_url.deref();
         result.value.bytecode_origin_path.deref();
+        result.value.commonjs_static_exports.deref();
         if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 168 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
     int errno_;

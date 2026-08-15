@@ -160,6 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Evaluate lhs before visiting the rhs
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
+        p.record_commonjs_static_module_exports_value(&data.value);
         p.visit_expr(&mut data.value);
         stmts.push(Stmt::assign(lhs, data.value));
         p.record_usage(p.module_ref);

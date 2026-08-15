@@ -973,7 +973,20 @@ size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
             additionalSize *= 2;
         }
     }
+    additionalSize += thisObject->m_staticExports.sizeInBytes();
     return Base::estimatedSize(cell, vm) + additionalSize;
+}
+
+void JSCommonJSModule::setSourceMetadata(const Zig::SourceProvider& provider)
+{
+    this->ignoreESModuleAnnotation = provider.ignoreESModuleAnnotation();
+    this->m_staticExports = provider.m_commonJSStaticExports;
+}
+
+void JSCommonJSModule::takeSourceMetadata(ResolvedSource& source)
+{
+    this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
+    this->m_staticExports = source.commonjs_static_exports.transferToWTFString();
 }
 
 void JSCommonJSModule::destroy(JSC::JSCell* cell)
@@ -1167,16 +1180,129 @@ void populateESMExports(
     }
 }
 
-void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
+// The CommonJS module `specifier` refers to from `module`, if require() would
+// find it already loaded. Resolution failures are ignored, as in Node.js.
+static JSCommonJSModule* loadedReexportTarget(Zig::GlobalObject* globalObject, JSCommonJSModule* module, const WTF::String& specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue filenameValue = module->filename();
+    if (!filenameValue || !filenameValue.isString())
+        return nullptr;
+    WTF::String filename = filenameValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    BunString specifierString = Bun::toString(specifier);
+    BunString from = Bun::toString(filename);
+    JSValue resolved = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &specifierString, &from, false));
+    if (scope.exception()) [[unlikely]] {
+        // A termination stays pending for the caller to notice.
+        (void)scope.tryClearException();
+        return nullptr;
+    }
+    if (!resolved || !resolved.isString())
+        return nullptr;
+
+    JSValue entry = globalObject->requireMap()->get(globalObject, resolved);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!entry)
+        return nullptr;
+    return dynamicDowncast<JSCommonJSModule>(entry);
+}
+
+// Walks `module->m_staticExports` (format: src/js_parser/commonjs_static_exports.rs)
+// and appends every detected name that is not exported yet as `undefined`,
+// following re-exports into modules that were actually loaded.
+static void appendStaticExports(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* module,
+    JSC::IdentifierSet& exported,
+    Vector<JSCommonJSModule*, 4>& visiting,
+    Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues)
+{
+    if (module->m_staticExports.isEmpty() || visiting.contains(module))
+        return;
+    visiting.append(module);
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Keep our own reference: resolving a re-export can run plugin code.
+    WTF::String serializedString = module->m_staticExports;
+    StringView serialized = serializedString;
+    size_t i = 0;
+    while (i < serialized.length()) {
+        char16_t kind = serialized[i++];
+        size_t length = 0;
+        size_t digitsStart = i;
+        while (i < serialized.length() && isASCIIDigit(serialized[i])) {
+            length = length * 10 + (serialized[i] - '0');
+            i++;
+            if (length > serialized.length())
+                return;
+        }
+        // Anything unexpected means the rest cannot be trusted either.
+        if (i == digitsStart || i >= serialized.length() || serialized[i] != ':')
+            return;
+        i++;
+        if (length > serialized.length() - i)
+            return;
+        StringView text = serialized.substring(i, length);
+        i += length;
+        if (text.isEmpty())
+            continue;
+
+        switch (kind) {
+        case 'e': {
+            JSC::Identifier name = JSC::Identifier::fromString(vm, text.toString());
+            if (!exported.add(name.impl()).isNewEntry)
+                continue;
+            exportNames.append(WTF::move(name));
+            exportValues.append(jsUndefined());
+            continue;
+        }
+        case 'r': {
+            JSCommonJSModule* target = loadedReexportTarget(globalObject, module, text.toString());
+            RETURN_IF_EXCEPTION(scope, );
+            if (target) {
+                appendStaticExports(globalObject, target, exported, visiting, exportNames, exportValues);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            continue;
+        }
+        default:
+            return;
+        }
+    }
+}
+
+void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* lexicalGlobalObject,
     const JSC::Identifier& moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     auto result = this->exportsObject();
     RETURN_IF_EXCEPTION(scope, );
 
-    RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
+    populateESMExports(lexicalGlobalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (this->m_staticExports.isEmpty())
+        return;
+
+    // Node.js links the names cjs-module-lexer finds in the source, so a name
+    // that evaluation did not put on module.exports (assigned conditionally,
+    // or replaced by a later `module.exports = ...`) imports as undefined
+    // instead of failing to link. The evaluated object decides the names it
+    // does have; this only adds what it lacks.
+    JSC::IdentifierSet exported;
+    for (auto& name : exportNames)
+        exported.add(name.impl());
+    Vector<JSCommonJSModule*, 4> visiting;
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    RELEASE_AND_RETURN(scope, appendStaticExports(globalObject, this, exported, visiting, exportNames, exportValues));
 }
 
 void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
@@ -1417,7 +1543,7 @@ void JSCommonJSModule::evaluate(
     }
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-    this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
+    this->setSourceMetadata(sourceProvider.get());
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
         Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
     }
@@ -1431,11 +1557,10 @@ void JSCommonJSModule::evaluate(
 
 void JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
-    Ref<JSC::SourceProvider>&& sourceProvider,
-    bool ignoreESModuleAnnotation)
+    Ref<Zig::SourceProvider>&& sourceProvider)
 {
     auto& vm = JSC::getVM(globalObject);
-    this->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    this->setSourceMetadata(sourceProvider.get());
     if (this->hasEvaluated)
         return;
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
@@ -1460,6 +1585,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
+        this->m_staticExports = source.commonjs_static_exports.transferToWTFString();
         WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
@@ -1499,7 +1625,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
-    bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
 
     if (entry) {
@@ -1534,10 +1659,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
+        // Stays alive past the move below: the module's SourceCode holds it.
+        Zig::SourceProvider& provider = sourceProvider.get();
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
+        moduleObject->setSourceMetadata(provider);
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1546,10 +1674,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         requireMap->set(globalObject, filename, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
+        // Typically require()d first and imported afterwards; the import path
+        // transpiled it again, so apply the fresh metadata without a provider.
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
+        moduleObject->takeSourceMetadata(source);
     }
-
-    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }
@@ -1608,14 +1737,16 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* requireMapKey,
-    Ref<JSC::SourceProvider>&& sourceProvider,
-    bool ignoreESModuleAnnotation)
+    Ref<Zig::SourceProvider>&& sourceProvider)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = nullptr;
-    WTF::String sourceURL = sourceProvider->sourceURL();
-    SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
+    // Valid for the whole function: either `sourceProvider` still owns it or the
+    // new module's SourceCode does.
+    Zig::SourceProvider& provider = sourceProvider.get();
+    WTF::String sourceURL = provider.sourceURL();
+    SourceOrigin sourceOrigin = provider.sourceOrigin();
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1652,7 +1783,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    moduleObject->setSourceMetadata(provider);
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }

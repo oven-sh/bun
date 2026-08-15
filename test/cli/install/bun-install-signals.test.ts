@@ -35,7 +35,9 @@ const canBecomePid1 = (() => {
  * tests send their signal.
  *
  * The idle timeout bounds the failure mode: an install that wrongly survives
- * its signal gives up on the manifest after a few seconds and exits 1.
+ * its signal gives up on the manifest after a few seconds and exits 1. It is
+ * long enough that a passing run never races it: the signal goes out as soon
+ * as `requested` resolves.
  */
 function stalledInstall() {
   const dir = tempDir("install-signals", {
@@ -56,7 +58,7 @@ function stalledInstall() {
     env: {
       ...bunEnv,
       BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
-      BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1",
+      BUN_CONFIG_HTTP_IDLE_TIMEOUT: "5",
       BUN_CONFIG_HTTP_RETRY_COUNT: "0",
     },
     requested: requested.promise,
@@ -85,8 +87,13 @@ describe.concurrent.skipIf(!canBecomePid1)("bun install as PID 1 of a pid namesp
     // `proc` is unshare, waiting on its one child: bun, which is PID 1 inside
     // the new namespace. Signal bun from out here, the way `docker stop` does.
     // unshare exits with whatever status bun exits with.
-    const children = (await Bun.file(`/proc/${proc.pid}/task/${proc.pid}/children`).text()).trim().split(/\s+/);
-    expect(children).toHaveLength(1);
+    //
+    // The file is empty if bun is already gone (an empty split would still be
+    // one element, and kill(0) would signal this test runner's process group).
+    const children = (await Bun.file(`/proc/${proc.pid}/task/${proc.pid}/children`).text())
+      .split(/\s+/)
+      .filter(Boolean);
+    expect(children).toEqual([expect.stringMatching(/^\d+$/)]);
     process.kill(Number(children[0]), signal);
 
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

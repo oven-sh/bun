@@ -131,15 +131,12 @@ pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
 /// * `-` and `_` are used instead of `+` and `/`
 ///
 /// Panics if `dest` is shorter than [`url_safe_encode_len`]`(source)`.
-///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
 pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, dest, true)
 }
 
-/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
-/// `url_safe_encode_len` (the exact no-padding length, so the trailing
-/// `truncate` is a no-op kept for symmetry with `encode_alloc`).
+/// `encode_url_safe` into a freshly allocated `Vec<u8>` of exactly `url_safe_encode_len(source)` bytes.
 pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
     let len = url_safe_encode_len(source);
     let mut destination = vec![0u8; len];
@@ -173,11 +170,7 @@ pub const fn url_safe_encode_len(source: &[u8]) -> usize {
     simdutf::base64::encode_len(source.len(), true)
 }
 
-// Run under `cargo miri test`, also with `--release` (scripts/rust-miri.ts), where
-// reaching simdutf itself fails the test: a too-short destination has to be
-// rejected before the encoder is handed it, by a check that is still compiled
-// in release builds. One byte encodes to 4 bytes padded and 2 bytes URL-safe;
-// each destination is one byte short.
+// Run by scripts/rust-miri.ts (also with --release), where reaching simdutf fails the test.
 #[cfg(test)]
 mod tests {
     use super::*;

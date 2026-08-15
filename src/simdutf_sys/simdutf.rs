@@ -484,13 +484,7 @@ pub mod base64 {
         ) -> SIMDUTFResult;
     }
 
-    /// Encodes `input` into the front of `output` and returns the number of
-    /// bytes written, which is always `encode_len(input.len(), is_urlsafe)`.
-    ///
-    /// # Panics
-    /// If `output` is shorter than that. simdutf is not told the output
-    /// length and always writes the whole encoding, so a short buffer would
-    /// be a buffer overflow, not a truncated result.
+    /// Writes exactly `encode_len(input.len(), is_urlsafe)` bytes; panics if `output` is shorter (simdutf is never told its length).
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
         let needed = encode_len(input.len(), is_urlsafe);
         assert!(
@@ -523,12 +517,7 @@ pub mod base64 {
         written
     }
 
-    /// Number of bytes [`encode`] writes for `input_len` input bytes: the
-    /// standard alphabet pads to a multiple of 4, base64url does not (a 1-byte
-    /// tail becomes 2 characters, a 2-byte tail 3). Same formula as simdutf's
-    /// `base64_length_from_binary`, which `binary_to_base64` always writes in
-    /// full; computed here so the check in [`encode`] needs no FFI call and
-    /// buffer sizes can be `const`.
+    /// simdutf's `base64_length_from_binary`, which is exactly what [`encode`] writes; in Rust so the check in `encode` is plain arithmetic.
     pub const fn encode_len(input_len: usize, is_urlsafe: bool) -> usize {
         if !is_urlsafe {
             return input_len.div_ceil(3) * 4;
@@ -567,12 +556,7 @@ pub mod base64 {
         }
     }
 
-    // Run under `cargo miri test`, also with `--release` (scripts/rust-miri.ts):
-    // reaching the foreign call fails the test, so a short buffer has to be
-    // rejected before simdutf is handed it, and a `debug_assert!` would only do
-    // that in the non-release run. Exact-fit buffers are covered by every base64
-    // encode in the JS suite. One input byte encodes to 4 bytes padded and 2
-    // bytes URL-safe; each buffer below is one byte short.
+    // Run by scripts/rust-miri.ts (also with --release), where reaching the foreign call fails the test.
     #[cfg(test)]
     mod tests {
         use super::*;

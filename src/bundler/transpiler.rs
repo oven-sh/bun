@@ -612,7 +612,7 @@ impl<'a> Transpiler<'a> {
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
-    /// `jsx` is kept: see `resolver_bundle_options_subset`.
+    /// `jsx` is kept: see `bun_resolver::options::BundleOptions::jsx`.
     pub fn sync_resolver_opts(&mut self) {
         let jsx = core::mem::take(&mut self.resolver.opts.jsx);
         self.resolver.opts = resolver_bundle_options_subset(&self.options, jsx);
@@ -1050,8 +1050,6 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
-///
-/// `jsx` is the base each file's own tsconfig is merged over; `src.jsx` has the cwd's merged in.
 ///
 /// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type

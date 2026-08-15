@@ -168,8 +168,31 @@ declare module "bun" {
     /**
      * The access key ID for authentication.
      * Defaults to `S3_ACCESS_KEY_ID` or `AWS_ACCESS_KEY_ID` environment variables.
+     *
+     * When neither this option nor those environment variables are set, Bun
+     * resolves credentials the same way the AWS CLI and SDKs do — from
+     * `~/.aws/credentials` / `~/.aws/config` (including SSO, `credential_process`,
+     * `role_arn` + `source_profile` and `web_identity_token_file` profiles),
+     * `AWS_WEB_IDENTITY_TOKEN_FILE` (EKS), the container credentials endpoint
+     * (ECS / EKS Pod Identity) and finally EC2 instance metadata (IMDSv2).
+     * Resolved credentials are cached and refreshed shortly before they expire.
+     * See {@link Bun.aws.credentials}.
      */
     accessKeyId?: string;
+
+    /**
+     * The profile to read from `~/.aws/credentials` / `~/.aws/config` when no
+     * explicit `accessKeyId`/`secretAccessKey` are given. Takes precedence over
+     * `AWS_ACCESS_KEY_ID`-style environment variables.
+     *
+     * Defaults to the `AWS_PROFILE` environment variable, or `"default"`.
+     *
+     * @example
+     * ```ts
+     * const client = new S3Client({ profile: "prod", bucket: "my-bucket" });
+     * ```
+     */
+    profile?: string;
 
     /**
      * The secret access key for authentication.

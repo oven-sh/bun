@@ -255,6 +255,43 @@ pub(crate) fn list_objects(
         let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
     }
 
+    if this.needs_credentials_resolution() {
+        let provider = this.provider.clone().expect("needs_credentials_resolution");
+        let credentials = this.clone();
+        let proxy_owned: Option<Box<[u8]>> = proxy_url.map(Box::from);
+        return crate::webcore::aws::resolve_shared_async(
+            VirtualMachine::get().global(),
+            &provider,
+            Box::new(move |result| match result {
+                Err(err) => s3_simple_request::Callback::ListObjects(callback)
+                    .fail_credentials(&err, callback_context),
+                Ok(_) => send_list_objects(
+                    &credentials,
+                    search_params,
+                    callback,
+                    callback_context,
+                    proxy_owned.as_deref(),
+                ),
+            }),
+        );
+    }
+    send_list_objects(this, search_params, callback, callback_context, proxy_url)
+}
+
+fn send_list_objects(
+    this: &S3Credentials,
+    search_params: Vec<u8>,
+    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
+    callback_context: *mut c_void,
+    proxy_url: Option<&[u8]>,
+) -> JsResult<()> {
+    if !VirtualMachine::get().script_allowed() {
+        return s3_simple_request::Callback::ListObjects(callback).fail(
+            b"ERR_S3_VM_SHUTDOWN",
+            b"The JavaScript VM that owns this request is shutting down",
+            callback_context,
+        );
+    }
     let result = match this.sign_request::<true>(
         &bun_s3_signing::SignOptions {
             path: b"",
@@ -1493,6 +1530,63 @@ pub(crate) fn readable_stream(
                 bun_ptr::BackRef::from_raw_mut(NonNull::new(wrapper).expect("heap::alloc").as_ptr())
             },
         ));
+
+    if this.needs_credentials_resolution() {
+        let provider = this.provider.clone().expect("needs_credentials_resolution");
+        let credentials = this.clone();
+        let path: Box<[u8]> = Box::from(path);
+        let proxy: Option<Box<[u8]>> = proxy_url.map(Box::from);
+        crate::webcore::aws::resolve_shared_async(
+            global_this,
+            &provider,
+            Box::new(move |result| {
+                // SAFETY: the wrapper is only freed by a `has_more == false`
+                // callback, which cannot have happened before a task exists.
+                let cancelled = unsafe { (*wrapper).readable_stream_ref.get(&(*wrapper).global).is_none() };
+                match result {
+                    Err(err) => S3DownloadStreamWrapper::opaque_callback(
+                        &MutableString::default(),
+                        false,
+                        Some(Error::S3Error {
+                            code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
+                                b"ERR_S3_MISSING_CREDENTIALS"
+                            } else {
+                                err.code.as_bytes()
+                            },
+                            message: &err.message,
+                        }),
+                        wrapper.cast::<c_void>(),
+                    ),
+                    Ok(_) if cancelled || !VirtualMachine::get().script_allowed() => {
+                        S3DownloadStreamWrapper::opaque_callback(
+                            &MutableString::default(),
+                            false,
+                            None,
+                            wrapper.cast::<c_void>(),
+                        )
+                    }
+                    Ok(_) => {
+                        let task = download_stream(
+                            &credentials,
+                            &path,
+                            offset,
+                            size,
+                            proxy.as_deref(),
+                            request_payer,
+                            S3DownloadStreamWrapper::opaque_callback,
+                            wrapper.cast::<c_void>(),
+                        );
+                        if !task.is_null() {
+                            // SAFETY: as below.
+                            unsafe { (*wrapper).task = task };
+                        }
+                    }
+                }
+                Ok(())
+            }),
+        )?;
+        return Ok(readable_value);
+    }
 
     let task = download_stream(
         this,

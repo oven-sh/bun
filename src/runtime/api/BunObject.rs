@@ -346,6 +346,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
+        BunObject_lazyPropCb_aws => super::get_aws_object,
         BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
@@ -1994,6 +1995,10 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     }
 
     Ok(array)
+}
+
+fn get_aws_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::webcore::aws::js::create(global_this)
 }
 
 fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

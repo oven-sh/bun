@@ -9,6 +9,7 @@ use bun_picohttp::Header as PicoHeader;
 use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
 
 use super::acl::ACL;
+use super::aws_credentials::{AwsCredentials, SharedProvider};
 use super::storage_class::StorageClass;
 
 bun_core::declare_scope!(AWS, visible);
@@ -181,6 +182,8 @@ pub struct S3Credentials {
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
     pub virtual_hosted_style: bool,
+    /// Consulted when `access_key_id`/`secret_access_key` are empty.
+    pub provider: Option<SharedProvider>,
 }
 
 // `S3Credentials` owns its bytes via
@@ -200,6 +203,7 @@ impl Clone for S3Credentials {
             storage_class: self.storage_class,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
+            provider: self.provider.clone(),
         }
     }
 }
@@ -217,6 +221,7 @@ impl Default for S3Credentials {
             storage_class: None,
             insecure_http: false,
             virtual_hosted_style: false,
+            provider: None,
         }
     }
 }
@@ -247,7 +252,18 @@ impl S3Credentials {
             storage_class: None,
             insecure_http,
             virtual_hosted_style: false,
+            provider: None,
         }
+    }
+
+    pub fn has_static_credentials(&self) -> bool {
+        !self.access_key_id.is_empty() && !self.secret_access_key.is_empty()
+    }
+
+    /// True when signing would have to wait on the provider (nothing static,
+    /// nothing cached). Asynchronous callers resolve first in that case.
+    pub fn needs_credentials_resolution(&self) -> bool {
+        !self.has_static_credentials() && self.provider.as_ref().is_some_and(|p| p.needs_refresh())
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -271,6 +287,7 @@ impl S3Credentials {
             storage_class: None,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
+            provider: self.provider.clone(),
         })
     }
 
@@ -306,19 +323,35 @@ impl S3Credentials {
         if matches!(content_encoding, Some(s) if s.is_empty()) {
             content_encoding = None;
         }
-        let session_token: Option<&[u8]> = if self.session_token.is_empty() {
-            None
-        } else {
-            Some(&self.session_token)
-        };
-
         let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string());
         let storage_class: Option<&'static [u8]> =
             sign_options.storage_class.map(|s| s.to_string());
 
-        if self.access_key_id.is_empty() || self.secret_access_key.is_empty() {
-            return Err(SignError::MissingCredentials);
-        }
+        let resolved: Option<std::sync::Arc<AwsCredentials>>;
+        let (access_key_id, secret_access_key, session_token): (&[u8], &[u8], Option<&[u8]>) =
+            if self.has_static_credentials() {
+                resolved = None;
+                (
+                    &self.access_key_id,
+                    &self.secret_access_key,
+                    if self.session_token.is_empty() {
+                        None
+                    } else {
+                        Some(&self.session_token)
+                    },
+                )
+            } else if let Some(provider) = &self.provider {
+                resolved = Some(
+                    provider
+                        .resolve_blocking()
+                        .map_err(|_| SignError::MissingCredentials)?,
+                );
+                let r = resolved.as_deref().unwrap();
+                (&r.access_key_id, &r.secret_access_key, r.session_token())
+            } else {
+                return Err(SignError::MissingCredentials);
+            };
+        let _ = &resolved;
         let sign_query = sign_query_option.is_some();
         let expires = sign_query_option.map(|o| o.expires).unwrap_or(0);
         let method_name: &'static str = match method {
@@ -332,6 +365,10 @@ impl S3Credentials {
 
         let region: &[u8] = if !self.region.is_empty() {
             &self.region
+        } else if let Some(r) = resolved.as_deref().and_then(|r| r.region.as_deref())
+            && self.endpoint.is_empty()
+        {
+            r
         } else {
             guess_region(&self.endpoint)
         };
@@ -491,7 +528,7 @@ impl S3Credentials {
                     hasher.update(b"\0");
                     hasher.update(service_name.as_bytes());
                     hasher.update(b"\0");
-                    hasher.update(&self.secret_access_key);
+                    hasher.update(secret_access_key);
                     hasher.r#final(&mut cache_key);
                 }
                 // was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
@@ -502,7 +539,7 @@ impl S3Credentials {
                 // not cached yet lets generate a new one
                 let aws4_key = buf_print(
                     &mut tmp_buffer,
-                    format_args!("AWS4{}", BStr::new(&self.secret_access_key)),
+                    format_args!("AWS4{}", BStr::new(secret_access_key)),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let sig_date = bun_sha_hmac::generate(
@@ -599,7 +636,7 @@ impl S3Credentials {
                     query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
                     query_parts.push(alloc_print!(
                         "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
-                        BStr::new(&self.access_key_id),
+                        BStr::new(access_key_id),
                         BStr::new(amz_day),
                         BStr::new(region),
                         service_name
@@ -689,7 +726,7 @@ impl S3Credentials {
                 url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
                 url_query_parts.push(alloc_print!(
                     "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
-                    BStr::new(&self.access_key_id),
+                    BStr::new(access_key_id),
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name
@@ -785,7 +822,7 @@ impl S3Credentials {
 
                 break 'brk alloc_print!(
                     "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature={}",
-                    BStr::new(&self.access_key_id),
+                    BStr::new(access_key_id),
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name,
@@ -817,7 +854,7 @@ impl S3Credentials {
             || content_encoding.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
             || contains_newline_or_cr(region)
-            || contains_newline_or_cr(&self.access_key_id)
+            || contains_newline_or_cr(access_key_id)
             || contains_newline_or_cr(&host)
         {
             return Err(SignError::InvalidHeaderValue);
@@ -943,7 +980,7 @@ fn get_amz_date() -> DateResult {
 
 // Gregorian Y/M/D from Unix-epoch seconds, using Howard Hinnant's
 // `civil_from_days` algorithm (public domain).
-fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
+pub(crate) fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     // returns (year, month(1-based), day(1-based), hours, minutes, seconds, seconds_into_day)
     let day_seconds = secs % 86_400;
     let hours = u32::try_from(day_seconds / 3600).expect("int cast");
@@ -1223,6 +1260,8 @@ pub enum SignError {
     FailedToGenerateSignature,
     #[error("NoSpaceLeft")]
     NoSpaceLeft,
+    #[error("InvalidExpires")]
+    InvalidExpires,
 }
 
 impl<'a> Default for SignOptions<'a> {

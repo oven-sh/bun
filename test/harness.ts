@@ -87,6 +87,11 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
   AGENT: "false",
+  // Keep the AWS default credential chain from picking up the CI agent's
+  // instance role or a developer's ~/.aws; tests that want it opt back in.
+  AWS_EC2_METADATA_DISABLED: "true",
+  AWS_CONFIG_FILE: process.env.BUN_TEST_AWS_CONFIG_FILE || "/dev/null/aws-config",
+  AWS_SHARED_CREDENTIALS_FILE: process.env.BUN_TEST_AWS_SHARED_CREDENTIALS_FILE || "/dev/null/aws-credentials",
 };
 
 const ciEnv = { ...bunEnv };

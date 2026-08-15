@@ -30,6 +30,7 @@
     macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
+    macro(aws) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \

@@ -7,7 +7,11 @@ pub mod storage_class;
 
 pub use crate_error::Error;
 
+pub mod aws_credentials;
 pub mod credentials;
+pub mod sigv4;
+
+pub use aws_credentials::{AwsCredentials, CredentialsProvider, CredentialsSource, ProviderError, ProviderResult, SharedProvider};
 
 pub use acl::ACL;
 pub use credentials::*;

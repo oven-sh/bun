@@ -149,6 +149,7 @@ impl Taskable for S3HttpSimpleTask {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
@@ -160,7 +161,22 @@ pub enum Callback {
 }
 
 impl Callback {
-    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
+    /// A credential-provider failure, surfaced with the S3 error code
+    /// existing callers match on when nothing was found at all.
+    pub(crate) fn fail_credentials(
+        &self,
+        err: &bun_s3_signing::ProviderError,
+        context: *mut c_void,
+    ) -> bun_jsc::JsResult<()> {
+        let code: &[u8] = if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
+            b"ERR_S3_MISSING_CREDENTIALS"
+        } else {
+            err.code.as_bytes()
+        };
+        self.fail(code, &err.message, context)
+    }
+
+    pub(crate) fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
@@ -530,6 +546,59 @@ pub struct S3SimpleRequestOptions<'a> {
     pub(crate) request_payer: bool,
 }
 
+/// Owned copy of [`S3SimpleRequestOptions`] held while credentials resolve.
+struct OwnedRequestOptions {
+    path: Box<[u8]>,
+    method: Method,
+    search_params: Option<Box<[u8]>>,
+    content_type: Option<Box<[u8]>>,
+    content_disposition: Option<Box<[u8]>>,
+    content_encoding: Option<Box<[u8]>>,
+    body: Box<[u8]>,
+    proxy_url: Option<Box<[u8]>>,
+    range: Option<Box<[u8]>>,
+    acl: Option<ACL>,
+    storage_class: Option<StorageClass>,
+    request_payer: bool,
+}
+
+impl OwnedRequestOptions {
+    fn from(o: S3SimpleRequestOptions<'_>) -> Self {
+        let own = |s: Option<&[u8]>| s.map(Box::<[u8]>::from);
+        Self {
+            path: Box::from(o.path),
+            method: o.method,
+            search_params: own(o.search_params),
+            content_type: own(o.content_type),
+            content_disposition: own(o.content_disposition),
+            content_encoding: own(o.content_encoding),
+            body: Box::from(o.body),
+            proxy_url: own(o.proxy_url),
+            range: o.range,
+            acl: o.acl,
+            storage_class: o.storage_class,
+            request_payer: o.request_payer,
+        }
+    }
+
+    fn borrow(&mut self) -> S3SimpleRequestOptions<'_> {
+        S3SimpleRequestOptions {
+            path: &self.path,
+            method: self.method,
+            search_params: self.search_params.as_deref(),
+            content_type: self.content_type.as_deref(),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            body: &self.body,
+            proxy_url: self.proxy_url.as_deref(),
+            range: self.range.take(),
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+        }
+    }
+}
+
 impl<'a> Default for S3SimpleRequestOptions<'a> {
     fn default() -> Self {
         Self {
@@ -557,6 +626,37 @@ pub(crate) fn execute_simple_s3_request(
 ) -> bun_jsc::JsResult<()> {
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping.
+    if !VirtualMachine::get().script_allowed() {
+        drop(options.range);
+        callback.fail(
+            b"ERR_S3_VM_SHUTDOWN",
+            b"The JavaScript VM that owns this request is shutting down",
+            callback_context,
+        )?;
+        return Ok(());
+    }
+    if this.needs_credentials_resolution() {
+        let provider = this.provider.clone().expect("needs_credentials_resolution");
+        let credentials = this.clone();
+        let mut owned = OwnedRequestOptions::from(options);
+        return crate::webcore::aws::resolve_shared_async(
+            VirtualMachine::get().global(),
+            &provider,
+            Box::new(move |result| match result {
+                Err(err) => callback.fail_credentials(&err, callback_context),
+                Ok(_) => sign_and_send(&credentials, owned.borrow(), callback, callback_context),
+            }),
+        );
+    }
+    sign_and_send(this, options, callback, callback_context)
+}
+
+fn sign_and_send(
+    this: &S3Credentials,
+    options: S3SimpleRequestOptions<'_>,
+    callback: Callback,
+    callback_context: *mut c_void,
+) -> bun_jsc::JsResult<()> {
     if !VirtualMachine::get().script_allowed() {
         drop(options.range);
         callback.fail(

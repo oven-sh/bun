@@ -4979,6 +4979,144 @@ declare module "bun" {
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
   /**
+   * AWS credentials as resolved by {@link Bun.aws.credentials}.
+   */
+  interface AWSCredentials {
+    accessKeyId: string;
+    secretAccessKey: string;
+    /** Present for temporary credentials (STS, SSO, container, instance metadata). */
+    sessionToken?: string;
+    /** When temporary credentials expire. Bun refreshes them ~5 minutes before this. */
+    expiration?: Date;
+    /** The region configured alongside the credentials (`AWS_REGION` or the profile's `region`), if any. */
+    region?: string;
+    /** The AWS account ID, when the source reports it. */
+    accountId?: string;
+    /**
+     * Where the credentials came from.
+     *
+     * - `"env"`: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (/ `AWS_SESSION_TOKEN`)
+     * - `"profile"`: static keys in `~/.aws/credentials` or `~/.aws/config`
+     * - `"assume-role"`: a profile with `role_arn` + `source_profile` / `credential_source` (STS `AssumeRole`)
+     * - `"web-identity"`: `AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, or a profile's `web_identity_token_file` (STS `AssumeRoleWithWebIdentity`, e.g. EKS IRSA)
+     * - `"process"`: a profile's `credential_process`
+     * - `"sso"`: an IAM Identity Center profile (`aws sso login`)
+     * - `"container"`: `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` / `_FULL_URI` (ECS, EKS Pod Identity, …)
+     * - `"imds"`: EC2 instance metadata (IMDSv2)
+     */
+    source: "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds";
+  }
+
+  /**
+   * How to sign a request for AWS. Every field is optional: credentials
+   * default to the ambient ones (see {@link Bun.aws.credentials}) and
+   * `service`/`region` are inferred from `*.amazonaws.com` hostnames.
+   */
+  interface AWSSignOptions {
+    /** e.g. `"s3"`, `"dynamodb"`, `"execute-api"`, `"lambda"`, `"bedrock-runtime"`. Inferred from the hostname when omitted. */
+    service?: string;
+    /** e.g. `"us-east-1"`. Inferred from the hostname, then `AWS_REGION` / `AWS_DEFAULT_REGION`, then the profile's `region`. */
+    region?: string;
+    /** Use these static credentials instead of ambient ones. Must be given together with `secretAccessKey`. */
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    sessionToken?: string;
+    /** Resolve credentials for this profile from `~/.aws/config` / `~/.aws/credentials` instead of the default chain. */
+    profile?: string;
+    /**
+     * Sign with `UNSIGNED-PAYLOAD` instead of hashing the body. Only S3-style
+     * services accept this; it is implied for `ReadableStream` bodies sent to S3.
+     * @default false
+     */
+    unsignedPayload?: boolean;
+    /**
+     * Put the signature in the query string (`X-Amz-Signature=…`) instead of
+     * the `Authorization` header.
+     * @default false
+     */
+    signQuery?: boolean;
+    /**
+     * Lifetime of a query-string signature, in seconds (1 – 604800).
+     * @default 900
+     */
+    expiresIn?: number;
+    /** Sign as of this instant instead of now (mostly useful for tests). */
+    date?: Date | number | string;
+  }
+
+  /**
+   * AWS credentials and request signing, without an SDK.
+   *
+   * @example
+   * ```ts
+   * const { accessKeyId, source } = await Bun.aws.credentials();
+   * const url = Bun.aws.presign("https://my-bucket.s3.us-east-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
+   * const res = await fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues", { aws: true });
+   * ```
+   */
+  namespace aws {
+    /**
+     * Resolve AWS credentials using the same default chain as the AWS CLI and SDKs:
+     *
+     * 1. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`
+     * 2. The profile named by `options.profile`, `AWS_PROFILE` or `default` in
+     *    `~/.aws/credentials` and `~/.aws/config` (`AWS_SHARED_CREDENTIALS_FILE` /
+     *    `AWS_CONFIG_FILE`): static keys, `role_arn` + `source_profile` /
+     *    `credential_source`, `web_identity_token_file`, `credential_process`,
+     *    and IAM Identity Center (`sso_session` / `sso_*`, using the token cached by `aws sso login`)
+     * 3. `AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN` (EKS service-account roles)
+     * 4. The container credentials endpoint — `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`
+     *    or `AWS_CONTAINER_CREDENTIALS_FULL_URI` (+ `AWS_CONTAINER_AUTHORIZATION_TOKEN[_FILE]`),
+     *    as set by ECS, EKS Pod Identity, App Runner, …
+     * 5. EC2 instance metadata (IMDSv2, honouring `AWS_EC2_METADATA_DISABLED`,
+     *    `AWS_EC2_METADATA_SERVICE_ENDPOINT[_MODE]` and `AWS_EC2_METADATA_V1_DISABLED`)
+     *
+     * A source that is not configured is skipped; a source that is configured
+     * but fails rejects with that error rather than falling through.
+     *
+     * Results are cached per profile for the whole process and refreshed
+     * about five minutes before they expire, so calling this repeatedly is cheap.
+     * `Bun.s3`, `new S3Client()`, `fetch("s3://…")` and `fetch(url, { aws })`
+     * use this automatically when no explicit keys are given.
+     *
+     * @param options.profile Profile name; defaults to `AWS_PROFILE` or `"default"`.
+     * @param options.refresh Discard cached credentials and resolve again.
+     *
+     * @example
+     * ```ts
+     * const creds = await Bun.aws.credentials();
+     * console.log(creds.source); // "sso"
+     * ```
+     */
+    function credentials(options?: { profile?: string; refresh?: boolean }): Promise<AWSCredentials>;
+
+    /**
+     * Create a presigned (query-string signed) URL for any AWS endpoint —
+     * most commonly an S3 object URL to hand to a browser.
+     *
+     * Credentials come from `options` or the ambient chain; if ambient
+     * credentials have not been resolved yet this resolves them synchronously
+     * once (call `await Bun.aws.credentials()` first to avoid that).
+     *
+     * @example
+     * ```ts
+     * const url = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/photo.jpg", {
+     *   expiresIn: 60 * 60,
+     * });
+     * // PUT upload URL
+     * const upload = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
+     * ```
+     */
+    function presign(
+      url: string | URL,
+      options?: AWSSignOptions & {
+        /** @default "GET" */
+        method?: "GET" | "PUT" | "POST" | "DELETE" | "HEAD" | "PATCH" | (string & {});
+      },
+    ): string;
+  }
+
+  /**
    * Bun.semver parses and compares version numbers.
    */
   namespace semver {

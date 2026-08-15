@@ -366,6 +366,12 @@ impl<'a> URL<'a> {
         }
     }
 
+    /// The query string including its leading `?` (empty if none).
+    #[inline]
+    pub fn search(&self) -> &'a [u8] {
+        self.search
+    }
+
     pub fn s3_path(&self) -> &'a [u8] {
         if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
             &self.href[self.protocol.len() + 2..]

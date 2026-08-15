@@ -105,7 +105,7 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 pub(crate) fn s3_credentials_from_env(
     env: &bun_dotenv::S3Credentials,
 ) -> bun_s3_signing::S3Credentials {
-    bun_s3_signing::S3Credentials::new_value(
+    let mut credentials = bun_s3_signing::S3Credentials::new_value(
         env.access_key_id.clone(),
         env.secret_access_key.clone(),
         env.region.clone(),
@@ -113,7 +113,13 @@ pub(crate) fn s3_credentials_from_env(
         env.bucket.clone(),
         env.session_token.clone(),
         env.insecure_http,
-    )
+    );
+    if !credentials.has_static_credentials() {
+        // No keys in the environment: fall back to the AWS default chain
+        // (shared config/SSO/process/web identity → container → IMDS).
+        credentials.provider = Some(crate::webcore::aws::shared(None));
+    }
+    credentials
 }
 
 /// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`,
@@ -338,7 +344,7 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
+    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe.arguments(), false))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -388,7 +394,8 @@ enum URLType {
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
-    callframe: &CallFrame,
+    arguments: &[JSValue],
+    credentials_ready: bool,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
     let global_this = ctx;
@@ -400,7 +407,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
 
-    if callframe.arguments_count() == 0 {
+    if arguments.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
             format_args!("{FETCH_ERROR_NO_ARGS}"),
@@ -419,7 +426,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments);
 
     let first_arg = args.next_eat().unwrap();
 
@@ -641,6 +648,134 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_method None;
     }
     .unwrap_or(Method::GET);
+
+    // "aws: true | { service, region, accessKeyId, ... }" — SigV4 request signing.
+    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = 'extract_aws: {
+        let objects_to_try = [
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
+        ];
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(v) = obj.get(global_this, "aws")? {
+                    if !v.is_undefined() {
+                        break 'extract_aws crate::webcore::aws::AwsSignOptions::from_js(global_this, v)?;
+                    }
+                }
+            }
+        }
+        break 'extract_aws None;
+    };
+
+    // Credentials for `s3://` URLs: env, then the `s3` option bag.
+    let mut s3_credentials: Option<s3::S3CredentialsWithOptions> = if url.is_s3() {
+        let env_creds = s3_credentials_from_env(
+            global_this
+                .bun_vm()
+                .as_mut()
+                .transpiler
+                .env_mut()
+                .get_s3_credentials(),
+        );
+        let mut credentials_with_options = s3::S3CredentialsWithOptions {
+            credentials: env_creds,
+            options: Default::default(),
+            acl: None,
+            storage_class: None,
+            ..Default::default()
+        };
+        if let Some(options) = options_object {
+            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
+                let s3_options: JSValue = s3_options;
+                if s3_options.is_object() {
+                    s3_options.ensure_still_alive();
+                    use crate::webcore::s3_client::S3CredentialsExt as _;
+                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
+                        &credentials_with_options.credentials,
+                        Default::default(),
+                        Some(s3_options),
+                        None,
+                        None,
+                        false,
+                        global_this,
+                    )?;
+                }
+            }
+        }
+        Some(credentials_with_options)
+    } else {
+        None
+    };
+
+    // Ambient AWS credentials (profile / SSO / container / IMDS) resolve off
+    // the JS thread; once they are cached, run this same call again.
+    if !credentials_ready {
+        let pending: Option<bun_s3_signing::SharedProvider> = aws_sign
+            .as_ref()
+            .and_then(|a| {
+                a.needs_credentials_resolution()
+                    .then(|| a.provider().cloned())
+                    .flatten()
+            })
+            .or_else(|| {
+                s3_credentials.as_ref().and_then(|c| {
+                    c.credentials
+                        .needs_credentials_resolution()
+                        .then(|| c.credentials.provider.clone())
+                        .flatten()
+                })
+            });
+        if let Some(provider) = pending {
+            drop(s3_credentials.take());
+            let is_s3 = url.is_s3();
+            let promise = jsc::JSPromiseStrong::init(global_this);
+            let promise_value = promise.value();
+            let protected: Vec<jsc::job::Protected> =
+                arguments.iter().map(|v| jsc::job::Protected::new(*v)).collect();
+            let global = jsc::GlobalRef::from(global_this);
+            crate::webcore::aws::resolve_shared_async(
+                global_this,
+                &provider,
+                Box::new(move |result| {
+                    let global: &JSGlobalObject = &global;
+                    let mut promise = promise;
+                    if !global.bun_vm().script_allowed() {
+                        return Ok(());
+                    }
+                    match result {
+                        Err(err) if is_s3 => promise.reject(
+                            global,
+                            Ok(s3::s3_error_to_js(
+                                &s3::Error::S3Error {
+                                    code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
+                                        b"ERR_S3_MISSING_CREDENTIALS"
+                                    } else {
+                                        err.code.as_bytes()
+                                    },
+                                    message: &err.message,
+                                },
+                                global,
+                                None,
+                            )),
+                        ),
+                        Err(err) => promise.reject(
+                            global,
+                            Ok(crate::webcore::aws::fetch_signing::provider_error_to_js(global, &err)),
+                        ),
+                        Ok(_) => {
+                            let argv: Vec<JSValue> = protected.iter().map(|p| p.value()).collect();
+                            let value = reject_on_exception(
+                                global,
+                                fetch_impl::<ALLOW_GET_BODY>(global, &argv, true),
+                            )?;
+                            promise.resolve(global, value)
+                        }
+                    }
+                }),
+            )?;
+            return Ok(promise_value);
+        }
+    }
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -1840,6 +1975,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(compress_opt) = &compress
         && let HTTPRequestBody::AnyBlob(_) = &body
         && !url.is_s3()
+        && aws_sign.is_none()
     {
         let already_has_encoding = headers
             .as_ref()
@@ -1856,45 +1992,46 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
-    if url.is_s3() {
-        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
-        // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
-            global_this
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
-        );
-        let mut credentials_with_options = s3::S3CredentialsWithOptions {
-            credentials: env_creds,
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
-            ..Default::default()
+    if let Some(aws) = aws_sign.as_ref().filter(|_| !url.is_s3()) {
+        use crate::webcore::aws::fetch_signing::{Body as SignBody, Signed, sign_fetch_request};
+        let sign_body = match &body {
+            HTTPRequestBody::AnyBlob(_) => SignBody::Bytes(body.slice()),
+            _ => SignBody::Streaming,
         };
-        // `defer credentialsWithOptions.deinit()` → Drop.
-
-        if let Some(options) = options_object {
-            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
-                let s3_options: JSValue = s3_options;
-                if s3_options.is_object() {
-                    s3_options.ensure_still_alive();
-                    use crate::webcore::s3_client::S3CredentialsExt as _;
-                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
-                        &credentials_with_options.credentials,
-                        Default::default(),
-                        Some(s3_options),
-                        None,
-                        None,
-                        false,
-                        global_this,
-                    )?;
+        match sign_fetch_request(aws, method, &url, &mut headers, sign_body) {
+            Ok(Signed::Headers) => {}
+            Ok(Signed::Url(new_url)) => {
+                let old_buffer = core::mem::take(&mut url_proxy_buffer);
+                if let Some(proxy_) = &proxy {
+                    let mut buffer = Vec::with_capacity(new_url.len() + proxy_.href.len());
+                    buffer.extend_from_slice(&new_url);
+                    buffer.extend_from_slice(proxy_.href);
+                    url_proxy_buffer = buffer;
+                    url = parse_url_detached!(&url_proxy_buffer[0..new_url.len()]);
+                    proxy = Some(parse_url_detached!(&url_proxy_buffer[new_url.len()..]));
+                } else {
+                    url_proxy_buffer = new_url.into_vec();
+                    url = parse_url_detached!(&url_proxy_buffer[..]);
                 }
+                drop(old_buffer);
+            }
+            Err(message) => {
+                let err = global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("fetch() could not sign the request for AWS: {message}"),
+                );
+                body.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
             }
         }
+    }
 
+    if let Some(credentials_with_options) = s3_credentials.take() {
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.

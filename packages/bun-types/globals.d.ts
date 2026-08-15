@@ -2002,6 +2002,41 @@ interface BunFetchRequestInit extends RequestInit {
   s3?: Bun.S3Options;
 
   /**
+   * Sign the request with [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html)
+   * so it can be sent straight to an AWS (or AWS-compatible) API.
+   *
+   * `true` infers the service and region from the hostname and uses ambient
+   * credentials (environment variables, `~/.aws`, SSO, container / instance
+   * metadata — see {@link Bun.aws.credentials}). Pass an object to override
+   * any of those.
+   *
+   * The `Authorization`, `x-amz-date`, `x-amz-content-sha256` and (for
+   * temporary credentials) `x-amz-security-token` headers are added for you.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @example
+   * ```ts
+   * const res = await fetch("https://dynamodb.us-east-1.amazonaws.com/", {
+   *   method: "POST",
+   *   aws: true,
+   *   headers: {
+   *     "content-type": "application/x-amz-json-1.0",
+   *     "x-amz-target": "DynamoDB_20120810.ListTables",
+   *   },
+   *   body: JSON.stringify({}),
+   * });
+   * ```
+   *
+   * @example
+   * ```ts
+   * // A Lambda function URL with IAM auth, using a named profile
+   * await fetch("https://abc123.lambda-url.eu-west-1.on.aws/", { aws: { profile: "prod" } });
+   * ```
+   */
+  aws?: boolean | Bun.AWSSignOptions;
+
+  /**
    * Make the request over a Unix socket
    *
    * @example

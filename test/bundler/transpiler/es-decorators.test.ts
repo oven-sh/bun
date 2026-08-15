@@ -226,10 +226,12 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("initializers that only work inside the class body stay there", async () => {
+    test("an initializer that only works inside the class body keeps every static field there, in order", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
         let original;
         function wrap(cls, ctx) {
+          log.push("decorator");
           original = cls;
           return class Wrapped extends cls {};
         }
@@ -237,31 +239,76 @@ describe("ES Decorators", () => {
           static defaults = { limit: 10 };
         }
         @wrap class Foo extends Base {
-          static fromSuper = { ...super.defaults, limit: 20 };
+          static first = (log.push("first"), 1);
+          static fromSuper = (log.push("fromSuper"), { ...super.defaults, limit: 20 });
+          static second = (log.push("second"), Foo.first + 1);
           static newTarget = new.target;
           static thisInParameter = (value = this) => value;
           static thisInComputedKey = { [this.name]: true };
-          static relocated = { limit: 30, tags: ["a", \`b\${1}\`], self: Foo };
-          static instance = new Foo();
+          static create = () => new Foo();
         }
-        const own = name => (Object.hasOwn(Foo, name) ? "replacement" : Object.hasOwn(original, name) ? "original" : "none");
         console.log(JSON.stringify({
-          fromSuper: [own("fromSuper"), Foo.fromSuper],
-          newTarget: [own("newTarget"), typeof Foo.newTarget],
-          thisInParameter: [own("thisInParameter"), Foo.thisInParameter() === original],
-          thisInComputedKey: [own("thisInComputedKey"), Foo.thisInComputedKey],
-          relocated: [own("relocated"), Foo.relocated.limit, Foo.relocated.tags, Foo.relocated.self === Foo],
-          instance: [own("instance"), Foo.instance instanceof Foo],
+          log,
+          originalKeys: Object.keys(original),
+          replacementKeys: Object.keys(Foo),
+          fromSuper: Foo.fromSuper,
+          second: Foo.second,
+          newTarget: typeof Foo.newTarget,
+          thisInParameter: Foo.thisInParameter() === original,
+          thisInComputedKey: Foo.thisInComputedKey,
+          created: Foo.create() instanceof Foo,
         }));
       `);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({
-        fromSuper: ["original", { limit: 20 }],
-        newTarget: ["original", "undefined"],
-        thisInParameter: ["original", true],
-        thisInComputedKey: ["original", { Foo: true }],
-        relocated: ["replacement", 30, ["a", "b1"], true],
-        instance: ["replacement", true],
+        log: ["first", "fromSuper", "second", "decorator"],
+        originalKeys: ["first", "fromSuper", "second", "newTarget", "thisInParameter", "thisInComputedKey", "create"],
+        replacementKeys: [],
+        fromSuper: { limit: 20 },
+        second: 2,
+        newTarget: "undefined",
+        thisInParameter: true,
+        thisInComputedKey: { Foo: true },
+        // Lazy initializers still pick up the decorated class through the body's binding.
+        created: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("eagerly evaluated initializers of every common shape are relocated together", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let original;
+        function wrap(cls, ctx) {
+          original = cls;
+          return class Wrapped extends cls {};
+        }
+        const label = "label";
+        @wrap class Foo {
+          static singleton = new Foo();
+          static registry = new Map([[label, Foo]]);
+          static config = { self: Foo, owner: this, nested: [1, ...[2], \`\${label}:\${Foo.name}\`], ...{ extra: true } };
+          static flag = typeof Foo === "function" && this === Foo ? "decorated" : "undecorated";
+          static declaredOnly;
+        }
+        console.log(JSON.stringify({
+          originalKeys: Object.keys(original),
+          replacementKeys: Object.keys(Foo),
+          singleton: Foo.singleton instanceof Foo,
+          registry: Foo.registry.get("label") === Foo,
+          config: [Foo.config.self === Foo, Foo.config.owner === Foo, Foo.config.nested, Foo.config.extra],
+          flag: Foo.flag,
+          declaredOnly: Object.hasOwn(Foo, "declaredOnly") && Foo.declaredOnly === undefined,
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        originalKeys: [],
+        replacementKeys: ["singleton", "registry", "config", "flag", "declaredOnly"],
+        singleton: true,
+        registry: true,
+        config: [true, true, [1, 2, "label:Wrapped"], true],
+        flag: "decorated",
+        declaredOnly: true,
       });
       expect(exitCode).toBe(0);
     });
@@ -379,32 +426,49 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("class with instance private members: initializers using them stay in the body", async () => {
+    test("instance private members: the body sees the replacement; initializers naming them stay put", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        let original;
+        const originals = [];
         function wrap(cls, ctx) {
-          original = cls;
+          originals.push(cls);
           return class Wrapped extends cls {};
         }
-        @wrap class Foo {
+        @wrap class UsesPrivateNames {
           #secret = 42;
-          static create() { return new Foo(); }
+          static create() { return new UsesPrivateNames(); }
           static peek = foo => foo.#secret;
-          static hasSecret = #secret in Foo;
-          static self = Foo;
+          static hasSecret = #secret in UsesPrivateNames;
+          static self = UsesPrivateNames;
         }
-        console.log(JSON.stringify([
-          Foo.create() instanceof Foo,
-          Foo.peek(Foo.create()),
-          Foo.hasSecret,
-          Object.hasOwn(original, "peek"),
-          Object.hasOwn(original, "hasSecret"),
-          Object.hasOwn(Foo, "self"),
-          Foo.self === Foo,
-        ]));
+        @wrap class PlainInitializers {
+          #secret = 42;
+          static create() { return new PlainInitializers(); }
+          static self = PlainInitializers;
+          reveal() { return this.#secret; }
+        }
+        console.log(JSON.stringify({
+          usesPrivateNames: [
+            UsesPrivateNames.create() instanceof UsesPrivateNames,
+            UsesPrivateNames.peek(UsesPrivateNames.create()),
+            UsesPrivateNames.hasSecret,
+            Object.keys(originals[0]),
+            Object.keys(UsesPrivateNames),
+            UsesPrivateNames.self === originals[0],
+          ],
+          plainInitializers: [
+            PlainInitializers.create() instanceof PlainInitializers,
+            PlainInitializers.create().reveal(),
+            Object.keys(originals[1]),
+            Object.keys(PlainInitializers),
+            PlainInitializers.self === PlainInitializers,
+          ],
+        }));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([true, 42, false, true, true, true, true]);
+      expect(JSON.parse(stdout)).toEqual({
+        usesPrivateNames: [true, 42, false, ["peek", "hasSecret", "self"], [], true],
+        plainInitializers: [true, 42, [], ["self"], true],
+      });
       expect(exitCode).toBe(0);
     });
 

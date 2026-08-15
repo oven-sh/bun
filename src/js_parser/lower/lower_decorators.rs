@@ -1281,11 +1281,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
-        // Relocating pre-evaluates every computed key (Phase 2) to keep them in source order.
+        // All or nothing (keys are pre-evaluated in Phase 2), so static members keep their order.
         let relocate_static_fields = class_decorators_len > 0
             && class.properties.slice().iter().all(|prop| {
-                !prop.flags.contains(Flags::Property::IsComputed)
-                    || prop.key.is_none_or(|key| can_leave_class_body(&key))
+                (!prop.flags.contains(Flags::Property::IsComputed)
+                    || prop.key.is_none_or(|key| can_leave_class_body(&key)))
+                    && (!is_plain_static_field(prop)
+                        || prop
+                            .initializer
+                            .is_none_or(|init| can_leave_class_body(&init)))
             });
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1790,12 +1794,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     continue;
                 }
-                if relocate_static_fields
-                    && is_plain_static_field(prop)
-                    && prop
-                        .initializer
-                        .is_none_or(|init| can_leave_class_body(&init))
-                {
+                if relocate_static_fields && is_plain_static_field(prop) {
                     static_element_order.push(StaticElement {
                         kind: StaticElementKind::PlainField,
                         index: relocated_static_fields.len(),

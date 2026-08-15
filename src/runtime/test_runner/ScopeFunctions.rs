@@ -329,6 +329,9 @@ impl ScopeFunctions {
     ) -> JsResult<()> {
         let _g = group_log::begin();
 
+        // Wrapped only now: the caller reads `.length` / `.bind()` off the bare function, and the wrapper has neither.
+        let callback = callback.map(|cb| cb.with_async_context_if_needed(global));
+
         // only allow in collection phase
         match bun_test.phase {
             bun_test::Phase::Collection => {} // ok
@@ -519,6 +522,7 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
 
 pub struct ParseArgumentsResult {
     pub(crate) description: Option<Vec<u8>>,
+    /// The function as passed by the user; whoever stores it applies `with_async_context_if_needed`.
     pub callback: Option<JSValue>,
     pub(crate) options: ParseArgumentsOptions,
 }
@@ -667,7 +671,7 @@ pub(crate) fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        Some(callback)
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));

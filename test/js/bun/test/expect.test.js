@@ -2375,6 +2375,10 @@ describe("expect()", () => {
       // if a file doesn't exist, it should throw (not return 0 size)
       expect(() => expect(Bun.file(tmpFile(false))).toHaveLength(0)).toThrow();
 
+      // objects without a length, or with one that is not a number
+      expect(() => expect({}).toHaveLength(0)).toThrow("Received value does not have a length property");
+      expect(() => expect({ length: "abc" }).toHaveLength(0)).toThrow("Received value has non-number length property");
+
       // Blob
       expect(new Blob(ANY([1, 2, 3]))).toHaveLength(3);
       expect(new Blob()).toHaveLength(0);
@@ -3762,6 +3766,13 @@ describe("expect()", () => {
       });
     }
   });
+
+  if (isBun) {
+    test("toBeEmpty() on objects with a non-number length property", () => {
+      expect(() => expect({ length: "abc" }).toBeEmpty()).toThrow("Received value has non-number length property");
+      expect(() => expect({ length: "abc" }).not.toBeEmpty()).toThrow("Received value has non-number length property");
+    });
+  }
 
   test("toBeEmptyObject()", () => {
     // Map and Set are not considered as object in jest-extended

@@ -2801,6 +2801,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
     }
     }
 
+    // No length at all; JSValue::get_length_if_property_exists (Rust) decodes this as None.
     return std::numeric_limits<double>::infinity();
 }
 

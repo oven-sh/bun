@@ -51,15 +51,15 @@ pub(crate) fn to_have_length(
 
     let mut pass = false;
 
-    let actual_length = value.get_length_if_property_exists_internal(global)?;
-
-    if actual_length == f64::INFINITY {
+    let Some(actual_length) = value.get_length_if_property_exists(global)? else {
         let mut fmt = super::make_formatter(global);
         return Err(global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
         )));
-    } else if actual_length.is_nan() {
+    };
+
+    if actual_length.is_nan() {
         return Err(global.throw(format_args!(
             "Received value has non-number length property: {}",
             actual_length,

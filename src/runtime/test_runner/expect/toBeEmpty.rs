@@ -16,9 +16,9 @@ pub(crate) fn to_be_empty(
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
 
-    let actual_length = value.get_length_if_property_exists_internal(global)?;
+    let actual_length = value.get_length_if_property_exists(global)?;
 
-    if actual_length == f64::INFINITY {
+    if actual_length.is_none() {
         if value.js_type_loose().is_object() {
             if value.is_iterable(global)? {
                 let mut any_properties_in_iterator = false;
@@ -71,13 +71,13 @@ pub(crate) fn to_be_empty(
                 value.to_fmt(&mut formatter)
             );
         }
-    } else if actual_length.is_nan() {
+    } else if let Some(actual_length) = actual_length.filter(|len| len.is_nan()) {
         return Err(global.throw(format_args!(
             "Received value has non-number length property: {}",
             actual_length
         )));
     } else {
-        pass = actual_length == 0.0;
+        pass = actual_length == Some(0.0);
     }
 
     if not && pass {

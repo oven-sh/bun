@@ -1081,7 +1081,11 @@ test(
         })();
       `,
       ],
-      env: bunEnv,
+      // Every fetch here is deliberately still in flight when its worker is terminated, and an
+      // in-flight fetch's tasklet is not reclaimed at worker teardown (pre-existing; not what this
+      // test is about), so leak checking is off for this child — the test guards the pump's
+      // termination handling, which aborts the child (no PASS) when it regresses.
+      env: { ...bunEnv, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1:disable_coredump=0" },
       stdout: "pipe",
       stderr: "pipe",
     });

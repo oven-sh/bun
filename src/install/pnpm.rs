@@ -2349,10 +2349,7 @@ fn rewrite_bare_patch_keys(
     Ok(())
 }
 
-/// Without a pnpm-lock.yaml to migrate (never committed, or older than
-/// `migrate_pnpm_lockfile` accepts) the install resolves from package.json
-/// alone, which turns a pnpm monorepo into a single package. A root
-/// package.json that already declares `workspaces` is treated as migrated.
+/// Imports pnpm-workspace.yaml when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
 pub(crate) fn migrate_pnpm_workspace_config(
     manager: &mut PackageManager,
 ) -> Result<(), AllocError> {
@@ -2369,11 +2366,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
     update_package_json_after_migration(manager, log, Fd::cwd(), &StringArrayHashMap::new())
 }
 
-/// Moves the configuration pnpm reads from package.json's `pnpm` field and
-/// from pnpm-workspace.yaml (workspace globs, catalogs, overrides, patched
-/// dependencies) into the package.json fields `bun install` reads.
-/// `patches` maps the bare `name` patch keys the lockfile resolved to their
-/// versions; it is empty when there is no lockfile.
+/// Moves the settings pnpm reads from package.json `pnpm.*` and pnpm-workspace.yaml into the fields bun reads.
 fn update_package_json_after_migration(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -2538,9 +2531,7 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // The yaml `Expr`s spliced into `json` below borrow the source text
-            // (plain scalars) and the parse arena (quoted and block scalars), so
-            // both live in `bump` until `json` has been printed.
+            // Quoted and block scalars are copied into the parse arena, so it has to outlive the print below.
             let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
@@ -2732,9 +2723,7 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    // The nodes spliced into `json` above live in `bump` and the thread-local
-    // AST store; re-parsing the printed source leaves the cache entry owning
-    // everything it points at, as the rest of the install expects.
+    // The spliced-in nodes live in `bump` and the AST store; re-parse so the cache entry owns its tree.
     print_package_json_into_cache_entry(root_pkg_json, json);
     if let Err(err) = root_pkg_json.reparse_root(log) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
@@ -2742,8 +2731,7 @@ fn update_package_json_after_migration(
     }
 
     let moved = moved.join(", ");
-    // The install that follows resolves from the updated entry, so a bun.lock
-    // saved after a failed write here would not match the package.json on disk.
+    // Continuing would save a bun.lock that does not match the package.json left on disk.
     if let Err(err) = sys::File::write_file(
         dir,
         bun_core::zstr!("package.json"),

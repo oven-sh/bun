@@ -664,16 +664,14 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        // `bun patch --commit` records the patch in the root package.json even
-        // when run from a workspace member; everything else edited the cwd's.
+        // `bun patch --commit` records the patch in the root package.json, even when run from a workspace.
         let path: &ZStr = if matches!(manager.options.patch_features, PatchFeatures::Commit { .. })
         {
             root_package_json_path
         } else {
             manager.original_package_json_path.as_zstr()
         };
-        // The cache entry, not the text printed before the install: a pnpm
-        // migration during `install_with_manager` edits the root entry too.
+        // Written from the cache entry: a pnpm migration inside `install_with_manager` may have edited it since.
         let entry = match manager
             .workspace_package_json_cache
             .get_with_path(

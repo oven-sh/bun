@@ -119,19 +119,14 @@ pub mod dir_iterator {
     /// step.
     pub struct IteratorResult {
         pub name: Name,
-        /// `Unknown` on filesystems that do not fill in `d_type` (FUSE, NFS,
-        /// XFS formatted with `ftype=0`); see [`IteratorResult::resolve_kind`].
         pub kind: EntryKind,
     }
 
     impl IteratorResult {
-        /// Resolves an `Unknown` kind in place and returns the kind.
-        ///
-        /// Uses `lstat`, which reports the same thing `d_type` would have (a
-        /// symlink is reported as a symlink, not as its target), so callers
-        /// behave the same on filesystems with and without `d_type`. `dir` is
-        /// the directory the entry was read from. The kind stays `Unknown` if
-        /// the entry cannot be stat'ed (for example it was removed since).
+        /// Replaces an `Unknown` kind (the filesystem did not fill in `d_type`)
+        /// with what `lstat` reports for the entry in `dir`, the directory it was
+        /// read from, and returns the kind. `lstat` so that a symlink is reported
+        /// the way `d_type` reports it, not as its target.
         pub fn resolve_kind(&mut self, dir: Fd) -> EntryKind {
             #[cfg(not(windows))]
             {
@@ -143,8 +138,7 @@ pub mod dir_iterator {
             }
             #[cfg(windows)]
             {
-                // `NtQueryDirectoryFile` always reports attributes, so the
-                // Windows iterator never yields `Unknown`.
+                // The Windows iterator always knows the kind.
                 let _ = dir;
             }
             self.kind
@@ -294,9 +288,7 @@ pub mod dir_iterator {
             // literal matches <sys/dirent.h>.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
-            // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
-            // provide d_type. Callers that need the type call
-            // `IteratorResult::resolve_kind()`.
+            // DT_UNKNOWN (FUSE, NFS, ...): see `IteratorResult::resolve_kind`.
             _ => EntryKind::Unknown,
         }
     }

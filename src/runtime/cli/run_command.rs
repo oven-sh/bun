@@ -3123,8 +3123,8 @@ impl RunCommand {
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
             // Scheme is case-insensitive per RFC 3986 §3.1.
-            if !bun_paths::strings::starts_with_case_insensitive_ascii(u, b"http://")
-                && !bun_paths::strings::starts_with_case_insensitive_ascii(u, b"https://")
+            if !strings::starts_with_case_insensitive_ascii(u, b"http://")
+                && !strings::starts_with_case_insensitive_ascii(u, b"https://")
             {
                 continue;
             }

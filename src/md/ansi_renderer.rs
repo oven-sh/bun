@@ -2683,11 +2683,9 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
+    // Resolve to an absolute path against the markdown file's directory
+    // when provided, else the process cwd. The join writes into a stack
+    // buffer, so dupe before returning.
     let mut cwd_buf = bun_paths::PathBuffer::uninit();
     let base: &[u8] = if let Some(d) = base_dir {
         d
@@ -2819,14 +2817,14 @@ fn read_png_dims(abs_path: &[u8]) -> Option<PngDims> {
     let mut zbuf = bun_paths::PathBuffer::uninit();
     let path_z = bun_paths::resolve_path::z(abs_path, &mut zbuf);
     let file = match bun_sys::File::open(path_z, bun_sys::O::RDONLY, 0) {
-        bun_sys::Result::Ok(f) => f,
-        bun_sys::Result::Err(_) => return None,
+        Ok(f) => f,
+        Err(_) => return None,
     };
     let mut buf = [0u8; 24];
     // read_all loops over short reads (e.g. FUSE/network mounts).
     // `file` closes on Drop.
     match file.read_all(&mut buf) {
-        bun_sys::Result::Ok(amt) if amt >= 24 => parse_png_dims(&buf),
+        Ok(amt) if amt >= 24 => parse_png_dims(&buf),
         _ => None,
     }
 }

@@ -299,8 +299,11 @@ impl Execution {
         let _g = group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
+        //   kill the dangling processes spawned by that group (each group is its own auto_killer scope, so
+        //   processes spawned by beforeAll or by earlier tests are left alone)
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
+        // timespec == EPOCH means the entry has no timeout; the timer that fired was armed by an earlier
+        // entry (update_min_timeout never unsets a timer), same as in ExecutionEntry::evaluate_timeout.
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
@@ -311,9 +314,11 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
+                    if !entry.timespec.eql(&Timespec::EPOCH)
+                        && entry.timespec.order(&now) == core::cmp::Ordering::Less
+                    {
                         // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
+                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill_scope();
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
@@ -565,7 +570,9 @@ impl Execution {
 
     fn on_group_started(global_this: &JSGlobalObject) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.enable();
+        let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
+        auto_killer.begin_scope();
+        auto_killer.enable();
     }
 
     fn on_group_completed(global_this: &JSGlobalObject) {

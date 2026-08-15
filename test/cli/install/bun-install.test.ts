@@ -7015,6 +7015,102 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/19088
+  //
+  // Workspace package.jsons are parsed without the root's duplicate check, so a name listed in
+  // two dependency groups yields two dependency slots. The hoister has to collapse them into one
+  // node_modules entry; the slot sorted first wins (dev, optional, prod, then peer), as it already
+  // did for the root package. `expected` is the `packages` section of bun.lock, name -> resolution.
+  it.each<{
+    name: string;
+    root?: Record<string, Record<string, string>>;
+    pkgA: Record<string, Record<string, string>>;
+    pkgB?: Record<string, Record<string, string>>;
+    expected: Record<string, string>;
+  }>([
+    {
+      name: "dependencies + devDependencies",
+      pkgA: { dependencies: { baz: "0.0.5" }, devDependencies: { baz: "0.0.3" } },
+      expected: { "baz": "baz@0.0.3", "pkg-a": "pkg-a@workspace:packages/pkg-a" },
+    },
+    {
+      name: "dependencies + optionalDependencies",
+      pkgA: { dependencies: { baz: "0.0.5" }, optionalDependencies: { baz: "0.0.3" } },
+      expected: { "baz": "baz@0.0.3", "pkg-a": "pkg-a@workspace:packages/pkg-a" },
+    },
+    {
+      // the root pin keeps both of pkg-a's slots out of the root folder, so they collide inside
+      // pkg-a's own node_modules instead of a parent's
+      name: "dependencies + optionalDependencies while the root pins a third version",
+      root: { dependencies: { baz: "0.0.7" } },
+      pkgA: { dependencies: { baz: "0.0.5" }, optionalDependencies: { baz: "0.0.3" } },
+      expected: { "baz": "baz@0.0.7", "pkg-a": "pkg-a@workspace:packages/pkg-a", "pkg-a/baz": "baz@0.0.3" },
+    },
+    {
+      // pkg-b makes the peer slot resolve to a different package than pkg-a's own dependencies slot
+      name: "dependencies + peerDependencies while a sibling workspace pins the peer's version",
+      pkgA: { dependencies: { baz: "0.0.5" }, peerDependencies: { baz: "0.0.3" } },
+      pkgB: { dependencies: { baz: "0.0.3" } },
+      expected: {
+        "baz": "baz@0.0.5",
+        "pkg-a": "pkg-a@workspace:packages/pkg-a",
+        "pkg-b": "pkg-b@workspace:packages/pkg-b",
+        "pkg-b/baz": "baz@0.0.3",
+      },
+    },
+  ])("--frozen-lockfile passes after a workspace lists a name in $name", async ({ root, pkgA, pkgB, expected }) => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, [], {
+          "0.0.3": { as: "0.0.3" },
+          "0.0.5": { as: "0.0.5" },
+          // a third version only has to resolve; there is no baz-0.0.7.tgz fixture
+          "0.0.7": { as: "0.0.5" },
+        }),
+      );
+
+      const files: Record<string, object> = {
+        "bunfig.toml": { install: { cache: false, registry: ctx.registry_url, linker: "hoisted" } },
+        "package.json": { name: "root", private: true, workspaces: ["packages/*"], ...root },
+        "packages/pkg-a/package.json": { name: "pkg-a", version: "1.0.0", ...pkgA },
+      };
+      if (pkgB) files["packages/pkg-b/package.json"] = { name: "pkg-b", version: "1.0.0", ...pkgB };
+      await Promise.all(
+        Object.entries(files).map(([path, contents]) =>
+          write(
+            join(ctx.package_dir, path),
+            path.endsWith(".toml") ? Bun.TOML.stringify(contents) : JSON.stringify(contents),
+          ),
+        ),
+      );
+
+      async function install(...args: string[]) {
+        const proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return await file(join(ctx.package_dir, "bun.lock")).text();
+      }
+
+      const lockfile = await install();
+      const packages = Bun.JSONC.parse(lockfile).packages as Record<string, [string, ...unknown[]]>;
+      expect(Object.fromEntries(Object.entries(packages).map(([name, [resolution]]) => [name, resolution]))).toEqual(
+        expected,
+      );
+
+      expect(await install("--frozen-lockfile")).toBe(lockfile);
+      expect(await install()).toBe(lockfile);
+    });
+  });
+
   it("should handle --frozen-lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       let urls: string[] = [];

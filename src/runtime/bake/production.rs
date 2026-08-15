@@ -1376,8 +1376,7 @@ extern "C" fn BakeProdResolve(
 pub use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
-/// Route scan callbacks for `bun build --app`: route files become server entry
-/// points, and reported errors are counted so the build fails after the scan.
+/// Route scan callbacks for `bun build --app`; counts the reported errors so the build can fail.
 struct RouteScan<'a> {
     entry_points: &'a mut EntryPointMap,
     error_count: usize,

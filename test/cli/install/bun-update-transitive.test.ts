@@ -744,6 +744,82 @@ test.concurrent("`bun update --latest -r` with a catalog pin converges with dedu
   expect(check.exitCode).toBe(0);
 });
 
+// `--latest` never moves a row below bun.lock: with `latest` behind the locked 2.0.0, the exact pin
+// stays, so parent's `>=2.0.0` edge is held instead of re-forking what dedupe removed.
+test.concurrent("`bun update --latest -r`: a pin ahead of `latest` keeps holding its siblings", async () => {
+  using server = await serveRegistry(
+    {
+      parent: { "1.0.0": { dependencies: { leaf: ">=2.0.0" } } },
+      leaf: { "1.9.0": {}, "2.0.0": {}, "2.1.0": {} },
+    },
+    { leaf: { latest: "1.9.0" } },
+  );
+  const dir = await installServed(server, "update-latest-behind-", pkgJson({ parent: "1.0.0", leaf: "2.0.0" }));
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "--latest", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// Root rows are re-appended unresolved before the plan runs; the snapshot recovers where they sat,
+// so a root pin still holds a member-scoped update's wants even though root is out of scope.
+test.concurrent("a root pin holds transitive wants when updating from a member", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("update-member-cwd-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { leaf: "1.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { parent: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// `bun update parent --latest` moves parent 1.0.0 -> 3.0.0; the superseded parent@1.0.0's `~1.0.0`
+// row must not hold the new parent's `^1.0.0` child edge, which moves in-range to 1.5.0.
+test.concurrent("`bun update <name> --latest`: a superseded version's rows do not hold the new children", async () => {
+  using server = await serveRegistry({
+    parent: {
+      "1.0.0": { dependencies: { leaf: "~1.0.0" } },
+      "3.0.0": { dependencies: { leaf: "^1.0.0" } },
+    },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(server, "update-superseded-", pkgJson({ parent: "1.0.0" }));
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "parent", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["3.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

@@ -293,7 +293,7 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, report) = plan_edges(manager, &edges, direct)?;
+        let (pins, report) = plan_edges(manager, &edges, direct, false)?;
         register_moved(manager, &report.moved)?;
         let printed_here = manager.options.dry_run || manager.options.lockfile_only;
         Ok(TransitiveUpdate {
@@ -424,7 +424,7 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default(), true)?;
     register_moved(manager, &report.moved)?;
     let update = TransitiveUpdate { pins, report: None };
     update.enqueue(manager)?;
@@ -1027,11 +1027,12 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag.
+/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. `post_resolution` marks the `refresh_children_of` call, which runs after the named rows resolved.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
+    post_resolution: bool,
 ) -> crate::Result<(Vec<Pin>, Report)> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
@@ -1133,7 +1134,7 @@ fn plan_edges(
     if instances.is_empty() {
         return Ok((Vec::new(), Report::default()));
     }
-    let edges_on = edges_on_instances(manager, &instances);
+    let edges_on = edges_on_instances(manager, &instances, direct, post_resolution);
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     let msgs_before = manager.log_mut().msgs.len();
@@ -1314,7 +1315,12 @@ struct InstanceEdges {
     direct: Vec<Vec<(DependencyID, bool)>>,
 }
 
-fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> InstanceEdges {
+fn edges_on_instances(
+    manager: &mut PackageManager,
+    instances: &[Instance],
+    direct_deps: &DirectDependencies,
+    post_resolution: bool,
+) -> InstanceEdges {
     struct DirectRow {
         dep_id: DependencyID,
         inst: u32,
@@ -1340,12 +1346,34 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
+        // After the named rows resolved, a superseded package's rows are still in the buffers;
+        // only owners something still resolves to contribute followers.
+        let referenced = post_resolution.then(|| {
+            let mut referenced = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+            for owner in 0..packages_len {
+                let slice = dep_slices[owner];
+                for row in slice.begin() as usize..slice.end() as usize {
+                    if (resolutions[row] as usize) < packages_len {
+                        referenced.set(resolutions[row] as usize);
+                    }
+                }
+            }
+            referenced
+        });
+
         for owner in 0..packages_len {
             let slice = dep_slices[owner];
             let is_direct = matches!(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
             );
+            if !is_direct
+                && referenced
+                    .as_ref()
+                    .is_some_and(|referenced| !referenced.is_set(owner))
+            {
+                continue;
+            }
             for row in slice.begin() as usize..slice.end() as usize {
                 if !is_direct {
                     let Some(&slot) = slot_of.get(resolutions[row] as usize) else {
@@ -1367,10 +1395,21 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
                     _ => continue,
                 };
                 let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
-                let res_slot = slot_of
+                let mut res_slot = slot_of
                     .get(resolutions[row] as usize)
                     .copied()
                     .unwrap_or(u32::MAX);
+                if (resolutions[row] as usize) >= packages_len {
+                    // The differ re-appends root rows unresolved; their pre-diff resolution lives in the snapshot.
+                    res_slot = snapshot_resolution(
+                        direct_deps,
+                        owner as PackageID,
+                        deps[row].name_hash,
+                        deps[row].behavior,
+                    )
+                    .and_then(|resolved| slot_of.get(resolved as usize).copied())
+                    .unwrap_or(u32::MAX);
+                }
                 for (i, inst) in instances.iter().enumerate() {
                     if name_hashes[inst.pkg_id as usize] == row_hash
                         && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
@@ -1434,6 +1473,23 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
     InstanceEdges { followers, direct }
 }
 
+/// The pre-differ resolution of a root/workspace row, matched by owner, name hash and behavior like `moved_pairs`.
+fn snapshot_resolution(
+    direct_deps: &DirectDependencies,
+    owner: PackageID,
+    name_hash: PackageNameHash,
+    behavior: Behavior,
+) -> Option<PackageID> {
+    let &(_, start, len) = direct_deps
+        .owners
+        .iter()
+        .find(|&&(pkg, _, _)| pkg == owner)?;
+    direct_deps.rows[start as usize..(start + len) as usize]
+        .iter()
+        .find(|&&(row_hash, row_behavior, _)| row_hash == name_hash && row_behavior == behavior)
+        .map(|&(_, _, resolved)| resolved)
+}
+
 /// Mirrors `should_update`'s named branch: the row names a requested package and sits in the update scope.
 fn named_row_in_scope(manager: &PackageManager, dep_id: DependencyID) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
@@ -1494,8 +1550,10 @@ fn direct_row_stays(
             _ => return false,
         }
     };
+    // `keep_locked_if_ahead`: update never moves a direct row below what bun.lock already has,
+    // so a lookup at or below `current` lands the row back on `current`.
     found.is_some_and(|found| {
-        found.version.order(current, &manifest.string_buf, buf) == Ordering::Equal
+        found.version.order(current, &manifest.string_buf, buf) != Ordering::Greater
     })
 }
 

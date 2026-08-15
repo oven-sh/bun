@@ -2,9 +2,9 @@
 // multiple branches (issue #35420), `git+file://` dependencies,
 // tarball-URL / `github:` dependencies that appear both directly and
 // transitively (issues #10915, #8501, #11348, #28284), and git / tarball
-// packages whose own package.json declares `file:` dependencies. Everything is
-// local: a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
-// when an http URL is needed) or static tarballs.
+// packages whose own package.json declares `file:` folder dependencies.
+// Everything is local: a bare repo on disk (served over git's dumb HTTP
+// protocol by Bun.serve when an http URL is needed) or static tarballs.
 import { expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { lstat, readdir, readlink } from "fs/promises";
@@ -435,18 +435,19 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A git or tarball package whose own package.json declares `file:` dependencies
-// (the shape registry packages publish too, see registry/packages/file-dep).
-// The paths are relative to the package, which is extracted into the cache, so
-// resolving them against the project dir turned them into paths into the cache
-// that were then rejected for escaping the declaring package:
+// A git or tarball package whose own package.json declares `file:` folder
+// dependencies (the shape registry packages publish too, see
+// registry/packages/file-dep). The paths are relative to the package, which is
+// extracted into the cache, so resolving them against the project dir turned
+// them into paths into the cache that were then rejected for escaping the
+// declaring package:
 //   error: Could not find package.json for "file:../<cache>/@T@.../sub" dependency "sub"
 //   error: sub@file:./sub failed to resolve
 // Registry packages keep the path as declared; git and tarball packages must too.
 const FILE_DEPS_NAME = "has-file-deps";
 
-// `file:` dependencies on a subfolder, on the package itself, and on a folder
-// that is not part of the package.
+// `file:` folder dependencies on a subfolder, on the package itself, and on a
+// folder that is not part of the package.
 const fileDepsManifest = {
   name: FILE_DEPS_NAME,
   version: "1.0.0",
@@ -514,7 +515,7 @@ async function expectFileDepsInstalled(project: string) {
 }
 
 for (const spec of ["file: path", "http url"] as const) {
-  test.concurrent(`installs the file: dependencies declared by a tarball package (${spec})`, async () => {
+  test.concurrent(`installs the file: folder dependencies declared by a tarball package (${spec})`, async () => {
     using dir = tempDir("tarball-file-deps", {});
     const root = String(dir);
     const tarballs = join(root, "tarballs");
@@ -542,7 +543,7 @@ for (const spec of ["file: path", "http url"] as const) {
 }
 
 test.concurrent(
-  "installs the file: dependencies declared by a git dependency",
+  "installs the file: folder dependencies declared by a git dependency",
   async () => {
     using dir = tempDir("git-dep-file-deps", {});
     const root = String(dir);
@@ -559,7 +560,7 @@ test.concurrent(
   30_000,
 );
 
-test.concurrent("does not install a file: dependency of a tarball package that points outside of it", async () => {
+test.concurrent("rejects a file: folder dependency of a tarball package that points outside of it", async () => {
   using dir = tempDir("tarball-escaping-file-dep", {
     "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
   });

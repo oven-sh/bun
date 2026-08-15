@@ -1206,9 +1206,10 @@ pub struct Features {
     pub is_workspace: bool,
     /// The package.json belongs to a local `file:` folder dependency. Together
     /// with `is_main` / `is_workspace` this marks the manifests that live in the
-    /// project, whose `file:` dependency paths are stored relative to the
-    /// top-level dir. `NPM` (registry, git and tarball packages) is parsed out of
-    /// the cache and keeps them relative to the package instead.
+    /// project: `Package::parse` stores their `file:` folder dependency paths
+    /// relative to the top-level dir. Manifests parsed with `NPM` (git and
+    /// tarball packages, extracted into the cache) keep those paths as declared,
+    /// the same form `Package::from_npm` stores for registry packages.
     pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,

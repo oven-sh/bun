@@ -803,7 +803,8 @@ impl Lockfile {
     /// Is the package whose `node_modules` this tree represents resolved from a
     /// local `file:` folder? Its `Resolution::Folder` dependencies were normalized
     /// relative to the top-level dir (`Package::parse` with `Features::FOLDER`), unlike
-    /// those of registry, git and tarball packages, which stay relative to the package.
+    /// those `Package::from_npm` and `Package::parse` with `Features::NPM` produce,
+    /// which are stored as declared, relative to the package.
     pub(crate) fn is_folder_tree_id(&self, id: tree::Id) -> bool {
         if id == 0 {
             return false;

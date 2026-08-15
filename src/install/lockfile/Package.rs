@@ -1843,11 +1843,11 @@ impl Package<u64> {
         }
 
         match dependency_version.tag {
-            // Only a manifest that lives in the project can have its `file:` paths
-            // rebased onto the top-level dir. A git/tarball package is parsed out of
-            // the cache: its paths stay relative to the package, as `Package::from_npm`
-            // stores them, and the installer resolves them against the installed copy
-            // of the declaring package.
+            // Only a manifest that lives in the project can have its `file:` folder
+            // paths rebased onto the top-level dir. A git/tarball package is parsed out
+            // of the cache (`Features::NPM`): its folder paths are kept as declared,
+            // like `Package::from_npm` keeps them, and the hoisted installer resolves
+            // them against the installed copy of the declaring package.
             dependency::version::Tag::Folder
                 if features.is_main || features.is_workspace || features.is_folder =>
             {

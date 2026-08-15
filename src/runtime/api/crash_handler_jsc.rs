@@ -132,29 +132,30 @@ pub(crate) mod js_bindings {
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
+    /// A real C `abort()`, the way WTF `CRASH()`/`RELEASE_ASSERT`, mimalloc
+    /// and BoringSSL die in release builds: SIGABRT on POSIX, the statically
+    /// linked UCRT's `abort()` (and its CRT SIGABRT hook) on Windows.
     #[bun_jsc::host_fn]
     fn js_abort(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the POSIX signal handlers are not installed; invoke the
         // handler directly so the reporter test still observes the upload.
-        if Environment::ENABLE_ASAN || cfg!(windows) {
+        if Environment::ENABLE_ASAN {
             crash_handler::crash_handler(
                 crash_handler::CrashReason::Abort,
                 crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
             );
         }
-        #[cfg(unix)]
         // SAFETY: libc::abort has no preconditions; never returns.
         unsafe {
             libc::abort();
         }
-        #[allow(unreachable_code)]
-        Ok(JSValue::UNDEFINED)
     }
 
     /// Dies like foreign native code, with Bun's crash handler provably out
     /// of the way on both platforms: `__fastfail` on Windows (uncatchable,
-    /// exit code 0xC0000409, same as UCRT abort(), Rust aborts, /GS checks)
+    /// exit code 0xC0000409: Rust aborts, /GS checks, and `abort()` in an
+    /// addon's own CRT, whose SIGABRT slot Bun's hook is not installed in)
     /// and a raw SIGABRT on POSIX (handlers reset first, like the
     /// `raiseIgnoringPanicHandler` binding below). The `abort` binding
     /// above is the opposite: it routes into the crash handler on purpose.
@@ -208,13 +209,22 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
+    /// `raiseIgnoringPanicHandler(signal?)`: re-raises `signal` (name or
+    /// number, default SIGSEGV) the way `bun run` forwards a child's fatal
+    /// signal, i.e. with the crash handler's hooks torn down first.
     #[bun_jsc::host_fn]
     fn js_raise_ignoring_panic_handler(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        let signal_arg = frame.argument(0);
+        let sig = if signal_arg.is_empty_or_undefined_or_null() {
+            bun_core::SignalCode::SIGSEGV as u8
+        } else {
+            bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global)?.0
+        };
         crash_handler::suppress_core_dumps_if_necessary();
-        Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
+        Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(sig));
     }
 
     #[bun_jsc::host_fn]

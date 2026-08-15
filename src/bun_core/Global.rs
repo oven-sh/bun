@@ -746,7 +746,8 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     // SIG_DFL instead of recursing into the panic handler. Storage moved down
     // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
     // we do the libc reset ourselves (no fn-ptr hook). Skip when ASAN owns the
-    // signals (we never installed over them); on Windows remove the VEH.
+    // signals (we never installed over them); on Windows remove the VEH and
+    // the CRT SIGABRT hook.
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
@@ -782,6 +783,13 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             }
             let _ = RemoveVectoredExceptionHandler(handle);
             let _ = SetUnhandledExceptionFilter(None);
+        }
+        // `sig` may be SIGABRT (UCRT `raise(6)` aliases it to the CRT SIGABRT
+        // slot), and `libc_abort()` below always goes through that slot; both
+        // must reach the CRT default rather than the crash handler's hook.
+        // SAFETY: `SIG_DFL` is a valid disposition for `SIGABRT`.
+        unsafe {
+            let _ = libc::signal(libc::SIGABRT, libc::SIG_DFL);
         }
     }
 

@@ -457,7 +457,6 @@ mod draft {
 
     use core::cell::Cell;
     use core::ffi::c_char;
-    #[cfg(not(windows))]
     use core::ffi::c_int;
     #[cfg(windows)]
     use core::ffi::c_long;
@@ -488,10 +487,11 @@ mod draft {
     use bun_core::output::enable_ansi_colors_stderr;
 
     /// On POSIX this is `libc::abort()` (async-signal-safe).
-    /// On Windows this is *not* MSVCRT `abort()` — it is
+    /// On Windows this is *not* UCRT `abort()` — it is
     /// `if (Debug) breakpoint(); kernel32.ExitProcess(3);`. UCRT `abort()` would
-    /// raise SIGABRT, may print `R6010 - abort() has been called` to stderr, and
-    /// can pop a Watson/WER dialog — none of which we want here.
+    /// raise SIGABRT (which `init` routes back into `crash_handler`, see
+    /// `handle_abort_windows`), or without that hook `__fastfail()` and possibly
+    /// pop a Watson/WER dialog — none of which we want here.
     #[inline(always)]
     fn abort() -> ! {
         #[cfg(windows)]
@@ -629,7 +629,10 @@ mod draft {
         BusError(usize),
         /// Posix-only
         FloatingPointError(usize),
-        /// Posix-only; libc/mimalloc `abort()`, `std::terminate`, etc.
+        /// `abort()` from libc/UCRT: WTF `CRASH()`/`RELEASE_ASSERT` in release
+        /// builds on Linux and Windows, mimalloc, BoringSSL, `std::terminate`,
+        /// etc. Arrives as SIGABRT on POSIX and via the CRT SIGABRT hook
+        /// (`handle_abort_windows`) on Windows.
         Abort,
         /// Posix-only; `__builtin_trap()` / WTF `CRASH()` / `brk` on aarch64.
         Trap(usize),
@@ -1703,6 +1706,27 @@ mod draft {
                     >(handle_unhandled_exception_windows),
                 ));
             }
+
+            // UCRT `abort()` raises no exception, so neither handler above
+            // sees it: it calls the CRT-level SIGABRT handler if one is
+            // installed and otherwise `__fastfail()`s (exit 0xC0000409). WTF
+            // `CRASH()`/`RELEASE_ASSERT` is `std::abort()` in release builds
+            // off Darwin, so without this hook every JSC assertion on Windows
+            // dies silently. This is the CRT's signal table, not libuv's;
+            // `process.on("SIGABRT")` never touches it.
+            // SAFETY: `handle_abort_windows` has the `void (*)(int)` signature
+            // the CRT calls handlers with, and lives for the whole process.
+            unsafe {
+                libc::signal(
+                    libc::SIGABRT,
+                    handle_abort_windows as *const () as libc::sighandler_t,
+                );
+            }
+            // The debug UCRT's `abort()` first reports "abort() has been
+            // called" (a dialog on an interactive desktop); the crash report
+            // from `handle_abort_windows` replaces it. No-op on the release
+            // UCRT, which never sets this flag.
+            _set_abort_behavior(0, WRITE_ABORT_MSG);
         }
         #[cfg(any(
             target_os = "macos",
@@ -1942,9 +1966,10 @@ mod draft {
                 debug_assert!(rc != 0);
             }
             // SAFETY: no memory-safety preconditions; clears the top-level
-            // filter back to the OS default.
+            // filter and the CRT SIGABRT slot back to their defaults.
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+                libc::signal(libc::SIGABRT, libc::SIG_DFL);
             }
             return;
         }
@@ -2101,6 +2126,34 @@ mod draft {
                 fp: info.ContextRecord as usize,
             },
         );
+    }
+
+    /// CRT SIGABRT handler (`init`). UCRT `abort()` calls this synchronously on
+    /// the aborting thread via `raise(SIGABRT)`, after resetting the slot to
+    /// `SIG_DFL`, so a second `abort()` while this report is being written
+    /// takes the CRT's own `__fastfail()` path (like `SA_RESETHAND` on POSIX).
+    /// The return address is inside UCRT `raise`, so the trace reads
+    /// `raise` -> `abort` -> the asserting frame, like the POSIX SIGABRT trace.
+    #[cfg(windows)]
+    extern "C" fn handle_abort_windows(_sig: c_int) {
+        crash_handler(
+            CrashReason::Abort,
+            TraceSeed::BeginAddr(debug::return_address()),
+        );
+    }
+
+    /// `_WRITE_ABORT_MSG` (`<stdlib.h>`).
+    #[cfg(windows)]
+    const WRITE_ABORT_MSG: core::ffi::c_uint = 0x1;
+
+    #[cfg(windows)]
+    unsafe extern "C" {
+        /// UCRT: replaces the `mask` bits of the process-wide abort behavior
+        /// flags with `flags`. Plain integer arguments, no preconditions.
+        safe fn _set_abort_behavior(
+            flags: core::ffi::c_uint,
+            mask: core::ffi::c_uint,
+        ) -> core::ffi::c_uint;
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

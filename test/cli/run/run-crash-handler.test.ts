@@ -352,37 +352,53 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
   expect(getMachOImageZeroOffset()).toBe(0x100000000);
 });
 
-test("raise ignoring panic handler does not trigger the panic handler", async () => {
-  let sent = false;
-  const resolve_handler = Promise.withResolvers();
-
-  using server = Bun.serve({
-    port: 0,
-    fetch(request, server) {
-      sent = true;
-      resolve_handler.resolve();
-      return new Response("OK");
-    },
-  });
-
-  const proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "raiseIgnoringPanicHandler"],
-    env: mergeWindowEnvs([
-      bunEnv,
-      {
-        BUN_CRASH_REPORT_URL: server.url.toString(),
-        BUN_ENABLE_CRASH_REPORTING: "1",
+// `raise_ignoring_panic_handler` is how `bun run` re-raises the signal that
+// killed the script: it must tear down every crash-handler hook first, SIGABRT
+// included (on Windows that is the CRT SIGABRT slot, which UCRT `raise()`
+// reaches from SIGABRT's POSIX number too), then die of the raw signal.
+// The crash handler prints the report URL before uploading, so a clean stderr
+// is the proof that no report was made or sent.
+describe("raise ignoring panic handler does not trigger the panic handler", () => {
+  test.concurrent.each(["SIGSEGV", "SIGABRT"] as const)("%s", async signal => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
       },
-    ]),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.raiseIgnoringPanicHandler("${signal}")`,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("oh no");
+    expect(stderr).not.toContain(server.url.toString());
+    expect(sent).toBe(false);
+    if (isWindows) {
+      // UCRT raise() with the disposition back at SIG_DFL is _exit(3).
+      expect(exitCode).toBe(3);
+    } else {
+      expect(proc.signalCode).toBe(signal);
+    }
   });
-
-  await proc.exited;
-
-  /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-  await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
-
-  expect(proc.exited).resolves.not.toBe(0);
-  expect(sent).toBe(false);
 });
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
@@ -497,6 +513,93 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(stderr).not.toContain(server.url.toString());
     expect(proc.signalCode).toBe("SIGABRT");
     expect(sent).toBe(false);
+  });
+});
+
+// Windows twin of the SIGABRT case above. There is no signal delivery: UCRT
+// abort() (what WTF CRASH()/RELEASE_ASSERT compiles to in release builds, and
+// what mimalloc, BoringSSL and plain C code call) runs the CRT-level SIGABRT
+// handler if one is installed and otherwise __fastfail()s. A fast-fail raises
+// no exception, so the VEH/UEF crash handlers never ran and every JSC
+// assertion on Windows exited 0xC0000409 with nothing on stderr. The crash
+// handler now installs a CRT SIGABRT handler at startup.
+describe.if(isWindows)("Windows: UCRT abort() is caught by the crash handler", () => {
+  const reportingEnv = (url: string) =>
+    mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: url,
+        BUN_ENABLE_CRASH_REPORTING: "1",
+        GITHUB_ACTIONS: undefined,
+        CI: undefined,
+      },
+    ]);
+
+  test.concurrent("abort() produces a crash report", async () => {
+    let sent = false;
+    const acked = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        expect(request.url).toEndWith("/ack");
+        sent = true;
+        acked.resolve();
+        return new Response("OK");
+      },
+    });
+
+    // The `abort` hook is a real UCRT abort() from bun.exe's statically
+    // linked CRT, the same call a RELEASE_ASSERT makes.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "abort",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: reportingEnv(server.url.toString()),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("panic(main thread): abort() called");
+    expect(stderr).toContain("oh no: Bun has crashed.");
+    expect(stderr).toContain(server.url.toString());
+    expect(exitCode).not.toBe(0);
+
+    await acked.promise;
+    expect(sent).toBe(true);
+  });
+
+  // Terminations that must stay out of the new hook. process.abort() is a
+  // user action (_exit(134) on Windows); fastfail is a bare __fastfail, which
+  // never enters the CRT, so it still dies with the raw NTSTATUS 0xC0000409
+  // (low byte 9 as an exit code) that `bun test --parallel` classifies on.
+  test.concurrent.each([
+    ["process.abort()", 134],
+    ["crash_handler.fastfail()", 9],
+  ] as const)("%s does not report a crash", async (code, expectedExitCode) => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const { crash_handler } = require("bun:internal-for-testing"); ${code}`],
+      env: reportingEnv(server.url.toString()),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("abort() called");
+    expect(stderr).not.toContain("Bun has crashed");
+    expect(stderr).not.toContain(server.url.toString());
+    expect(sent).toBe(false);
+    expect(exitCode).toBe(expectedExitCode);
   });
 });
 

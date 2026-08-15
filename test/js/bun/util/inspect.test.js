@@ -664,6 +664,28 @@ describe("a name defined with Object.defineProperty is displayed", () => {
     expect(Bun.inspect(new Cls())).toBe("Original {}");
     expect(called).toBe(false);
   });
+
+  it("a name redefined as empty prints like an anonymous function", () => {
+    const Unnamed = setName(class Original {}, "");
+    class Child extends Unnamed {}
+    expect([
+      Bun.inspect(Unnamed),
+      Bun.inspect(new Unnamed()),
+      Bun.inspect({ u: new Unnamed() }, { compact: true }),
+      Bun.inspect(Child),
+      Bun.inspect(setName(function original() {}, "")),
+    ]).toEqual(["[class (anonymous)]", "{}", "{ u: {} }", "[class Child]", "[Function]"]);
+  });
+
+  it("reading .name does not change the output of an untouched function", () => {
+    const { get } = Object.getOwnPropertyDescriptor({ get accessor() {} }, "accessor");
+    const Cls = class {};
+    const holder = { key: function () {} };
+    const values = [get, Cls, new Cls(), holder.key];
+    const before = values.map(value => Bun.inspect(value));
+    expect([get.name, Cls.name, holder.key.name]).toEqual(["get accessor", "Cls", "key"]);
+    expect(values.map(value => Bun.inspect(value))).toEqual(before);
+  });
 });
 
 it("console.log on a Blob shows name", () => {

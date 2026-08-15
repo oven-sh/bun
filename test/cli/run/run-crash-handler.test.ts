@@ -510,17 +510,18 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 describe.concurrent("trace string panic message", () => {
   const TRACE_STRING_MAX_LEN = 1024;
 
-  // 1024 bytes off a hash chain. Deterministic, and with 8 bits of entropy per
-  // byte nothing made of them deflates below ~1024 bytes, while the message
-  // payload of a trace string can hold at most 1024 * 3 / 4 compressed bytes.
+  // TRACE_STRING_MAX_LEN bytes off a hash chain: deterministic, and with 8 bits
+  // of entropy per byte nothing made of them deflates below that many bytes,
+  // while the message payload of a trace string holds at most 3/4 as many.
+  // So these messages cannot fit whatever the buffer size or the header length.
   const entropy = (() => {
     const chunks: Buffer[] = [];
     let digest = Buffer.from("trace string panic message");
-    while (chunks.length < 16) {
+    for (let bytes = 0; bytes < TRACE_STRING_MAX_LEN; bytes += digest.length) {
       digest = createHash("sha512").update(digest).digest();
       chunks.push(digest);
     }
-    return Buffer.concat(chunks);
+    return Buffer.concat(chunks).subarray(0, TRACE_STRING_MAX_LEN);
   })();
 
   async function panicTraceString(message: string): Promise<string> {
@@ -603,9 +604,9 @@ describe.concurrent("trace string panic message", () => {
   });
 
   test.each([
-    // 2048 one-byte characters.
+    // Two one-byte characters per entropy byte.
     ["ASCII", entropy.toString("hex")],
-    // 1024 three-byte characters, so a cut at an arbitrary byte offset would split one.
+    // One three-byte character per entropy byte, so a cut at an arbitrary byte offset would split one.
     ["multi-byte", Array.from(entropy, byte => String.fromCharCode(0x4e00 + byte)).join("")],
   ])("a message too long to fit is cut to the longest prefix that fits (%s)", async (_, message) => {
     const trace = await panicTraceString(message);

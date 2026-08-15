@@ -1634,9 +1634,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  // Callers unwrap a FileHandle to its fd. Anything else is a path (string,
-  // Buffer or URL) that has to be opened with `flag` and `mode`; fs.open
-  // rejects the values that are none of those.
+  // Callers already unwrapped a FileHandle to its fd; fs.open validates everything else.
   const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
     fdOrPath = await fs.open(fdOrPath, flag, mode);
@@ -1664,8 +1662,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     } catch {}
   }
 
-  // Like node, only sync data that was fully written; a failed write rejects
-  // with its own error, and an fsync failure rejects the promise.
+  // Node only syncs a write that succeeded; a failed one rejects with its own error.
   if (flush && error === undefined) {
     try {
       await fs.fsync(fdOrPath);

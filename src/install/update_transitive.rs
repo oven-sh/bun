@@ -1347,8 +1347,7 @@ fn edges_on_instances(
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        // Rows of removed or superseded subtrees are still in the buffers: only owners reachable
-        // from a root/workspace contribute followers (re-appended root rows reach via the snapshot).
+        // Removed or superseded subtrees are still in the buffers: only owners reachable from a root/workspace contribute followers.
         let mut reachable = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
         let mut queue: Vec<usize> = Vec::new();
         for owner in 0..packages_len {

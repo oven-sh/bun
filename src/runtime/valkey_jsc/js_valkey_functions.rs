@@ -1936,7 +1936,6 @@ impl JSValkeyClient {
                     }
                     Err(e) => return Err(e),
                 };
->>>>>>> b44b2c4b7d
 
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
             // channel.

@@ -2684,8 +2684,8 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
     // Resolve to an absolute path against the markdown file's directory
-    // when provided, else the process cwd. The join writes into a stack
-    // buffer, so dupe before returning.
+    // when provided, else the process cwd. The join writes into a pooled
+    // scratch buffer, so dupe before returning.
     let mut cwd_buf = bun_paths::PathBuffer::uninit();
     let base: &[u8] = if let Some(d) = base_dir {
         d

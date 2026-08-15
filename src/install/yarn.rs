@@ -497,9 +497,20 @@ fn read_package_json(
     ) {
         // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
         GetJsonResult::Entry(entry) => Ok((entry.source.clone(), entry.root)),
-        GetJsonResult::ReadErr(_) | GetJsonResult::ParseErr(_) => {
-            Err(crate::Error::InvalidPackageJSON)
+        GetJsonResult::ReadErr(err) => {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "{} reading \"{}\"",
+                    err.name(),
+                    bstr::BStr::new(abs_package_json_path)
+                ),
+            );
+            Err(err)
         }
+        // The parse diagnostics are already in `log`.
+        GetJsonResult::ParseErr(_) => Err(crate::Error::InvalidPackageJSON),
     }
 }
 
@@ -510,10 +521,7 @@ struct Binder<'a> {
 }
 
 impl Binder<'_> {
-    /// A root or workspace dependency is keyed in yarn.lock by the exact `name@range` it declares;
-    /// a same-name entry that merely satisfies the range is a different resolution. yarn never locked
-    /// peers, so required peers bind like a loaded bun.lock's and optional peers are left to the
-    /// hoister. `None` drops the row, and `bun install` resolves it like a newly added dependency.
+    /// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
     fn bind(&mut self, this: &Lockfile, dep: &Dependency) -> Option<PackageID> {
         let string_bytes = this.buffers.string_bytes.as_slice();
         if dep.version.tag == dependency::Tag::Workspace {
@@ -522,8 +530,10 @@ impl Binder<'_> {
                 .get(dep.version.workspace().slice(string_bytes))
                 .copied();
         }
+        // yarn never locked these peers; bind them the way loading a bun.lock does.
         if dep.behavior.is_peer() {
             if dep.behavior.is_optional_peer() {
+                // Bound by the hoister, as after a fresh resolve.
                 return Some(install::INVALID_PACKAGE_ID);
             }
             return lockfile::bun_lock::resolve_peer_dep_by_range(
@@ -544,8 +554,7 @@ impl Binder<'_> {
     }
 }
 
-/// Packages `0..importer_count` are the root and the workspaces; their package.json rows are the
-/// only rows in the buffers at this point, and the buffers are rebuilt with the ones that bind.
+/// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far.
 fn bind_importer_dependencies(
     this: &mut Lockfile,
     importer_count: usize,
@@ -573,6 +582,7 @@ fn bind_importer_dependencies(
         let off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
         for dep in declared.by_ref().take(declared_slice.len as usize) {
             let Some(resolution) = binder.bind(this, &dep) else {
+                // `bun install` resolves it, like a dependency added after yarn.lock was written.
                 continue;
             };
             this.buffers.dependencies.push(dep);

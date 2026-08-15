@@ -3368,8 +3368,7 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// The scan behind `resolve_peer_dep_version_based`, for a caller with no printed tree to fall back
-/// on (the yarn.lock migration binds the root's and workspaces' required peers with it, `*` included).
+/// `resolve_peer_dep_version_based`'s scan; the yarn.lock migration binds `*` peers with it too.
 pub(crate) fn resolve_peer_dep_by_range(
     dep: &Dependency,
     range: &DependencyVersion,

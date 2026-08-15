@@ -1791,9 +1791,19 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
         },
         peerDependenciesMeta: { typescript: { optional: true } },
       }),
-      "packages/b/package.json": JSON.stringify({ name: "@mono/b", version: "1.2.0" }),
-      "packages/c/package.json": JSON.stringify({ name: "@mono/c", version: "0.0.1" }),
+      "packages/b/package.json": JSON.stringify({
+        name: "@mono/b",
+        version: "1.2.0",
+        dependencies: { "is-number": "6.0.0" },
+      }),
+      "packages/c/package.json": JSON.stringify({
+        name: "@mono/c",
+        version: "0.0.1",
+        // Neither peer is satisfied by the first `is-number` / `lodash` yarn.lock has.
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      }),
       "yarn.lock": yarnLock(
+        yarnLockEntries["is-number-6"]("is-number@6.0.0"),
         yarnLockEntries["is-number-7"]("is-number@^7.0.0"),
         yarnLockEntries["lodash"]("lodash@^4.17.21"),
       ),
@@ -1813,13 +1823,21 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
         peerDependencies: { "is-number": ">=6", lodash: "*", typescript: ">=4" },
         optionalPeers: ["typescript"],
       },
-      "packages/b": { name: "@mono/b", version: "1.2.0" },
-      "packages/c": { name: "@mono/c", version: "0.0.1" },
+      "packages/b": { name: "@mono/b", version: "1.2.0", dependencies: { "is-number": "6.0.0" } },
+      "packages/c": {
+        name: "@mono/c",
+        version: "0.0.1",
+        // `is-number` binds to the 6.0.0 entry; `lodash` falls back to the only lodash there is, as a
+        // fresh install would ("incorrect peer dependency").
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      },
     });
     expect(resolvedPackages(lock)).toEqual({
       "@mono/a": "@mono/a@workspace:packages/a",
       "@mono/b": "@mono/b@workspace:packages/b",
+      "@mono/b/is-number": "is-number@6.0.0",
       "@mono/c": "@mono/c@workspace:packages/c",
+      "@mono/c/is-number": "is-number@6.0.0",
       "is-number": "is-number@7.0.0",
       "lodash": "lodash@4.17.21",
     });
@@ -1895,7 +1913,8 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
     expect(first.stderr).toContain("migrated lockfile from yarn.lock");
     expect(first.stderr).toContain("Saved lockfile");
 
-    expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+    const installed = nodeModulesPackages(packageDir);
+    expect(installed).toMatchInlineSnapshot(`
       "node_modules/a-dep/a-dep@1.0.1
       node_modules/no-deps/no-deps@1.0.0
       packages/a/a@1.0.0
@@ -1903,8 +1922,8 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
       packages/b/node_modules/no-deps/no-deps@1.0.1"
     `);
 
-    const lock = Bun.JSONC.parse(await Bun.file(join(packageDir, "bun.lock")).text()) as MigratedLock;
-    expect(resolvedPackages(lock)).toEqual({
+    const lockText = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(resolvedPackages(Bun.JSONC.parse(lockText) as MigratedLock)).toEqual({
       "a": "a@workspace:packages/a",
       "a-dep": "a-dep@1.0.1",
       "b": "b@workspace:packages/b",
@@ -1915,5 +1934,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
     // The migrated lockfile describes the package.json files exactly, so the next install has nothing to change.
     const second = await install(packageDir);
     expect(second.stderr).not.toContain("Saved lockfile");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(lockText);
+    expect(nodeModulesPackages(packageDir)).toBe(installed);
   });
 });

@@ -416,10 +416,13 @@ describe("@types/bun integration test", () => {
              event.message satisfies string;
              console.log(event.error);
            });
-           ws.addEventListener("error", (event: ErrorEvent) => console.log(event.error));
+           const onError = (event: ErrorEvent) => console.log(event.error);
+           ws.addEventListener("error", onError);
+           ws.removeEventListener("error", onError);
            ws.onerror = event => {
              event satisfies ErrorEvent;
-           };`,
+           };
+           ws.onerror = onError;`,
       });
 
       await using proc = Bun.spawn({

@@ -263,6 +263,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     ErrorableResolvedSource res;
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
+    ResolvedSourceCodeHolder sourceCodeHolder(&res);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),

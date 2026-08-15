@@ -81,6 +81,29 @@ public:
     bool wasModuleMock = false;
 };
 
+// Releases whatever a transpile left in `res` that no consumer took (error paths).
+class ResolvedSourceCodeHolder {
+public:
+    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
+        : res(res_)
+    {
+    }
+
+    ~ResolvedSourceCodeHolder()
+    {
+        if (!res->success)
+            return;
+        if (res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+            res->result.value.needsDeref = false;
+            res->result.value.source_code.impl.wtf->deref();
+        }
+        res->result.value.commonjs_static_exports.deref();
+        res->result.value.commonjs_static_exports = BunString { BunStringTag::Empty };
+    }
+
+    ErrorableResolvedSource* res;
+};
+
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,

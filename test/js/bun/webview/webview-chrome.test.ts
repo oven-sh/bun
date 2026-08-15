@@ -10,8 +10,8 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import {
   accessSync,
   chmodSync,
-  constants as fsConstants,
   existsSync,
+  constants as fsConstants,
   readdirSync,
   readFileSync,
   rmSync,

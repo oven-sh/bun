@@ -157,16 +157,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            // The sizing above is the owner's last write to any chunk before
-            // the fan-out. The views the tasks read through are taken only
-            // now, and from here until `group.wait()` below this function only
-            // reads `chunks`: under Rust's aliasing rules, writing through the
-            // owner (or reborrowing it `&mut`, e.g. `iter_mut()`) invalidates
-            // every view taken from it earlier, even though the bytes do not
-            // move. See `GenerateChunkCtx::chunk`.
+            // Take the tasks' views only after the writes above, and until
+            // `group.wait()` only read `chunks` (no `iter_mut()`): writing
+            // through, or `&mut`-reborrowing, the owner invalidates every view
+            // previously taken from it.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
-            // the fan-out only reads through this view
-            // (`pending_part_range_prologue`).
+            // the fan-out only reads through this view.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);

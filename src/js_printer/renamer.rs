@@ -139,13 +139,9 @@ impl<'a> NoOpRenamer<'a> {
     }
 }
 
-// Two lifetime params — `'r` is the borrow of the underlying renamer,
-// `'src` is `NoOpRenamer`'s borrow of the `Source`.
-//
-// The variants hold shared borrows: names are fully assigned before anything
-// is printed, and the bundler prints every part range of a chunk in parallel
-// through the chunk's one renamer, so a `Renamer` must be obtainable from
-// `&Chunk` without any task claiming exclusive access to it.
+// `'r` is the borrow of the underlying renamer, `'src` is `NoOpRenamer`'s
+// borrow of the `Source`. Shared borrows: names are assigned before printing,
+// and the bundler prints a chunk's part ranges in parallel through one renamer.
 pub enum Renamer<'r, 'src> {
     NumberRenamer(&'r NumberRenamer),
     NoOpRenamer(&'r NoOpRenamer<'src>),
@@ -161,10 +157,8 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    /// The returned bytes live as long as the borrowed renamer (`'r`), not just
-    /// as long as this `Renamer` value: they point into the AST arena
-    /// (`Symbol::original_name`), the `Source` contents, or the renamer's own
-    /// slot storage, none of which change while the renamer is borrowed.
+    /// Returns `&'r` (the renamer's borrow, not this value's) so the printer
+    /// can hold a name across its own `&mut self` calls.
     pub fn name_for_symbol(&self, ref_: Ref) -> &'r [u8] {
         match *self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),

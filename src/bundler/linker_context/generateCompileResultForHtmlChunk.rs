@@ -33,14 +33,10 @@ use crate::{Chunk, CompileResult};
 ///    a <link rel="modulepreload" href="..." crossorigin> tag that
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
-// `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
-// `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` through the shared
-// views the prologue and `GenerateChunkCtx` hand out; the other chunks' fields
-// it reads (`unique_key`, `content`, `entry_point`) are frozen for the whole
-// fan-out. See `generate_compile_result_for_js_chunk` for the
-// `PendingPartRange: Send` justification.
+// CONCURRENCY: thread-pool callback — one task per HTML chunk. Writes:
+// `chunk.compile_results_for_chunk[0]`; everything else, including the other
+// chunks' `unique_key` / `content` / `entry_point`, is read. See
+// `generate_compile_result_for_js_chunk`.
 //
 /// # Safety
 ///
@@ -57,9 +53,8 @@ pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoo
     let ctx: &GenerateChunkCtx = part_range.ctx;
     let chunks: &[Chunk] = ctx.chunks.get();
     let result = generate_compile_result_for_html_chunk_impl(c, chunk, chunks);
-    // SAFETY: an HTML chunk has exactly one part range, so this task is the
-    // only writer of the slot, and nothing reads it before the pool join; see
-    // `CompileResultSlots::write`.
+    // SAFETY: an HTML chunk has one part range, so this is the slot's only
+    // writer; nothing reads it before the join.
     unsafe {
         chunk
             .compile_results_for_chunk

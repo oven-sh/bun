@@ -13,16 +13,11 @@ use crate::{Chunk, CompileResult, Index, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// `PendingPartRange`, and every part range of every JS chunk is in flight at
-// once against the same `LinkerContext` (and, per chunk, the same `Chunk`).
-// Writes: `chunk.compile_results_for_chunk[i]` (disjoint by per-task `i`),
-// `chunk.files_with_parts_in_chunk[source].counter` (atomic RMW). Reads
-// `c.graph`/`c.parse_graph` SoA columns and `chunk.renamer` shared. The
-// prologue hands out `&LinkerContext` / `&Chunk` and the whole impl chain
-// (`generate_code_for_file_in_chunk_js`, `convert_stmts_for_chunk*`,
-// `print_code_for_file_in_chunk_js`) takes `&`, exactly like the CSS and
-// HTML callbacks; nothing here may form `&mut` to either (see
+// CONCURRENCY: thread-pool callback — one task per `PendingPartRange`, all of
+// them in flight at once against one `LinkerContext` and, per chunk, one
+// `Chunk`. Writes: `chunk.compile_results_for_chunk[i]` (per-task `i`),
+// `chunk.files_with_parts_in_chunk[source]` (atomic RMW); everything else is
+// read through the `&LinkerContext` / `&Chunk` from the prologue (enforced by
 // test/internal/source-lints/chunk-codegen-shared-borrows.test.ts).
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
 // `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
@@ -41,8 +36,7 @@ pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolL
     let result =
         generate_compile_result_for_js_chunk_impl(&mut **worker, c, chunk, part_range.part_range);
 
-    // SAFETY: `part_range.i` is unique among this chunk's tasks and nothing
-    // reads the slot before the pool join; see `CompileResultSlots::write`.
+    // SAFETY: `part_range.i` is this task's own slot; nothing reads it before the join.
     unsafe {
         chunk
             .compile_results_for_chunk

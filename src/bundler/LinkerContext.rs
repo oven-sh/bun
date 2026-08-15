@@ -1595,32 +1595,20 @@ pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// Note: pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
 /// thread. The per-chunk `each_ptr` passes (`generate_js_renamer`,
-/// `generate_chunk`) receive their own chunk as a separate `*mut Chunk` and
-/// only write to that; reads of `c`/`chunks` are read-only.
+/// `generate_chunk`) write only the chunk they are handed separately.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
-    /// Shared view of the full `chunks` slice owned by
-    /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so
-    /// [`bun_ptr::BackRef`]'s owner-outlives-holder invariant holds and reads
-    /// go through safe `Deref`.
+    /// All chunks, outliving every ctx (`generate_chunks_in_parallel` joins
+    /// each pass before returning).
     pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
-    /// Shared view of this context's `Chunk` (an element of `chunks`), for the
-    /// part-range fan-out: every `PendingPartRange` of the chunk reads through
-    /// it and publishes its result via
-    /// [`CompileResultSlots::write`](crate::chunk::CompileResultSlots::write),
-    /// so no task ever needs write access to the chunk itself.
-    ///
-    /// Both views are taken in `generate_chunks_in_parallel` *after* the
-    /// owner's last write to the chunks (sizing `compile_results_for_chunk`),
-    /// and the owner only reads the slice until the fan-out is joined: a view
-    /// taken earlier would be invalidated by those writes under Rust's
-    /// aliasing rules even though it would still point at the same bytes.
+    /// This ctx's chunk, shared by all of its part-range tasks; they publish
+    /// through `compile_results_for_chunk` and never need `&mut Chunk`. Both
+    /// views are taken after the owner's last write to the chunks (see
+    /// `generate_chunks_in_parallel`).
     pub(crate) chunk: bun_ptr::BackRef<Chunk>,
 }
-// SAFETY: see note above — the shared views are only read through, and each
-// `each_ptr` task writes only the chunk it was handed separately.
+// SAFETY: see note above — the views are only read through.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
@@ -1663,28 +1651,19 @@ pub struct PendingPartRange<'a> {
     pub(crate) i: u32,
 }
 
-/// Shared prologue for the `generate_compile_result_for_{js,css,html}_chunk`
-/// thread-pool callbacks: recover the intrusive [`PendingPartRange`] from
-/// `task`, borrow the `LinkerContext` and this task's `Chunk` from its
-/// [`GenerateChunkCtx`], and acquire the per-thread
-/// [`Worker`](crate::thread_pool::Worker) (returned as a scopeguard that calls
-/// `unget()` on drop).
+/// Shared prologue for the `generate_compile_result_for_*_chunk` thread-pool
+/// callbacks: recovers the [`PendingPartRange`] from `task` and acquires the
+/// per-thread [`Worker`](crate::thread_pool::Worker) (released on drop).
 ///
-/// CONCURRENCY: every part range of every chunk is in flight at once, so the
-/// callbacks get `&LinkerContext` / `&Chunk` and nothing stronger. That is
-/// all they need: the only writes in this phase are each task's own
-/// `compile_results_for_chunk` slot
-/// ([`CompileResultSlots::write`](crate::chunk::CompileResultSlots::write))
-/// and the `files_with_parts_in_chunk` atomics, both of which go through
-/// interior mutability behind the shared borrow. The owner holds
-/// `&mut LinkerContext` / `&mut [Chunk]` across the fan-out but only reads
-/// through them until the batch is joined (see the views' derivation note on
-/// [`GenerateChunkCtx::chunk`]).
+/// Every part range of every chunk is in flight at once, so the callbacks get
+/// `&LinkerContext` / `&Chunk`; their only writes are their own
+/// `compile_results_for_chunk` slot and the `files_with_parts_in_chunk`
+/// atomics (see `unsafe impl Sync for Chunk`).
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
-/// by `generate_chunks_in_parallel`; the returned borrows are valid until the
-/// callback returns, which happens before the owner's `group.wait()` returns.
+/// by `generate_chunks_in_parallel`, whose `group.wait()` keeps everything the
+/// returned borrows point at alive until the callback returns.
 #[inline]
 #[allow(clippy::type_complexity)]
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
@@ -2154,11 +2133,8 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    // CONCURRENCY: called from every JS part-range task at once (see
-    // `generate_compile_result_for_js_chunk`); `&self` is what makes the
-    // concurrent borrows of one `LinkerContext` legitimate, so everything in
-    // here, including the `require_or_import_meta_for_source` callback the
-    // printer calls back into, must stay read-only over `self`.
+    // Runs on every JS part-range task at once; `&self` (including in the
+    // `require_or_import_meta_for_source` callback below) is load-bearing.
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,

@@ -21,10 +21,8 @@ use bun_js_parser::lexer as js_lexer;
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
-// CONCURRENCY: runs on worker threads for every part range of every JS chunk
-// at once (see `generate_compile_result_for_js_chunk`), so `c` and `chunk`
-// are shared borrows and everything reached through them is read-only; all
-// output goes to the caller-owned `writer` / `stmts` / `module_info`.
+// Runs for every part range of every JS chunk at once; `c` and `chunk` are
+// shared with all of those tasks (see `generate_compile_result_for_js_chunk`).
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     c: &LinkerContext,

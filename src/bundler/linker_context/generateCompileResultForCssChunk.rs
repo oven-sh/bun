@@ -12,12 +12,10 @@ use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
 
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
-// by per-task `i`), `chunk.files_with_parts_in_chunk[source]` (atomic RMW).
-// Reads `c.graph.ast.css` / `c.options` through the `&LinkerContext` /
-// `&Chunk` the prologue hands out. See `generate_compile_result_for_js_chunk`
-// for the `PendingPartRange: Send` justification.
+// CONCURRENCY: thread-pool callback — one task per `PendingPartRange`. Writes:
+// `chunk.compile_results_for_chunk[i]` (per-task `i`),
+// `chunk.files_with_parts_in_chunk[source]` (atomic RMW); everything else is
+// read. See `generate_compile_result_for_js_chunk`.
 //
 /// # Safety
 ///
@@ -34,8 +32,7 @@ pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPool
 
     let result = generate_compile_result_for_css_chunk_impl(&mut **worker, c, chunk, part_range.i);
 
-    // SAFETY: `part_range.i` is unique among this chunk's tasks and nothing
-    // reads the slot before the pool join; see `CompileResultSlots::write`.
+    // SAFETY: `part_range.i` is this task's own slot; nothing reads it before the join.
     unsafe {
         chunk
             .compile_results_for_chunk

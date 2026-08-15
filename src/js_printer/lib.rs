@@ -1306,10 +1306,8 @@ impl Default for RequireOrImportMetaCallback {
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
-///
-/// Takes `&self`: the bundler installs one callback per part range while
-/// printing many part ranges of the same `LinkerContext` concurrently, so the
-/// erased context is only ever a shared borrow.
+/// `&self` because the bundler prints many part ranges of one `LinkerContext`
+/// concurrently.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
         &self,
@@ -2414,9 +2412,6 @@ pub(crate) mod __gated_printer {
             self.renamer.symbols()
         }
 
-        /// The name borrows the renamer for `'a` (`Renamer<'a, 'a>`), not
-        /// `self`, so callers can hold it across the `&mut self` print calls
-        /// that follow.
         #[inline]
         fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
             self.renamer.name_for_symbol(ref_)
@@ -7367,8 +7362,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
-    // Declared out here so the borrow stored in `renamer` outlives the branch
-    // that fills in whichever of the two is used.
     let no_op_renamer;
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only

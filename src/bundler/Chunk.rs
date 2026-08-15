@@ -114,34 +114,17 @@ impl Default for Content {
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
-//
-// CONCURRENCY: during the `generate_compile_result_for_*_chunk` fan-out, many
-// `PendingPartRange` tasks share ONE `&Chunk` (handed out by
-// `pending_part_range_prologue`, derived in `generate_chunks_in_parallel`
-// after the owner's last write to the chunk) and each publishes into a
-// disjoint `compile_results_for_chunk[i]`. That field is therefore
-// [`CompileResultSlots`] (UnsafeCell-per-slot), so the per-task write goes
-// through interior mutability behind the shared borrow and nothing in the
-// fan-out ever needs `&mut Chunk` — see [`CompileResultSlots::write`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW; the renamer
-// is fully populated before fan-out and every part-range task reads it
-// through `ChunkRenamer::as_renamer(&self)`.
 unsafe impl Send for Chunk {}
-// SAFETY: the only writes into a `Chunk` while it is shared across the
-// fan-out are the `compile_results_for_chunk` slot writes (UnsafeCell per
-// slot, one task per index) and the `files_with_parts_in_chunk` atomics,
-// both of which `&Chunk` permits; every other field is written only by the
-// single-threaded owner before the fan-out and after the pool join.
+// SAFETY: the part-range fan-out (`generate_compile_result_for_*_chunk`)
+// shares one `&Chunk` per chunk across tasks. The only writes while it is
+// shared are the `compile_results_for_chunk` slots (`UnsafeCell`, one task
+// per index) and the `files_with_parts_in_chunk` atomics; every other field
+// is written only by the single-threaded owner before and after the fan-out.
 unsafe impl Sync for Chunk {}
 
-/// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
-///
-/// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
-/// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
-/// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`)
-/// through [`CompileResultSlots::write`], then read single-threaded after the
-/// batch's `group.wait()`. Wrapping each slot in `UnsafeCell` is what makes
-/// the per-task write sound through the `&Chunk` every task shares.
+/// One output slot per `PendingPartRange` of the chunk, sized before the
+/// fan-out, written concurrently through [`CompileResultSlots::write`], and
+/// read after the pool join.
 #[derive(Default)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
@@ -162,21 +145,14 @@ impl CompileResultSlots {
         self.0.len()
     }
 
-    /// Publish one part range's result from a `generate_compile_result_for_*_chunk`
-    /// worker callback. Takes `&self` because every task of the chunk holds the
-    /// same `&Chunk`; the `UnsafeCell` around the slot is what makes the write
-    /// legal through that shared borrow.
+    /// Publish one part range's result from its worker task.
     ///
     /// # Safety
-    /// - No other task may write slot `i` of this chunk (`i` is the task's
-    ///   `PendingPartRange::i`, unique per chunk by construction).
-    /// - Nothing may read slot `i` until the worker-pool join; the post-join
-    ///   readers (`iter`, `get_mut`, `Index`) rely on that happens-before.
+    /// `i` must be this task's own `PendingPartRange::i` (no other task writes
+    /// it), and nothing may read the slot before the pool join.
     #[inline]
     pub(crate) unsafe fn write(&self, i: usize, result: CompileResult) {
-        // SAFETY: per the contract this task is the slot's only accessor until
-        // the join, so the write through the cell cannot race or alias; the old
-        // (default) value is dropped in place. Indexing bounds-checks `i`.
+        // SAFETY: per the contract, this is the slot's only access until the join.
         unsafe { *self.0[i].get() = result };
     }
 

@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -131,5 +131,124 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
     ],
+  });
+});
+
+describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer", () => {
+  // 100 KB is longer than PATH_MAX on every platform (4 KB on Linux, 1 KB on
+  // macOS, ~96 KB on Windows), so the resolved root cannot fit in a path buffer.
+  const tooLongRoot = `Buffer.alloc(100_000, "a").toString()`;
+  const tooLongRootError = "ENAMETOOLONG: Failed to resolve 'fileSystemRouterTypes[0].root' for framework";
+  const serverEntryPoint = `
+    export function render(req, meta) {
+      return meta.pageModule.default(req, meta);
+    }
+  `;
+  const serveOrReport = (options: string) => `
+    try {
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        ${options},
+        fetch: () => new Response(""),
+      });
+      server.stop(true);
+      console.log("started");
+    } catch (e) {
+      console.log("threw: " + e.message);
+    }
+  `;
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  for (const [kind, root] of [
+    ["relative", tooLongRoot],
+    ["absolute", `"/" + ${tooLongRoot}`],
+  ]) {
+    test(`Bun.serve({ app }) reports the root (${kind}) instead of crashing`, async () => {
+      using dir = tempDir(`fsr-long-root-app-${kind}`, {
+        "server.ts": serverEntryPoint,
+        "start.ts": serveOrReport(`
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: ${root}, style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+              ],
+            },
+          }
+        `),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+      expect(stderr).toContain(tooLongRootError);
+      expect(stdout).toBe("threw: Framework is missing required files!\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("Bun.serve({ routes: { '/*': { dir, style } } }) reports the root instead of crashing", async () => {
+    using dir = tempDir("fsr-long-root-routes", {
+      "start.ts": serveOrReport(`routes: { "/*": { dir: ${tooLongRoot}, style: "nextjs-pages" } }`),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+    expect(stderr).toContain(tooLongRootError);
+    expect(stdout).toBe("threw: Framework is missing required files!\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun build --app reports the root instead of crashing", async () => {
+    using dir = tempDir("fsr-long-root-build", {
+      "server.ts": serverEntryPoint,
+      "bun.app.ts": `
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: ${tooLongRoot}, style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+              ],
+            },
+          },
+        };
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), "build", "--app");
+    expect(stderr).toContain(tooLongRootError);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a root that only normalizes down to a path that fits is served", async () => {
+    using dir = tempDir("fsr-long-root-normalizes", {
+      "server.ts": serverEntryPoint,
+      "routes/index.ts": `export default () => new Response("hello from routes");`,
+      "start.ts": `
+        // 100 KB as written, "routes" once the ".." segments are resolved.
+        const root = "routes" + Buffer.alloc(100_000, "/../routes").toString();
+        using server = Bun.serve({
+          port: 0,
+          development: true,
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root, style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+            },
+          },
+          fetch: () => new Response("not routed", { status: 404 }),
+        });
+        const res = await fetch(\`http://localhost:\${server.port}/\`);
+        console.log(res.status, await res.text());
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+    expect(stderr).not.toContain("ENAMETOOLONG");
+    expect(stdout).toBe("200 hello from routes\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -69,7 +69,8 @@ async function lockfileTree(dir: string) {
 
 async function installedPackageJsons(dir: string) {
   const nodeModules = join(dir, "node_modules");
-  return (await Array.fromAsync(new Bun.Glob("**/package.json").scan({ cwd: nodeModules, dot: true }))).sort();
+  const paths = await Array.fromAsync(new Bun.Glob("**/package.json").scan({ cwd: nodeModules, dot: true }));
+  return paths.map(path => path.replaceAll("\\", "/")).sort();
 }
 
 // Installs `files` from scratch, then again in a new directory from the bun.lock that produced,

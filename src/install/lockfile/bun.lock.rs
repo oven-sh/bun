@@ -3458,10 +3458,7 @@ fn map_dep_to_pkg(
     }
 }
 
-/// Edges a fresh install itself leaves unresolved, so a lockfile bun wrote can
-/// list them without a package entry: optional dependencies, and peers that
-/// nothing in the tree provided and no published version satisfied (see
-/// `warn_unmet_peer_dependency` in `PackageManagerEnqueue.rs`).
+/// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }

@@ -1642,10 +1642,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     }
 }
 
-/// A peer that nothing in the tree provides and that no published version
-/// satisfies stays unresolved; unlike a regular dependency it does not fail
-/// the install. bun.lock then records the edge without a package
-/// (`may_stay_unresolved` in bun.lock.rs).
+/// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
 #[cold]
 #[inline(never)]
 fn warn_unmet_peer_dependency(
@@ -2592,9 +2589,7 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    // Deferred to the peer pass, as in `get_or_put_resolved_package_with_find_result`.
-                    // Not from the peer pass itself: the caller takes `Ok(None)` to mean the
-                    // manifest is not loaded yet and would reload it from the cache forever.
+                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
                     if behavior.is_peer() && !install_peer {
                         return Ok(None);
                     }

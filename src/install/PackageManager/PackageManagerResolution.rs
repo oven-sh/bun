@@ -325,9 +325,7 @@ impl PackageManager {
                     continue;
                 }
 
-                // A peer that nothing provides stays unresolved (at most a
-                // warning, see `warn_unmet_peer_dependency`), and bun.lock
-                // records it that way (`may_stay_unresolved` in bun.lock.rs).
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }

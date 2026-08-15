@@ -1,57 +1,38 @@
-//! Per-input-file sourcemap used by the bundler to chain sourcemaps through
-//! upstream compile steps (e.g. `.vue` → `.js`, `.svelte` → `.js`,
-//! TypeScript plugins). When `Bun.build` reads an input file that carries
-//! an inline `//# sourceMappingURL=data:application/json;...` comment, we
-//! parse it into an `InputSourceMap` and store it on the file's
-//! `Graph::InputFile`. `LinkerContext` then emits its `sources` /
-//! `sourcesContent` in place of the intermediate, and `Chunk::Builder`
-//! remaps each mapping through `map.find_mapping` during printing so stack
-//! traces surface in the authored source.
+//! Inline `//# sourceMappingURL=data:...` sourcemap carried by a bundler
+//! input file, stored on `Graph::InputFile`. `LinkerContext` expands its
+//! `sources`/`sourcesContent` and `Chunk::Builder` remaps mappings through
+//! it so the output map points at the authored source.
 
 use std::sync::Arc;
 
 use crate::ParsedSourceMap;
 
-/// Parsed inner sourcemap + per-source content bytes, owned.
-///
-/// `map.external_source_names` holds the chained-in `sources[]`.
-/// `sources_content[i]` is the inner file's `sourcesContent[i]`; an empty
-/// slot (`b""`) means the inner map did not carry content for that source.
+/// `map.external_source_names` holds the chained-in `sources[]`;
+/// `sources_content[i]` is `sourcesContent[i]` (`b""` when absent).
 pub struct InputSourceMap {
     pub map: Arc<ParsedSourceMap>,
     pub sources_content: Box<[Box<[u8]>]>,
 }
 
 impl InputSourceMap {
-    /// Parse a sourcemap JSON blob intended to chain through a bundler input
-    /// file. Returns `None` when the payload is malformed — callers fall back
-    /// to the raw file bytes. Allocation failures panic via `handle_oom`.
-    ///
-    /// `json_bytes` is borrowed; the function copies out what it needs.
+    /// `None` on malformed payloads — callers fall back to the raw file
+    /// bytes. Copies what it needs out of `json_bytes`.
     pub fn parse(json_bytes: &[u8]) -> Option<Box<InputSourceMap>> {
         parse_internal(json_bytes).ok()
     }
 
-    /// Locate a trailing `//# sourceMappingURL=data:...` inline comment in
-    /// `source` and parse the embedded map. Returns `None` when no URL is
-    /// present, when the URL is not a data URL (e.g. a `.map` filename), or
-    /// when the payload fails to parse. External `.map` file resolution is
-    /// the caller's responsibility.
+    /// Parse the map from a trailing inline comment in `source`. `None`
+    /// for no/non-`data:` URL (external `.map` resolution is the
+    /// caller's) or a malformed payload.
     pub fn parse_from_source(source: &[u8]) -> Option<Box<InputSourceMap>> {
         let url = find_source_mapping_url(source)?;
         parse_data_url(url)
     }
 }
 
-/// Malformed input is indistinguishable from "no chain available" — callers
-/// treat it as a silent fallback to the raw file bytes.
+/// Malformed input behaves exactly like "no chain available".
 struct InvalidSourceMap;
 
-/// Workhorse returning `Result` so `?` fires cleanup on malformed-payload
-/// bails — critical because JSON can pass the structural checks but still
-/// have a malformed `mappings` VLQ, and we'd otherwise leak everything
-/// allocated up to that point (cleanup rides on `Drop` at each early
-/// return).
 fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourceMap> {
     use bun_ast::StoreResetGuard as DataStoreScope;
 
@@ -65,9 +46,8 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
 
     let root = bun_parsers::json::parse_json_into_arena(&json_src, &mut log, &arena)
         .map_err(|_| InvalidSourceMap)?;
-    // The tape-based JSON parser represents containers as `EObjectJSON` /
-    // `EArrayJSON` rows; read through the tape accessors rather than
-    // materializing `Expr`s per element.
+    // Containers come back as `EObjectJSON`/`EArrayJSON` tape rows; read
+    // them through the tape accessors.
     let obj: &bun_ast::E::ObjectJSON = match &root.data {
         bun_ast::ExprData::EObjectJSON(o) => o.get(),
         _ => return Err(InvalidSourceMap),
@@ -110,11 +90,9 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
 
     let source_count = sources_paths.items().len();
 
-    // Copy source paths out of the arena into owned storage. A `sources[i]`
-    // longer than `MAX_PATH_BYTES` is rejected (the whole map falls back):
-    // the name is resolved against the intermediate's dir via the
-    // fixed-size path buffers in `bun_paths`, which would otherwise panic
-    // on an oversized entry from an adversarial inline map.
+    // A `sources[i]` longer than `MAX_PATH_BYTES` rejects the whole map:
+    // the linker resolves it through fixed-size path buffers that panic on
+    // oversized (adversarial) input.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     for item in sources_paths.items() {
         let s = item.as_str().ok_or(InvalidSourceMap)?;
@@ -140,13 +118,9 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         }
     }
 
-    // `sources_count` bounds every `source_index` encoded in the VLQ
-    // mappings. The downstream consumers (`Chunk::Builder` emits
-    // `1 + inner.source_index`; `LinkerContext` reserves exactly
-    // `1 + external_source_names.len` slots per file) DON'T defensively
-    // clamp — out-of-range indices would alias a neighboring input file's
-    // slot in the output `sources[]`. Pass the real source count so
-    // malformed maps hit `Fail` and we fall back cleanly.
+    // Pass the real source count: downstream slot math doesn't clamp, so
+    // an out-of-range VLQ `source_index` must reject the map here instead
+    // of aliasing a neighboring file's `sources[]` slot.
     let sources_count_i32: i32 = i32::try_from(source_count).map_err(|_| InvalidSourceMap)?;
     let map_data = crate::mapping::parse(
         mappings_slice,
@@ -169,12 +143,9 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     }))
 }
 
-/// Find the trailing `//# sourceMappingURL=<url>` comment in a file. Per
-/// the Source Map spec the comment MUST be on the last line of the file
-/// (see "3. Source Map Format" / "Linking generated code to source maps"),
-/// so we anchor to the final line rather than the first `last_index_of`
-/// match — a string literal earlier in the file containing that needle
-/// must not hijack the lookup.
+/// Find the trailing `//# sourceMappingURL=<url>` comment. Anchored to the
+/// final line (spec: the comment MUST be the last line) so a string literal
+/// containing the needle can't hijack the lookup.
 fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     // Trim trailing whitespace/newlines so a file that ends with
     // `\n//# sourceMappingURL=...\n\n` still resolves to its final line.
@@ -203,10 +174,8 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let mut url = &last_line[NEEDLE.len()..];
-    // Trim whitespace (` `, `\r`, `\t`) on both sides within the line: a
-    // leading space after `=` (e.g. `//# sourceMappingURL= data:...`) is
-    // spec-invalid but some toolchains emit it, and `parse_data_url`
-    // would fail on the leading space without this.
+    // Trim spaces/tabs/CR around the URL: `= data:...` is spec-invalid but
+    // some toolchains emit it.
     while let Some(&first) = url.first() {
         if first == b' ' || first == b'\r' || first == b'\t' {
             url = &url[1..];
@@ -232,9 +201,8 @@ fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
         return None;
     }
 
-    // `data:application/json;charset=utf-8;base64,...` is permitted in the
-    // wild; tolerate any number of `;name[=value]` parameters between the
-    // prefix and the final `;base64,` / `,` separator.
+    // Tolerate any `;name[=value]` parameters (e.g. `;charset=utf-8`)
+    // before the final `;base64,` / `,` separator.
     let mut rest = &url[PREFIX.len()..];
     let mut is_base64 = false;
     while !rest.is_empty() && rest[0] == b';' {

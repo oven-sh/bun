@@ -1190,14 +1190,9 @@ pub struct Options<'a> {
     /// builder as `LineOffsetTables::Borrowed`.
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
-    /// When `Some`, the bundler input file carried an inline
-    /// `//# sourceMappingURL=data:...` comment. The chunk builder
-    /// remaps each emitted mapping through this inner map so the final
-    /// output's `source_index`/`(original_line, original_column)` refer
-    /// to the authored source instead of the intermediate input.
-    /// `None` for files that don't carry an inline sourcemap, or for
-    /// the DevServer HMR path (which uses a separate stitcher that
-    /// hard-codes one `sources[]` slot per file).
+    /// Inline `//# sourceMappingURL=data:...` map carried by the input
+    /// file; the chunk builder remaps emitted mappings through it. `None`
+    /// for the DevServer path (its stitcher assumes one slot per file).
     pub input_source_map: Option<&'a SourceMap::InputSourceMap>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,

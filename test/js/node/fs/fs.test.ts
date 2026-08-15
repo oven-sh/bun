@@ -5934,7 +5934,7 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
 
     // readFileSync reads 256 KB before it calls fstat; only the bytes after that
     // go through the grow path under test, and one read() from a pipe returns at
-    // most one pipe buffer, which is 64 KB on Linux and smaller on macOS. 1 MB
+    // most one pipe buffer, which is 64 KB on Linux and no larger on macOS. 1 MB
     // past the pre-stat buffer is therefore at least 16 grow steps however the
     // kernel chunks the data, and before the fix every step doubled the buffer.
     const SIZE = 256 * 1024 + 1024 * 1024;

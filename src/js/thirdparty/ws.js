@@ -669,9 +669,11 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    // npm ws has no try/catch here: Sender.prototype.ping throws RangeError
+    // Like npm ws's `data || EMPTY_BUFFER`: null/false/"" send an empty frame
+    // (the native USVString overload would stringify them to "null"/"false").
+    // No try/catch, as in npm ws: Sender.prototype.ping throws RangeError
     // synchronously for a >125-byte payload and never reaches cb.
-    if (data === undefined) this.#ws.ping();
+    if (!data) this.#ws.ping();
     else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
@@ -695,7 +697,7 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    if (data === undefined) this.#ws.pong();
+    if (!data) this.#ws.pong();
     else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
@@ -1090,7 +1092,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    if (data === undefined) this.#ws.ping();
+    // npm ws sends `data || EMPTY_BUFFER`; ServerWebSocket.ping(false) would throw.
+    if (!data) this.#ws.ping();
     else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
@@ -1114,7 +1117,7 @@ class BunWebSocketMocked extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    if (data === undefined) this.#ws.pong();
+    if (!data) this.#ws.pong();
     else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();

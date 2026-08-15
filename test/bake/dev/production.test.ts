@@ -603,11 +603,11 @@ export default function IndexPage() {
     // build failed with `EINVAL reading "\\"`.
     const dir = await tempDirWithBakeDeps("bake-production-disk-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "extra/banner.mjs": `import { detail } from "./detail.mjs";
+      "extra/banner.mjs": `import { detail } from "../shared/detail.mjs";
 
 export const banner = "read from disk while rendering";
 export { detail };`,
-      "extra/detail.mjs": `export const detail = "resolved relative to the file on disk";`,
+      "shared/detail.mjs": `export const detail = "resolved relative to the file on disk";`,
       "pages/index.tsx": `import { join } from "node:path";
 
 export default async function IndexPage() {
@@ -630,7 +630,7 @@ export default async function IndexPage() {
       cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
       cwd: dir,
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

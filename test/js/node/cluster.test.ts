@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
   bunRun,
+  isDebug,
   isIPv6,
   isLinux,
   isWindows,
@@ -12,6 +13,11 @@ import {
   tls as tlsCerts,
 } from "harness";
 import net from "node:net";
+
+// Every fixture here forks cluster workers, and a debug build spends about a second per process
+// just evaluating node:cluster/net/tls, so the tests take 2-7s against the 5s default when run
+// with `bun bd test`. CI passes its own --timeout and is left alone.
+if (isDebug) setDefaultTimeout(30_000);
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {

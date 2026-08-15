@@ -293,7 +293,7 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, report) = plan_edges(manager, &edges, direct, false)?;
+        let (pins, report) = plan_edges(manager, &edges, direct)?;
         register_moved(manager, &report.moved)?;
         let printed_here = manager.options.dry_run || manager.options.lockfile_only;
         Ok(TransitiveUpdate {
@@ -424,7 +424,7 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default(), true)?;
+    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default())?;
     register_moved(manager, &report.moved)?;
     let update = TransitiveUpdate { pins, report: None };
     update.enqueue(manager)?;
@@ -1027,12 +1027,11 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. `post_resolution` marks the `refresh_children_of` call, which runs after the named rows resolved.
+/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
-    post_resolution: bool,
 ) -> crate::Result<(Vec<Pin>, Report)> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
@@ -1134,7 +1133,7 @@ fn plan_edges(
     if instances.is_empty() {
         return Ok((Vec::new(), Report::default()));
     }
-    let edges_on = edges_on_instances(manager, &instances, direct, post_resolution);
+    let edges_on = edges_on_instances(manager, &instances, direct);
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     let msgs_before = manager.log_mut().msgs.len();
@@ -1216,17 +1215,20 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        let direct_stays = edges_on.direct[inst_i].iter().any(|&(dep_id, latest)| {
-            direct_row_stays(
-                &manager.lockfile,
-                manifest,
-                dep_id,
-                latest,
-                inst.current,
-                min_age,
-                excludes,
-            )
-        });
+        let direct_stays = edges_on.direct[inst_i]
+            .iter()
+            .any(|&(dep_id, latest, keep_locked)| {
+                direct_row_stays(
+                    &manager.lockfile,
+                    manifest,
+                    dep_id,
+                    latest,
+                    keep_locked,
+                    inst.current,
+                    min_age,
+                    excludes,
+                )
+            });
         // Holds cascade (a held want stays behind and can block another), so iterate to a fixed point.
         let mut held_wants = vec![false; inst.wants.len()];
         loop {
@@ -1309,17 +1311,16 @@ fn plan_edges(
     Ok((pins, report))
 }
 
-/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves (`true` lands on the `latest` dist-tag), per `should_update`.
+/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead applies here)` per `should_update`.
 struct InstanceEdges {
     followers: Vec<Vec<DependencyID>>,
-    direct: Vec<Vec<(DependencyID, bool)>>,
+    direct: Vec<Vec<(DependencyID, bool, bool)>>,
 }
 
 fn edges_on_instances(
     manager: &mut PackageManager,
     instances: &[Instance],
     direct_deps: &DirectDependencies,
-    post_resolution: bool,
 ) -> InstanceEdges {
     struct DirectRow {
         dep_id: DependencyID,
@@ -1329,7 +1330,7 @@ fn edges_on_instances(
         catalog: bool,
     }
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    let mut direct: Vec<Vec<(DependencyID, bool)>> = vec![Vec::new(); instances.len()];
+    let mut direct: Vec<Vec<(DependencyID, bool, bool)>> = vec![Vec::new(); instances.len()];
     let mut direct_rows: Vec<DirectRow> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -1346,19 +1347,42 @@ fn edges_on_instances(
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        // Post-resolution, a superseded package's rows are still in the buffers: only owners something still resolves to contribute followers.
-        let referenced = post_resolution.then(|| {
-            let mut referenced = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
-            for owner in 0..packages_len {
-                let slice = dep_slices[owner];
-                for row in slice.begin() as usize..slice.end() as usize {
-                    if (resolutions[row] as usize) < packages_len {
-                        referenced.set(resolutions[row] as usize);
-                    }
+        // Rows of removed or superseded subtrees are still in the buffers: only owners reachable
+        // from a root/workspace contribute followers (re-appended root rows reach via the snapshot).
+        let mut reachable = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+        let mut queue: Vec<usize> = Vec::new();
+        for owner in 0..packages_len {
+            if matches!(
+                pkg_res[owner].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            ) {
+                reachable.set(owner);
+                queue.push(owner);
+            }
+        }
+        while let Some(owner) = queue.pop() {
+            let slice = dep_slices[owner];
+            let snapshot = matches!(
+                pkg_res[owner].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
+            for row in slice.begin() as usize..slice.end() as usize {
+                let mut target = resolutions[row] as usize;
+                if target >= packages_len && snapshot {
+                    target = snapshot_resolution(
+                        direct_deps,
+                        owner as PackageID,
+                        deps[row].name_hash,
+                        deps[row].behavior,
+                    )
+                    .map_or(usize::MAX, |resolved| resolved as usize);
+                }
+                if target < packages_len && !reachable.is_set(target) {
+                    reachable.set(target);
+                    queue.push(target);
                 }
             }
-            referenced
-        });
+        }
 
         for owner in 0..packages_len {
             let slice = dep_slices[owner];
@@ -1366,11 +1390,7 @@ fn edges_on_instances(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
             );
-            if !is_direct
-                && referenced
-                    .as_ref()
-                    .is_some_and(|referenced| !referenced.is_set(owner))
-            {
+            if !is_direct && !reachable.is_set(owner) {
                 continue;
             }
             for row in slice.begin() as usize..slice.end() as usize {
@@ -1463,11 +1483,11 @@ fn edges_on_instances(
             continue;
         }
         // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never by `latest`); named rows reach plan_edges via the --latest-only path.
-        let latest = to_latest
-            && (!bare || in_targets)
-            && !row.catalog
-            && !overridden_row(&manager.lockfile, row.dep_id);
-        direct[row.inst as usize].push((row.dep_id, latest));
+        let overridden = overridden_row(&manager.lockfile, row.dep_id);
+        let latest = to_latest && (!bare || in_targets) && !row.catalog && !overridden;
+        // `keep_locked_if_ahead` only applies under --latest, and only against the row's own locked instance.
+        let keep_locked = to_latest && row.inst == row.res_slot && !row.catalog && !overridden;
+        direct[row.inst as usize].push((row.dep_id, latest, keep_locked));
     }
     InstanceEdges { followers, direct }
 }
@@ -1520,11 +1540,13 @@ fn overridden_row(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
 }
 
 /// The differ lands this row back on `current` when that is the release it re-resolves to: the `latest` dist-tag for `--latest` target rows, otherwise the best release the row's range allows.
+#[allow(clippy::too_many_arguments)]
 fn direct_row_stays(
     lockfile: &Lockfile,
     manifest: &PackageManifest,
     dep_id: DependencyID,
     latest: bool,
+    keep_locked: bool,
     current: Semver::Version,
     min_age: Option<f64>,
     excludes: Option<&[&[u8]]>,
@@ -1549,9 +1571,14 @@ fn direct_row_stays(
             _ => return false,
         }
     };
-    // `keep_locked_if_ahead`: a lookup at or below `current` lands the row back on `current`.
+    // Under `keep_locked_if_ahead`, a lookup at or below the locked `current` lands the row back on it.
     found.is_some_and(|found| {
-        found.version.order(current, &manifest.string_buf, buf) != Ordering::Greater
+        let order = found.version.order(current, &manifest.string_buf, buf);
+        if keep_locked {
+            order != Ordering::Greater
+        } else {
+            order == Ordering::Equal
+        }
     })
 }
 

@@ -820,6 +820,74 @@ test.concurrent("`bun update <name> --latest`: a superseded version's rows do no
   expect(exitCode).toBe(0);
 });
 
+// Same through an intermediate package: the superseded parent@1.0.0 -> mid -> leaf `~1.0.0` chain
+// is unreachable once parent moves, so mid's row does not hold the new parent's `^1.0.0` edge.
+test.concurrent("`bun update <name> --latest`: a superseded chain's rows do not hold the new children", async () => {
+  using server = await serveRegistry({
+    parent: {
+      "1.0.0": { dependencies: { mid: "1.0.0" } },
+      "3.0.0": { dependencies: { leaf: "^1.0.0" } },
+    },
+    mid: { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(server, "update-superseded-chain-", pkgJson({ parent: "1.0.0" }));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "parent", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["3.0.0"]);
+  expect(await lockedVersions(dir, "mid")).toStrictEqual([]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// Removing a root dependency and updating in one step: the removed subtree's rows are unreachable
+// and do not hold the remaining `^1.0.0` want at the 1.0.0 they used to share.
+test.concurrent("a removed root dependency's rows do not hold the remaining wants", async () => {
+  using server = await serveRegistry({
+    "parent-a": { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    "parent-b": { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(
+    server,
+    "update-removed-root-",
+    pkgJson({ "parent-a": "1.0.0", "parent-b": "1.0.0" }),
+  );
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  await write(join(dir, "package.json"), stringify(pkgJson({ "parent-b": "1.0.0" })));
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent-a")).toStrictEqual([]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// The root's `^1.0.0` row sits on leaf@1.5.0; its lookup (1.5.0) is below leaf@2.0.0 but the row
+// never resolved there, so it must not hold parent's `^2.0.0` want from moving to 2.5.0.
+test.concurrent("a direct row on a lower instance does not hold wants on a higher instance", async () => {
+  const manifests: Manifests = {
+    parent: { "1.0.0": { dependencies: { leaf: "^2.0.0" } } },
+    leaf: { "1.5.0": {}, "2.0.0": {}, "2.5.0": {} },
+  };
+  using server = await serveRegistry(manifests);
+  const hidden = manifests.leaf["2.5.0"];
+  delete manifests.leaf["2.5.0"];
+  const dir = await installServed(server, "update-two-instances-", pkgJson({ parent: "1.0.0", leaf: "^1.0.0" }));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0", "2.0.0"]);
+  manifests.leaf["2.5.0"] = hidden;
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0", "2.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

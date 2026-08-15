@@ -68,6 +68,10 @@ pub const BASE_PATH: &[u8] = build_options::BASE_PATH;
 pub const ENABLE_LOGS: bool = build_options::ENABLE_LOGS;
 pub const ENABLE_ASAN: bool = build_options::ENABLE_ASAN;
 pub const ENABLE_FUZZILLI: bool = build_options::ENABLE_FUZZILLI;
+/// Whether libtcc is linked into this build: `cfg!(bun_tinycc)`, which
+/// `scripts/build/rust.ts` sets from the build's `tinycc` option (off by default
+/// on Android and FreeBSD). `bun_tcc_sys` swaps its `tcc_*` externs for stubs on
+/// the same cfg, so bun:ffi's cc() must early-return while this is `false`.
 pub const ENABLE_TINYCC: bool = build_options::ENABLE_TINYCC;
 
 // TYPE_ONLY: bun_semver::Version moves to bun_core (move-in pass).

@@ -12,10 +12,12 @@
  * keeps the mtime stable so a reconfigure with the same sha doesn't
  * recompile `bun_core` and its dependents.
  *
- * Target-dependent constants (`ENABLE_TINYCC`, `ENABLE_ASAN`, `ENABLE_LOGS`)
- * stay as `cfg!()` expressions inside the generated file rather than literals
- * so a `cargo check --target <other-triple>` against the same generated file
- * still evaluates them per-target.
+ * `ENABLE_LOGS` / `ENABLE_ASAN` / `ENABLE_TINYCC` are emitted as `cfg!()` of
+ * the `--cfg` that `rust.ts` derives from the same `Config` field, not as
+ * literals: each pairs with `#[cfg]`-gated code (the ASAN allocator, the
+ * `tcc_*` externs in `bun_tcc_sys`) that can only key on the cfg, so reading
+ * the cfg keeps constant and code in agreement in every invocation, including
+ * a bare `cargo check` that reads this file with no RUSTFLAGS at all.
  *
  * Written at configure time alongside `depVersionsHeader.ts` /
  * `cargo-config.ts` — it's a constant manifest, not a build edge.
@@ -59,17 +61,14 @@ export function generateBuildOptionsRs(cfg: Config): string {
     `pub const BASE_PATH: &[u8] = ${rbstr(cfg.cwd)};`,
     `pub const CODEGEN_PATH: &[u8] = ${rbstr(cfg.codegenDir)};`,
     "",
-    "// Target/profile-derived — kept as `cfg!()` so cross-target",
-    "// `cargo check` evaluates per-triple. Values agree with `Config`:",
-    "// rust.ts sets `--cfg=bun_debug` ⇔ `cfg.debug`, `--cfg=bun_asan` ⇔",
-    "// `cfg.asan`, and `cfg.tinycc`'s default (config.ts) is the negation",
-    "// of this predicate.",
+    "// Each of these reads the `--cfg` that scripts/build/rust.ts",
+    "// (cargoBuildInvocation) sets from the matching `Config` field, so it",
+    "// agrees with the `#[cfg]`-gated code it pairs with; rust.ts sets",
+    "// `--cfg=bun_debug` ⇔ `cfg.debug`, `--cfg=bun_asan` ⇔ `cfg.asan`,",
+    "// `--cfg=bun_tinycc` ⇔ `cfg.tinycc`. All false under bare `cargo check`.",
     "pub const ENABLE_LOGS: bool = cfg!(bun_debug);",
     "pub const ENABLE_ASAN: bool = cfg!(bun_asan);",
-    "pub const ENABLE_TINYCC: bool = !cfg!(any(",
-    `    target_os = "android",`,
-    `    target_os = "freebsd",`,
-    "));",
+    "pub const ENABLE_TINYCC: bool = cfg!(bun_tinycc);",
     "",
   ];
 

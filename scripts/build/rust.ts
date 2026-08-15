@@ -536,6 +536,17 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
   }
+  // `bun_tinycc`: libtcc is in the link (deps/tinycc.ts is `enabled` by the
+  // same `cfg.tinycc`). Same contract as above: `bun_tcc_sys` declares the
+  // `tcc_*` externs under this cfg and defines link-satisfying stubs without
+  // it, and `build_options::ENABLE_TINYCC` (the runtime gate that makes
+  // bun:ffi's cc() throw "not available in this build") is `cfg!(bun_tinycc)`,
+  // so the option reaches every Rust consumer through this one flag. Bare
+  // `cargo check` / clippy / miri (no rustflags) get the stubs.
+  rustflags.push("--check-cfg=cfg(bun_tinycc)");
+  if (cfg.tinycc) {
+    rustflags.push("--cfg=bun_tinycc");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string

@@ -46,8 +46,8 @@ const verdaccio = new VerdaccioRegistry();
 let templates: ReturnType<typeof tempDir>;
 
 beforeAll(async () => {
-  await verdaccio.start();
   templates = tempDir("bun-audit-templates-", {});
+  await verdaccio.start();
 });
 
 afterAll(() => {

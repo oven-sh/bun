@@ -2415,6 +2415,43 @@ trait Sink<'a, U: Unit> {
     fn finish(&mut self) -> Expr;
 }
 
+/// Rows staged for the tape, in the two columns the tape appends them as.
+struct Rows<T> {
+    values: Vec<T>,
+    locs: Vec<Loc>,
+}
+
+impl<T: Copy> Rows<T> {
+    fn with_capacity(capacity: usize) -> Self {
+        Rows {
+            values: Vec::with_capacity(capacity),
+            locs: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[inline]
+    fn push(&mut self, value: T, loc: Loc) {
+        self.values.push(value);
+        self.locs.push(loc);
+    }
+
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        self.values.truncate(len);
+        self.locs.truncate(len);
+    }
+
+    #[inline]
+    fn columns(&self, range: core::ops::Range<usize>) -> (&[T], &[Loc]) {
+        (&self.values[range.clone()], &self.locs[range])
+    }
+}
+
 /// The document's `E::JsonTape` plus the scratch stacks rows are staged on
 /// until their object or array is complete (a node's rows are contiguous on
 /// the tape, so they can only be appended once all of them are known).
@@ -2423,8 +2460,7 @@ struct Tape<'a> {
     bump: &'a Bump,
     props: Vec<E::PropertyJSON>,
     prop_locs: Vec<Loc>,
-    items: Vec<E::JsonValue>,
-    item_locs: Vec<Loc>,
+    items: Rows<E::JsonValue>,
     /// `{}` and `[]` are immutable and carry no data, so one row of each
     /// serves every empty object / array in the document.
     empty_object: Option<StoreRef<E::ObjectJSON>>,
@@ -2445,8 +2481,7 @@ impl<'a> Tape<'a> {
             bump,
             props: Vec::with_capacity(rows / 4 + 16),
             prop_locs: Vec::with_capacity(rows / 4 + 16),
-            items: Vec::with_capacity(rows / 8 + 16),
-            item_locs: Vec::with_capacity(rows / 8 + 16),
+            items: Rows::with_capacity(rows / 8 + 16),
             empty_object: None,
             empty_array: None,
         }
@@ -2469,8 +2504,7 @@ impl<'a> Tape<'a> {
 
     #[inline]
     fn push_item(&mut self, value: E::JsonValue, loc: Loc) {
-        self.items.push(value);
-        self.item_locs.push(loc);
+        self.items.push(value, loc);
     }
 
     /// Moves the properties staged since `mark` to the tape as one object.
@@ -2513,9 +2547,9 @@ impl<'a> Tape<'a> {
             self.empty_array = Some(row);
             return row;
         }
-        let row = Self::array_of(self.tape, &self.items[mark..], &self.item_locs[mark..], loc);
+        let (items, locs) = self.items.columns(mark..self.items.len());
+        let row = Self::array_of(self.tape, items, locs, loc);
         self.items.truncate(mark);
-        self.item_locs.truncate(mark);
         row
     }
 
@@ -2615,7 +2649,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     fn new(tape: Tape<'a>) -> Self {
         CompactSink {
             stack: Vec::with_capacity(64),
-            text_runs: Vec::with_capacity(tape.items.capacity()),
+            text_runs: Vec::with_capacity(tape.items.values.capacity()),
             tape,
             key_cache: [None; KEY_CACHE_SIZE],
             group_of: Vec::new(),

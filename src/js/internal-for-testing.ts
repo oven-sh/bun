@@ -453,68 +453,108 @@ function nodeGetValidStdio(stdio, sync?) {
   return { stdio, ipc, ipcFd };
 }
 
+// Entries below that assemble an object rather than return a module are built
+// once, so repeated requires get the same object, as they would in node.
+let cachedInternalUtil;
+let cachedInternalEventTarget;
 let cachedInternalChildProcess;
+let cachedInternalFsUtils;
 
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
 // bundler cannot rewrite variable-path requires. Extend the map as more
 // vendored tests need more internals.
+//
+// Every entry must be a getter (test/internal/internal-for-testing.test.ts
+// enforces it): test/harness.ts loads this module in every test file just to
+// read isASANEnabled, so anything required here is evaluated on every test
+// run. Small-looking entries are not cheap either; internal/assert/myers_diff
+// pulls in internal/util/colors, which materializes process.stderr on load.
 export const exposedInternals = {
-  "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
-  "internal/util/debuglog": require("internal/util/debuglog"),
-  "internal/async_context_frame": require("internal/async_context_frame"),
-  "internal/async_hooks": require("internal/async_hooks"),
-  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
-  "internal/dgram": require("internal/dgram"),
+  get "internal/streams/add-abort-signal"() {
+    return require("internal/streams/add-abort-signal");
+  },
+  get "internal/util/debuglog"() {
+    return require("internal/util/debuglog");
+  },
+  get "internal/async_context_frame"() {
+    return require("internal/async_context_frame");
+  },
+  get "internal/async_hooks"() {
+    return require("internal/async_hooks");
+  },
+  get "internal/webstreams/adapters"() {
+    return require("internal/webstreams_adapters");
+  },
+  get "internal/dgram"() {
+    return require("internal/dgram");
+  },
   // Bun's real implementations, under the names node's tests import them by.
-  "internal/validators": require("internal/validators"),
-  "internal/util/inspect": require("internal/util/inspect"),
-  "internal/freelist": require("internal/freelist"),
+  get "internal/validators"() {
+    return require("internal/validators");
+  },
+  get "internal/util/inspect"() {
+    return require("internal/util/inspect");
+  },
+  get "internal/freelist"() {
+    return require("internal/freelist");
+  },
   // Node's internal/fixed_queue module IS the FixedQueue class.
-  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
-  "internal/assert/myers_diff": require("internal/assert/myers_diff"),
+  get "internal/fixed_queue"() {
+    return require("internal/fixed_queue").FixedQueue;
+  },
+  get "internal/assert/myers_diff"() {
+    return require("internal/assert/myers_diff");
+  },
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.
-  "internal/errors": require("internal/errors"),
+  get "internal/errors"() {
+    return require("internal/errors");
+  },
   // normalizeEncoding wraps the same Rust binding node:crypto and the
   // webstream adapters call; the rest are node's own JS helpers, ported
   // verbatim from lib/internal/util.js where Bun has no native equivalent.
-  "internal/util": {
-    normalizeEncoding: nodeNormalizeEncoding,
-    // Bun always has crypto support compiled in.
-    assertCrypto() {},
-    getCIDR,
-    isError: nodeIsError,
-    assignFunctionName,
-    kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
-    kEmptyObject: nodeKEmptyObject,
-    WeakReference,
+  get "internal/util"() {
+    return (cachedInternalUtil ??= {
+      normalizeEncoding: nodeNormalizeEncoding,
+      // Bun always has crypto support compiled in.
+      assertCrypto() {},
+      getCIDR,
+      isError: nodeIsError,
+      assignFunctionName,
+      kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
+      kEmptyObject: nodeKEmptyObject,
+      WeakReference,
+    });
   },
   // Bun's EventTarget/Event/CustomEvent are the native (global) ones; node
   // keeps them in internal/event_target. kWeakHandler is Bun's real weak
   // listener symbol from internal/shared. Bun has no NodeEventTarget.
-  "internal/event_target": {
-    Event: globalThis.Event,
-    CustomEvent: globalThis.CustomEvent,
-    EventTarget: globalThis.EventTarget,
-    kWeakHandler: require("internal/shared").kWeakHandler,
+  get "internal/event_target"() {
+    return (cachedInternalEventTarget ??= {
+      Event: globalThis.Event,
+      CustomEvent: globalThis.CustomEvent,
+      EventTarget: globalThis.EventTarget,
+      kWeakHandler: require("internal/shared").kWeakHandler,
+    });
   },
   // ChildProcess is the real class exec()/spawn() instantiate, so vendored
   // tests can monkeypatch its prototype; getValidStdio is ported from node.
-  // A getter so loading this module does not eagerly pull in child_process.
   get "internal/child_process"() {
     return (cachedInternalChildProcess ??= {
       ChildProcess: require("node:child_process").ChildProcess,
       getValidStdio: nodeGetValidStdio,
     });
   },
-  "internal/fs/utils": {
-    // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
-    // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
-    // the production behavior through these.
-    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
-    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+  get "internal/fs/utils"() {
+    return (cachedInternalFsUtils ??= {
+      // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
+      // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
+      // the production behavior through these.
+      stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
+      validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+    });
   },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
@@ -540,8 +580,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
       return { state: $inheritsWritableStream(stream) ? "writable" : "readable", storedError: undefined };
   }
 }
-
-export const fs = require("node:fs/promises").$data;
 
 export const fsStreamInternals = {
   writeStreamFastPath(str) {

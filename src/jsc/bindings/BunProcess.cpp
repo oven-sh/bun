@@ -3219,12 +3219,10 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Empty with the exception left pending: the read throws and `env` stays
-    // unreified for the next read (like Bun.$). Not a ThrowScope: its simulated
-    // throw fails the next builder under validateExceptionChecks, since
-    // reifyAllStaticProperties does not check between builders.
+    // Not a ThrowScope: reifyAllStaticProperties runs the next builder without an exception check, which validateExceptionChecks flags as an unchecked simulated throw.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* env = globalObject->processEnvObject();
+    // Left pending on purpose: the read throws and `env` stays unreified, so the next read builds it (like Bun.$).
     if (scope.exception()) [[unlikely]]
         return {};
     return env;

@@ -3090,8 +3090,7 @@ JSC::JSObject* GlobalObject::processEnvObject()
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* env = Bun::createEnvironmentVariablesMap(this);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // User code run by the Windows builtin (an Object.prototype setter) may have
-    // read process.env and built one already; every entry point must share that one.
+    // Built re-entrantly if user code run by the Windows builtin read process.env; everyone must get that one.
     if (JSObject* existing = m_processEnvObject.get())
         return existing;
     m_processEnvObject.set(vm, this, env);

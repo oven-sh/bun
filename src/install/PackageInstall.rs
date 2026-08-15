@@ -1195,14 +1195,11 @@ impl<'a> PackageInstall<'a> {
             &[]
         };
 
-        state.walker = Some(
-            walker_skippable::walk(
-                state.cached_package_dir.fd(),
-                &[] as &[&OSPathSlice],
-                skip_dirs,
-            )
-            .expect("oom"), // bun.handleOom
-        );
+        state.walker = Some(bun_core::handle_oom(walker_skippable::walk(
+            state.cached_package_dir.fd(),
+            &[] as &[&OSPathSlice],
+            skip_dirs,
+        )));
         state.walker.as_mut().unwrap().resolve_unknown_entry_types = true;
 
         #[cfg(not(windows))]

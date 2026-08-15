@@ -2898,7 +2898,7 @@ fn bind_existing_peer(
     }
 }
 
-/// `row` is a root or workspace `peerDependencies` entry and `package_id` a copy bun.lock holds for peer rows only (usually this entry's own earlier install); a package's peer rows never qualify, a copy resolved for them alone is not placed.
+/// `row` is a root or workspace `peerDependencies` entry and `package_id` is held only by non-root peer rows (usually this entry's own earlier install): nothing provides it, and it is not a root row's copy, which `Tree::hoist_dependency` dedupes every other peer onto regardless of range.
 fn would_revive_leftover(
     lockfile: &Lockfile::Lockfile,
     row: DependencyID,
@@ -2914,10 +2914,17 @@ fn would_revive_leftover(
         .items_dependencies()
         .iter()
         .zip(lockfile.packages.items_resolutions())
-        .flat_map(|(dep_slice, res_slice)| {
-            dep_slice.get(deps).iter().zip(res_slice.get(resolutions))
+        .enumerate()
+        .flat_map(|(owner, (dep_slice, res_slice))| {
+            dep_slice
+                .get(deps)
+                .iter()
+                .zip(res_slice.get(resolutions))
+                .map(move |(dep, &resolved)| (owner, dep, resolved))
         });
-    !owned_rows.any(|(dep, &resolved)| resolved == package_id && !dep.behavior.is_peer())
+    !owned_rows.any(|(owner, dep, resolved)| {
+        resolved == package_id && (owner == 0 || !dep.behavior.is_peer())
+    })
 }
 
 fn patched_package_satisfying(

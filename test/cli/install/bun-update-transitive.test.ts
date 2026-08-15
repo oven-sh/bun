@@ -2231,6 +2231,61 @@ test.concurrent("a package's own peer entry still binds to the highest copy in b
   await frozen(dir);
 });
 
+// Workspaces declaring the same peer share the one no-deps@1.1.0 the install put at the top of node_modules.
+const peerRoot = (range?: string) => (range ? { ...ROOT, peerDependencies: { "no-deps": range } } : ROOT);
+const peerMember = (name: string, range: string) => ({
+  name,
+  version: "1.0.0",
+  peerDependencies: { "no-deps": range },
+});
+
+async function sharedPeer(root: Json, ...members: [string, string][]) {
+  const files: Record<string, Json> = { "package.json": root };
+  for (const [name, range] of members) files[`packages/${name}/package.json`] = peerMember(name, range);
+  const dir = await setup(files);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  return dir;
+}
+
+// The tree dedupes every other peer onto the root's copy whatever their range says, so a member's copy of its own would
+// never be installed; the member's entry keeps the root's copy and the warning.
+test.concurrent("a member's rewritten entry keeps binding to the copy the root's own entry holds", async () => {
+  const dir = await sharedPeer(peerRoot("^1.0.0"), ["pkg1", "^1.0.0"]);
+  await write(join(dir, "packages/pkg1/package.json"), stringify(peerMember("pkg1", "^2.0.0")));
+  const stderr = await install(dir);
+  expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+});
+
+test.concurrent("rewriting the root's and a member's entries together moves both onto the new copy", async () => {
+  const dir = await sharedPeer(peerRoot("^1.0.0"), ["pkg1", "^1.0.0"]);
+  await write(join(dir, "package.json"), stringify(peerRoot("^2.0.0")));
+  await write(join(dir, "packages/pkg1/package.json"), stringify(peerMember("pkg1", "^2.0.0")));
+  const stderr = await install(dir);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+});
+
+// With no root entry, pkg2's copy is not forced on pkg1: each member ends up with the copy its own entry asks for.
+test.concurrent(
+  "a member's rewritten entry gets its own copy next to a sibling's when the root declares nothing",
+  async () => {
+    const dir = await sharedPeer(peerRoot(), ["pkg1", "^1.0.0"], ["pkg2", "^1.0.0"]);
+    await write(join(dir, "packages/pkg1/package.json"), stringify(peerMember("pkg1", "^2.0.0")));
+    const stderr = await install(dir);
+    expectCleanStderr(stderr);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0", "2.0.0"]);
+    const { workspaces } = await lock(dir);
+    expect(workspaces["packages/pkg1"].peerDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+    expect(workspaces["packages/pkg2"].peerDependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+    await frozen(dir);
+  },
+);
+
 // Without a lockfile the no-deps the first peer row installs is all the second one can bind to; that still dedupes onto it
 // and warns. Which row goes first follows the order the two manifests arrive in, so only the single copy is pinned down.
 test.concurrent("on a fresh install two peer entries nothing provides still share one no-deps", async () => {

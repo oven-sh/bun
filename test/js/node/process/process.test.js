@@ -2090,6 +2090,52 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
   });
 });
 
+it("process.env.TZ changes reach the no-argument Date toLocale*String formatters", async () => {
+  // The no-argument toLocaleString / toLocaleDateString / toLocaleTimeString
+  // paths format through three Intl.DateTimeFormat objects JSC keeps per
+  // global object, built the first time they are used. Node drops V8's
+  // equivalent caches on every TZ write (DateTimeConfigurationChangeNotification);
+  // here each one is primed under the old zone first so a stale one shows up.
+  // Comparing against the explicit `(undefined, {})` form, which builds a fresh
+  // formatter with the same defaults, keeps the assertions locale-independent.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const d = new Date(Date.UTC(2024, 5, 15, 20, 0));
+       const snapshot = () => ({
+         noArg: [d.toLocaleString(), d.toLocaleDateString(), d.toLocaleTimeString()],
+         fresh: [
+           d.toLocaleString(undefined, {}),
+           d.toLocaleDateString(undefined, {}),
+           d.toLocaleTimeString(undefined, {}),
+         ],
+       });
+       process.env.TZ = "America/Los_Angeles";
+       const la = snapshot();
+       process.env.TZ = "Asia/Tokyo";
+       const tokyo = snapshot();
+       delete process.env.TZ;
+       const afterDelete = snapshot();
+       console.log(JSON.stringify({ la, tokyo, afterDelete }));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { la, tokyo, afterDelete } = JSON.parse(stdout);
+  expect(la.noArg).toEqual(la.fresh);
+  expect(tokyo.noArg).toEqual(tokyo.fresh);
+  expect(afterDelete.noArg).toEqual(afterDelete.fresh);
+  // 2024-06-15T20:00Z is June 15th 13:00 in Los Angeles and June 16th 05:00 in
+  // Tokyo, so all three no-argument results have to change, not just agree
+  // with the fresh formatter.
+  expect(tokyo.noArg.map((s, i) => s !== la.noArg[i])).toEqual([true, true, true]);
+  expect(exitCode).toBe(0);
+});
+
 it("process.traceDeprecation set at runtime prints a stack", async () => {
   await using proc = Bun.spawn({
     cmd: [

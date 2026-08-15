@@ -942,7 +942,7 @@ describe("exceptions thrown while walking properties", () => {
   }
 
   it.concurrent("a throwing Proxy get trap in the prototype chain skips that property", async () => {
-    const { stdout, exitCode } = await run(`
+    const result = await run(`
       const proto = new Proxy(
         { a: 1, b: 2, c: 3 },
         {
@@ -954,12 +954,11 @@ describe("exceptions thrown while walking properties", () => {
       );
       console.log(Bun.inspect(Object.create(proto)));
     `);
-    expect(stdout).toBe("{\n  c: 3,\n}\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "{\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
   });
 
   it.concurrent("a throwing Proxy getPrototypeOf trap in the prototype chain stops the walk", async () => {
-    const { stdout, exitCode } = await run(`
+    const result = await run(`
       const proto = new Proxy(
         { a: 1 },
         {
@@ -970,15 +969,18 @@ describe("exceptions thrown while walking properties", () => {
       );
       console.log(Bun.inspect(Object.create(proto)));
     `);
-    expect(stdout).toBe("{\n  a: 1,\n}\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n}\n", stderr: "", exitCode: 0 });
   });
 
   // Bun.$ is a lazy property whose initializer calls into JS. Inspecting the Bun
   // object right after a stack overflow makes that initializer throw; the
   // properties after it must still be visited.
-  it.concurrent("a lazy property initializer that throws does not hide the remaining properties", async () => {
-    const { stdout, exitCode } = await run(`
+  //
+  // On Windows, reading Bun.$ (or Bun.sql) at the stack limit kills the process
+  // with STATUS_STACK_BUFFER_OVERRUN instead of throwing, independently of the
+  // property walk being tested here.
+  it.concurrent.skipIf(isWindows)("a throwing lazy property initializer does not hide later properties", async () => {
+    const result = await run(`
       let result;
       function recurse() {
         try {
@@ -993,7 +995,6 @@ describe("exceptions thrown while walking properties", () => {
       recurse();
       console.log(result.includes("Archive: [class Archive]"));
     `);
-    expect(stdout).toBe("true\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
 });

@@ -78,3 +78,11 @@ describe.each([
     });
   });
 });
+
+test("the probe rejects arguments the table above could get wrong", () => {
+  const bytesAsUnits = new Uint8Array(4) as unknown as Uint16Array;
+  const unitsAsBytes = new Uint16Array(1) as unknown as Uint8Array;
+  expect(() => convertUTF16ToUTF8Append(bytesAsUnits, new Uint8Array(0), 0, false)).toThrow("Uint16Array");
+  expect(() => convertUTF16ToUTF8Append(units("ab"), unitsAsBytes, 0, false)).toThrow("Uint8Array");
+  expect(() => convertUTF16ToUTF8Append(units("ab"), new Uint8Array(0), -1, false)).toThrow("spare capacity");
+});

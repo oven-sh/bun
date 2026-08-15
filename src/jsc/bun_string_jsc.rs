@@ -5,7 +5,7 @@
 use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
 use crate::zig_string::{self, ZigString};
-use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSType, JSValue, JsError, JsResult, ZigStringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -321,15 +321,21 @@ pub mod unicode_testing_apis {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(units) = frame.argument(0).as_array_buffer(global) else {
-            return Err(global.throw(format_args!(
-                "convertUTF16ToUTF8Append: expected a Uint16Array"
-            )));
+        let units = match frame.argument(0).as_array_buffer(global) {
+            Some(units) if units.typed_array_type == JSType::Uint16Array => units,
+            _ => {
+                return Err(global.throw(format_args!(
+                    "convertUTF16ToUTF8Append: expected a Uint16Array"
+                )));
+            }
         };
-        let Some(prefix) = frame.argument(1).as_array_buffer(global) else {
-            return Err(global.throw(format_args!(
-                "convertUTF16ToUTF8Append: expected a Uint8Array"
-            )));
+        let prefix = match frame.argument(1).as_array_buffer(global) {
+            Some(prefix) if prefix.typed_array_type == JSType::Uint8Array => prefix,
+            _ => {
+                return Err(global.throw(format_args!(
+                    "convertUTF16ToUTF8Append: expected a Uint8Array"
+                )));
+            }
         };
         let spare = frame.argument(2).to_int32();
         if spare < 0 {

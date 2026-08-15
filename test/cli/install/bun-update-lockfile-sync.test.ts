@@ -1,8 +1,9 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { appendFile, exists } from "fs/promises";
+import { appendFile, exists, mkdir } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
 
@@ -138,6 +139,63 @@ const WORKSPACES = (rootFields: Json, members: Record<string, Json>) => ({
 const MONOREPO = (pkg1: Json = {}, rootFields: Json = {}) => WORKSPACES(rootFields, { pkg1 });
 const PKG1 = "packages/pkg1";
 const PKG2 = "packages/pkg2";
+
+const gitEnv = {
+  ...bunEnv,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+// The git+file:// literal of a repository publishing `name` 1.0.0.
+async function gitRepo(dir: string, name: string) {
+  const repo = join(dir, "repos", name);
+  await mkdir(repo, { recursive: true });
+  await write(join(repo, "package.json"), json({ name, version: "1.0.0" }));
+  for (const args of [
+    ["init", "-q"],
+    ["add", "package.json"],
+    ["commit", "-q", "-m", "1.0.0", "--no-gpg-sign"],
+  ]) {
+    await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: repo, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("fatal:");
+    expect(exitCode).toBe(0);
+  }
+  return `git+${pathToFileURL(repo)}`;
+}
+
+// A root declaring `no-deps` from git although the registry has it (latest 2.0.0), one entry of every other kind the registry does not resolve, and a dist-tag that --latest does rewrite.
+async function setupNonRegistryDeps(members: Record<string, Json> = {}) {
+  const dir = await setup(
+    {
+      ...WORKSPACES({}, { pkg1: {}, ...members }),
+      "folder-target/package.json": { name: "folder-dep", version: "1.0.0" },
+    },
+    { install: false },
+  );
+  const dependencies = {
+    "no-deps": await gitRepo(dir, "no-deps"),
+    "dep-with-tags": "pre-2",
+    "folder-dep": "file:./folder-target",
+    "tgz-dep": "file:./tgz-dep-1.0.0.tgz",
+    pkg1: "workspace:^",
+  };
+  await Promise.all([
+    writePkg(dir, wsRoot({ dependencies })),
+    Archive.write(
+      join(dir, "tgz-dep-1.0.0.tgz"),
+      { "package/package.json": json({ name: "tgz-dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    ),
+  ]);
+  await runBunInstall(envFor(dir), dir);
+  const gitResolution = (await resolutions(dir, "no-deps")).find(res => res.startsWith("no-deps@git+"))!;
+  expect(gitResolution).toBeDefined();
+  return { dir, dependencies, gitResolution };
+}
 
 describe.concurrent("bun update rewrites bun.lock together with package.json", () => {
   test("bun update", async () => {
@@ -305,6 +363,46 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     expect((await pkg(dir)).dependencies).toStrictEqual(expected);
     expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
     await expectInSync(dir, ["", PKG1]);
+  });
+
+  // With --latest or an explicit spec, naming such an entry used to replace it with the registry package of the same name
+  // (`no-deps` here), or fail with a 404 when there is none; a plain `bun update pkg1` rewrote `workspace:^` to `workspace:*`.
+  test.each([
+    [["no-deps", "dep-with-tags", "folder-dep", "tgz-dep", "pkg1", "--latest"], "^3.0.0"],
+    [["*", "--latest"], "^3.0.0"],
+    [["no-deps", "folder-dep", "tgz-dep", "pkg1"], "pre-2"],
+    [["no-deps@latest"], "pre-2"],
+    [["no-deps@^2.0.0"], "pre-2"],
+  ])(
+    "bun update %j keeps git, folder, tarball and workspace entries as written; dep-with-tags becomes %p",
+    async (args, depWithTags) => {
+      const { dir, dependencies, gitResolution } = await setupNonRegistryDeps();
+      await run(dir, "update", ...args);
+      const expected = { ...dependencies, "dep-with-tags": depWithTags };
+      expect((await pkg(dir)).dependencies).toStrictEqual(expected);
+      expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(expected);
+      expect(await resolutions(dir, "no-deps")).toStrictEqual([gitResolution]);
+      expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
+      await expectInSync(dir, ["", PKG1]);
+    },
+  );
+
+  test("bun update <name> -r --latest keeps the workspace declaring the name from git and moves the one declaring it from the registry", async () => {
+    const { dir, dependencies, gitResolution } = await setupNonRegistryDeps({
+      pkg2: { dependencies: { "no-deps": "~1.0.0" } },
+    });
+    await run(dir, "update", "no-deps", "-r", "--latest");
+    expect((await pkg(dir)).dependencies).toStrictEqual(dependencies);
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "no-deps": "~2.0.0" });
+    const lockfile = await lock(dir);
+    expect(lockfile.workspaces[""].dependencies).toStrictEqual(dependencies);
+    expect(lockfile.workspaces[PKG2].dependencies).toStrictEqual({ "no-deps": "~2.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0", gitResolution]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
+    expect(await file(join(dir, PKG2, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
   test("bun update -r", async () => {

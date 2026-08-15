@@ -31,6 +31,7 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 - `^1.1.0` → `^1.2.0`, `~1.1.0` → `~1.1.5`. Bun preserves the operator. With [`install.exact`](/runtime/bunfig#install-exact) or `--exact`, Bun writes an exact version instead.
 - Exact pins, dist-tags (`"latest"`, `"next"`), and other range forms (`*`, `1.x`, `>=1.0.0`) are left as written; only `bun.lock` moves. `--latest` rewrites them.
 - Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead.
+- Bun leaves `workspace:`, git, GitHub, `file:` and tarball entries as written, even when you name them with `--latest` or a version. To replace one with a registry package, use `bun add`.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
 
 ### What is held back

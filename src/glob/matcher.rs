@@ -132,9 +132,7 @@ struct Wildcard {
 ///     Matches zero or more characters, except for path separators ('/' or '\').
 /// "**"
 ///     Matches zero or more characters, including path separators.
-///     Must be a complete path segment, i.e. preceded by a path separator (or
-///     the start of the pattern) and followed by one (or the end of the
-///     pattern). Anywhere else ("a**") it behaves like "*".
+///     Must be a whole path segment ("a/**/b"); elsewhere ("a**") it acts like "*".
 /// "[ab]"
 ///     Matches one of the characters contained in the brackets.
 ///     Character ranges (e.g. "[a-z]") are also supported.
@@ -200,18 +198,10 @@ fn glob_match_impl(
                 'to_else: {
                     match ch {
                         b'*' => {
-                            // `**` is a globstar only at the start of a segment: after a `/`
-                            // or at `glob_start` (the pattern or, as in `{**/a,**/b}`, the
-                            // brace branch; `<=` because backtracking out of a branch can
-                            // land before its start). Anywhere else (`a**`) each `*` is a
-                            // plain wildcard, and this must be decided before
-                            // `skip_globstars` folds any following `/**` segments into this
-                            // one: those belong to the rest of the pattern when this `**`
-                            // is not a globstar (`a**/**` means `a*/**`).
+                            // `a**` is `a*`, so only a globstar may absorb the `/**` segments after it.
                             let is_globstar = (state.glob_index as usize) + 1 < glob.len()
                                 && glob[state.glob_index as usize + 1] == b'*'
-                                && (state.glob_index <= glob_start
-                                    || glob[state.glob_index as usize - 1] == b'/');
+                                && starts_segment(glob, glob_start, state.glob_index);
                             if is_globstar {
                                 skip_globstars(glob, &mut state.glob_index);
                             }
@@ -678,6 +668,14 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
     }
 
     true
+}
+
+/// Whether the `**` at `glob_index` begins a path segment: it follows a `/`, or it is
+/// where the pattern (or the brace branch being matched, as in `{**/a,**/b}`) starts.
+#[inline(always)]
+fn starts_segment(glob: &[u8], glob_start: u32, glob_index: u32) -> bool {
+    // `<=`: a failed brace branch backtracks to `**`s that precede the branch.
+    glob_index <= glob_start || glob[glob_index as usize - 1] == b'/'
 }
 
 #[inline(always)]

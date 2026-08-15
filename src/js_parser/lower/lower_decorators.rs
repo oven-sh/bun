@@ -1275,7 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
-        // Class expressions keep their own name binding (see `body_names_class_as_written`).
+        // Class expressions keep their own name binding (see `keep_static_fields_in_body`).
         let inner_class_ref: Ref = if is_expr {
             class_name_ref
         } else if visited_inner_class_ref.is_symbol() {
@@ -1293,16 +1293,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
-        // Relocated fields land on the decorated class; a body naming the original would miss them.
-        let body_names_class_as_written = if is_expr {
-            !expr_class_is_anonymous
-                && p.symbols[class_name_ref.inner_index() as usize].use_count_estimate > 0
-        } else {
-            has_private_static_member(class)
-        };
+        // Private statics stay in the body; an expression body using its name means the original.
+        let keep_static_fields_in_body = has_private_static_member(class)
+            || (is_expr
+                && !expr_class_is_anonymous
+                && p.symbols[class_name_ref.inner_index() as usize].use_count_estimate > 0);
         // All or nothing (keys are pre-evaluated in Phase 2), so static members keep their order.
         let relocate_static_fields = class_decorators_len > 0
-            && !body_names_class_as_written
+            && !keep_static_fields_in_body
             && class.properties.slice().iter().all(|prop| {
                 !is_undecorated_static_accessor(prop)
                     && (!prop.flags.contains(Flags::Property::IsComputed)

@@ -369,7 +369,18 @@ describe("ES Decorators", () => {
           values: [WithAccessor.first, WithAccessor.second, WithAccessor.third],
           keys: Object.keys(WithAccessor),
         };
-        console.log(JSON.stringify({ withPrivate, withAccessor }));
+        const Expression = @wrap class {
+          static first = (log.push("first"), 1);
+          static #second = (log.push("second"), this.first + 1);
+          static get second() { return original.#second; }
+        };
+        const expression = {
+          log: log.splice(0),
+          second: Expression.second,
+          originalKeys: Object.keys(original),
+          replacementKeys: Object.keys(Expression),
+        };
+        console.log(JSON.stringify({ withPrivate, withAccessor, expression }));
       `);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({
@@ -384,6 +395,12 @@ describe("ES Decorators", () => {
           log: ["first", "third", "second", "decorator"],
           values: [1, 2, 3],
           keys: ["first", "third"],
+        },
+        expression: {
+          log: ["first", "second", "decorator"],
+          second: 2,
+          originalKeys: ["first"],
+          replacementKeys: [],
         },
       });
       expect(exitCode).toBe(0);

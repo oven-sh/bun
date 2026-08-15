@@ -61,11 +61,14 @@ function skipBalanced(source: string, i: number, open: string, close: string): n
   return -1;
 }
 
+const WHERE = /\bwhere\b/y;
+
 /**
- * Names of the `fn` items in `source` whose signature, after the parameter
- * list (return type and `where` clause, up to the body's `{` or a declaration's
- * `;`), mentions `&'static mut`, sorted. One entry per function, so a file with
- * two same-named accessors in different impls lists the name twice.
+ * Names of the `fn` items in `source` whose return type mentions
+ * `&'static mut`, sorted. Parameters and `where` bounds do not count: a
+ * function that takes or constrains such a reference is not what hands it out.
+ * One entry per function, so a file with two same-named accessors in different
+ * impls lists the name twice.
  */
 function staticMutFns(source: string): string[] {
   const names: string[] = [];
@@ -82,15 +85,25 @@ function staticMutFns(source: string): string[] {
     if (source[i] !== "(") continue;
     i = skipBalanced(source, i, "(", ")");
     if (i < 0) continue;
-    // Return type (and `where` clause) run up to the body's `{`, or the `;`
-    // that ends a declaration; a `;` inside an array type (`[u8; N]`) or a
-    // tuple does not end the signature.
-    const start = i;
+    while (i < source.length && /\s/.test(source[i])) i++;
+    if (!source.startsWith("->", i)) continue;
+    // The return type runs up to the body's `{`, the `;` ending a declaration,
+    // or a `where` clause. `(`/`[` nesting is tracked so the `;` of an array
+    // type (`[u8; N]`) inside it does not end it; `->` inside an `impl Fn`
+    // return type is just text here.
+    const start = i + 2;
     for (let depth = 0; i < source.length; i++) {
       const c = source[i];
       if (c === "(" || c === "[") depth++;
       else if (c === ")" || c === "]") depth--;
-      else if (c === "{" || (c === ";" && depth === 0)) break;
+      else if (c === "{") break;
+      else if (depth === 0) {
+        if (c === ";") break;
+        if (c === "w") {
+          WHERE.lastIndex = i;
+          if (WHERE.test(source)) break;
+        }
+      }
     }
     if (STATIC_MUT.test(source.slice(start, i))) names.push(m[1]);
   }
@@ -126,7 +139,7 @@ if (process.argv.includes("--update")) {
 const inventory: Record<string, string[]> = await Bun.file(INVENTORY).json();
 
 describe("staticMutFns", () => {
-  test("matches bare, wrapped, multi-line and declared returns, not parameters or prose", () => {
+  test("matches bare, wrapped, multi-line and declared returns, not parameters, where bounds or prose", () => {
     expect(
       staticMutFns(`
         pub fn http_thread() -> &'static mut HTTPThread { todo!() }
@@ -143,6 +156,8 @@ describe("staticMutFns", () => {
         { todo!() }
         unsafe extern "C" { fn ffi_thing() -> &'static mut Thing; }
         fn consumes(slice: &'static mut [u8]) -> StoreRef { todo!() }
+        fn bounded<F>(f: F) -> usize where F: FnOnce(&'static mut Thing) { 0 }
+        fn bounded_no_return<F>(f: F) where F: FnOnce() -> &'static mut Thing { f(); }
         fn plain(&self) -> &'static Loader { todo!() }
         fn shared_mut(&self) -> &mut EventLoop { todo!() }
         fn callback(project: fn(&mut Source) -> &mut Writer) -> &'static str { "" }

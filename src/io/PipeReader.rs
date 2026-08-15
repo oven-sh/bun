@@ -1753,17 +1753,14 @@ impl WindowsBufferedReader {
             sys::Result::Err(_) => unreachable!(),
         };
 
-        #[cfg(debug_assertions)]
-        {
-            // Pointer-range check against `[ptr, ptr+capacity)` — can't form a
-            // `&[u8]` over spare capacity (uninit), so do it on addresses.
-            let base = self._buffer.as_ptr() as usize;
-            let end = base + self._buffer.capacity();
-            let s = slice.as_ptr() as usize;
-            if !slice.is_empty() && !(s >= base && s + slice.len() <= end) {
-                panic!("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
-            }
-        }
+        // Address arithmetic: `slice` covers spare (uninit) capacity, so no `&[u8]` over the Vec may be formed for the check.
+        debug_assert!(
+            slice.is_empty()
+                || (slice.as_ptr() as usize >= self._buffer.as_ptr() as usize
+                    && slice.as_ptr() as usize + slice.len()
+                        <= self._buffer.as_ptr() as usize + self._buffer.capacity()),
+            "uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it."
+        );
 
         // move cursor foward
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.

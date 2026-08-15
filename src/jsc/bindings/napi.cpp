@@ -1723,16 +1723,9 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
-// Shared by the three constructors that wrap addon memory in a buffer
-// (node_api_create_external_sharedarraybuffer, napi_create_external_buffer,
-// napi_create_external_arraybuffer). Node aborts on this input in all three
-// (node::Buffer::New and V8's SharedArrayBuffer::New CHECK it). Letting it
-// through would produce a JSC::ArrayBuffer whose data() is null but whose
-// byteLength() is not 0. JSC reads a null data() as "detached" and every
-// detached buffer it produces itself has byteLength 0, so anything that takes
-// span() without re-checking (crypto.subtle.digest on the ArrayBuffer,
-// SharedArrayBuffer.prototype.slice, which has no detached state to check)
-// reads `length` bytes from address 0.
+// Node CHECKs this too (node::Buffer::New, V8's SharedArrayBuffer::New). A null
+// data pointer means "detached" to JSC, which then assumes byteLength is 0, so
+// wrapping NULL with a length would be read as `length` bytes at address 0.
 static void checkExternalBufferData(const char* function, const void* data, size_t length)
 {
     NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
@@ -1782,12 +1775,9 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     auto* structure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared);
 
     if (external_data == nullptr) {
-        // byte_length is 0 here. JSC has no shared-and-detached state: a null
-        // data pointer means detached, and makeShared() asserts it is not, so
-        // a zero-length SharedArrayBuffer needs a (one byte) allocation behind
-        // it, the same one node_api_create_sharedarraybuffer(env, 0, ...) makes.
-        // As in napi_create_external_buffer's empty case, finalize_cb then runs
-        // when the wrapper dies.
+        // byte_length is 0 here. A SharedArrayBuffer cannot be detached, which
+        // is what a null data pointer means to JSC (makeShared() asserts), so
+        // allocate the empty buffer as node_api_create_sharedarraybuffer does.
         RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(0, 1);
         NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer, napi_generic_failure);
         arrayBuffer->makeShared();

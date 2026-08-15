@@ -1177,8 +1177,7 @@ pub mod package_manifest {
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
                     return Ok(());
                 }
-                // Rename over the existing entry (below) rather than unlink it first: nothing
-                // waits for this task, so exiting in between would delete the entry.
+                // Keep the entry present throughout: rename over it below instead of unlinking it.
                 bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 

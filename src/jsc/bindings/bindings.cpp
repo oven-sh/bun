@@ -2325,8 +2325,9 @@ struct AsymmetricMatcherSubstitution {
     std::set<EncodedJSValue> matcherPath;
 
     // nullptr for kinds the formatter renders from internal state rather than
-    // from properties (Date, RegExp, Map, Set, boxed primitives, ...): a
-    // matcher on one of those was never visible, so the original is used.
+    // from properties (Date, RegExp, Map, Set, boxed primitives, matcher
+    // instances, ...): a matcher on one of those was never visible, so the
+    // original is used.
     JSObject* cloneFor(JSObject* received)
     {
         auto& vm = globalObject->vm();
@@ -2344,6 +2345,8 @@ struct AsymmetricMatcherSubstitution {
             JSC::JSType type = received->type();
             bool rendersOwnProperties = type == JSC::FinalObjectType || type == JSC::ObjectType || type == JSC::JSType(JSDOMWrapperType) || type == JSC::JSType(JSEventType);
             if (!rendersOwnProperties && type != JSC::ErrorInstanceType) return nullptr;
+            // A matcher instance is a JSDOMWrapper too, but prints as itself (`Any<String>`).
+            if (isAsymmetricMatcher(received)) return nullptr;
 
             // The formatter takes the class name (or Error name) from the prototype.
             JSValue proto = received->getPrototype(globalObject);
@@ -2419,64 +2422,62 @@ struct AsymmetricMatcherSubstitution {
         }
     }
 
+    // Returns what to serialize in place of `received`.
     JSValue run(JSObject* received, JSObject* matchers)
     {
-        JSValue result = substitute(received, matchers);
+        substitute(received, matchers);
         RETURN_IF_EXCEPTION(throwScope, {});
         redirectToClones();
         RETURN_IF_EXCEPTION(throwScope, {});
-        return result;
+        auto rootClone = clones.find(JSValue::encode(received));
+        return rootClone == clones.end() ? received : rootClone->second;
     }
 
-    // Returns what to serialize in place of `received`.
-    JSValue substitute(JSObject* received, JSObject* matchers)
+    void substitute(JSObject* received, JSObject* matchers)
     {
-        if (received == matchers) return received;
+        if (received == matchers) return;
 
         JSObject* clone = cloneFor(received);
-        RETURN_IF_EXCEPTION(throwScope, received);
-        if (!clone) return received;
+        RETURN_IF_EXCEPTION(throwScope, );
+        if (!clone) return;
 
         PropertyNameArrayBuilder names(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         matchers->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, received);
+        RETURN_IF_EXCEPTION(throwScope, );
 
         for (const auto& name : names) {
             JSValue receivedProp = received->getIfPropertyExists(globalObject, name);
-            RETURN_IF_EXCEPTION(throwScope, received);
+            RETURN_IF_EXCEPTION(throwScope, );
             if (receivedProp.isEmpty()) continue;
             JSValue matcherProp = matchers->get(globalObject, name);
-            RETURN_IF_EXCEPTION(throwScope, received);
+            RETURN_IF_EXCEPTION(throwScope, );
             gcBuffer.append(receivedProp);
             gcBuffer.append(matcherProp);
 
-            JSValue replacement;
             if (isAsymmetricMatcher(matcherProp)) {
-                replacement = matcherProp;
-            } else if (isAsymmetricMatcher(receivedProp) || !receivedProp.isObject() || !matcherProp.isObject()) {
-                // Compared as a whole; a received-side matcher already prints as one.
+                clone->putDirectMayBeIndex(globalObject, name, matcherProp);
+                RETURN_IF_EXCEPTION(throwScope, );
                 continue;
-            } else {
-                auto onReceivedPath = receivedPath.insert(JSValue::encode(receivedProp));
-                auto onMatcherPath = matcherPath.insert(JSValue::encode(matcherProp));
-                if (!onReceivedPath.second || !onMatcherPath.second) {
-                    // Cycle: deepMatch checked nothing below here.
-                    if (onReceivedPath.second) receivedPath.erase(onReceivedPath.first);
-                    if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
-                    continue;
-                }
-                replacement = substitute(receivedProp.getObject(), matcherProp.getObject());
-                receivedPath.erase(JSValue::encode(receivedProp));
-                matcherPath.erase(JSValue::encode(matcherProp));
-                RETURN_IF_EXCEPTION(throwScope, received);
-                if (replacement == receivedProp) continue;
             }
+            // Compared as a whole; a received-side matcher already prints as one.
+            if (isAsymmetricMatcher(receivedProp) || !receivedProp.isObject() || !matcherProp.isObject()) continue;
 
-            clone->putDirectMayBeIndex(globalObject, name, replacement);
-            RETURN_IF_EXCEPTION(throwScope, received);
+            auto onReceivedPath = receivedPath.insert(JSValue::encode(receivedProp));
+            auto onMatcherPath = matcherPath.insert(JSValue::encode(matcherProp));
+            if (!onReceivedPath.second || !onMatcherPath.second) {
+                // Cycle: deepMatch checked nothing below here.
+                if (onReceivedPath.second) receivedPath.erase(onReceivedPath.first);
+                if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
+                continue;
+            }
+            // Nothing is put on `clone` for this key: whichever copied property
+            // holds the child (this key, or the field behind a getter) is pointed
+            // at the child's clone by redirectToClones.
+            substitute(receivedProp.getObject(), matcherProp.getObject());
+            receivedPath.erase(JSValue::encode(receivedProp));
+            matcherPath.erase(JSValue::encode(matcherProp));
+            RETURN_IF_EXCEPTION(throwScope, );
         }
-
-        return clone;
     }
 };
 }

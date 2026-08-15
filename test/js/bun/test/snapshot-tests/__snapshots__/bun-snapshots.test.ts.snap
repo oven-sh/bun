@@ -187,13 +187,21 @@ MessageEvent {
 }
 `;
 
-exports[`a matcher checked through a getter is recorded under the getter and on the object behind it 1`] = `
+exports[`snapshot records the matchers that were checked 9`] = `Any<String>`;
+
+exports[`a matcher object checked through a getter is recorded on the object behind it 1`] = `
 Wrapper {
   "_user": {
     "name": Any<String>,
   },
-  "user": {
+}
+`;
+
+exports[`a matcher object checked through a getter is recorded on the object behind it 2`] = `
+{
+  "_user": {
     "name": Any<String>,
   },
+  "user": [native code],
 }
 `;

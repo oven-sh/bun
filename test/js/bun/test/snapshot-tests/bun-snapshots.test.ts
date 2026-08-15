@@ -154,9 +154,14 @@ test("snapshot records the matchers that were checked", () => {
   const message = new MessageEvent("message", { data: "hi" });
   expect(message).toMatchSnapshot({ data: expect.any(String) });
   expect(message.data).toBe("hi");
+
+  // A received value that is itself a matcher still prints as that matcher.
+  expect(expect.any(String)).toMatchSnapshot({});
 });
 
-test("a matcher checked through a getter is recorded under the getter and on the object behind it", () => {
+// The matcher is recorded on the object the getter returns, which the snapshot
+// shows under the field that holds it; the getter itself is left as it was.
+test("a matcher object checked through a getter is recorded on the object behind it", () => {
   class Wrapper {
     _user: { name: string };
     constructor() {
@@ -170,6 +175,16 @@ test("a matcher checked through a getter is recorded under the getter and on the
   expect(wrapper).toMatchSnapshot({ user: { name: expect.any(String) } });
   expect(wrapper._user.name).toBe("alice");
   expect(Object.hasOwn(wrapper, "user")).toBe(false);
+
+  const withOwnGetter = {
+    _user: { name: "bob" },
+    get user() {
+      return this._user;
+    },
+  };
+  expect(withOwnGetter).toMatchSnapshot({ user: { name: expect.any(String) } });
+  expect(withOwnGetter._user.name).toBe("bob");
+  expect(Object.getOwnPropertyDescriptor(withOwnGetter, "user")!.get).toBeFunction();
 });
 
 describe("toMatchSnapshot errors", () => {

@@ -1652,6 +1652,8 @@ describe("bins", () => {
             "absolute-link": "absolute-link.js",
             "link-inside-package": "link-to-real.js",
             "through-linked-dir": "linked-dir/inner.js",
+            // bin paths are normalized to `/` before they are checked
+            "through-linked-dir-backslash": "linked-dir\\inner.js",
           },
         }),
       ),

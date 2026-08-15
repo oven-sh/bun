@@ -2355,8 +2355,6 @@ impl Data {
             | Data::EUndefined(_)
             | Data::EInlinedEnum(_) => true,
             Data::EString(str) => str.next.is_none(),
-            Data::EArray(array) => array.was_originally_macro,
-            Data::EObject(object) => object.was_originally_macro,
             _ => false,
         }
     }

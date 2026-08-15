@@ -289,9 +289,10 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
   }
 
   type Host = { hostname: string; port: number };
-  const spec = ({ hostname, port }: Host) =>
-    `http://carol:${password}@${hostname}:${port}/cdn/direct-1.0.0.tgz?token=${token}`;
-  const masked = ({ hostname, port }: Host) => `http://carol:******@${hostname}:${port}/cdn/direct-1.0.0.tgz?token=***`;
+  const spec = ({ hostname, port }: Host, query = `?token=${token}`) =>
+    `http://carol:${password}@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
+  const masked = ({ hostname, port }: Host, query = "?token=***") =>
+    `http://carol:******@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
 
   const packageJson = (dependency: string) => JSON.stringify({ name: "app", dependencies: { direct: dependency } });
   // What a previous install of `packageJson(dependency)` writes to bun.lock.
@@ -361,8 +362,11 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     await using server = await startTarballServer();
     using dir = tempDir("redacted-resolution-add", { "package.json": JSON.stringify({ name: "app" }) });
 
-    const { out, err, exitCode } = await run(String(dir), server, ["add", spec(server)]);
-    expect(out).toContain(`installed direct@${masked(server)}\n`);
+    // No query string here: `bun add <url>` names its extraction directory
+    // after the URL's basename, and a `?` in a directory name is rejected on
+    // Windows, so a query string makes the add itself fail there.
+    const { out, err, exitCode } = await run(String(dir), server, ["add", spec(server, "")]);
+    expect(out).toContain(`installed direct@${masked(server, "")}\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(0);
   });

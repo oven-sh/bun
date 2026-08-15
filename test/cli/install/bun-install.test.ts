@@ -161,7 +161,7 @@ describe.concurrent("bun-install", () => {
       setContextHandler(ctx, async () => {
         inFlight++;
         maxInFlight = Math.max(maxInFlight, inFlight);
-        if (inFlight === documented) documentedLimitReached.resolve();
+        if (inFlight >= documented) documentedLimitReached.resolve();
         if (inFlight > documented) documentedLimitExceeded.resolve();
         await release.promise;
         inFlight--;
@@ -177,7 +177,11 @@ describe.concurrent("bun-install", () => {
         env: installEnv,
       });
       try {
-        await documentedLimitReached.promise;
+        // A limit lower than the documented one parks bun (and this wait) with
+        // fewer requests in flight and no further signal, so the wait is bounded
+        // (generously: this is a debug build under CI load) and the assertions
+        // below report what was reached. proc.exited covers bun giving up early.
+        await Promise.race([documentedLimitReached.promise, proc.exited, Bun.sleep(30_000)]);
         // bun sends everything its limit allows in one burst, so a request beyond
         // the documented limit arrives right behind the others. That it never
         // arrives can only be observed by giving it a moment to show up.

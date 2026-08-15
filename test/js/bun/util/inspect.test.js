@@ -312,6 +312,7 @@ async function AsyncComponent() {}
 // `React.forwardRef()` / `React.memo()` return objects, not functions; they are
 // named by assigning `displayName`.
 const ForwardRefLike = { $$typeof: Symbol.for("react.forward_ref"), render: () => null, displayName: "Button" };
+const MemoLike = { $$typeof: Symbol.for("react.memo"), type: Foo };
 function makeUnnamed() {
   return () => null;
 }
@@ -327,6 +328,7 @@ describe("jsx component tag name", () => {
     ["anonymous class expression", ClassExpression, "ClassExpression"],
     ["async function", AsyncComponent, "AsyncComponent"],
     ["displayName on a forwardRef/memo-style object", ForwardRefLike, "Button"],
+    ["memo-style object without a displayName", MemoLike, "NoName"],
     ["function with no name at all", Unnamed, "NoName"],
   ];
 

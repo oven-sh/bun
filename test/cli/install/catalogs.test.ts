@@ -1598,11 +1598,36 @@ describe("peer dependencies", () => {
     });
   });
 
-  // package.json is edited after the install so bun.lock's catalogs are the ones that lack the entry.
+  // The root catalog is the one in package.json right now, not the one bun.lock recorded at the last install.
+  test.concurrent("bun pm pack substitutes the catalog range edited into package.json after the install", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": "^1.0.0" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    await install(dir, "hoisted");
+    await rewriteRootPackageJson(dir, { catalog: { "no-deps": "^2.0.0" } });
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toContain('"no-deps": "^1.0.0"');
+
+    const libDir = join(dir, "packages", "lib");
+    await pack(libDir, bunEnv);
+    const tarball = readTarball(join(libDir, "lib-1.2.3.tgz"));
+    const packageJson = tarball.entries.find(
+      (entry: { pathname: string }) => entry.pathname === "package/package.json",
+    );
+    expect(JSON.parse(packageJson.contents)).toStrictEqual({
+      name: "lib",
+      version: "1.2.3",
+      peerDependencies: { "no-deps": "^2.0.0" },
+    });
+  });
+
+  // lib's package.json is edited after the install; the root catalog never had these entries.
   describe.each([
     ["a-dep", "catalog:"],
     ["no-deps", "catalog:missing"],
-  ] as const)("bun pm pack with a %s peer of %s missing from the lockfile's catalogs", (peerName, peerSpec) => {
+  ] as const)("bun pm pack with a %s peer of %s missing from the catalogs", (peerName, peerSpec) => {
     test.concurrent("fails without writing a tarball", async () => {
       const dir = await makeRepo({
         catalog: { "no-deps": ">=1.0.0" },

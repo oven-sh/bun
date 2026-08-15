@@ -691,12 +691,12 @@ describe("workspaces", () => {
     });
   }
 
-  test("fails gracefully when workspace version fails to resolve", async () => {
+  test("resolves workspace:* from the workspace's package.json without a lockfile", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-workspace-protocol-fail",
+          name: "pack-workspace-protocol-no-lockfile",
           version: "2.2.3",
           workspaces: ["pkgs/*"],
           dependencies: {
@@ -708,19 +708,146 @@ describe("workspaces", () => {
       write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
     ]);
 
-    const { err } = await packExpectError(packageDir, bunEnv);
-    expect(err).toContain(
-      'error: Failed to resolve workspace version for "pkg1" in `dependencies`. Run `bun install` and try again.',
-    );
-
-    await runBunInstall(bunEnv, packageDir);
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-protocol-no-lockfile-2.2.3.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/pkgs/pkg1/package.json" },
       { "pathname": "package/root.js" },
     ]);
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.1.1" });
+  });
+
+  test("fails when no workspace with a version matches a workspace:* dependency", async () => {
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+      write(join(packageDir, "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" })),
+      write(
+        join(packageDir, "pkgs", "app1", "package.json"),
+        JSON.stringify({ name: "app1", version: "1.0.0", dependencies: { "not-a-workspace": "workspace:*" } }),
+      ),
+      write(
+        join(packageDir, "pkgs", "app2", "package.json"),
+        JSON.stringify({ name: "app2", version: "1.0.0", devDependencies: { "unversioned": "workspace:^" } }),
+      ),
+    ]);
+
+    const app1 = await packExpectError(join(packageDir, "pkgs", "app1"), bunEnv);
+    expect(app1.err).toContain('error: Failed to resolve workspace version for "not-a-workspace" in `dependencies` (');
+    expect(app1.err).toContain(
+      'package.json" has no workspace named "not-a-workspace", or its package.json has no version).',
+    );
+    expect(await exists(join(packageDir, "pkgs", "app1", "app1-1.0.0.tgz"))).toBeFalse();
+
+    const app2 = await packExpectError(join(packageDir, "pkgs", "app2"), bunEnv);
+    expect(app2.err).toContain('error: Failed to resolve workspace version for "unversioned" in `devDependencies` (');
+    expect(app2.err).toContain(
+      'package.json" has no workspace named "unversioned", or its package.json has no version).',
+    );
+    expect(await exists(join(packageDir, "pkgs", "app2", "app2-1.0.0.tgz"))).toBeFalse();
+  });
+
+  // https://github.com/oven-sh/bun/issues/20477: a release bumps versions (`bun pm version`,
+  // changesets) after the last `bun install`, so bun.lock still has the versions from before
+  // the bump when the packages get packed and published.
+  test("uses the versions and catalogs in the package.json files, not the ones in bun.lock", async () => {
+    const rootPackageJson = (react: string) =>
+      JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: { packages: ["packages/*"], catalog: { react } },
+      });
+    const corePackageJson = (version: string) => JSON.stringify({ name: "@acme/core", version });
+    const utilsPackageJson = (version: string) =>
+      JSON.stringify({
+        name: "@acme/utils",
+        version,
+        dependencies: { "@acme/core": "workspace:*" },
+        devDependencies: { "@acme/core": "workspace:~" },
+        peerDependencies: { "@acme/core": "workspace:^", "react": "catalog:" },
+        // optional so that `bun install` does not need a registry to install react
+        peerDependenciesMeta: { react: { optional: true } },
+      });
+    const coreDir = join(packageDir, "packages", "core");
+    const utilsDir = join(packageDir, "packages", "utils");
+
+    await Promise.all([
+      write(join(packageDir, "package.json"), rootPackageJson("^18.3.1")),
+      write(join(coreDir, "package.json"), corePackageJson("1.2.3")),
+      write(join(utilsDir, "package.json"), utilsPackageJson("0.4.0")),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    await Promise.all([
+      write(join(packageDir, "package.json"), rootPackageJson("^19.1.0")),
+      write(join(coreDir, "package.json"), corePackageJson("1.3.0")),
+      write(join(utilsDir, "package.json"), utilsPackageJson("0.4.1")),
+    ]);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"version": "1.2.3"');
+    expect(lockfile).toContain('"react": "^18.3.1"');
+
+    await pack(utilsDir, bunEnv);
+
+    const tarball = readTarball(join(utilsDir, "acme-utils-0.4.1.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "@acme/utils",
+      version: "0.4.1",
+      dependencies: { "@acme/core": "1.3.0" },
+      devDependencies: { "@acme/core": "~1.3.0" },
+      peerDependencies: { "@acme/core": "^1.3.0", "react": "^19.1.0" },
+      peerDependenciesMeta: { react: { optional: true } },
+    });
+  });
+
+  test("packing the workspace root uses the versions in the workspaces' package.json files", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace-root",
+          version: "2.0.0",
+          workspaces: ["pkgs/*"],
+          dependencies: { "pkg1": "workspace:*" },
+        }),
+      ),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+    await write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.2.0" }));
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-root-2.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.2.0" });
+  });
+
+  test("sees the versions a prepack script writes to other workspaces", async () => {
+    const pkg1PackageJson = join(packageDir, "pkgs", "pkg1", "package.json");
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+      write(pkg1PackageJson, JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+      write(
+        join(packageDir, "pkgs", "app", "package.json"),
+        JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          scripts: { prepack: `${bunExe()} bump-pkg1.js` },
+          dependencies: { "pkg1": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "pkgs", "app", "bump-pkg1.js"),
+        `require("fs").writeFileSync(${JSON.stringify(pkg1PackageJson)}, JSON.stringify({ name: "pkg1", version: "2.0.0" }));`,
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    await pack(join(packageDir, "pkgs", "app"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "app", "app-1.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "2.0.0" });
   });
 });
 

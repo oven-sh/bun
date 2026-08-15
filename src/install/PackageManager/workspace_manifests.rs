@@ -1,3 +1,5 @@
+use core::fmt;
+
 use bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
@@ -75,6 +77,60 @@ impl ScratchManifests {
     }
 }
 
+/// What `bun pm pack` and `bun publish` substitute for `workspace:` and `catalog:` specs: the
+/// versions the workspace's package.json files declare right now, parsed the way `bun install`
+/// parses them. bun.lock is deliberately not consulted. It records what the files said at the last
+/// install, and a release bumps versions (`bun pm version`, changesets, ...) between that install
+/// and the publish.
+pub struct WorkspaceManifests {
+    lockfile: Lockfile,
+    root_package_json_path: Box<[u8]>,
+}
+
+impl WorkspaceManifests {
+    /// Reads the root package.json and every workspace it lists. Prints the same errors
+    /// `bun install` would print for them and exits when they do not parse.
+    pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
+        let mut scratch = ScratchManifests::new();
+        if let Err(err) = scratch.parse_root(manager) {
+            crash(
+                &mut scratch.log,
+                err,
+                format_args!("failed to read the workspace's package.json files"),
+            );
+        }
+        WorkspaceManifests {
+            lockfile: scratch.lockfile,
+            root_package_json_path: root_package_json_path(),
+        }
+    }
+
+    /// The package.json whose `workspaces` and catalogs these are: the workspace root's when the
+    /// package being packed is one of its workspaces, otherwise the package's own.
+    pub fn root_package_json_path(&self) -> &[u8] {
+        &self.root_package_json_path
+    }
+
+    /// The `version` in the package.json of the workspace named `name`. `None` when no workspace
+    /// has that name or its package.json has no (semver) version.
+    pub fn workspace_version(&self, name: &[u8]) -> Option<impl fmt::Display + '_> {
+        let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
+        let version = self.lockfile.workspace_versions.get(&name_hash)?;
+        Some(version.fmt(self.lockfile.buffers.string_bytes.as_slice()))
+    }
+
+    /// The range catalog `catalog_name` (`""` and `"default"` both name the default catalog)
+    /// declares for `dependency_name`, as written in the root package.json.
+    pub fn catalog_version(&self, catalog_name: &[u8], dependency_name: &[u8]) -> Option<&[u8]> {
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let dependency = self
+            .lockfile
+            .catalogs
+            .find(string_buf, catalog_name, dependency_name)?;
+        Some(dependency.version.literal.slice(string_buf))
+    }
+}
+
 /// Graph index i == `targets[i]`; the target whose `name_hash` is `None` is the root.
 pub(crate) fn relation_graph(
     manager: &mut PackageManager,
@@ -83,7 +139,7 @@ pub(crate) fn relation_graph(
 ) -> WorkspaceGraph {
     let mut scratch = ScratchManifests::new();
     if let Err(err) = scratch.parse_root(manager) {
-        crash(&mut scratch.log, pattern, err);
+        crash_for_filter(&mut scratch.log, pattern, err);
     }
 
     let mut parsed: Vec<(u32, Package)> = Vec::with_capacity(targets.len());
@@ -94,7 +150,7 @@ pub(crate) fn relation_graph(
         }
         match scratch.parse_member(manager, target) {
             Ok(pkg) => parsed.push((i as u32, pkg)),
-            Err(err) => crash(&mut scratch.log, pattern, err),
+            Err(err) => crash_for_filter(&mut scratch.log, pattern, err),
         }
     }
 
@@ -150,14 +206,23 @@ pub(crate) fn relation_graph(
     WorkspaceGraph::from_edges(targets.len(), edges)
 }
 
-fn crash(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
+fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
+    crash(
+        log,
+        err,
+        format_args!(
+            "failed to read the workspace dependencies for --filter \"{}\"",
+            BStr::new(pattern)
+        ),
+    )
+}
+
+/// The parse errors explain the failure when there are any; `what` and `err` are the fallback.
+fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     } else {
-        Output::err_generic(
-            "failed to read the workspace dependencies for --filter \"{}\": {}",
-            (BStr::new(pattern), err.name()),
-        );
+        Output::err_generic("{}: {}", (what, err.name()));
     }
     Global::crash();
 }

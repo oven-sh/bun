@@ -181,6 +181,25 @@ describe("advanceTimersByTime", () => {
     expect(fired).toBe(1);
   });
 
+  test("…unless the callback refresh()es it, which schedules it on the new clock", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    const interval = setInterval(() => {
+      if (++fired === 1) {
+        vi.useFakeTimers({ now: 5000 });
+        interval.refresh();
+      }
+    }, 100);
+    vi.advanceTimersByTime(100);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 1 });
+    // One full period on the new clock, not the old timeline's next deadline.
+    vi.advanceTimersByTime(99);
+    expect(fired).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect({ fired, now: Date.now() }).toEqual({ fired: 2, now: 5100 });
+    clearInterval(interval);
+  });
+
   test("a firing setInterval whose callback calls useRealTimers() does not escape onto the real clock", async () => {
     vi.useFakeTimers({ now: 0 });
     let fired = 0;

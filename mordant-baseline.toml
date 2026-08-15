@@ -40,7 +40,6 @@
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "narrowed_two_ways:src/jsc/RuntimeTranspilerCache.rs" = 1
 "reimplemented_helper:src/jsc/webcore_types.rs" = 1
-"same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
 [bun_parsers]
 "parallel_vecs:src/parsers/xml.rs" = 1

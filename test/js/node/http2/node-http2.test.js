@@ -4720,6 +4720,48 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
   }
 });
 
+it("sendTrailers() whose values are all empty arrays ends the stream without a 'trailers' event", async () => {
+  // Empty arrays put no fields on the wire, so the block encodes to nothing. Node then ends the
+  // stream with an empty DATA frame (as for sendTrailers({})) and the peer never sees trailers;
+  // bun used to send a HEADERS frame with an empty block, surfacing as a 'trailers' event with
+  // no headers. sentTrailers still records what was passed, as in node.
+  const trailers = { "x-none": [] };
+  const server = http2.createServer();
+  try {
+    const serverSide = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", serverSide.reject);
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers(trailers));
+      stream.on("close", () => serverSide.resolve({ sentTrailers: stream.sentTrailers, rstCode: stream.rstCode }));
+      stream.end("body");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+
+    const clientSide = Promise.withResolvers();
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", clientSide.reject);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", clientSide.reject);
+      const trailerEvents = [];
+      req.on("trailers", (headers, flags, rawHeaders) => trailerEvents.push(rawHeaders));
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => (body += chunk));
+      req.on("close", () => clientSide.resolve({ body, trailerEvents, rstCode: req.rstCode }));
+      req.end();
+
+      expect(await clientSide.promise).toEqual({ body: "body", trailerEvents: [], rstCode: 0 });
+      expect(await serverSide.promise).toEqual({ sentTrailers: trailers, rstCode: 0 });
+    } finally {
+      client.close();
+    }
+  } finally {
+    server.close();
+  }
+});
+
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must

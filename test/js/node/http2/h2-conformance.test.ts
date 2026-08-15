@@ -1047,6 +1047,111 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe.concurrent("sendTrailers() with a block that encodes to no fields (RFC 9113 §8.1)", () => {
+  // An empty array value puts no field on the wire (nor does an empty name). When that leaves
+  // nothing at all, node (Http2Stream::SubmitTrailers) ends the stream with the empty END_STREAM
+  // DATA frame that sendTrailers({}) also produces, instead of a HEADERS frame carrying a
+  // zero-length block, which the peer reports as a 'trailers' event with no headers in it.
+  const END_STREAM = 0x1;
+  const END_HEADERS = 0x4;
+
+  /** The flags of every HEADERS frame on stream 1, and the frame that ended the stream. */
+  function stream1(frames: Frame[]) {
+    const onStream = frames.filter(f => f.streamId === 1);
+    return {
+      headersFlags: onStream.filter(f => f.type === FrameType.HEADERS).map(f => f.flags),
+      endStream: onStream
+        .filter(f => (f.flags & END_STREAM) !== 0)
+        .map(f => ({ type: f.type, flags: f.flags, length: f.length })),
+    };
+  }
+
+  /** Serves one request with waitForTrailers, answering 'wantTrailers' with `trailers`. Resolves
+   *  once the response stream has ended on the wire, with the server stream's sentTrailers. */
+  async function serverSends(trailers: Record<string, unknown>) {
+    const sent = Promise.withResolvers<unknown>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", (err: Error) => sent.reject(err));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        stream.sendTrailers(trailers);
+        sent.resolve(stream.sentTrailers);
+      });
+      stream.end("body");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, END_STREAM | END_HEADERS, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.streamId === 1 && (f.flags & END_STREAM) !== 0);
+      return { ...stream1(c.frames), sentTrailers: await sent.promise };
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+
+  test.each([
+    [{ "x-none": [] }],
+    // content-type is a single-value field: its bookkeeping runs for the empty array but must
+    // not count as a field either.
+    [{ "x-none": [], "content-type": [] }],
+    [{ "": "x" }],
+    // {} is short-circuited to noTrailers() in JS before the encoder runs; it pins that the two
+    // routes put the same frame on the wire.
+    [{}],
+  ])("server: %j ends the response with an empty DATA frame and no trailer HEADERS frame", async trailers => {
+    expect(await serverSends(trailers)).toEqual({
+      headersFlags: [END_HEADERS], // the response block; it cannot carry END_STREAM with trailers pending
+      endStream: [{ type: FrameType.DATA, flags: END_STREAM, length: 0 }],
+      sentTrailers: trailers,
+    });
+  });
+
+  test("server: one field next to an empty array still goes out as a trailer HEADERS frame", async () => {
+    const result = await serverSends({ "x-none": [], "x-sent": "1" });
+    expect(result).toEqual({
+      headersFlags: [END_HEADERS, END_STREAM | END_HEADERS],
+      endStream: [{ type: FrameType.HEADERS, flags: END_STREAM | END_HEADERS, length: expect.any(Number) }],
+      sentTrailers: { "x-none": [], "x-sent": "1" },
+    });
+    expect(result.endStream[0].length).toBeGreaterThan(0);
+  });
+
+  test("client: the same block ends the request with an empty DATA frame and no trailer HEADERS frame", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      const sent = new Promise<unknown>(resolve => {
+        req.on("wantTrailers", () => {
+          req.sendTrailers({ "x-none": [] });
+          resolve(req.sentTrailers);
+        });
+      });
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      await raw.waitFor(f => f.streamId === 1 && (f.flags & END_STREAM) !== 0);
+      expect({ ...stream1(raw.frames), sentTrailers: await sent }).toEqual({
+        headersFlags: [END_HEADERS],
+        endStream: [{ type: FrameType.DATA, flags: END_STREAM, length: 0 }],
+        sentTrailers: { "x-none": [] },
+      });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
   // and no client library normalizes it away.

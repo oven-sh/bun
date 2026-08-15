@@ -7745,11 +7745,14 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
-
-        stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        this.send_no_trailers(unsafe { &mut *stream });
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Empty END_STREAM DATA frame: what node sends in place of a trailer block with no fields.
+    fn send_no_trailers(&self, stream: &mut Stream) {
+        stream.wait_for_trailers = false;
+        let _ = self.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
     }
 
     /// node's strictSingleValueFields option (default true): when disabled, duplicate
@@ -8120,6 +8123,10 @@ impl H2FrameParser {
                     return Ok(ret);
                 }
             }
+        }
+        if encoded_headers.is_empty() {
+            this.send_no_trailers(&mut stream);
+            return Ok(JSValue::UNDEFINED);
         }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();

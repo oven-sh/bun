@@ -240,8 +240,6 @@ describe.concurrent("ResolveMessage.referrer for resolve errors raised during tr
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-
     const { importMe, requireMe, requireMeNodeBuiltin, ...results } = JSON.parse(stdout);
     expect(results).toEqual({
       import: [{ specifier: "./does-not-exist", referrer: importMe, file: importMe }],
@@ -256,6 +254,7 @@ describe.concurrent("ResolveMessage.referrer for resolve errors raised during tr
         },
       ],
     });
+    expect(exitCode).toBe(0);
   }
 
   it("import(), require() and plugin virtual modules", async () => {

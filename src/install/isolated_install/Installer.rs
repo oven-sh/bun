@@ -2816,9 +2816,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Appends `<entry's store node_modules>/<package_dir_name>/<folder>` to `buf`.
-    /// `Ok(false)`: nothing to link, as in the hoisted installer, because the path
-    /// leaves the package (`install_isolated_packages` reports those) or the
-    /// package does not ship the folder.
+    /// `Ok(false)`: nothing to link (the path leaves the package, or no such directory).
     fn append_nested_folder_path(
         &self,
         buf: &mut AutoAbsPath,

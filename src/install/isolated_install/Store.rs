@@ -283,10 +283,8 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
-        /// A folder that exists only inside the packages declaring it
-        /// (`isolated_install::ContainedFolders::packages`): no store directory,
-        /// no task, no hoist slot; those packages link it from inside their own
-        /// directory (`Installer::symlink_dependencies`).
+        /// Exists only inside the packages declaring it (`isolated_install::ContainedFolders`):
+        /// no store directory, task or hoist slot; linked in `Installer::symlink_dependencies`.
         pub nested_folder: bool,
 
         pub peer_hash: PeerHash,

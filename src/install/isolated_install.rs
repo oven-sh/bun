@@ -213,12 +213,10 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
-/// Whether `dep`, declared by the package resolved as `declarer`, is a `file:`
-/// dependency on a folder inside that package: `Package::from_npm` keeps the path
-/// as declared, while `Package::parse` (root, workspaces, local `file:` packages)
-/// and `overrides` produce paths relative to the top-level dir. Such a folder is
-/// private to the package: it is linked from inside the package's own directory
-/// and does not satisfy the peer dependencies of the packages below it.
+/// `dep` is a `file:` dependency whose path is relative to the package declaring it
+/// (resolved as `declarer`): `Package::from_npm` stores these paths as declared,
+/// `Package::parse` and `overrides` store top-level relative ones. Such a folder is
+/// linked from inside the package and is not a peer provider for the packages below.
 fn dependency_is_contained_folder(
     lockfile: &Lockfile,
     declarer: &Resolution,
@@ -241,8 +239,8 @@ fn dependency_is_contained_folder(
 struct ContainedFolders {
     /// Indexed by `DependencyID`.
     dependencies: DynamicBitSet,
-    /// Indexed by `PackageID`: folder packages only such dependencies resolve to,
-    /// which therefore get no store entry (`store::entry::Entry::nested_folder`).
+    /// Indexed by `PackageID`: folders only such dependencies resolve to. They get
+    /// no store entry (`store::entry::Entry::nested_folder`).
     packages: DynamicBitSet,
 }
 
@@ -289,9 +287,7 @@ fn contained_folders(lockfile: &Lockfile) -> Result<ContainedFolders, AllocError
     Ok(contained)
 }
 
-/// Whether one of `pkg_id`'s own dependencies is a `dependency_is_contained_folder`
-/// dependency on the folder package `folder_pkg_id`; any other kind of dependency
-/// on a folder links to the folder's store entry.
+/// `pkg_id` has a `dependency_is_contained_folder` dependency resolving to `folder_pkg_id`.
 pub(crate) fn folder_is_inside_package(
     lockfile: &Lockfile,
     pkg_id: PackageID,
@@ -388,9 +384,8 @@ pub(crate) fn build_store(
 
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
-        // filtered out by bundled/disabled/unresolved) and satisfy peers below the
-        // package. Contained folders satisfy only the package's own peers, so
-        // leaving them out over-approximates the leaks, which is safe.
+        // filtered out by bundled/disabled/unresolved) and are peer providers for
+        // the packages below (contained folders are not, see the walk below).
         let own_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
         let provides: DynamicBitSetList =

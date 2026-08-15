@@ -247,10 +247,7 @@ impl GraphTraceState {
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
-        let b = match side {
-            Side::Client => &mut self.client_bits,
-            Side::Server => &mut self.server_bits,
-        };
+        let b = self.bits(side);
         if b.unmanaged.bit_length < new_size {
             b.resize(new_size, false)?;
         }

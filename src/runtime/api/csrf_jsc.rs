@@ -48,6 +48,30 @@ fn get_optional_int_u64(
     Ok(Some(num as u64))
 }
 
+/// Reads the optional `encoding` property. Parsed as a Buffer encoding name
+/// ("" selects base64url), of which only the three token formats are accepted.
+fn get_optional_token_format(
+    target: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<Option<csrf::TokenFormat>> {
+    let Some(value) = target.get(global, "encoding")? else {
+        return Ok(None);
+    };
+    let encoding =
+        NodeEncoding::from_js_with_default_on_empty(value, global, NodeEncoding::Base64url)?;
+    let format = match encoding {
+        Some(NodeEncoding::Base64) => csrf::TokenFormat::Base64,
+        Some(NodeEncoding::Base64url) => csrf::TokenFormat::Base64Url,
+        Some(NodeEncoding::Hex) => csrf::TokenFormat::Hex,
+        _ => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Invalid format: must be 'base64', 'base64url', or 'hex'"
+            )));
+        }
+    };
+    Ok(Some(format))
+}
+
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
@@ -96,27 +120,8 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(format) = get_optional_token_format(options_value, global)? {
+            encoding = format;
         }
 
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
@@ -177,10 +182,8 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
     };
 
-    // Encode the token
-    // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
-    // `bun_core::NodeEncoding`, not `crate::node::Encoding` (which owns
-    // `encode_with_max_size`). Map locally to the runtime enum instead.
+    // Encode the token. `bun_csrf` sits below `crate::node::Encoding` (which
+    // owns `encode_with_max_size`), so `TokenFormat` is mapped back to it here.
     let node_encoding = match encoding {
         csrf::TokenFormat::Base64 => NodeEncoding::Base64,
         csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
@@ -251,27 +254,8 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(format) = get_optional_token_format(options_value, global)? {
+            encoding = format;
         }
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {

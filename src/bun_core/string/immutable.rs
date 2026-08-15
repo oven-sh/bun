@@ -2537,9 +2537,7 @@ fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
     (cp as u32, take)
 }
 
-/// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
-/// `list` (unpaired surrogates become U+FFFD) and return the
-/// (possibly-reallocated) list.
+/// `strings.toUTF8ListWithType`: append `utf16` as UTF-8 onto `list` and return it.
 pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
     try_convert_utf16_to_utf8_append(&mut list, utf16)?;
     Ok(list)

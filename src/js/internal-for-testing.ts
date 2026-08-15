@@ -735,14 +735,7 @@ export const stringsInternals = {
   toUTF16AllocSentinel: $newRustFunction("string/immutable/unicode.rs", "TestingAPIs.toUTF16AllocSentinel", 1) as (
     bytes: Uint8Array,
   ) => string,
-  /**
-   * Appends `units` (UTF-16 code units) as UTF-8 to a byte vector that already
-   * holds `prefix` and has exactly `spare` bytes of spare capacity, through
-   * `bun.strings.convertUTF16ToUTF8Append` (or `toUTF8ListWithType` when
-   * `fallible`). Returns the whole vector and whether the conversion had to
-   * grow it. The conversion sizes its own output starting from that spare
-   * capacity, which no JS-reachable caller lets a test control.
-   */
+  /** Appends `units` as UTF-8 to a vector holding `prefix` with exactly `spare` spare bytes (`fallible`: via `toUTF8ListWithType`). */
   convertUTF16ToUTF8Append: $newRustFunction(
     "string/immutable/unicode.rs",
     "TestingAPIs.convertUTF16ToUTF8Append",

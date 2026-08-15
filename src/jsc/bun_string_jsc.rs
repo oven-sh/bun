@@ -309,14 +309,7 @@ pub mod unicode_testing_apis {
         js
     }
 
-    /// `stringsInternals.convertUTF16ToUTF8Append(units, prefix, spare, fallible)`
-    /// in `internal-for-testing.ts`: appends `units` (a `Uint16Array`) as UTF-8
-    /// to a `Vec` holding `prefix` with exactly `spare` bytes of spare capacity,
-    /// via `convert_utf16_to_utf8_append` or, when `fallible`,
-    /// `to_utf8_list_with_type`. Returns `{ bytes, reallocated }`: the whole
-    /// `Vec` and whether the conversion had to grow it. The starting spare
-    /// capacity is what the conversion sizes its output from, and no caller
-    /// reachable from JS lets a test choose it.
+    /// `stringsInternals.convertUTF16ToUTF8Append` in `internal-for-testing.ts`.
     pub fn convert_utf16_to_utf8_append(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -345,8 +338,6 @@ pub mod unicode_testing_apis {
         }
         let fallible = frame.argument(3).to_boolean();
 
-        // Copy the code units out rather than viewing the array's bytes as
-        // `&[u16]`, which would depend on the view's alignment.
         let utf16: Vec<u16> = units
             .byte_slice()
             .as_chunks::<2>()

@@ -1666,16 +1666,12 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `convertUTF16ToUTF8Append`: append the UTF-8 form of `utf16` to
-    /// `list`, replacing unpaired surrogates with U+FFFD. Grows `list` as
-    /// needed; [`try_convert_utf16_to_utf8_append`] reports allocation failure
-    /// instead of crashing.
+    /// Port of `convertUTF16ToUTF8Append`; unpaired surrogates become U+FFFD.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
         crate::handle_oom(try_convert_utf16_to_utf8_append(list, utf16))
     }
 
-    /// [`convert_utf16_to_utf8_append`] returning `Err` instead of crashing when
-    /// the output cannot be allocated; nothing is appended in that case.
+    /// [`convert_utf16_to_utf8_append`] that reports allocation failure instead of crashing.
     pub fn try_convert_utf16_to_utf8_append(
         list: &mut Vec<u8>,
         utf16: &[u16],
@@ -1683,21 +1679,17 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() {
             return Ok(());
         }
-        // simdutf is not told the output length: it writes the converted
-        // prefix of `utf16` (at most `length::utf8::from::utf16::le(utf16)`
-        // bytes) unconditionally, so the spare capacity must cover that before
-        // the call. The length scan is skipped when the 3-bytes-per-code-unit
-        // worst case already fits.
         if list.capacity() - list.len() < utf16.len().saturating_mul(3) {
             let need = simdutf::length::utf8::from::utf16::le(utf16);
             list.try_reserve(need)
                 .map_err(|_| ::bun_alloc::AllocError)?;
         }
-        // SAFETY: the spare slice holds at least `utf8_length_from_utf16le(utf16)`
-        // bytes (reserved just above, or implied by the 3x worst case), which
-        // bounds what simdutf writes. On success `count` is the number of bytes
-        // it initialized; on error it is an input position, so commit nothing
-        // and re-encode everything below.
+        // SAFETY: simdutf is not told the output length; it writes at most
+        // `utf8_length_from_utf16le(utf16)` bytes, which the spare capacity now
+        // holds (reserved above, or implied by the 3-bytes-per-code-unit worst
+        // case). `count` is the number of bytes written only on success; on
+        // error it is an input position, so nothing is committed and the
+        // fallback below re-encodes the whole input.
         let r = unsafe {
             crate::vec::fill_spare(list, 0, |spare| {
                 let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
@@ -1709,10 +1701,6 @@ pub(crate) mod strings_impl {
             })
         };
         if !r.is_successful() {
-            // The replacement encoding spends 3 bytes on each unpaired surrogate
-            // where the length scan above counted 2, so it can exceed what was
-            // reserved; reserving it up front keeps the scalar fallback from
-            // reallocating (and from crashing on OOM).
             list.try_reserve(element_length_utf16_into_utf8(utf16))
                 .map_err(|_| ::bun_alloc::AllocError)?;
             append_wtf8_from_utf16(list, utf16);
@@ -1814,14 +1802,9 @@ pub(crate) mod strings_impl {
         unsafe { copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len) }
     }
 
-    /// [`copy_utf16_into_utf8`] for callers that already computed the encoded
-    /// length and want to skip the second length scan.
-    ///
     /// # Safety
-    /// `utf8_len` must be at least [`element_length_utf16_into_utf8`]`(utf16)`
-    /// (any larger upper bound is fine). Whenever `utf8_len <= buf.len()` the
-    /// whole conversion is written by simdutf, which is not told `buf.len()`,
-    /// so an undersized `utf8_len` lets it write past the end of `buf`.
+    /// `utf8_len` must be at least [`element_length_utf16_into_utf8`]`(utf16)`: when it is
+    /// `<= buf.len()`, simdutf writes the whole conversion without being told `buf.len()`.
     pub unsafe fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],

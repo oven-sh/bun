@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
@@ -1508,7 +1508,7 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
+  async function migrateFixture(folder: string) {
     const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
     const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
@@ -1531,7 +1531,10 @@ describe("bun pm migrate for existing yarn.lock", () => {
 
     const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
     expect(bunLockContent).toMatchSnapshot(folder);
-  });
+  }
+  // yarn-cli-repo is an 8k-line lockfile whose migration also fetches several hundred manifests,
+  // which takes around 5s in a debug build.
+  test.each(folders)("%s", migrateFixture, isDebug ? 60_000 : undefined);
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     await using tmpDir = tempDir("yarn-migration-os-cpu", {
@@ -1638,5 +1641,151 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("fsevents");
     expect(bunLockContent).toContain("@esbuild/linux-arm64");
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+  });
+});
+
+// `bun add` in a project with only a yarn.lock migrates it and resolves the added package against the
+// migrated lockfile in the same run. Resolution looks locked packages up by package name, so a
+// dependency on a package yarn.lock already locks must reuse the migrated package no matter which
+// specs keyed its yarn.lock entry.
+describe("resolving new dependencies against a migrated yarn.lock", () => {
+  const integrity = (fill: number) => "sha512-" + Buffer.alloc(64, fill).toString("base64");
+  // The migrated records carry the integrity yarn.lock recorded; anything resolved from the
+  // registry in this run carries the registry's. That tells the two apart in bun.lock.
+  const lockedP1 = integrity(1);
+  const lockedP2 = integrity(2);
+  const lockedS = integrity(3);
+  const fromRegistry = integrity(9);
+
+  const sha1 = Buffer.alloc(40, "0").toString();
+  const yarnEntry = (key: string, name: string, version: string, locked: string, deps = "") =>
+    `${key}:
+  version "${version}"
+  resolved "https://registry.yarnpkg.com/${name}/-/${name}-${version}.tgz#${sha1}"
+  integrity ${locked}
+${deps}`;
+
+  const cases: {
+    label: string;
+    dependencies: Record<string, string>;
+    yarnLock: string;
+    add: string;
+    expected: (registry: string) => Record<string, unknown[]>;
+  }[] = [
+    {
+      // yarn sorts the alias spec first on the shared key line.
+      label: "alias spec listed first on the entry's key line",
+      dependencies: { "p-alias": "npm:pkg-p@^1.0.0", "pkg-p": "^1.0.0" },
+      yarnLock: yarnEntry(`"p-alias@npm:pkg-p@^1.0.0", pkg-p@^1.0.0`, "pkg-p", "1.0.0", lockedP1),
+      add: "pkg-q",
+      expected: registry => ({
+        "p-alias": ["pkg-p@1.0.0", "", {}, lockedP1],
+        "pkg-p": ["pkg-p@1.0.0", "", {}, lockedP1],
+        "pkg-q": [
+          "pkg-q@1.0.0",
+          `${registry}pkg-q/-/pkg-q-1.0.0.tgz`,
+          { dependencies: { "pkg-p": "^1.0.0" } },
+          fromRegistry,
+        ],
+      }),
+    },
+    {
+      label: "entry keyed only by an alias spec, wanted as a peer dependency",
+      dependencies: { "p-alias": "npm:pkg-p@^1.0.0" },
+      yarnLock: yarnEntry(`"p-alias@npm:pkg-p@^1.0.0"`, "pkg-p", "1.0.0", lockedP1),
+      add: "pkg-r",
+      expected: registry => ({
+        "p-alias": ["pkg-p@1.0.0", "", {}, lockedP1],
+        "pkg-p": ["pkg-p@1.0.0", "", {}, lockedP1],
+        "pkg-r": [
+          "pkg-r@1.0.0",
+          `${registry}pkg-r/-/pkg-r-1.0.0.tgz`,
+          { peerDependencies: { "pkg-p": "^1.0.0" } },
+          fromRegistry,
+        ],
+      }),
+    },
+    {
+      label: "second locked version of a name",
+      dependencies: { "pkg-p": "^2.0.0", "pkg-s": "^1.0.0" },
+      yarnLock: [
+        yarnEntry("pkg-p@^1.0.0", "pkg-p", "1.0.0", lockedP1),
+        yarnEntry("pkg-p@^2.0.0", "pkg-p", "2.0.0", lockedP2),
+        yarnEntry("pkg-s@^1.0.0", "pkg-s", "1.0.0", lockedS, `  dependencies:\n    pkg-p "^1.0.0"\n`),
+      ].join("\n"),
+      add: "pkg-t",
+      expected: registry => ({
+        "pkg-p": ["pkg-p@2.0.0", "", {}, lockedP2],
+        "pkg-s": ["pkg-s@1.0.0", "", { dependencies: { "pkg-p": "^1.0.0" } }, lockedS],
+        "pkg-s/pkg-p": ["pkg-p@1.0.0", "", {}, lockedP1],
+        "pkg-t": [
+          "pkg-t@1.0.0",
+          `${registry}pkg-t/-/pkg-t-1.0.0.tgz`,
+          { dependencies: { "pkg-p": "^2.0.0" } },
+          fromRegistry,
+        ],
+      }),
+    },
+  ];
+
+  const manifests: Record<string, Record<string, object>> = {
+    "pkg-p": { "1.0.0": {}, "2.0.0": {} },
+    "pkg-q": { "1.0.0": { dependencies: { "pkg-p": "^1.0.0" } } },
+    "pkg-r": { "1.0.0": { peerDependencies: { "pkg-p": "^1.0.0" } } },
+    "pkg-s": { "1.0.0": { dependencies: { "pkg-p": "^1.0.0" } } },
+    "pkg-t": { "1.0.0": { dependencies: { "pkg-p": "^2.0.0" } } },
+  };
+
+  test.concurrent.each(cases)("$label", async ({ dependencies, yarnLock, add, expected }) => {
+    // `--lockfile-only` below means only packuments are ever requested, never tarballs.
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const name = new URL(req.url).pathname.slice(1);
+        const versions = manifests[name];
+        if (!versions) return new Response("not found", { status: 404 });
+        const entries = Object.entries(versions).map(([version, manifest]): [string, object] => [
+          version,
+          {
+            name,
+            version,
+            ...manifest,
+            dist: { tarball: `${registry.url}${name}/-/${name}-${version}.tgz`, integrity: fromRegistry },
+          },
+        ]);
+        return Response.json({
+          name,
+          "dist-tags": { latest: entries.at(-1)![0] },
+          versions: Object.fromEntries(entries),
+        });
+      },
+    });
+
+    await using tmpDir = tempDir("yarn-migration-then-add", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "yarn.lock": `# yarn lockfile v1\n\n\n${yarnLock}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "add", add, "--lockfile-only"],
+      cwd: tmpDir,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("Saved bun.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    expect(lock.packages).toStrictEqual(expected(registry.url.href));
   });
 });

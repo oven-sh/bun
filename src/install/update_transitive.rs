@@ -1383,14 +1383,14 @@ fn edges_on_instances(
         }
 
         for owner in 0..packages_len {
+            if !reachable.is_set(owner) {
+                continue;
+            }
             let slice = dep_slices[owner];
             let is_direct = matches!(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
             );
-            if !reachable.is_set(owner) {
-                continue;
-            }
             for row in slice.begin() as usize..slice.end() as usize {
                 if !is_direct {
                     let Some(&slot) = slot_of.get(resolutions[row] as usize) else {

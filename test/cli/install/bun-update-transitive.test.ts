@@ -905,6 +905,7 @@ test.concurrent("a direct row on a lower instance does not hold wants on a highe
     leaf: { "1.5.0": {}, "2.0.0": {}, "2.5.0": {} },
   };
   using server = await serveRegistry(manifests);
+  // Tarballs are built eagerly, versions are read per request: hide 2.5.0 from the install only.
   const hidden = manifests.leaf["2.5.0"];
   delete manifests.leaf["2.5.0"];
   const dir = await installServed(server, "update-two-instances-", pkgJson({ parent: "1.0.0", leaf: "^1.0.0" }));

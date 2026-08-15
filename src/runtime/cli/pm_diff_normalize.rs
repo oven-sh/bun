@@ -360,6 +360,10 @@ impl<'s> Namer<'s> {
     }
 
     fn plan(&mut self, old: Option<&bun_ast::Scope>, new: Option<&bun_ast::Scope>, depth: usize) {
+        // One frame per nesting level; past this the input is pathological and its names can stay as they are.
+        if depth > 256 {
+            return;
+        }
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));
         let cn = new.map_or(Vec::new(), |s| self.candidates(1, s));
         let mut index = 0;
@@ -394,8 +398,13 @@ fn pair_scopes<'a>(
     new: &[&'a bun_ast::Scope],
 ) -> Vec<(Option<&'a bun_ast::Scope>, Option<&'a bun_ast::Scope>)> {
     const BIG: usize = 24;
-    fn weight(s: &bun_ast::Scope) -> usize {
-        s.members.len() + s.children.iter().map(|c| weight(c)).sum::<usize>()
+    fn weight(root: &bun_ast::Scope) -> usize {
+        let (mut total, mut stack) = (0usize, vec![root]);
+        while let Some(s) = stack.pop() {
+            total += s.members.len();
+            stack.extend(s.children.iter().map(|c| &**c));
+        }
+        total
     }
     let wo: Vec<usize> = old.iter().map(|s| weight(s)).collect();
     let wn: Vec<usize> = new.iter().map(|s| weight(s)).collect();
@@ -570,7 +579,8 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     // SAFETY: the stylesheet and everything it borrows from the arena are dropped before `arena` at the end of this fn.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(&arena) };
     let mut opts = bun_css::ParserOptions::default(None);
-    opts.filename = Vec::leak(path.to_vec());
+    // SAFETY: as for `alloc` above — the arena outlives every use of the options.
+    opts.filename = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(arena.alloc_slice_copy(path)) };
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,

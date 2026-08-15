@@ -55,8 +55,8 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
-/// `original_cwd` is the folder the user ran the command from; the manager has since `chdir`ed to the project
-/// root (or a scratch project), so relative paths and the no-argument form resolve against it.
+/// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
+/// to its root, so relative paths and the no-argument form resolve against it.
 pub(crate) fn exec(
     pm: &mut PackageManager,
     positionals: &[&[u8]],
@@ -92,9 +92,22 @@ pub(crate) fn exec(
         Global::exit(1);
     }
 
-    let (left_spec, right_spec) = resolve_sides(pm, &args, original_cwd);
-    let mut left = materialize(pm, &left_spec)?;
+    let (mut left_spec, right_spec) = resolve_sides(pm, &args, original_cwd);
     let mut right = materialize(pm, &right_spec)?;
+    if let Spec::Registry { name, version } = left_spec {
+        if name.is_empty() {
+            // `bun pm diff ./pkg`: the registry side is named by the folder/tarball's own package.json.
+            let name = package_name_in(&right).unwrap_or_else(|| {
+                Output::err_generic(
+                    "{} has no package.json \"name\" to look up in the registry",
+                    (BStr::new(&right.label),),
+                );
+                Global::exit(1);
+            });
+            left_spec = Spec::Registry { name, version };
+        }
+    }
+    let mut left = materialize(pm, &left_spec)?;
     // Show local paths the way they were typed, not as resolved from a scratch cwd.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -108,52 +121,6 @@ pub(crate) fn exec(
     print_diff(&left, &right, flags);
     Output::flush();
     Ok(())
-}
-
-/// Outside any project there is no package.json for the manager to anchor on; make a private, empty one in a fresh
-/// temp folder, `chdir` there, and return its path. Fails closed: an existing path is never reused.
-pub(crate) fn enter_scratch_project() -> Result<&'static [u8], crate::Error> {
-    let mut path = bun_resolver::fs::RealFS::platform_temp_dir().to_vec();
-    let _ = write!(
-        &mut path,
-        "/bun-pm-diff-{}-{:x}",
-        std::process::id(),
-        bun_core::time::nano_timestamp() as u64
-    );
-    path.push(0);
-    let path: &'static [u8] = Vec::leak(path);
-    let z = bun_core::ZStr::from_buf(path, path.len() - 1);
-    let made = bun_sys::mkdir(z, 0o700)
-        .and_then(|()| bun_sys::open_dir_at(Fd::cwd(), z.as_bytes()))
-        .and_then(|dir| {
-            let wrote = bun_sys::File::create(dir, b"package.json", true).and_then(|f| {
-                let wrote = f.write_all(b"{}");
-                let closed = f.close();
-                wrote.and(closed)
-            });
-            let r = wrote.and_then(|()| bun_sys::fchdir(dir));
-            dir.close();
-            r
-        });
-    if let Err(err) = made {
-        Output::err(
-            err,
-            "could not set up a scratch folder at {}",
-            (BStr::new(z.as_bytes()),),
-        );
-        Global::exit(1);
-    }
-    Ok(z.as_bytes())
-}
-
-/// The manager has read what it needs; do not leave the scratch folder behind.
-pub(crate) fn leave_scratch_project(path: &[u8]) {
-    let mut buf = path.to_vec();
-    buf.extend_from_slice(b"/package.json\0");
-    let _ = bun_sys::unlink(bun_core::ZStr::from_buf(&buf, buf.len() - 1));
-    buf.truncate(path.len());
-    buf.push(0);
-    let _ = bun_sys::rmdir(bun_core::ZStr::from_buf(&buf, buf.len() - 1));
 }
 
 // ─── spec resolution ────────────────────────────────────────────────────────
@@ -232,17 +199,14 @@ fn resolve_sides<'a>(
                     },
                 )
             }
-            // A folder or tarball on its own: compare what is published under its package.json name to it.
-            local => {
-                let name = root_package_name(pm, original_cwd);
-                (
-                    Spec::Registry {
-                        name,
-                        version: b"latest",
-                    },
-                    local,
-                )
-            }
+            // A folder or tarball on its own: what is published under *its* package.json name → it (named once unpacked).
+            local => (
+                Spec::Registry {
+                    name: b"",
+                    version: b"latest",
+                },
+                local,
+            ),
         },
         [a, b] => {
             let left = classify(a);
@@ -268,14 +232,29 @@ fn resolve_sides<'a>(
     }
 }
 
+fn package_name_in(tree: &Tree) -> Option<&'static [u8]> {
+    let bytes = tree.files.get(b"package.json".as_slice())?;
+    let bump = Bump::new();
+    let src: &[u8] = bump.alloc_slice_copy(bytes);
+    let json = bun_parsers::json::parse_utf8(
+        &bun_ast::Source::init_path_string(b"package.json", src),
+        &mut bun_ast::Log::init(),
+        &bump,
+    )
+    .ok()?;
+    let name = json.get_string_cloned(&bump, b"name").ok().flatten()?;
+    (!name.is_empty()).then(|| leak(name.to_vec()))
+}
+
 fn leak(v: Vec<u8>) -> &'static [u8] {
     Vec::leak(v)
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> &'static [u8] {
-    let dir = bun_sys::open_dir_at(Fd::cwd(), original_cwd).unwrap_or_else(|_| Fd::cwd());
+    let mut path = original_cwd.to_vec();
+    path.extend_from_slice(b"/package.json");
     // The folder we are in, before the workspace root the manager walked up to.
-    if let Ok(bytes) = bun_sys::File::read_from(dir, b"package.json") {
+    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path) {
         let bump = Bump::new();
         let src: &[u8] = bump.alloc_slice_copy(&bytes);
         if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -443,7 +422,20 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 rel.push(b'/');
             }
             rel.extend_from_slice(name);
-            match entry.kind {
+            let kind = match entry.kind {
+                // Some filesystems leave d_type blank; symlinks are followed to what they point at.
+                #[cfg(not(windows))]
+                bun_sys::FileKind::Unknown | bun_sys::FileKind::SymLink => {
+                    match bun_sys::fstatat(dir, entry.name.as_zstr()) {
+                        Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
+                        Err(err) => fail(err, &rel),
+                    }
+                }
+                k => k,
+            };
+            match kind {
+                // A symlinked folder could loop back up the tree, and a published package cannot contain one anyway.
+                bun_sys::FileKind::Directory if entry.kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
                     Ok(sub) => stack.push((sub, rel)),
                     Err(err) => fail(err, &rel),
@@ -454,6 +446,13 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                     }
                     Err(err) => fail(err, &rel),
                 },
+                // Windows always reports d_type; a symlink is read through (a linked folder just fails the read).
+                #[cfg(windows)]
+                bun_sys::FileKind::SymLink => {
+                    if let Ok(bytes) = bun_sys::File::read_from(dir, name) {
+                        tree.files.insert(rel, bytes);
+                    }
+                }
                 _ => {}
             }
         }
@@ -603,25 +602,34 @@ fn registry_get(
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    if !scope.token.is_empty() {
+    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
+    let same_origin = {
+        let registry = scope.url.url();
+        url.protocol == registry.protocol
+            && url.hostname == registry.hostname
+            && url.get_port_auto() == registry.get_port_auto()
+    };
+    let (token, auth): (&[u8], &[u8]) = if same_origin {
+        (&scope.token, &scope.auth)
+    } else {
+        (b"", b"")
+    };
+    if !token.is_empty() {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
+        headers.content.cap += b"Bearer ".len() + token.len();
+    } else if !auth.is_empty() {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + scope.auth.len();
+        headers.content.cap += b"Basic ".len() + auth.len();
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
-    if !scope.token.is_empty() {
+    if !token.is_empty() {
         headers.append_fmt(
             b"Authorization",
-            format_args!("Bearer {}", BStr::new(&*scope.token)),
+            format_args!("Bearer {}", BStr::new(token)),
         );
-    } else if !scope.auth.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Basic {}", BStr::new(&*scope.auth)),
-        );
+    } else if !auth.is_empty() {
+        headers.append_fmt(b"Authorization", format_args!("Basic {}", BStr::new(auth)));
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
@@ -1056,10 +1064,6 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
     }
     prettyln!("");
     print_header(left, right, style);
-    if changes.is_empty() {
-        prettyln!("<d>No differences ({} files)<r>", left.files.len());
-        return;
-    }
     if style.pretty {
         let mut line = format!(
             "<d>{} file{}<r>  <green>+{}<r> <red>-{}<r>",
@@ -1113,7 +1117,7 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         if c.binary && c.old.is_none() {
             notes.push(format!(
                 "new binary file <b>{}<r> ({} bytes)",
-                BStr::new(c.path),
+                Esc(c.path),
                 c.new.map_or(0, <[u8]>::len)
             ));
         }
@@ -1123,10 +1127,7 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
                 || strings::ends_with(c.path, b".exe"))
             && !c.binary
         {
-            notes.push(format!(
-                "new executable-looking file <b>{}<r>",
-                BStr::new(c.path)
-            ));
+            notes.push(format!("new executable-looking file <b>{}<r>", Esc(c.path)));
         }
     }
     if !notes.is_empty() {
@@ -1157,15 +1158,15 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
     for (b, path) in &builtins {
         notes.push(format!(
             "now imports <b><magenta>{}<r> <d>({})<r>",
-            BStr::new(b),
-            BStr::new(path)
+            Esc(b),
+            Esc(path)
         ));
     }
     if !packages.is_empty() {
         let shown: Vec<String> = packages
             .iter()
             .take(6)
-            .map(|p| format!("<b>{}<r>", BStr::new(p)))
+            .map(|p| format!("<b>{}<r>", Esc(p)))
             .collect();
         let more = if packages.len() > 6 {
             format!(" <d>… and {} more<r>", packages.len() - 6)
@@ -1190,9 +1191,28 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
         }
         notes.push(format!(
             "<b>+{n}<r> {label} <d>({}{})<r>",
-            BStr::new(first_path),
+            Esc(first_path),
             if n > 1 { ", …" } else { "" }
         ));
+    }
+}
+
+/// User-controlled text headed for `Output::pretty`: `<`/`>` would otherwise be read as colour tags.
+struct Esc<T: AsRef<[u8]>>(T);
+impl<T: AsRef<[u8]>> core::fmt::Display for Esc<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for chunk in self.0.as_ref().utf8_chunks() {
+            for ch in chunk.valid().chars() {
+                if ch == '<' || ch == '>' {
+                    f.write_str("\\")?;
+                }
+                core::fmt::Write::write_char(f, ch)?;
+            }
+            if !chunk.invalid().is_empty() {
+                f.write_str("\u{FFFD}")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1237,13 +1257,13 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
         match (o, n) {
             (None, Some(n)) => notes.push(format!(
                 "<b>{}<r> script added: <cyan>{}<r>",
-                BStr::new(key),
-                BStr::new(n)
+                Esc(key),
+                Esc(n)
             )),
             (Some(o), Some(n)) if o != n => notes.push(format!(
                 "<b>{}<r> script changed: <cyan>{}<r>",
-                BStr::new(key),
-                BStr::new(n)
+                Esc(key),
+                Esc(n)
             )),
             _ => {}
         }
@@ -1277,16 +1297,16 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
             match o.iter().find(|(on, _)| on == name) {
                 None => notes.push(format!(
                     "{} added: <b>{}<r>@{}",
-                    BStr::new(field),
-                    BStr::new(name),
-                    BStr::new(ver)
+                    Esc(field),
+                    Esc(name),
+                    Esc(ver)
                 )),
                 Some((_, ov)) if ov != ver => bumps.push(format!(
                     "{} <b>{}<r>: {} → {}",
-                    BStr::new(field),
-                    BStr::new(name),
-                    BStr::new(ov),
-                    BStr::new(ver)
+                    Esc(field),
+                    Esc(name),
+                    Esc(ov),
+                    Esc(ver)
                 )),
                 _ => {}
             }
@@ -1298,17 +1318,13 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
             bumps.push(format!(
                 "<d>… and {} more {} version changes<r>",
                 rest,
-                BStr::new(field)
+                Esc(field)
             ));
         }
         notes.append(&mut bumps);
         for (name, _) in &o {
             if !n.iter().any(|(nn, _)| nn == name) {
-                notes.push(format!(
-                    "{} removed: <b>{}<r>",
-                    BStr::new(field),
-                    BStr::new(name)
-                ));
+                notes.push(format!("{} removed: <b>{}<r>", Esc(field), Esc(name)));
             }
         }
     }
@@ -1327,16 +1343,12 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
             match (o, n) {
                 (Some(o), Some(n)) => notes.push(format!(
                     "<b>{}<r> changed: {} → {}",
-                    BStr::new(field),
-                    BStr::new(&o),
-                    BStr::new(&n)
+                    Esc(field),
+                    Esc(&o),
+                    Esc(&n)
                 )),
-                (None, Some(n)) => notes.push(format!(
-                    "<b>{}<r> added: {}",
-                    BStr::new(field),
-                    BStr::new(&n)
-                )),
-                (Some(_), None) => notes.push(format!("<b>{}<r> removed", BStr::new(field))),
+                (None, Some(n)) => notes.push(format!("<b>{}<r> added: {}", Esc(field), Esc(&n))),
+                (Some(_), None) => notes.push(format!("<b>{}<r> removed", Esc(field))),
                 (None, None) => {}
             }
         }

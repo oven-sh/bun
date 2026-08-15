@@ -1108,7 +1108,7 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
-        // Never route a runtime key to `fastGet`: a runtime byte-slice match
+        // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
         // (and `inspectCustom` → `Symbol.for("nodejs.util.inspect.custom")`), so
@@ -1586,6 +1586,10 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
+    }
+
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalType(self)
     }
 }
 
@@ -2137,6 +2141,21 @@ unsafe extern "C" {
 pub enum ProxyField {
     Target = 0,
     Handler = 1,
+}
+
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
 }
 
 /// `JSValue.SerializedFlags`.

@@ -257,7 +257,7 @@ impl JSMySQLConnection {
         }
 
         self.timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
+            t.next = timespec::ms_from_now(TimespecMockMode::ForceRealTime, interval.into());
         });
         // whole-struct provenance: the fire path recovers the container from this pointer.
         let t = core::ptr::addr_of!(self.timer)
@@ -339,7 +339,7 @@ impl JSMySQLConnection {
 
         self.max_lifetime_timer.with_mut(|t| {
             t.next = timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
+                TimespecMockMode::ForceRealTime,
                 self.max_lifetime_interval_ms.into(),
             );
         });
@@ -857,7 +857,15 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                self.fail(b"Connection closed", err);
+                let message: &[u8] = match err {
+                    AnyMySQLErrorT::PublicKeyRetrievalNotAllowed => {
+                        b"The server requested RSA public key retrieval to complete \
+                          authentication, which is not allowed over an insecure connection. \
+                          Enable TLS or set allowPublicKeyRetrieval: true"
+                    }
+                    _ => b"Connection closed",
+                };
+                self.fail(message, err);
             }
         }
     }
@@ -934,9 +942,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
-                return;
-            };
+            let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
             this.fail_with_js_value(v);
         }
     }

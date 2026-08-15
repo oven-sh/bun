@@ -12,7 +12,9 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-use bun_sys::{self, Fd, FdExt as _};
+#[cfg(unix)]
+use bun_sys::FdExt as _;
+use bun_sys::{self, Fd};
 
 #[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
@@ -494,17 +496,6 @@ impl ExtraPipe {
 }
 
 impl PosixSpawnResult {
-    pub fn close(&mut self) {
-        for item in self.extra_pipes.iter() {
-            match item {
-                ExtraPipe::OwnedFd(f) => f.close(),
-                ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
-            }
-        }
-        self.extra_pipes.clear();
-        self.extra_pipes.shrink_to_fit();
-    }
-
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
         // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
@@ -580,14 +571,6 @@ impl PosixSpawnResult {
             }
             Ok(fd) => Ok(fd.native()),
         }
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Err(bun_sys::Error::from_code(
-            bun_sys::E::ENOSYS,
-            bun_sys::Tag::pidfd_open,
-        ))
     }
 }
 
@@ -783,7 +766,12 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;

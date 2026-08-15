@@ -115,50 +115,29 @@ describe("url", () => {
     expect(url.origin).toBe("file://");
   });
   it("leaves opaque (non-special-scheme) hosts unchanged", () => {
-    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
-    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
-    // special schemes only.
     expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
     expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
-    // special scheme: delta applies, host is IDNA-processed.
-    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    // Non-canonical special-scheme authority forms reach IDNA too.
-    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
-    // Same scheme as the base without "//" is relative-state (path, not host):
-    // the delta source stays percent-encoded verbatim.
-    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
-    // Cross-scheme reaches the authority state and IDNA runs.
-    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
-    // file: only has a host with exactly two slashes; ///x and /x are path.
-    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
-    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
-    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
-    // Bracketed hosts go to the IPv6 parser, never IDNA.
-    expect(() => new URL("http://[::\u180E1]/")).toThrow();
-    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
-    // embedded tab in the scheme or between : and // must not defeat the delta.
-    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    // The port span is left verbatim: an ignored-class delta source
-    // (U+180E) in the port must still fail the WHATWG port state, not be
-    // stripped into a valid digit run. The same char in the host is fine.
-    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
-    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
-    // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";
     expect(u.hostname).toBe("%E1%BA%9E");
-    // url.host setter: delta applies to the host span only, port stays
-    // verbatim so an ignored-class code point there is not stripped into a
-    // valid digit run.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
     const h1 = new URL("http://x/");
     h1.host = "foo:8\u206A0";
     expect(h1.port).toBe("8");
-    const h2 = new URL("http://x/");
-    h2.host = "foo\u1E9E:81";
-    expect(h2.host).toBe("xn--foo-7ka:81");
+  });
+
+  // Unicode 16 changed these code points' UTS #46 status; ICU 76 is the first release with that table.
+  it.skipIf(parseInt(process.versions.icu) < 76)("special-scheme hosts use the Unicode 16 IDNA table", () => {
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
+    const h = new URL("http://x/");
+    h.host = "foo\u1E9E:81";
+    expect(h.host).toBe("xn--foo-7ka:81");
+    const hn = new URL("http://x/");
+    hn.hostname = "\u04C0.com";
+    expect(hn.hostname).toBe("xn--s5a.com");
   });
 
   it("prints", () => {

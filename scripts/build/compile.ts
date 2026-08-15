@@ -8,7 +8,7 @@
 
 import { mkdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -528,7 +528,16 @@ function objectPath(cfg: Config, src: string): string {
     relSrc = relative(cfg.buildDir, absSrc);
   } else {
     relSrc = relative(cfg.cwd, absSrc);
+    // --local-deps checkouts may live outside the repo; map them onto the
+    // vendor/<name>/ path the pinned source would have so obj/ stays a tree.
+    for (const [name, dir] of Object.entries(cfg.localDeps)) {
+      if (absSrc.startsWith(dir + sep)) {
+        relSrc = relative(cfg.cwd, resolve(cfg.vendorDir, name, relative(dir, absSrc)));
+        break;
+      }
+    }
   }
+  assert(!relSrc.startsWith(".."), `object path for ${absSrc} escapes the build dir (obj/${relSrc})`);
 
   return resolve(cfg.buildDir, "obj", relSrc + cfg.objSuffix);
 }

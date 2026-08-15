@@ -472,18 +472,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
-                                            1,
-                                        );
+                                    let i = query.i as usize;
+                                    if i >= end as usize {
+                                        object.properties.slice_mut().swap(i, end as usize);
+                                        end += 1;
                                     }
-                                    end += 1;
                                 }
                             }
                         }

@@ -21,8 +21,11 @@ import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
-export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+// Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
+export const isAndroid = process.platform === "android";
+export const isLinux = process.platform === "linux" || isAndroid;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 
 export const isArm64 = process.arch === "arm64";
 export const isX64 = process.arch === "x64";
@@ -1538,14 +1541,17 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
     return "darwin";
   }
-  if (/linux/i.test(string)) {
+  if (/linux|android/i.test(string)) {
     return "linux";
+  }
+  if (/freebsd/i.test(string)) {
+    return "freebsd";
   }
   if (/win/i.test(string)) {
     return "windows";
@@ -1554,7 +1560,7 @@ export function parseOs(string) {
 }
 
 /**
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function getOs() {
   return parseOs(process.platform);
@@ -1604,11 +1610,15 @@ export function getKernel() {
 }
 
 /**
- * @returns {"musl" | "gnu" | undefined}
+ * @returns {"musl" | "gnu" | "android" | undefined}
  */
 export function getAbi() {
   if (!isLinux) {
     return;
+  }
+
+  if (isAndroid || existsSync("/system/bin/linker64")) {
+    return "android";
   }
 
   if (existsSync("/etc/alpine-release")) {
@@ -2590,7 +2600,7 @@ function parseLevel(level) {
  */
 
 /**
- * @param {Record<keyof Annotation, unknown>} options
+ * @param {Partial<Record<keyof Annotation, unknown>>} options
  * @param {AnnotationContext} [context]
  * @returns {Annotation}
  */
@@ -2603,11 +2613,14 @@ export function parseAnnotation(options, context) {
   const line = parseInt(options["line"]) || undefined;
   const column = parseInt(options["column"]) || undefined;
   const content = options["content"];
-  const lines = Array.isArray(content) ? content : content?.split(/(\r?\n)/) || [];
+  const lines = Array.isArray(content) ? content : content?.split(/\r?\n/) || [];
   const metadata = Object.fromEntries(
     Object.entries(options["metadata"] || {}).filter(([, value]) => value !== undefined),
   );
 
+  // Drop leading blank lines, collapse runs of blank lines, and drop the
+  // trailing blank line(s) a readUntil() in parseAnnotations() may have
+  // consumed as a block terminator.
   const relevantLines = [];
   let lastLine;
   for (const line of lines) {
@@ -2616,6 +2629,9 @@ export function parseAnnotation(options, context) {
     }
     lastLine = line.trim();
     relevantLines.push(line);
+  }
+  while (relevantLines.length > 0 && !relevantLines[relevantLines.length - 1].trim()) {
+    relevantLines.pop();
   }
 
   let filename;
@@ -2728,7 +2744,7 @@ export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 
-  const originalLines = content.split(/(\r?\n)/);
+  const originalLines = content.split(/\r?\n/);
   const lines = [];
 
   for (let i = 0; i < originalLines.length; i++) {
@@ -2737,25 +2753,29 @@ export function parseAnnotations(content) {
     const bufferedLines = [originalLine];
 
     /**
+     * Consume the lines after the current one into `bufferedLines`, through
+     * the first line matching `pattern` (inclusive) or `maxLines` lines if
+     * none matches. Leaves `i` on the last consumed line, so the outer loop
+     * resumes after it; can be called again to consume further.
+     *
      * @param {RegExp} pattern
-     * @param {number} [maxLength]
-     * @returns {{lines: string[], match: string[] | undefined}}
+     * @param {number} [maxLines]
+     * @returns {{lines: string[], match: RegExpExecArray | undefined}}
      */
-    const readUntil = (pattern, maxLength = 100) => {
-      let length = 0;
+    const readUntil = (pattern, maxLines = 100) => {
+      const start = i + 1;
       let match;
 
-      while (i + length < originalLines.length && length < maxLength) {
-        const originalLine = originalLines[i + length++];
-        const line = stripAnsi(originalLine).trim();
-        const patternMatch = pattern.exec(line);
+      while (i + 1 < originalLines.length && i + 1 - start < maxLines) {
+        i++;
+        const patternMatch = pattern.exec(stripAnsi(originalLines[i]).trim());
         if (patternMatch) {
           match = patternMatch;
           break;
         }
       }
 
-      const lines = originalLines.slice(i + 1, (i += length));
+      const lines = originalLines.slice(start, i + 1);
       bufferedLines.push(...lines);
       return { lines, match };
     };
@@ -2815,17 +2835,16 @@ export function parseAnnotations(content) {
     // e.g. error[E0308]: mismatched types
     //        --> src/http/lib.rs:553:5
     // The header line carries the level + (optional) code; the location
-    // arrives on the following `-->` line. Read until the blank line that
-    // separates rustc diagnostics so the annotation body contains the
-    // rendered span + help/note lines.
+    // arrives on the following `-->` line (absent for diagnostics without a
+    // span, e.g. "error: linking with `cc` failed"). The body runs until the
+    // blank line rustc emits after every diagnostic, so the annotation
+    // contains the rendered span + help/note lines; the cap is only a guard
+    // against output that never has one.
     const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
     if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
       const [, level, code, title] = rustHeader;
-      const { match: locMatch } = readUntil(/-->\s+(.+?):(\d+):(\d+)/, 3);
-      // Swallow the diagnostic body up to the blank-line separator (rustc
-      // always emits one between diagnostics in the human format; cap at 30
-      // for `--message-format=short` which doesn't).
-      readUntil(/^$/, 30);
+      const { lines: body } = readUntil(/^$/, 30);
+      const locMatch = stripAnsi(body[0] ?? "").match(/-->\s+(.+?):(\d+):(\d+)/);
       const annotation = parseAnnotation({
         source: "rustc",
         level,

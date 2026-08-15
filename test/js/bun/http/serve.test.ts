@@ -1302,6 +1302,74 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
   );
 });
 
+it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
+  // The other direction of the kind invariant: a server created as a node:http
+  // one stays one. node's close() contract is that stop(false) neither sweeps
+  // idle keep-alive connections nor waits for them, and a reload() that routes
+  // requests to fetch instead of the node handler must not switch the server
+  // over to Bun.serve's drain (which closes the idle connection here).
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    // @ts-expect-error internal option used by node:http's Server
+    onNodeHTTPRequest() {
+      throw new Error("replaced by reload() before any request");
+    },
+  });
+  server.reload({ fetch: () => new Response("ok") });
+
+  let received = "";
+  let connectionClosed = false;
+  let waiter = Promise.withResolvers<void>();
+  await using connection = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      data(_, data) {
+        received += data.toString("latin1");
+        waiter.resolve();
+      },
+      end() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      close() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      error() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+    },
+  });
+  // Sends a keep-alive request and returns "<status line> <body>", or "closed"
+  // if the server hung up instead of answering.
+  async function request(): Promise<string> {
+    connection.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    connection.flush();
+    while (true) {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd !== -1) {
+        const head = received.slice(0, headEnd);
+        const bodyEnd = headEnd + 4 + Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+        if (received.length >= bodyEnd) {
+          const result = `${head.split("\r\n")[0]} ${received.slice(headEnd + 4, bodyEnd)}`;
+          received = received.slice(bodyEnd);
+          return result;
+        }
+      }
+      if (connectionClosed) return "closed";
+      await waiter.promise;
+      waiter = Promise.withResolvers();
+    }
+  }
+
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
+  await server.stop(false);
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
+});
+
 describe("status code text", () => {
   const fixture = {
     200: "OK",
@@ -3159,6 +3227,40 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: expect.stringMatching(/^(listening:\d+|caught:\w+)$/),
     stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
+// A "[...]" hostname has its brackets stripped before it is handed to the socket layer.
+// That copy used to live in a fixed 1024-byte buffer, so a longer bracketed hostname
+// aborted the process instead of failing to listen like any other bogus hostname.
+it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+  const script = `
+    const hostname = "[" + Buffer.alloc(1100, "a").toString() + "]";
+    let server;
+    try {
+      server = Bun.serve({ port: 0, hostname, fetch() { return new Response("ok"); } });
+    } catch (e) {
+      console.log("caught:" + (e instanceof Error));
+    }
+    if (server) {
+      console.log("listening:" + server.port);
+      server.stop(true);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "caught:true",
+    stderr: "",
     exitCode: 0,
   });
 });

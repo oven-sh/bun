@@ -1441,7 +1441,7 @@ where
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
-                Err(JsError::Thrown) | Err(JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -2288,7 +2288,7 @@ where
         // and set_routes would swap the context onto the node:http handler
         // instantiation under those already-sized allocations, so the node
         // request path would construct and index past them.
-        if !self.config.on_node_http_request.is_empty()
+        if self.config.is_node_http_server
             && self.config.on_node_http_request != new_config.on_node_http_request
         {
             super::wrap_handler_slot(
@@ -2395,7 +2395,8 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                has_user_routes: !self.user_routes.is_empty(),
+                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
+                previous_routes: !self.user_routes.is_empty(),
             },
         )?;
         if global.has_exception() {
@@ -2605,10 +2606,10 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
-        // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it. One-shot sweep (Node semantics): busy
-        // connections are spared and are NOT marked to close later.
+        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // the guard so it cannot re-derive `&mut self` while this frame owns
+        // it. One-shot sweep (Node semantics): busy connections are spared
+        // and are NOT marked to close later.
         self.deinit_running.set(true);
         let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
@@ -2826,11 +2827,7 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener()
-            && self.pending_requests.get() == 0
-            && !self.has_active_connections()
-            && !self.has_active_web_sockets()
-        {
+        if self.is_closed() {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {
@@ -3270,16 +3267,18 @@ where
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the
             // second `&mut req` borrow for `url` is unconflicted.
-            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
-                let fmt = bun_fmt::HostFormatter {
-                    is_https: true,
-                    host,
-                    port: None,
-                };
-                let mut s = Vec::new();
-                let _ = write!(&mut s, "https://{}", fmt);
-                s
-            });
+            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host")
+                .filter(|host| Request::is_valid_host_header(host))
+                .map(|host| {
+                    let fmt = bun_fmt::HostFormatter {
+                        is_https: true,
+                        host,
+                        port: None,
+                    };
+                    let mut s = Vec::new();
+                    let _ = write!(&mut s, "https://{}", fmt);
+                    s
+                });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(mut s) = prefix {
@@ -3662,40 +3661,34 @@ where
         socket: &mut uws::Socket,
         error_code: u8,
         raw_packet: &[u8],
-    ) {
+    ) -> JsResult<()> {
         if self.js_value_for_dispatch().is_none() {
-            return;
+            return Ok(());
         }
         let callback = self.on_clienterror;
         if callback.is_empty() {
-            return;
+            return Ok(());
         }
         {
             let is_ssl = SSL;
             let global = self.global();
-            let node_socket = match jsc::from_js_host_call(&global, || {
+            let node_socket = jsc::from_js_host_call(&global, || {
                 Bun__getOrCreateNodeHTTPServerSocket(
                     is_ssl,
                     std::ptr::from_mut(socket).cast::<c_void>(),
                     &global,
                 )
-            }) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
+            })?;
             if node_socket.is_undefined_or_null() {
-                return;
+                return Ok(());
             }
 
             let error_code_value = JSValue::js_number(error_code as f64);
-            let raw_packet_value = match ArrayBuffer::create_buffer(&global, raw_packet) {
-                Ok(v) => v,
-                Err(_) => return, // TODO: properly propagate exception upwards
-            };
+            let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
             // SAFETY: event_loop() returns a live raw pointer tied to the global.
             let _scope =
                 unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-            if let Err(err) = callback.call(
+            callback.call(
                 &global,
                 JSValue::UNDEFINED,
                 &[
@@ -3704,40 +3697,35 @@ where
                     error_code_value,
                     raw_packet_value,
                 ],
-            ) {
-                global.report_active_exception_as_unhandled(err);
-            }
+            )?;
         }
+        Ok(())
     }
 
     /// node:http compat: a connection was accepted on this server (for TLS,
     /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
     /// `onConnection` callback so `node:http` can emit 'connection' before any
     /// request bytes arrive.
-    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) {
+    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
         if self.js_value_for_dispatch().is_none() {
-            return;
+            return Ok(());
         }
         let callback = self.on_connection;
         if callback.is_empty() {
-            return;
+            return Ok(());
         }
         let global = self.global();
-        let node_socket = match jsc::from_js_host_call(&global, || {
+        let node_socket = jsc::from_js_host_call(&global, || {
             Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
-        }) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        })?;
         if node_socket.is_undefined_or_null() {
-            return;
+            return Ok(());
         }
         // SAFETY: event_loop() returns a live raw pointer tied to the global.
         let _scope =
             unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-        if let Err(err) = callback.call(&global, JSValue::UNDEFINED, &[node_socket]) {
-            global.report_active_exception_as_unhandled(err);
-        }
+        callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
+        Ok(())
     }
 
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
@@ -3769,7 +3757,6 @@ extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: 
         Err(JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory_value();
         }
-        Err(JsError::Terminated) => {}
     }
 }
 
@@ -3865,11 +3852,11 @@ fn server_set_on_client_error(
                             &[]
                         };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        this.on_client_error_callback(
+                        crate::dispatch::fold(this.on_client_error_callback(
                             bun_opaque::opaque_deref_mut(socket),
                             error_code,
                             packet,
-                        );
+                        ));
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app)
@@ -3935,7 +3922,7 @@ fn server_set_on_connection(
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        this.on_connection_callback(socket.cast::<c_void>());
+                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());

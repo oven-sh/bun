@@ -130,7 +130,7 @@ Set the `BUN_CONFIG_VERBOSE_FETCH` environment variable to log network requests 
 
 ### Print fetch & node:http requests as curl commands
 
-Set `BUN_CONFIG_VERBOSE_FETCH` to `curl` to print each `fetch()` and `node:http` request as a single-line `curl` command you can copy-paste into your terminal to replicate the request.
+Set `BUN_CONFIG_VERBOSE_FETCH` to `curl` to print each `fetch()` and `node:http` request as a single-line `curl` command. You can copy-paste the command into your terminal to replicate the request.
 
 ```ts index.ts icon="/icons/typescript.svg"
 process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
@@ -211,7 +211,7 @@ await fetch("https://example.com", {
 
 Bun transpiles every file, which could leave stack traces pointing at the transpiled output. To avoid this, Bun generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and land in the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
 
-Bun loads sourcemaps both at runtime when transpiling files on-demand, and when using `bun build` to precompile files ahead of time.
+Bun loads sourcemaps both at runtime when it transpiles files on-demand, and when you use `bun build` to precompile files ahead of time.
 
 ### Syntax-highlighted source code preview
 
@@ -235,7 +235,7 @@ error: Something went wrong
 
 ### V8 Stack Traces
 
-Bun uses JavaScriptCore as its engine, but much of the Node.js ecosystem and npm expects V8, and JavaScript engines differ in how they format `error.stack`. Because Bun aims to be a drop-in replacement for Node.js, it formats `error.stack` the same way V8 does. This matters most when you use libraries that expect V8 stack traces.
+Bun uses JavaScriptCore as its engine, but much of the Node.js ecosystem and npm expects V8. JavaScript engines differ in how they format `error.stack`. Because Bun aims to be a drop-in replacement for Node.js, it formats `error.stack` the same way V8 does. This matters most when you use libraries that expect V8 stack traces.
 
 #### V8 Stack Trace API
 
@@ -293,7 +293,7 @@ In the following example, `err.stack` points to the code calling `fn()`, even th
 ```ts index.ts icon="/icons/typescript.svg"
 const fn = () => {
   function myInner() {
-    throw err;
+    throw new Error("here!");
   }
 
   try {
@@ -313,18 +313,12 @@ fn();
 
 ```txt
 Error: here!
-    at myInner (file.js:4:15)
-    at fn (file.js:8:5)
-    at module code (file.js:17:1)
-    at moduleEvaluation (native)
-    at moduleEvaluation (native)
-    at <anonymous> (native)
+    at myInner (/path/to/index.ts:3:15)
+    at fn (/path/to/index.ts:7:5)
+    at /path/to/index.ts:18
 
 -- captureStackTrace --
 
 Error: here!
-    at module code (file.js:17:1)
-    at moduleEvaluation (native)
-    at moduleEvaluation (native)
-    at <anonymous> (native)
+    at /path/to/index.ts:18
 ```

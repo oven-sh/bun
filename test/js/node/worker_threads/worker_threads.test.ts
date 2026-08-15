@@ -2003,6 +2003,23 @@ test.skipIf(isWindows)(
   },
 );
 
+// A user-visible consequence of the reify-all: process.mainModule is built from the require
+// map when it is first read. Built during the bootstrap, before the entry module exists, it
+// was permanently undefined in every worker; built on first read it is the entry module, as
+// in node (and as it was before the bootstrap reified it).
+test("process.mainModule in a worker is the worker's entry module, like node", async () => {
+  using dir = tempDir("worker-main-module", {
+    "entry.js": `require("worker_threads").parentPort.postMessage({
+      mainModuleIsEntry: process.mainModule === module,
+      requireMainIsEntry: require.main === module,
+    });`,
+  });
+  const worker = new Worker(join(String(dir), "entry.js"));
+  const [result] = await once(worker, "message");
+  await worker.terminate();
+  expect(result).toEqual({ mainModuleIsEntry: true, requireMainIsEntry: true });
+});
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

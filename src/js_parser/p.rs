@@ -805,8 +805,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
             }
-            // After folding "./fo" + `o/${x}` the head (or a tail) is a rope;
-            // `string` alone would give only its first segment.
             match &mut tmpl.head {
                 js_ast::e::TemplateContents::Cooked(head) => {
                     head.resolve_rope_if_needed(self.arena);
@@ -1084,8 +1082,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.new_expr(E::Null {}, arg.loc);
         }
 
-        // `slice` flattens the rope left behind by folding "./fo" + "o";
-        // `string` would record only its first segment.
         let mut str_ = arg.data.e_string().expect("infallible: variant checked");
         let import_record_index =
             self.add_import_record(ImportKind::RequireResolve, arg.loc, str_.slice(self.arena));

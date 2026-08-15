@@ -678,8 +678,7 @@ impl ArrayIterator {
 // raw-ptr returns). Those drafts were dropped; only the methods without a live
 // counterpart remain.
 impl Expr {
-    /// Unlike `as_utf8_string_literal`, this accepts visited strings, which may
-    /// be ropes: the rope is flattened in place.
+    /// Flattens ropes, so unlike `as_utf8_string_literal` it is safe on visited strings.
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
         let Data::EString(mut s) = self.data else {
@@ -2307,8 +2306,7 @@ impl Data {
             }
             Data::EString(e) => {
                 if e.is_utf8() {
-                    // Hashing the segments back to back gives a folded
-                    // `"a" + "b"` the same hash as `"ab"`.
+                    // Rope segments hash back to back, so "a" + "b" hashes like "ab".
                     let mut segment: Option<&E::String> = Some(e.get());
                     while let Some(current) = segment {
                         hasher.update(&current.data);

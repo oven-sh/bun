@@ -1913,10 +1913,7 @@ impl EString {
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
     /// The transcode allocates via the global arena then copies into `bump`.
-    ///
-    /// Reads `data` only: a string that went through the visit pass may be a
-    /// rope (`fold_string_addition`), of which this is just the first segment.
-    /// Use `slice` (or `resolve_rope_if_needed` first) on those.
+    /// Does not walk ropes: a string that may have been folded goes through `slice`.
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         debug_assert!(
             self.next.is_none(),
@@ -2457,8 +2454,7 @@ impl Import {
             return None;
         };
         let mut str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
-        // The options object is visited with constant folding forced on, so
-        // `"js" + "on"` arrives here as a rope.
+        // import() options are always constant-folded, so this may be a rope.
         str_.resolve_rope_if_needed(bump);
 
         if !str_.is_utf16 {

@@ -1927,7 +1927,6 @@ bun_jsc::jsc_promise_handler!(
 );
 
 fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let _ = global;
     let args = frame.arguments();
     // `take` nulls the context so its destructor is a no-op; `None` means the
     // suspension was already abandoned.
@@ -1936,9 +1935,15 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     let pipe = BackRef::from(pipe);
     pipe.release_suspended_wrapper();
+    // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    // Handler errors are captured into the stream by the pipe; what can still be pending here is
+    // what cannot be captured — a termination — and this reaction reports it rather than a value.
+    if global.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1950,11 +1955,15 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     };
     let pipe = BackRef::from(pipe);
     pipe.release_suspended_wrapper();
+    // Fails the output stream: delivers the error to its reader (script may run).
     pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason, global),
     ));
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    if global.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
     Ok(JSValue::UNDEFINED)
 }
 

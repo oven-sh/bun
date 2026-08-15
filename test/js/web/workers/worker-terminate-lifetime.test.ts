@@ -1000,3 +1000,49 @@ test(
   },
   timeout,
 );
+
+// A worker terminated while HTMLRewriter transforms with async element handlers are in flight: a
+// handler's promise reaction resumes the rewrite (more handlers, sink writes, stream delivery) beneath a
+// microtask, and the reaction returned a value with the termination it met still pending ("host fn
+// return/exception state mismatch"). It now reports the pending exception instead.
+test(
+  "terminate() while HTMLRewriter async element handlers resume beneath a microtask",
+  async () => {
+    const workers = slow ? 10 : 40;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "const once = () => T(() => new HTMLRewriter().on('*', { async element(e) { await Bun.sleep(Math.random() * 3); T(() => e.setAttribute('y', '1')); } })" +
+          "  .transform(new Response('<p><a>x</a></p>'.repeat(50))).text().then(() => {}, () => {}));" +
+          "setInterval(() => { for (let i = 0; i < 4; i++) once(); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(8 + (i % 8) * 3);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

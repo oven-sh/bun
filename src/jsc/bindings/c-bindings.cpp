@@ -588,7 +588,37 @@ extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
     signal(sig, SIG_DFL);
+
+    // The signal being handled is blocked for the duration of its handler, so
+    // unblock it: with SIG_DFL restored, raise() then terminates the process
+    // before it returns.
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, sig);
+    pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
     raise(sig);
+
+    // Still alive, so this process is PID 1 of a pid namespace (a container
+    // entrypoint without an init). The kernel discards default-action signals
+    // aimed at init, including the one just raised; returning would resume the
+    // interrupted command as if the signal had never arrived.
+    _exit(128 + sig);
+}
+
+// Takes over a signal whose default action is to terminate the process, so
+// that the TTY is restored first. A disposition inherited from the parent
+// (`nohup`, `trap '' INT`, a non-interactive shell backgrounding us) is kept.
+static void installExitSignalHandler(int sig)
+{
+    struct sigaction sa;
+    if (sigaction(sig, nullptr, &sa) != 0 || sa.sa_handler != SIG_DFL)
+        return;
+
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = onExitSignal;
+    sigaction(sig, &sa, nullptr);
 }
 #endif
 
@@ -682,17 +712,20 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sigemptyset(&sa.sa_mask);
-
-        sa.sa_flags = SA_RESETHAND;
-        sa.sa_handler = onExitSignal;
-
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
+    // Restore TTY state on exit.
+    //
+    // Also needed when we are PID 1 of a pid namespace (`docker run image bun
+    // install` without `--init`), TTY or not: the kernel only delivers a signal
+    // to init if init has a handler for it, so with SIG_DFL `docker stop` /
+    // Ctrl-C would be ignored until the SIGKILL escalation.
+    bool isPidNamespaceInit = false;
+#if OS(LINUX)
+    isPidNamespaceInit = getpid() == 1;
+#endif
+    if (anyTTYs || isPidNamespaceInit) {
+        installExitSignalHandler(SIGTERM);
+        installExitSignalHandler(SIGINT);
+        installExitSignalHandler(SIGHUP);
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {

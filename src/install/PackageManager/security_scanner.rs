@@ -907,7 +907,6 @@ fn attempt_security_scan_with_retry(
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
         stderr_data: Vec::new(),
-        has_process_exited: false,
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -957,7 +956,6 @@ pub struct SecurityScanSubprocess<'a> {
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
-    has_process_exited: bool,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
@@ -1389,7 +1387,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        self.has_process_exited && self.remaining_fds == 0
+        self.exit_status.is_some() && self.remaining_fds == 0
     }
 
     pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
@@ -1413,7 +1411,6 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub(crate) fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
-        self.has_process_exited = true;
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
@@ -1519,15 +1516,13 @@ impl<'a> SecurityScanSubprocess<'a> {
     ) -> Result<ScanAttemptResult, Error> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
-        if self.exit_status.is_none() {
+        let Some(status) = self.exit_status.clone() else {
             Output::err_generic(
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
                 (),
             );
             return Err(crate::Error::SecurityScannerProcessFailedWithoutExitStatus);
-        }
-
-        let status = self.exit_status.clone().unwrap();
+        };
 
         if self.ipc_data.is_empty() {
             match &status {

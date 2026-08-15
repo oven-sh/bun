@@ -96,6 +96,9 @@ pub struct ConsoleObject {
 
     pub(crate) default_indent: u16,
 
+    /// A node worker's console output goes to its parent, never to a terminal: no colours, as in node.
+    routed_to_parent_worker: bool,
+
     counts: Counter,
 
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
@@ -126,6 +129,7 @@ impl ConsoleObject {
             error_writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
             writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
             default_indent: 0,
+            routed_to_parent_worker: false,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
@@ -156,10 +160,21 @@ impl ConsoleObject {
         messaging_proxy: *mut c_void,
         global: *mut crate::JSGlobalObject,
     ) {
+        self.routed_to_parent_worker = true;
         self.error_writer_backing =
             WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 2));
         self.writer_backing =
             WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 1));
+    }
+
+    /// Whether stdout / stderr output of this console may be coloured.
+    #[inline]
+    pub(crate) fn colors_stdout(&self) -> bool {
+        !self.routed_to_parent_worker && Output::enable_ansi_colors_stdout()
+    }
+    #[inline]
+    pub(crate) fn colors_stderr(&self) -> bool {
+        !self.routed_to_parent_worker && Output::enable_ansi_colors_stderr()
     }
 
     /// Hands anything still buffered to the underlying sink.
@@ -536,7 +551,8 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::Assert && len == 0 {
-        let text: &str = if Output::enable_ansi_colors_stderr() {
+        // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
+        let text: &str = if unsafe { (*console).colors_stderr() } {
             pfmt!("<r><red>Assertion failed<r>\n", true)
         } else {
             "Assertion failed\n"
@@ -550,10 +566,11 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
+    // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
     let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-        Output::enable_ansi_colors_stderr()
+        unsafe { (*console).colors_stderr() }
     } else {
-        Output::enable_ansi_colors_stdout()
+        unsafe { (*console).colors_stdout() }
     };
 
     // Snapshot before borrowing the writer; `default_indent` is not mutated
@@ -1297,7 +1314,8 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
         &holder.zig_exception().stack,
-        Output::enable_ansi_colors_stderr(),
+        // SAFETY: see [`vm_console`]; read-only probe.
+        unsafe { (*vm_console(global)).colors_stderr() },
     );
 
     // `ZigStringSlice` frees on `Drop`.
@@ -5915,8 +5933,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
+    let colors = this.colors_stdout();
     let writer = this.writer();
-    if Output::enable_ansi_colors_stdout() {
+    if colors {
         let _ = writeln!(
             writer,
             "{}{}{}: {}{}{}",
@@ -6066,7 +6085,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
+        // SAFETY: see [`vm_console`]; read-only probe.
+        if unsafe { (*console).colors_stderr() } {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

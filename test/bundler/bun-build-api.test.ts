@@ -1718,6 +1718,35 @@ describe.concurrent("source whose path is close to or beyond the path buffer siz
     ]);
   });
 
+  test("as an in-memory asset named with a [dir] template", async () => {
+    const { outputs, relativePath } = await bundle("asset-dir");
+    // [dir] is the asset's directory relative to the root (the cwd here), with
+    // each `..` level written as `_.._`, so the output path is even longer than
+    // the source path. It is relativized again when chunks refer to it.
+    const relativeDir = relativePath.slice(0, relativePath.lastIndexOf("/"));
+    const [, , asset] = outputs;
+    expect(outputs).toEqual([
+      expect.stringMatching(/(^|[\\/])entry\.js$/),
+      expect.stringMatching(/(^|[\\/])entry\.js\.map$/),
+      expect.stringMatching(/(^|[\\/])e*image-[a-z0-9]+\.png$/),
+    ]);
+    expect(asset.replaceAll("\\", "/")).toStartWith(`./${relativeDir.replaceAll("..", "_.._")}/`);
+    expect(asset.length).toBeGreaterThan(MAX_PATH_BYTES);
+  });
+
+  test("as a dynamically imported in-memory module, with chunks named with a [dir] template", async () => {
+    const { outputs, path: modulePath } = await bundle("chunk-dir");
+    // The module's chunk keeps the module's directory, so the relative path
+    // from the importing chunk to it, written into the import(), is about as
+    // long as the source path itself.
+    const chunks = outputs.filter(output => /lazy-[a-z0-9]+\.js(\.map)?$/.test(output));
+    expect(chunks).toEqual([
+      expect.stringMatching(/(^|[\\/])e*lazy-[a-z0-9]+\.js$/),
+      expect.stringMatching(/(^|[\\/])e*lazy-[a-z0-9]+\.js\.map$/),
+    ]);
+    expect(chunks[0].length).toBeGreaterThan(modulePath.length);
+  });
+
   // A real path can only get close to the buffer size where the buffer is
   // sized after PATH_MAX; the Windows buffer is far larger than any path the
   // filesystem accepts.

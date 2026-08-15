@@ -2615,18 +2615,17 @@ impl PackageManifest {
 
                 let mut non_optional_peer_dependency_offset: usize = 0;
 
+                // Every group below appends the bundled names it declares to
+                // `bundled_deps_buf`; the version's list is the whole range
+                // written across the groups, assigned once after the loop.
+                let bundled_deps_begin = bundled_deps_offset;
+
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
                     // slice when `peerDependencies` is absent so that
                     // `peerDependenciesMeta`-only entries (synthesised
-                    // below) still get a build pass. The fallthrough must
-                    // stay scoped to packages that actually have a
-                    // `peerDependenciesMeta`: the body sets
-                    // `package_version.bundled_dependencies` from this
-                    // iteration's slice of `bundled_deps_buf`, so an
-                    // unconditional empty pass would clobber the value the
-                    // `dependencies` iteration just produced.
+                    // below) still get a build pass.
                     let items: &[JSON::E::PropertyJSON] = version_obj
                         .and_then(|o| o.get(pair.prop))
                         .and_then(|deps| deps.as_object())
@@ -2674,8 +2673,6 @@ impl PackageManifest {
                                 }
                             }
                         }
-
-                        let bundled_deps_begin = bundled_deps_offset;
 
                         let mut i: usize = 0;
 
@@ -2805,27 +2802,6 @@ impl PackageManifest {
                         let this_versions =
                             &version_extern_strings[values_base..values_base + count];
 
-                        // Bundled deps are matched against the
-                        // `dependencies`/`optionalDependencies` groups
-                        // only; the peer pass never adds to
-                        // `bundled_deps_buf`. With the meta-only
-                        // synthesis above the peer body now runs even
-                        // when `peerDependencies` is absent, so writing
-                        // here would clobber the value the dependencies
-                        // pass already produced with an empty slice.
-                        if !is_peer {
-                            if bundle_all_deps {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::INVALID;
-                            } else {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::init(
-                                        &bundled_deps_buf,
-                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                    );
-                            }
-                        }
-
                         let mut name_list =
                             ExternalStringList::init(&all_extern_strings, this_names);
                         let mut version_list =
@@ -2947,6 +2923,15 @@ impl PackageManifest {
                         }
                     }
                 }
+
+                package_version.bundled_dependencies = if bundle_all_deps {
+                    ExternalPackageNameHashList::INVALID
+                } else {
+                    ExternalPackageNameHashList::init(
+                        &bundled_deps_buf,
+                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                    )
+                };
 
                 if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
                     let indexed = &time_props[i as usize];

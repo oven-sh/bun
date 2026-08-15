@@ -406,7 +406,11 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         if unchanged_on_disk(manager, &e.target) {
             continue;
         }
-        any_failed |= !write_target(manager, &e.target);
+        if write_target(manager, &e.target) {
+            manager.wrote_package_json = true;
+        } else {
+            any_failed = true;
+        }
     }
     if any_failed {
         Global::exit(1);

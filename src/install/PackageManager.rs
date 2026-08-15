@@ -447,6 +447,10 @@ pub struct PackageManager {
     // package.json cache entries that differ from disk; written by package_json_write_back::flush.
     pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
 
+    // package_json_write_back::flush rewrote a package.json whose bytes differed
+    // from disk; the install summary reports the sync instead of "(no changes)".
+    pub(crate) wrote_package_json: bool,
+
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
     pub(crate) catalog_add: add_catalog::State,
 
@@ -2120,6 +2124,7 @@ pub fn init(
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(wrote_package_json, false);
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
@@ -2569,6 +2574,7 @@ fn init_with_runtime_once(
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(wrote_package_json, false);
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);

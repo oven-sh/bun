@@ -6305,7 +6305,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("FUNCTION and FCALL load and invoke a library function", async () => {
         const redis = ctx.redis;
-        const lib = "bunlib" + randomUUIDv7().replace(/-/g, "").slice(0, 8);
+        // Library names only allow [A-Za-z0-9_], so strip the hyphens.
+        const lib = "bunlib" + randomUUIDv7().replace(/-/g, "");
         const code = `#!lua name=${lib}\nredis.register_function('${lib}_fn', function(keys, args) return args[1] end)`;
         await redis.function("LOAD", "REPLACE", code);
         try {
@@ -6816,6 +6817,52 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(subscriber.connected).toBe(true);
 
         await subscriber.punsubscribe(...patterns);
+      });
+
+      test("punsubscribe with an undefined pattern throws and keeps every pattern subscribed", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefixA = `pattern-a:${randomUUIDv7()}:`;
+        const prefixB = `pattern-b:${randomUUIDv7()}:`;
+        await subscriber.psubscribe(`${prefixA}*`, `${prefixB}*`);
+        expect(await ctx.redis.publish(`${prefixA}1`, testMessage())).toBe(1);
+        expect(await ctx.redis.publish(`${prefixB}1`, testMessage())).toBe(1);
+
+        // A bare PUNSUBSCRIBE would drop both patterns, so an undefined pattern
+        // has to be rejected before anything is sent.
+        expect(() => subscriber.punsubscribe(undefined as any)).toThrow("string or buffer");
+        expect(() => subscriber.psubscribe(undefined as any)).toThrow("string or buffer");
+        expect(await ctx.redis.publish(`${prefixA}2`, testMessage())).toBe(1);
+        expect(await ctx.redis.publish(`${prefixB}2`, testMessage())).toBe(1);
+
+        await subscriber.punsubscribe(`${prefixA}*`);
+        expect(await ctx.redis.publish(`${prefixA}3`, testMessage())).toBe(0);
+        expect(await ctx.redis.publish(`${prefixB}3`, testMessage())).toBe(1);
+      });
+
+      test("punsubscribe with no arguments drops every pattern", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefixA = `pattern-a:${randomUUIDv7()}:`;
+        const prefixB = `pattern-b:${randomUUIDv7()}:`;
+        await subscriber.psubscribe(`${prefixA}*`, `${prefixB}*`);
+        expect(await ctx.redis.publish(`${prefixA}1`, testMessage())).toBe(1);
+        expect(await ctx.redis.publish(`${prefixB}1`, testMessage())).toBe(1);
+
+        await subscriber.punsubscribe();
+        expect(await ctx.redis.publish(`${prefixA}2`, testMessage())).toBe(0);
+        expect(await ctx.redis.publish(`${prefixB}2`, testMessage())).toBe(0);
+      });
+
+      test("unsubscribe with an undefined channel throws and keeps the channel subscribed", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        await subscriber.subscribe(channel, () => {});
+        expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
+
+        expect(() => subscriber.unsubscribe(undefined as any)).toThrow("string or array");
+        expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
+
+        await subscriber.unsubscribe();
+        expect(await ctx.redis.publish(channel, testMessage())).toBe(0);
       });
 
       test("a raw SUBSCRIBE issued through send() resolves and keeps the client usable", async () => {
@@ -7436,6 +7483,25 @@ describe("RedisClient argument validation", () => {
         () => client.geoadd("geo", null as any),
         () => client.xadd("stream", "*", "field", null as any),
         () => client.lcs("a", null as any),
+      ]) {
+        expect(syncThrow(call)).toMatchObject({ message: expect.stringContaining("string or buffer") });
+      }
+    } finally {
+      client.close();
+    }
+  });
+
+  test("pattern subscription commands reject an explicit undefined argument", () => {
+    // PUNSUBSCRIBE with no patterns drops every pattern subscription, so an
+    // undefined pattern must not be treated as "no patterns" the way an
+    // undefined optional argument is for the other variadic commands.
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      for (const call of [
+        () => client.punsubscribe(undefined as any),
+        () => client.punsubscribe("news.*", undefined as any),
+        () => client.psubscribe(undefined as any),
+        () => client.psubscribe("news.*", undefined as any),
       ]) {
         expect(syncThrow(call)).toMatchObject({ message: expect.stringContaining("string or buffer") });
       }

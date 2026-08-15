@@ -355,11 +355,27 @@ macro_rules! cmd_key_value_value2 {
     };
 }
 
+/// What a `cmd_strings_varargs!` command does with an explicit `undefined` argument.
+enum UndefinedArg {
+    /// Dropped, so `flushdb(undefined)` sends the same thing as `flushdb()`. `null` still throws.
+    Omitted,
+    /// Rejected like any other non-string. PSUBSCRIBE/PUNSUBSCRIBE use this because dropping
+    /// the pattern would turn `punsubscribe(pattern)` into a PUNSUBSCRIBE of every pattern.
+    Rejected,
+}
+
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
+        cmd_strings_varargs!(
+            $fn_name,
+            $name,
+            $command,
+            $state,
+            CommandMeta::default(),
+            UndefinedArg::Omitted
+        );
     };
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr, $undefined:expr) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -373,8 +389,7 @@ macro_rules! cmd_strings_varargs {
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
             for arg in frame.arguments() {
-                // `undefined` = omitted optional arg; `null` still falls through and throws.
-                if arg.is_undefined() {
+                if matches!($undefined, UndefinedArg::Omitted) && arg.is_undefined() {
                     continue;
                 }
 
@@ -1703,14 +1718,16 @@ impl JSValkeyClient {
         b"psubscribe",
         "PSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
+        UndefinedArg::Rejected
     );
     cmd_strings_varargs!(
         punsubscribe,
         b"punsubscribe",
         "PUNSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
+        UndefinedArg::Rejected
     );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);

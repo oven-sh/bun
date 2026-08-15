@@ -18,7 +18,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
+            p.esm_import_keyword = Some(bun_ast::Range {
+                loc,
+                len: b"import".len() as i32,
+            });
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
                 p.lexer.next()?;

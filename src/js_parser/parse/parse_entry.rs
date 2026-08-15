@@ -13,7 +13,7 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{EsmExportKeyword, P};
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
     WrapMode,
@@ -1313,11 +1313,8 @@ impl<'a> Parser<'a> {
                 }
 
                 if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.is_none() {
-                    p.esm_export_keyword = Some(bun_ast::Range {
-                        loc: first_export_ref_loc.expect(
-                            "CommonJS named exports are recorded from parsed property accesses",
-                        ),
-                        len: 5,
+                    p.esm_export_keyword = Some(EsmExportKeyword::ConvertedFromCommonJs {
+                        at: first_export_ref_loc,
                     });
                 }
             }
@@ -1532,10 +1529,10 @@ impl<'a> Parser<'a> {
                                         }
 
                                         if p.esm_export_keyword.is_none() {
-                                            p.esm_export_keyword = Some(bun_ast::Range {
-                                                loc: stmt_loc.expect("statements reaching the CommonJS export conversion come from the parser"),
-                                                len: 5,
-                                            });
+                                            p.esm_export_keyword =
+                                                Some(EsmExportKeyword::ConvertedFromCommonJs {
+                                                    at: stmt_loc,
+                                                });
                                         }
                                         p.commonjs_named_exports_deoptimized = false;
                                         break;

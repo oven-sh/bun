@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{EsmExportKeyword, P};
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
@@ -828,7 +828,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         let previous_export_keyword = p.esm_export_keyword;
         match opts.scope {
-            StatementScope::Module => p.esm_export_keyword = Some(p.lexer.range()),
+            StatementScope::Module => {
+                p.esm_export_keyword = Some(EsmExportKeyword::Parsed(p.lexer.range()))
+            }
             StatementScope::Namespace => {}
             StatementScope::Nested => {
                 p.lexer.unexpected()?;

@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate::Error;
 use crate::lexer as js_lexer;
-use crate::p::{P, ReactRefreshExportKind};
+use crate::p::{EsmExportKeyword, P, ReactRefreshExportKind};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
@@ -1433,10 +1433,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_top_level: true,
                                     })
                                     .expect("oom");
-                                p.esm_export_keyword = Some(bun_ast::Range {
-                                    loc: stmt.loc.expect("statements reaching the CommonJS export conversion come from the parser"),
-                                    len: 5,
-                                });
+                                p.esm_export_keyword =
+                                    Some(EsmExportKeyword::ConvertedFromCommonJs { at: stmt.loc });
                                 p.had_commonjs_named_exports_this_visit = true;
                                 let clause_items =
                                     core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
@@ -1513,7 +1511,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
-            if let Some(where_) = p.esm_export_keyword.or(p.top_level_await_keyword) {
+            let esm_keyword = match p.esm_export_keyword {
+                Some(export) => Some(export.range()),
+                None => p.top_level_await_keyword.map(Some),
+            };
+            if let Some(where_) = esm_keyword {
                 p.log().add_range_error(
                     Some(p.source),
                     where_,

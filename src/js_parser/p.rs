@@ -191,6 +191,26 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
+/// What makes this file count as using the ESM `export` keyword: a parsed
+/// `export`, or a CommonJS export the parser rewrote into an ESM one.
+#[derive(Clone, Copy)]
+pub enum EsmExportKeyword {
+    Parsed(bun_ast::Range),
+    ConvertedFromCommonJs { at: Option<bun_ast::Loc> },
+}
+
+impl EsmExportKeyword {
+    /// Where a diagnostic about this file being an ES module points.
+    pub fn range(self) -> Option<bun_ast::Range> {
+        match self {
+            EsmExportKeyword::Parsed(range) => Some(range),
+            EsmExportKeyword::ConvertedFromCommonJs { at } => {
+                at.map(|loc| bun_ast::Range { loc, len: 5 })
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
@@ -399,7 +419,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     // These are for handling ES6 imports and exports
     pub(crate) esm_import_keyword: Option<bun_ast::Range>,
-    pub(crate) esm_export_keyword: Option<bun_ast::Range>,
+    pub(crate) esm_export_keyword: Option<EsmExportKeyword>,
     pub(crate) enclosing_class_keyword: Option<bun_ast::Range>,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
@@ -4370,7 +4390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     where_ = self.esm_import_keyword
                 }
                 js_ast::StrictModeKind::ImplicitStrictModeExport => {
-                    where_ = self.esm_export_keyword
+                    where_ = self.esm_export_keyword.and_then(EsmExportKeyword::range)
                 }
                 js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
                     where_ = self.top_level_await_keyword

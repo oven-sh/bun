@@ -723,9 +723,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     path::resolve_path::relative_platform_spill::<
                                         path::platform::Posix,
                                     >(
-                                        &mut relative_spill,
-                                        html_dir,
-                                        &source_map_final_rel_path,
+                                        &mut relative_spill, html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )

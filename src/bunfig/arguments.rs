@@ -17,32 +17,11 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-/// Locate a global `bunfig.toml` using XDG Base Directory conventions with
-/// back-compat fallbacks. Candidates are tried in order; the first existing
-/// file wins:
-///
-/// 1. `$XDG_CONFIG_HOME/bun/bunfig.toml` — XDG-conventional (app subdir)
-/// 2. `$XDG_CONFIG_HOME/.bunfig.toml` — legacy hidden-file path
-/// 3. `$HOME/.config/bun/bunfig.toml` — XDG spec default when `XDG_CONFIG_HOME` unset
-/// 4. `$HOME/.config/.bunfig.toml` — legacy hidden-file under spec default
-/// 5. `$HOME/.bunfig.toml` — original home dotfile
-///
-/// (2) and (4) are retained because Bun previously documented them; new setups
-/// should prefer (1)/(3), which follow the XDG Base Directory Specification
-/// (<https://specifications.freedesktop.org/basedir-spec/latest/>). Candidates
-/// under `$XDG_CONFIG_HOME` are existence-checked so we fall through to the
-/// home dotfile; the final home-dotfile path is returned even if missing so
-/// the downstream auto-load branch (which swallows "file not found" when
-/// `auto_loaded=true`) can handle it uniformly.
+/// Locate a global `bunfig.toml`. First existing file wins:
+/// `<xdg>/bun/bunfig.toml`, then `<xdg>/.bunfig.toml` (legacy), then
+/// `$HOME/.bunfig.toml` — where `<xdg>` is `$XDG_CONFIG_HOME`, or the
+/// XDG spec default `$HOME/.config` when that variable is unset or empty.
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    // Resolve the effective XDG base. When `$XDG_CONFIG_HOME` is unset **or
-    // empty** (per the XDG spec), apply the default `$HOME/.config`; own that
-    // in a small stack array so we can borrow it past the XDG-candidate loop.
-    // `$HOME` on every supported platform is well under a few hundred bytes,
-    // so 512 is ample — longer homes fall through to `$HOME/.bunfig.toml`.
-    // `get_not_empty()` mirrors the spec's "not set or empty" language — a
-    // bare `XDG_CONFIG_HOME=""` must be treated as unset, not as an
-    // empty-string base.
     let mut xdg_scratch = [0u8; 512];
     let xdg_base: Option<&[u8]> = match (
         env_var::XDG_CONFIG_HOME.get_not_empty(),
@@ -64,24 +43,20 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     };
 
     if let Some(base) = xdg_base {
-        // Probe each XDG-relative candidate. Existence is checked first, then
-        // the winning path is re-materialized in `buf` for the caller.
         for rel in [b"bun/bunfig.toml" as &[u8], b".bunfig.toml"] {
             let parts: [&[u8]; 1] = [rel];
             let path =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(base, &mut **buf, &parts);
             if bun_sys::exists_z(path) {
-                // SAFETY: `buf` holds the NUL-terminated path; `path.len()`
-                // is the byte length excluding the trailing NUL.
+                // SAFETY: `buf` holds the NUL-terminated path of length `len`.
                 let len = path.len();
                 return Some(unsafe { ZStr::from_raw(buf.as_ptr(), len) });
             }
         }
     }
 
-    // Tail: `$HOME/.bunfig.toml`. Returned unconditionally (no existence
-    // check) to preserve prior behaviour — `load_bunfig(auto_loaded=true)`
-    // swallows "file not found" for this path.
+    // No existence check here: `load_bunfig(auto_loaded=true)` swallows a
+    // missing file, matching the original behaviour for this path.
     if let Some(home_dir) = env_var::HOME.get_not_empty() {
         let parts: [&[u8]; 1] = [b".bunfig.toml"];
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(

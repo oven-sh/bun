@@ -419,6 +419,7 @@ impl<'a> Scanner<'a> {
                 entry.abs_path = Interned::from_static(stored);
                 self.test_files.push(entry.abs_path);
             }
+            fs::EntryKind::Dangling => {}
         }
     }
 }

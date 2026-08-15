@@ -654,53 +654,51 @@ impl ValkeyClient {
     }
 
     /// Handle connection closed event
+    ///
+    /// Always ends in `on_valkey_close()` or `on_valkey_reconnect()`: they release the ref
+    /// the socket held on the client and arm the retry, so they run even when rejecting the
+    /// pending commands returns `Err` (a promise cannot be settled once the VM's termination
+    /// is pending, e.g. a worker stopped while commands were in flight). That `Err` is still
+    /// the one returned, as in `fail_with_js_value`.
     pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
         // If manually closing, don't attempt to reconnect
-        if self.flags.is_manually_closed {
+        let reason: &[u8] = if self.flags.is_manually_closed {
             debug!("skip reconnecting since the connection is manually closed");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
-
-        // If auto reconnect is disabled, just fail
-        if !self.flags.enable_auto_reconnect {
+            b"Connection closed"
+        } else if !self.flags.enable_auto_reconnect {
             debug!("skip reconnecting since auto reconnect is disabled");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
+            b"Connection closed"
+        } else {
+            // Calculate reconnection delay with exponential backoff
+            self.retry_attempts += 1;
+            let delay_ms = self.get_reconnect_delay();
 
-        // Calculate reconnection delay with exponential backoff
-        self.retry_attempts += 1;
-        let delay_ms = self.get_reconnect_delay();
+            if delay_ms != 0 && self.retry_attempts <= self.max_retries {
+                debug!(
+                    "reconnect in {}ms (attempt {}/{})",
+                    delay_ms, self.retry_attempts, self.max_retries
+                );
 
-        if delay_ms == 0 || self.retry_attempts > self.max_retries {
+                self.flags.is_reconnecting = true;
+                self.flags.is_selecting_db_internal = false;
+
+                let rejected = self
+                    .reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed);
+                // Signal reconnect timer should be started, whatever `rejected` is
+                self.on_valkey_reconnect();
+                return rejected;
+            }
+
             debug!("Max retries reached or retry strategy returned 0, giving up reconnection");
-            self.fail(
-                b"Max reconnection attempts reached",
-                RedisError::ConnectionClosed,
-            )?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
+            b"Max reconnection attempts reached"
+        };
 
-        debug!(
-            "reconnect in {}ms (attempt {}/{})",
-            delay_ms, self.retry_attempts, self.max_retries
-        );
-
-        self.flags.is_reconnecting = true;
-        self.flags.is_selecting_db_internal = false;
-
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
-
-        // Signal reconnect timer should be started
-        self.on_valkey_reconnect();
-        Ok(())
+        let failed = self.fail(reason, RedisError::ConnectionClosed);
+        let closed = self.on_valkey_close(); // unconditionally, whatever `failed` is
+        failed.and(closed)
     }
 
     pub(crate) fn send_next_command(&mut self) {

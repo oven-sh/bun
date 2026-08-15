@@ -694,6 +694,10 @@ const ksecureContext = Symbol("ksecureContext");
 const ksharedCredsOptions = Symbol("ksharedCredsOptions");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
+// The name passed to setServername(). Kept separately from `servername`
+// because Socket.prototype.connect resets `servername` from its own options on
+// every connect(), which would drop a name set while the socket had no handle.
+const kservername = Symbol("kservername");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
@@ -708,6 +712,7 @@ function TLSSocket(socket?, options?) {
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;
   this[ksession] = undefined;
+  this[kservername] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
   this._rejectUnauthorized = false;
@@ -1034,7 +1039,7 @@ TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER();
   }
-  // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
+  this[kservername] = name;
   this.servername = name;
   this._handle?.setServername?.(name);
 };
@@ -1113,7 +1118,10 @@ TLSSocket.prototype[buntls] = function (port, host) {
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
   // falling back to the connection host.
-  let servername = this.servername || ctx?.servername;
+  // `servername` is whatever the current connect() chose so far (its
+  // options.servername, or the name a previous call of this function returned);
+  // a setServername() name applies when it chose nothing.
+  let servername = this.servername || this[kservername] || ctx?.servername;
   if (servername === undefined) {
     servername = host && !net.isIP(host) ? host : "";
   }

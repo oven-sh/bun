@@ -1426,3 +1426,109 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("setServername() before connect()", () => {
+  // A client TLSSocket in node owns its handle from construction, so a name set
+  // with setServername() before connect() is the SNI of the handshake and is
+  // what socket.servername reports once the handshake is done (node v26.3.0).
+  // Socket.prototype.connect used to reset servername from its own options and
+  // the name was lost on every connect form below.
+  const NAME = "set.before.connect";
+
+  // The server records the SNI of every connection it accepts, then hangs up.
+  async function listen(seen: unknown[]) {
+    const server = tls.createServer(COMMON_CERT_, socket => {
+      seen.push(socket.servername);
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
+  }
+
+  function client() {
+    return new TLSSocket(undefined as any, { rejectUnauthorized: false });
+  }
+
+  // Resolves with the client's servername once the server has hung up, i.e.
+  // after its connection listener recorded what the client sent.
+  async function handshake(socket: TLSSocket) {
+    await once(socket, "secureConnect");
+    const { servername } = socket;
+    await once(socket, "close");
+    return servername;
+  }
+
+  it("is sent on a host/port connect and kept in socket.servername", async () => {
+    const seen: unknown[] = [];
+    await using server = await listen(seen);
+    const socket = client();
+    socket.setServername(NAME);
+    socket.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    expect({ client: await handshake(socket), server: seen }).toEqual({ client: NAME, server: [NAME] });
+  });
+
+  it("is sent on an autoSelectFamily connect instead of the name derived from the host", async () => {
+    const seen: unknown[] = [];
+    await using server = await listen(seen);
+    const socket = client();
+    socket.setServername(NAME);
+    socket.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "derived.from.host",
+      autoSelectFamily: true,
+      // Two candidates put the connect on the per-address attempt path; the
+      // first candidate is the server, so the second is never tried.
+      lookup: (_host, _opts, cb) =>
+        cb(null, [
+          { address: "127.0.0.1", family: 4 },
+          { address: "::1", family: 6 },
+        ]),
+    } as any);
+    expect({ client: await handshake(socket), server: seen }).toEqual({ client: NAME, server: [NAME] });
+  });
+
+  it("is sent when connect() upgrades an existing net.Socket", async () => {
+    const seen: unknown[] = [];
+    await using server = await listen(seen);
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    await once(raw, "connect");
+    const socket = client();
+    socket.setServername(NAME);
+    socket.connect({ socket: raw } as any);
+    expect({ client: await handshake(socket), server: seen }).toEqual({ client: NAME, server: [NAME] });
+  });
+
+  it("yields to a servername passed to connect() itself", async () => {
+    const seen: unknown[] = [];
+    await using server = await listen(seen);
+    const socket = client();
+    socket.setServername(NAME);
+    socket.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      servername: "from.connect.options",
+    } as any);
+    expect({ client: await handshake(socket), server: seen }).toEqual({
+      client: "from.connect.options",
+      server: ["from.connect.options"],
+    });
+  });
+
+  it("does not make a name derived from one host stick to a reconnect to another", async () => {
+    // Only setServername() survives across connects; the host-derived default
+    // is recomputed for each connect.
+    const seen: unknown[] = [];
+    await using server = await listen(seen);
+    const { port } = server.address() as AddressInfo;
+    const lookup = (_host, _opts, cb) => cb(null, "127.0.0.1", 4);
+    const socket = client();
+    socket.connect({ port, host: "first.test", lookup, autoSelectFamily: false } as any);
+    const first = await handshake(socket);
+    socket.connect({ port, host: "second.test", lookup, autoSelectFamily: false } as any);
+    const second = await handshake(socket);
+    expect({ client: [first, second], server: seen }).toEqual({
+      client: ["first.test", "second.test"],
+      server: ["first.test", "second.test"],
+    });
+  });
+});

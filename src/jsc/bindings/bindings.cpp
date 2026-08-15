@@ -3517,6 +3517,10 @@ CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
         if (!buf->isShared())
             buf->pin();
+        // pin() only blocks transfer(); the native ref is what keeps the
+        // contents alive past Heap::lastChanceToFinalize. Balanced by
+        // unpinArrayBuffer; JS thread only (DeferrableRefCounted is not atomic).
+        buf->ref();
         return true;
     }
     return false;
@@ -3526,6 +3530,7 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
         if (!buf->isShared())
             buf->unpin();
+        buf->deref();
     }
 }
 
@@ -3568,6 +3573,7 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         if (!buf) return 0;
         if (!buf->isShared())
             buf->pin();
+        buf->ref();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
         return 2;
@@ -3577,6 +3583,7 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         if (!buf || buf->isDetached()) return 0;
         if (!buf->isShared())
             buf->pin();
+        buf->ref();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
         return 2;
@@ -7125,6 +7132,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
                 return 2;
             if (!buf->isShared())
                 buf->pin();
+            buf->ref();
         }
         append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
     }

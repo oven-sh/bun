@@ -2543,10 +2543,8 @@ impl JSValue {
         }
         JSBuffer__isBuffer(global, self)
     }
-    /// `JSValue.getDirectIndex` — read the `i`th indexed
-    /// own-property slot directly (no prototype walk, no getters). Returns
-    /// the empty value for holes.
-    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
+    /// Own element `i` or empty for a hole; no prototype walk. May run an accessor and throw.
+    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn JSC__JSValue__getDirectIndex(
                 this: JSValue,
@@ -2554,7 +2552,11 @@ impl JSValue {
                 i: u32,
             ) -> JSValue;
         }
-        JSC__JSValue__getDirectIndex(self, global, i)
+        debug_assert!(self.is_object());
+        crate::top_scope!(scope, global);
+        let v = JSC__JSValue__getDirectIndex(self, global, i);
+        scope.return_if_exception()?;
+        Ok(v)
     }
     /// Smallest own present index of a `JSArray` that is `>= start`, or
     /// `None` when every index from `start` to the end of the array is a

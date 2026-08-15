@@ -1343,5 +1343,21 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
         expect(() => jestExpect(fn)[returnedWith]("foo")).toThrow();
       }
     });
+
+    test("propagates an exception thrown by an accessor on mock.results", () => {
+      const fn = jest.fn(() => "foo");
+      fn();
+      Object.defineProperty(fn.mock.results, 0, {
+        get() {
+          throw new Error("results-getter");
+        },
+      });
+
+      if (isToHaveNth(returnedWith)) {
+        expect(() => jestExpect(fn)[returnedWith](1, "foo")).toThrow("results-getter");
+      } else {
+        expect(() => jestExpect(fn)[returnedWith]("foo")).toThrow("results-getter");
+      }
+    });
   },
 );

@@ -402,21 +402,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub(crate) fn is_primitive(self) -> bool {
-        matches!(
-            self,
-            Tag::String
-                | Tag::StringPossiblyFormatted
-                | Tag::Undefined
-                | Tag::Double
-                | Tag::Integer
-                | Tag::Null
-                | Tag::Boolean
-                | Tag::Symbol
-                | Tag::BigInt
-        )
-    }
-
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
         matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
@@ -1406,80 +1391,44 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"\n");
                     }
 
-                    let mut was_good_time = self.always_newline_scope;
                     {
                         self.indent += 1;
-
-                        self.add_for_new_line(2);
 
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // `indent` and `quote_strings` must be
-                        // restored even when `Tag::get` / `format` throw. Wrap the fallible body in
-                        // a closure and restore unconditionally afterward.
+                        self.reset_line();
+                        writer.write_all(b"[");
+                        self.add_for_new_line(1);
+
+                        // Closure so `indent`/`quote_strings` are restored if an element throws.
                         let inner: JsResult<()> = (|| {
-                            {
-                                let element = value.get_index(self.global_this, 0)?;
-                                let tag = Tag::get(element, self.global_this)?;
-
-                                was_good_time = was_good_time
-                                    || !tag.tag.is_primitive()
-                                    || self.good_time_for_a_new_line();
-
-                                self.reset_line();
-                                writer.write_all(b"[");
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                self.add_for_new_line(1);
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const::<true>("<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if len == 1 {
+                            for i in 0..len {
+                                if i > 0 {
                                     self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
                                         .expect("unreachable");
                                 }
-                            }
-
-                            let mut i: u32 = 1;
-                            while i < len {
-                                self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                    .expect("unreachable");
-
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                let element = value.get_index(self.global_this, i)?;
+                                // Own indices only, the same view Bun__deepEquals compares.
+                                let element = value.get_direct_index(self.global_this, i)?;
+                                if element.is_empty() {
+                                    // A hole is just the comma, as in pretty-format.
+                                    continue;
+                                }
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, element, self.global_this,
                                 )?;
 
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const::<true>("<r>").as_bytes(),
-                                        );
-                                    }
+                                if tag.cell.is_string_like() && ENABLE_ANSI_COLORS {
+                                    writer.write_all(pretty_fmt_const::<true>("<r>").as_bytes());
                                 }
-
-                                if i == len - 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
-                                }
-                                i += 1;
                             }
+                            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                .expect("unreachable");
                             Ok(())
                         })();
 

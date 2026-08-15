@@ -588,6 +588,71 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   expect(err).not.toContain("undefined");
 });
 
+it("expect() diffs print an array hole as an empty slot, like jest", async () => {
+  using dir = tempDir("diff-array-holes", {
+    "holes.test.js": `
+      import { expect, test } from "bun:test";
+      test("hole vs undefined", () => {
+        expect([1, , 3]).toStrictEqual([1, undefined, 3]);
+      });
+      test("hole vs value", () => {
+        expect([1, , 3]).toEqual([1, 2, 3]);
+      });
+      test("hole vs the value inherited through the prototype", () => {
+        Array.prototype[1] = "proto";
+        expect([1, , 3]).toStrictEqual([1, "proto", 3]);
+      });
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "holes.test.js"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Keep only the matcher output: from each `error:` line up to its stack trace.
+  const diffs = [...stderr.matchAll(/^error: expect\(received\)[^]*?(?=\n\s+at )/gm)].map(m => m[0]);
+  expect(diffs.join("\n")).toMatchInlineSnapshot(`
+    "error: expect(received).toStrictEqual(expected)
+
+      [
+        1,
+    -   undefined,
+    +   ,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+    error: expect(received).toEqual(expected)
+
+      [
+        1,
+    -   2,
+    +   ,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+    error: expect(received).toStrictEqual(expected)
+
+      [
+        1,
+    -   "proto",
+    +   ,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1"
+  `);
+  expect(exitCode).toBe(1);
+});
+
 it("test --preload supports global lifecycle hooks", () => {
   const preloadedPath = join(tmp, "test-fixture-preload-global-lifecycle-hook-preloaded.js");
   const path = join(tmp, "test-fixture-preload-global-lifecycle-hook-test.test.js");

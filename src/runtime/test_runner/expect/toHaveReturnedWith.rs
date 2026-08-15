@@ -31,7 +31,7 @@ pub(crate) fn to_have_returned_with(
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_direct_index(global, i);
+        let result = returns.get_direct_index(global, i)?;
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);

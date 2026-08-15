@@ -13,3 +13,17 @@ test("it will work with an existing snapshot file made with bun", () => {
     b: expect.any(String),
   });
 });
+
+// The entries for this test in the .snap file are what jest's serializer
+// (pretty-format) writes: a hole is a line holding only the comma, and only an
+// element that is actually present prints as `undefined`. Do not regenerate them with -u.
+test("array holes match the snapshot entries jest writes", () => {
+  expect([1, , 3]).toMatchSnapshot();
+  expect([, "b"]).toMatchSnapshot();
+  expect([1, 2, ,]).toMatchSnapshot();
+  expect(new Array(2)).toMatchSnapshot();
+  expect([,]).toMatchSnapshot();
+  expect({ a: [, 1] }).toMatchSnapshot();
+  expect([[, 1], , [2]]).toMatchSnapshot();
+  expect([1, undefined, 3]).toMatchSnapshot();
+});

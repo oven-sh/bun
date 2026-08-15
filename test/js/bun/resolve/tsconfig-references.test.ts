@@ -204,6 +204,27 @@ test.concurrent("solution root's own paths apply when the selected project has n
   expectRan(await run(String(dir), "src/index.ts"), "root-paths\n");
 });
 
+test.concurrent("the covering project's baseUrl is tried before the solution root's paths", async () => {
+  using dir = tempDir("tsconfig-refs-baseurl-before-root-paths", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }],
+      compilerOptions: { paths: { "utils/*": ["./legacy-utils/*"] } },
+    }),
+    "tsconfig.app.json": JSON.stringify({
+      include: ["src"],
+      compilerOptions: { baseUrl: "./src" },
+    }),
+    "src/index.ts": `import { who } from "utils/who"; console.log(who);`,
+    "src/utils/who.ts": `export const who = "app-baseurl";`,
+    "legacy-utils/who.ts": `export const who = "root-paths";`,
+  });
+
+  // The root's paths are a fallback for imports the covering project cannot
+  // resolve at all, not a layer above that project's own baseUrl.
+  expectRan(await run(String(dir), "src/index.ts"), "app-baseurl\n");
+});
+
 test.concurrent("a single-star glob include covers only its directory", async () => {
   using dir = tempDir("tsconfig-refs-nonrecursive", {
     "tsconfig.json": JSON.stringify({

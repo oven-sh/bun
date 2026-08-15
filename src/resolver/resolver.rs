@@ -2599,46 +2599,34 @@ impl<'a> Resolver<'a> {
 
         if let Some(enclosing) = dir_info.enclosing_tsconfig_json {
             self.ensure_tsconfig_references(enclosing, dir_info.abs_path);
-            // Try path substitutions first
+            // A candidate's "paths" and then its "baseUrl" are tried before the next candidate.
             for tsconfig in enclosing.candidates_for_dir(dir_info.abs_path) {
-                if tsconfig.paths.count() == 0 {
-                    continue;
-                }
-                if self
-                    .match_tsconfig_paths(tsconfig, import_path, kind, out)
-                    .is_success()
-                {
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        if !core::ptr::eq(tsconfig, enclosing) {
-                            debug.add_note_fmt(format_args!(
-                                "Using referenced tsconfig \"{}\" for directory \"{}\"",
-                                bstr::BStr::new(&tsconfig.abs_path),
-                                bstr::BStr::new(dir_info.abs_path)
-                            ));
-                        }
-                        debug.decrease_indent();
-                    }
-                    return MatchStatus::Success;
-                }
-            }
-
-            // Try looking up the path relative to the base URL
-            for tsconfig in enclosing.candidates_for_dir(dir_info.abs_path) {
-                if !tsconfig.has_base_url() {
-                    continue;
-                }
-                let base: &[u8] = &tsconfig.base_url;
-                if let Some(abs) = self.fs_ref().abs_buf_checked(
-                    &[base, import_path],
-                    bufs!(load_as_file_or_directory_via_tsconfig_base_path),
-                ) {
-                    if self.load_as_file_or_directory(abs, kind, out).is_success() {
-                        if let Some(d) = self.debug_logs.as_mut() {
-                            d.decrease_indent();
-                        }
-                        return MatchStatus::Success;
+                let mut matched = tsconfig.paths.count() > 0
+                    && self
+                        .match_tsconfig_paths(tsconfig, import_path, kind, out)
+                        .is_success();
+                if !matched && tsconfig.has_base_url() {
+                    if let Some(abs) = self.fs_ref().abs_buf_checked(
+                        &[&tsconfig.base_url[..], import_path],
+                        bufs!(load_as_file_or_directory_via_tsconfig_base_path),
+                    ) {
+                        matched = self.load_as_file_or_directory(abs, kind, out).is_success();
                     }
                 }
+                if !matched {
+                    continue;
+                }
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    if !core::ptr::eq(tsconfig, enclosing) {
+                        debug.add_note_fmt(format_args!(
+                            "Using referenced tsconfig \"{}\" for directory \"{}\"",
+                            bstr::BStr::new(&tsconfig.abs_path),
+                            bstr::BStr::new(dir_info.abs_path)
+                        ));
+                    }
+                    debug.decrease_indent();
+                }
+                return MatchStatus::Success;
             }
         }
 

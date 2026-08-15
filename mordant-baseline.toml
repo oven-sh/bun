@@ -12,7 +12,6 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
-"arg_named_like_other_param:src/css/rules/mod.rs" = 1
 "bare_bool_args:src/css/selectors/builder.rs" = 1
 "tuple_wants_struct:src/css/css_parser.rs" = 1
 "tuple_wants_struct:src/css/values/color.rs" = 5

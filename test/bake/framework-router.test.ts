@@ -159,11 +159,11 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
     }
   `;
 
-  async function run(dir: string, ...args: string[]) {
+  async function run(dir: string, args: string[], env: NodeJS.Dict<string> = bunEnv) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: dir,
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -188,7 +188,7 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
           }
         `),
       });
-      const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+      const { stdout, stderr, exitCode } = await run(String(dir), ["start.ts"]);
       expect(stderr).toContain(tooLongRootError);
       expect(stdout).toBe("threw: Framework is missing required files!\n");
       expect(exitCode).toBe(0);
@@ -199,7 +199,7 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
     using dir = tempDir("fsr-long-root-routes", {
       "start.ts": serveOrReport(`routes: { "/*": { dir: ${tooLongRoot}, style: "nextjs-pages" } }`),
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["start.ts"]);
     expect(stderr).toContain(tooLongRootError);
     expect(stdout).toBe("threw: Framework is missing required files!\n");
     expect(exitCode).toBe(0);
@@ -220,7 +220,15 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
         };
       `,
     });
-    const { stderr, exitCode } = await run(String(dir), "build", "--app");
+    // Loading any --app config trips JSC's exception check validation in
+    // BakeGetDefaultExportFromModule before the framework is resolved (the
+    // reason test/bake/dev/production.test.ts is in no-validate-exceptions.txt),
+    // so the ASAN lane's validator must not leak into this child.
+    const { stderr, exitCode } = await run(String(dir), ["build", "--app"], {
+      ...bunEnv,
+      BUN_JSC_validateExceptionChecks: undefined,
+      BUN_JSC_dumpSimulatedThrows: undefined,
+    });
     expect(stderr).toContain(tooLongRootError);
     expect(exitCode).toBe(1);
   });
@@ -246,7 +254,7 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
         console.log(res.status, await res.text());
       `,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "start.ts");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["start.ts"]);
     expect(stderr).not.toContain("ENAMETOOLONG");
     expect(stdout).toBe("200 hello from routes\n");
     expect(exitCode).toBe(0);

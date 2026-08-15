@@ -10,7 +10,7 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
+use crate::{Dependency, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -267,7 +267,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
 /// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
 fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
-    scratch.parse_root(manager)?;
+    scratch.parse_root(manager, Features::main())?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
     for (i, e) in edited.iter().enumerate() {

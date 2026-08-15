@@ -912,6 +912,75 @@ describe("workspaces", () => {
       expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.1.1" });
     });
   }
+
+  // Only the root's `workspaces` and catalogs are read to resolve a spec. Its own dependency sections
+  // are `bun install`'s business: a `workspace:<range>` there is packed as written (see the table
+  // above) and does not have to match the workspace, whether the root or a member is being packed.
+  describe("a workspace: range in the root that no workspace satisfies", () => {
+    beforeEach(async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "root",
+            version: "1.0.0",
+            workspaces: ["pkgs/*"],
+            dependencies: { "pkg1": "workspace:9.9.9", "pkg2": "workspace:*" },
+          }),
+        ),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.1" })),
+        write(join(packageDir, "pkgs", "pkg2", "package.json"), JSON.stringify({ name: "pkg2", version: "2.0.0" })),
+        write(
+          join(packageDir, "pkgs", "app", "package.json"),
+          JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "pkg2": "workspace:^" } }),
+        ),
+      ]);
+    });
+
+    test("packing the root", async () => {
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "root-1.0.0.tgz"));
+      expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "9.9.9", "pkg2": "2.0.0" });
+    });
+
+    test("packing a member", async () => {
+      await pack(join(packageDir, "pkgs", "app"), bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pkgs", "app", "app-1.0.0.tgz"));
+      expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg2": "^2.0.0" });
+    });
+  });
+
+  describe("a workspaces entry that does not exist", () => {
+    beforeEach(async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({ name: "root", workspaces: ["pkgs/pkg1", "pkgs/app", "pkgs/plain", "pkgs/missing"] }),
+        ),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+        write(
+          join(packageDir, "pkgs", "app", "package.json"),
+          JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "pkg1": "workspace:*" } }),
+        ),
+        write(join(packageDir, "pkgs", "plain", "package.json"), JSON.stringify({ name: "plain", version: "1.0.0" })),
+      ]);
+    });
+
+    test("fails a pack that has to resolve a workspace: spec, with bun install's error", async () => {
+      const { err } = await packExpectError(join(packageDir, "pkgs", "app"), bunEnv);
+      expect(err).toContain('error: Workspace not found "pkgs/missing"');
+      expect(err).toContain("package.json:1:");
+      expect(await exists(join(packageDir, "pkgs", "app", "app-1.0.0.tgz"))).toBeFalse();
+    });
+
+    test("does not affect a pack that has nothing to resolve", async () => {
+      const { err } = await pack(join(packageDir, "pkgs", "plain"), bunEnv);
+      expect(err).toBe("");
+      expect(await exists(join(packageDir, "pkgs", "plain", "plain-1.0.0.tgz"))).toBeTrue();
+    });
+  });
 });
 
 test("lifecycle scripts execution order", async () => {

@@ -30,7 +30,12 @@ impl ScratchManifests {
     }
 
     /// Must run first: it fills `lockfile.workspace_paths`, which `workspace:` rows in every file resolve through.
-    pub(crate) fn parse_root(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
+    /// `features` must include `workspaces` for that, and `is_main` for the catalogs.
+    pub(crate) fn parse_root(
+        &mut self,
+        manager: &mut PackageManager,
+        features: Features,
+    ) -> crate::Result<()> {
         let root_target = WorkspaceTarget {
             name: Box::default(),
             name_hash: None,
@@ -49,7 +54,7 @@ impl ScratchManifests {
             &root_source,
             root_json,
             &mut resolver,
-            Features::main(),
+            features,
         )?;
         self.fail_on_logged_errors()
     }
@@ -98,8 +103,18 @@ pub struct WorkspaceManifests {
 impl WorkspaceManifests {
     /// Exits with `bun install`'s errors when the root package.json or a workspace does not parse.
     pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
+        // Only the two things pack reads: the `workspaces` walk and the catalogs. The root's own
+        // dependency sections are not parsed, so `bun install`'s checks on them (a `workspace:1.2.3`
+        // range no workspace satisfies, say) do not decide whether a package packs.
+        let features = Features {
+            is_main: true,
+            workspaces: true,
+            dependencies: false,
+            peer_dependencies: false,
+            ..Features::default()
+        };
         let mut scratch = ScratchManifests::new();
-        if let Err(err) = scratch.parse_root(manager) {
+        if let Err(err) = scratch.parse_root(manager, features) {
             crash(
                 &mut scratch.log,
                 err,
@@ -145,7 +160,7 @@ pub(crate) fn relation_graph(
     pattern: &[u8],
 ) -> WorkspaceGraph {
     let mut scratch = ScratchManifests::new();
-    if let Err(err) = scratch.parse_root(manager) {
+    if let Err(err) = scratch.parse_root(manager, Features::main()) {
         crash_for_filter(&mut scratch.log, pattern, err);
     }
 

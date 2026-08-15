@@ -1529,14 +1529,11 @@ pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> O
         }
         BinType::File => normalized,
     };
-    if subpath.is_empty() || subpath == b"." || bin_path_escapes_root(subpath) {
-        return None;
-    }
-    Some(subpath)
+    (!is_package_root_or_outside(subpath)).then_some(subpath)
 }
 
-fn bin_path_escapes_root(p: &[u8]) -> bool {
-    path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
+    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {

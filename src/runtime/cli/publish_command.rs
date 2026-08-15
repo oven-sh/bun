@@ -1610,11 +1610,9 @@ impl PublishCommand {
         None
     }
 
-    /// `None` when a `bin` value resolves to the package root (`""`, `"."`), which npm drops too.
     fn bin_target<'a>(value: &[u8], path_buf: &'a mut [u8]) -> Option<&'a ZStr> {
         let target: &'a ZStr = normalize_buf_z::<path::platform::Posix>(value, path_buf);
-        let is_package_root = target.is_empty() || target.as_bytes() == b".";
-        (!is_package_root).then_some(target)
+        (!pack::is_package_root_or_outside(target.as_bytes())).then_some(target)
     }
 
     fn normalize_bin(

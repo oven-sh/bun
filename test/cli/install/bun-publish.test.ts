@@ -1207,16 +1207,18 @@ describe("readme", () => {
   });
 });
 
-// The manifest "bin" that reaches the registry. A value that resolves to the
-// package root is dropped, as npm does; other values are kept as written (npm
-// keeps "lib/" and "package.json" as well), and "directories.bin" is expanded
-// with the same rule the tarball uses.
+// The manifest "bin" that reaches the registry. Paths are resolved against the
+// package root the way npm does it ("../cli.js" is "cli.js"), a value that
+// resolves to the root itself is dropped, other values are kept as written (npm
+// keeps "lib/" as well), and "directories.bin" is expanded with the same rule
+// the tarball uses.
 describe("bin in the published manifest", () => {
   test.each([
     [{ bin: "cli.js" }, { "bin-pkg": "cli.js" }],
+    [{ bin: "../cli.js" }, { "bin-pkg": "cli.js" }],
     [{ bin: "" }, {}],
     [{ bin: "." }, {}],
-    [{ bin: { x: "lib/", y: "./cli.js", z: "", w: "." } }, { x: "lib/", y: "cli.js" }],
+    [{ bin: { x: "lib/", y: "./cli.js", z: "", w: ".", v: "../../cli.js" } }, { x: "lib/", y: "cli.js", v: "cli.js" }],
     [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
     [{ directories: { bin: "" } }, undefined],
     [{ directories: { bin: "." } }, undefined],

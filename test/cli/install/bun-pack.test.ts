@@ -1648,6 +1648,7 @@ describe("bins", () => {
     ]);
   });
 
+  // Paths resolve against the package root, as in npm, so all four name one file.
   test("the same file under several bin names is packed once", async () => {
     await Promise.all([
       write(
@@ -1659,6 +1660,7 @@ describe("bins", () => {
             "one": "cli.js",
             "two": "cli.js",
             "three": "./cli.js",
+            "four": "../cli.js",
           },
         }),
       ),

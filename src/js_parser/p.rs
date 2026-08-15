@@ -4868,7 +4868,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
-        if (location.start as usize) < self.lexer.source.contents.len() && !location.is_empty() {
+        if location
+            .to_index()
+            .is_some_and(|start| start < self.lexer.source.contents.len())
+        {
             let _ = self.log().add_range_error_fmt(
                 Some(self.source),
                 bun_ast::Range {

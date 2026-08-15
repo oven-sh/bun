@@ -595,6 +595,12 @@ impl Loc {
         usize::try_from(self.start.max(0)).expect("int cast")
     }
 
+    /// `None` for [`Loc::EMPTY`] (or any negative start), unlike [`Loc::i`] which clamps to 0.
+    #[inline]
+    pub fn to_index(self) -> Option<usize> {
+        usize::try_from(self.start).ok()
+    }
+
     #[inline]
     pub fn eql(self, other: Loc) -> bool {
         self.start == other.start
@@ -1249,10 +1255,10 @@ impl Default for Range {
 /// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
 /// `\u{...}` escape skipping.
 pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
-    if loc.start < 0 || (loc.start as usize) >= contents.len() {
-        return Range::NONE;
-    }
-    let text = &contents[loc.start as usize..];
+    let text = match loc.to_index() {
+        Some(start) if start < contents.len() => &contents[start..],
+        _ => return Range::NONE,
+    };
     let mut r = Range { loc, len: 0 };
     if text.is_empty() {
         return r;

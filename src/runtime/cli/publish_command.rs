@@ -1588,8 +1588,8 @@ impl PublishCommand {
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
-        while let Some(entry) = iter.next().ok().flatten() {
-            if pack::entry_kind(workspace_dir, &entry) == bun_sys::EntryKind::Directory {
+        while let Some(mut entry) = iter.next().ok().flatten() {
+            if entry.resolve_kind(workspace_dir) == bun_sys::EntryKind::Directory {
                 continue;
             }
             // Entry names are UTF-8 on every platform.
@@ -1810,7 +1810,7 @@ impl PublishCommand {
                     });
 
                     let mut iter = DirIterator::iterate(dir);
-                    while let Some(entry) = iter.next().ok().flatten() {
+                    while let Some(mut entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Entry names are UTF-8 on every platform.
                             let name = entry.name.slice_u8();
@@ -1861,7 +1861,7 @@ impl PublishCommand {
                             ..Default::default()
                         });
 
-                        if pack::entry_kind(dir, &entry) == bun_sys::EntryKind::Directory {
+                        if entry.resolve_kind(dir) == bun_sys::EntryKind::Directory {
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;

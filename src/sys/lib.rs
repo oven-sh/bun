@@ -119,7 +119,36 @@ pub mod dir_iterator {
     /// step.
     pub struct IteratorResult {
         pub name: Name,
+        /// `Unknown` on filesystems that do not fill in `d_type` (FUSE, NFS,
+        /// XFS formatted with `ftype=0`); see [`IteratorResult::resolve_kind`].
         pub kind: EntryKind,
+    }
+
+    impl IteratorResult {
+        /// Resolves an `Unknown` kind in place and returns the kind.
+        ///
+        /// Uses `lstat`, which reports the same thing `d_type` would have (a
+        /// symlink is reported as a symlink, not as its target), so callers
+        /// behave the same on filesystems with and without `d_type`. `dir` is
+        /// the directory the entry was read from. The kind stays `Unknown` if
+        /// the entry cannot be stat'ed (for example it was removed since).
+        pub fn resolve_kind(&mut self, dir: Fd) -> EntryKind {
+            #[cfg(not(windows))]
+            {
+                if self.kind == EntryKind::Unknown {
+                    if let Ok(stat) = super::lstatat(dir, self.name.as_zstr()) {
+                        self.kind = super::kind_from_mode(stat.st_mode as super::Mode);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                // `NtQueryDirectoryFile` always reports attributes, so the
+                // Windows iterator never yields `Unknown`.
+                let _ = dir;
+            }
+            self.kind
+        }
     }
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
@@ -266,7 +295,8 @@ pub mod dir_iterator {
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
             // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
-            // provide d_type. Callers should lstatat() to resolve when needed.
+            // provide d_type. Callers that need the type call
+            // `IteratorResult::resolve_kind()`.
             _ => EntryKind::Unknown,
         }
     }

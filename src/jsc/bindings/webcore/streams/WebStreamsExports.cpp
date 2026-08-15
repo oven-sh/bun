@@ -45,6 +45,37 @@ using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
 
+// A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
+static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
+{
+    // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return 0;
+    JSCell* handleCell = handle.asCell();
+    if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
+        *ptr = blobSource->wrapped();
+        return 1;
+    }
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
+        *ptr = fileSource->wrapped();
+        return 2;
+    }
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
+        *ptr = bytesSource->wrapped();
+        return 4;
+    }
+    return 0;
+}
+
+// Re-tag a value known to be a stream (one a Strong/Weak handle holds). -1 if it is not one after all.
+extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, void** ptr)
+{
+    *ptr = nullptr;
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    return stream ? tagOfStream(stream, ptr) : -1;
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     *ptr = nullptr;
@@ -57,26 +88,8 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     auto& vm = JSC::getVM(globalObject);
 
-    if (auto* stream = dynamicDowncast<JSReadableStream>(object)) {
-        // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
-        JSValue handle = stream->m_nativePtr.get();
-        if (handle.isEmpty() || !handle.isCell())
-            return 0;
-        JSCell* handleCell = handle.asCell();
-        if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
-            *ptr = blobSource->wrapped();
-            return 1;
-        }
-        if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
-            *ptr = fileSource->wrapped();
-            return 2;
-        }
-        if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
-            *ptr = bytesSource->wrapped();
-            return 4;
-        }
-        return 0;
-    }
+    if (auto* stream = dynamicDowncast<JSReadableStream>(object))
+        return tagOfStream(stream, ptr);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isNonHostAsyncGeneratorFunction(object)) {

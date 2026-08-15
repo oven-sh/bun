@@ -87,22 +87,10 @@ impl Strong {
         *self = Self::Empty;
     }
 
-    pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
-        if let Some(value) = self.value() {
-            // TODO: properly propagate exception upwards
-            return ReadableStream::from_js(value, global).ok().flatten();
-        }
-        None
-    }
-
-    /// [`get`](Self::get) that says why there is no stream: `Ok(None)` when empty, `Err` when
-    /// re-tagging the held value left an exception pending (a stopped worker's termination) —
-    /// which `get` folds into `None`, so `has()` followed by `get().unwrap()` can panic.
-    pub(crate) fn try_get(&self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        match self.value() {
-            Some(value) => ReadableStream::from_js(value, global),
-            None => Ok(None),
-        }
+    /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
+    /// [`ReadableStream::from_js`], which converts arbitrary values).
+    pub(crate) fn get(&self, _global: &JSGlobalObject) -> Option<ReadableStream> {
+        self.value().and_then(ReadableStream::from_held)
     }
 
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
@@ -136,6 +124,7 @@ unsafe extern "C" {
     ) -> bool;
     /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
     /// stack out-param. Reference params discharge the only preconditions.
+    safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     safe fn ReadableStreamTag__tagged(
         global_object: &JSGlobalObject,
         possible_readable_stream: &mut JSValue,
@@ -426,6 +415,39 @@ impl ReadableStream {
         ReadableStream__is(value)
     }
 
+    /// Re-tag a value already known to be a `ReadableStream` (one a handle holds). Pure — no script,
+    /// no exception, no trap poll; `None` only if it is not a stream after all.
+    pub fn from_held(value: JSValue) -> Option<ReadableStream> {
+        let mut ptr: *mut c_void = core::ptr::null_mut();
+        let tag = ReadableStreamTag__taggedStream(value, &mut ptr);
+        Self::from_tag(tag, value, ptr)
+    }
+
+    fn from_tag(tag: Tag, value: JSValue, ptr: *mut c_void) -> Option<ReadableStream> {
+        match tag {
+            Tag::JavaScript => Some(ReadableStream {
+                value,
+                ptr: Source::JavaScript,
+            }),
+            Tag::Blob => Some(ReadableStream {
+                value,
+                // SAFETY: tag == Blob ⇒ ptr is a non-null *ByteBlobLoader from C++.
+                ptr: Source::Blob(ptr.cast::<ByteBlobLoader>()),
+            }),
+            Tag::File => Some(ReadableStream {
+                value,
+                // SAFETY: tag == File ⇒ ptr is a non-null *FileReader from C++.
+                ptr: Source::File(ptr.cast::<FileReader>()),
+            }),
+            Tag::Bytes => Some(ReadableStream {
+                value,
+                // SAFETY: tag == Bytes ⇒ ptr is a non-null *ByteStream from C++.
+                ptr: Source::Bytes(ptr.cast::<ByteStream>()),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn from_js(
         value: JSValue,
         global_this: &JSGlobalObject,
@@ -437,29 +459,7 @@ impl ReadableStream {
         let tag = bun_jsc::from_js_host_call_generic(global_this, || {
             ReadableStreamTag__tagged(global_this, &mut out, &mut ptr)
         })?;
-
-        Ok(match tag {
-            Tag::JavaScript => Some(ReadableStream {
-                value: out,
-                ptr: Source::JavaScript,
-            }),
-            Tag::Blob => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == Blob ⇒ ptr is a non-null *ByteBlobLoader from C++.
-                ptr: Source::Blob(ptr.cast::<ByteBlobLoader>()),
-            }),
-            Tag::File => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == File ⇒ ptr is a non-null *FileReader from C++.
-                ptr: Source::File(ptr.cast::<FileReader>()),
-            }),
-            Tag::Bytes => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == Bytes ⇒ ptr is a non-null *ByteStream from C++.
-                ptr: Source::Bytes(ptr.cast::<ByteStream>()),
-            }),
-            _ => None,
-        })
+        Ok(Self::from_tag(tag, out, ptr))
     }
 
     pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {

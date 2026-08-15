@@ -2388,28 +2388,55 @@ snapshots:
   no-deps@1.0.1: {}
 `;
 
+    const goneRegistry = () => Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
+    const project = (registry: Bun.Server, group: string) =>
+      tempDir("pnpm-v9-manifest-gone", {
+        "package.json": JSON.stringify({ name: "manifest-gone", [group]: { "no-deps": "1.0.1" } }),
+        "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\n`,
+        "pnpm-lock.yaml": lockfile(group),
+      });
+    const fetchLines = (stderr: string) =>
+      stderr.split("\n").filter(line => line.startsWith("warn:") || line.startsWith("error:"));
+
     test.concurrent.each([
       ["optionalDependencies", "warn", 0],
       ["dependencies", "error", 1],
     ])(
       "installing when the registry no longer serves the %s entry: the manifest line is a warning, the tarball line says %s",
       async (group, tarballSeverity, expectedExitCode) => {
-        using registry = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
-        using dir = tempDir("pnpm-v9-manifest-gone", {
-          "package.json": JSON.stringify({ name: "manifest-gone", [group]: { "no-deps": "1.0.1" } }),
-          "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\n`,
-          "pnpm-lock.yaml": lockfile(group),
-        });
+        using registry = goneRegistry();
+        using dir = project(registry, group);
 
         const { stdout, stderr, exitCode } = await run(String(dir), "install");
 
         expect(stdout).toStartWith("bun install v");
-        expect(stderr.split("\n").filter(line => line.startsWith("warn:") || line.startsWith("error:"))).toStrictEqual([
+        expect(fetchLines(stderr)).toStrictEqual([
           `warn: GET ${registry.url.origin}/no-deps - 404`,
           `${tarballSeverity}: GET ${registry.url.origin}/no-deps/-/no-deps-1.0.1.tgz - 404`,
         ]);
         expect(existsSync(join(String(dir), "bun.lock"))).toBe(expectedExitCode === 0);
         expect(exitCode).toBe(expectedExitCode);
+      },
+    );
+
+    // The command's own fetch must not be deduplicated against the migration's failed one, or the failure would stay a warning and the command would exit 0.
+    test.concurrent.each<[string, string[]]>([
+      ["outdated", ["outdated"]],
+      ["update --interactive", ["update", "-i", "--dry-run"]],
+    ])(
+      "`bun %s` run straight off the pnpm lockfile still fails on the manifest it cannot get",
+      async (header, args) => {
+        using registry = goneRegistry();
+        using dir = project(registry, "dependencies");
+
+        const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+        expect(stdout).toMatch(new RegExp(`^bun ${header} v[^\\n]*\\n$`));
+        expect(fetchLines(stderr)).toStrictEqual([
+          `warn: GET ${registry.url.origin}/no-deps - 404`,
+          `error: GET ${registry.url.origin}/no-deps - 404`,
+        ]);
+        expect(exitCode).toBe(1);
       },
     );
   });

@@ -18,9 +18,11 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    // Put ICs and DFG PutByStatus would otherwise store repeat writes from a site directly, skipping
-    // put()'s ToString; the DFG only looks at the structure, so a PutPropertySlot flag is not enough.
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::ProhibitsPropertyCaching;
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesPut
+        // Cached puts and fast indexed storage would both store without reaching put() / putByIndex().
+        | JSC::ProhibitsPropertyCaching
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {

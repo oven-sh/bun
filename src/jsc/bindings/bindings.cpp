@@ -3045,14 +3045,12 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
+extern "C" bool Bun__NodeVM__isRunningWithDeadline();
 
-    return false;
+// Whether a node:vm `timeout` could terminate what this thread runs right now (see setupWatchdog).
+extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM*)
+{
+    return Bun__NodeVM__isRunningWithDeadline();
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)

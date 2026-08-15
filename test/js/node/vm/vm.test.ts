@@ -1537,6 +1537,8 @@ test("a vm timeout that expires after its run has finished terminates nothing el
     const spin = (ms) => { const t = Date.now(); while (Date.now() - t < ms); };
     vm.runInThisContext("", { timeout: 10 });   // done long before 10 ms
     spin(80);                                   // running when the stale timer fires
+    vm.runInThisContext("", { timeout: 10 });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);   // idle instead: the fire finds CPU time to spare
     let real;
     try { vm.runInThisContext("for(;;){}", { timeout: 20 }); } catch (e) { real = e.code; }
     spin(80);

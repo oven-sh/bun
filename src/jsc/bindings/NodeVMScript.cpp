@@ -336,14 +336,24 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
     return false;
 }
 
-// A `timeout` arms JSC's per-VM Watchdog, whose queued timer and CPU deadline outlive the run that
-// armed it: its own staleness check only covers the wall-clock deadline, so once the run is over the
-// fire lands in — and terminates — whatever this thread runs next. Only let it terminate while a
-// run with a deadline is on this thread's stack; every setupWatchdog() is paired with a
+// A `timeout` arms JSC's per-VM Watchdog, whose queued timer, wall-clock deadline and CPU deadline
+// all outlive the run that armed them, and which assumes a check that finds a past deadline belongs
+// to a limit that is still set. Once a short run was over, its fire landed in whatever this thread
+// ran next: with the limit cleared it re-armed a timer under no limit (an assert on debug builds),
+// and otherwise it terminated that unrelated code. So: the decision to terminate is ours — only while
+// a run with a deadline is on this thread's stack — and outside such runs the watchdog is left with
+// a dormant (century-long) limit rather than none, which keeps its own bookkeeping consistent for a
+// late fire to be recognised as stale and dropped. Every setupWatchdog() is paired with a
 // restoreWatchdog().
 static thread_local unsigned s_runsWithDeadline = 0;
+static constexpr Seconds dormantLimit = Seconds::fromHours(24 * 365 * 100);
 
 static bool watchdogMayTerminate(JSC::JSGlobalObject*, void*, void*)
+{
+    return s_runsWithDeadline > 0;
+}
+
+extern "C" bool Bun__NodeVM__isRunningWithDeadline()
 {
     return s_runsWithDeadline > 0;
 }
@@ -356,6 +366,8 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
     ++s_runsWithDeadline;
 
     Seconds oldLimit = dog.getTimeLimit();
+    if (oldLimit >= dormantLimit)
+        oldLimit = Seconds::infinity();
 
     if (oldTimeout) {
         *oldTimeout = oldLimit.milliseconds();
@@ -375,7 +387,10 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
 void restoreWatchdog(VM& vm, double oldTimeout)
 {
     --s_runsWithDeadline;
-    vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(oldTimeout), watchdogMayTerminate);
+    Seconds limit = WTF::Seconds::fromMilliseconds(oldTimeout);
+    if (limit.isInfinity())
+        limit = dormantLimit;
+    vm.watchdog()->setTimeLimit(limit, watchdogMayTerminate);
 }
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)

@@ -94,6 +94,8 @@ ninja -C build/debug <target>               # build a specific target (e.g. tiny
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
 
+The typecheck is enforced in CI by `test/internal/build-typecheck.test.ts`, so it has to stay clean.
+
 ## CLI arg parsing
 
 `bun scripts/build.ts [build-flags] [exec-args...]`. The cutoff: first arg that isn't a recognized build/ninja flag ends build-flag parsing — it and everything after go to the built binary.

@@ -1,3 +1,5 @@
+import { expectType } from "./utilities";
+
 process.memoryUsage();
 process.cpuUsage().system;
 process.cpuUsage().user;
@@ -6,13 +8,56 @@ process.on("SIGINT", () => {
 });
 
 process.on("beforeExit", code => {
+  expectType(code).is<number>();
   console.log("Event loop is empty and no work is left to schedule.", code);
 });
 
 process.on("exit", code => {
+  expectType(code).is<number>();
   console.log("Exiting with code:", code);
 });
 process.kill(123, "SIGTERM");
+
+// Node's own events, on the methods @types/node has at times left for Process to
+// inherit (this fixture checks against whatever @types/node is current; the
+// declaration style that keeps these working regardless of that is enforced by
+// test/internal/source-lints/bun-types-process-event-methods.test.ts).
+const onSignal = (signal: NodeJS.Signals) => {
+  console.log(signal);
+};
+process.once("SIGTERM", onSignal);
+process.off("SIGTERM", onSignal);
+process.removeListener("SIGTERM", onSignal);
+process.prependListener("uncaughtException", (error, origin) => {
+  expectType(error).is<Error>();
+  expectType(origin).is<NodeJS.UncaughtExceptionOrigin>();
+});
+process.prependOnceListener("beforeExit", code => {
+  expectType(code).is<number>();
+});
+process.addListener("exit", code => {
+  expectType(code).is<number>();
+});
+process.emit("beforeExit", 0);
+
+// Bun's own process event is an entry in the event map, so every method types it.
+expectType<process.ProcessEventMap["memoryPressure"]>().is<[level: "warning" | "critical"]>();
+const onMemoryPressure = (level: "warning" | "critical") => {
+  console.log(level);
+};
+process.on("memoryPressure", level => {
+  expectType(level).is<"warning" | "critical">();
+});
+process.once("memoryPressure", level => {
+  expectType(level).is<"warning" | "critical">();
+});
+process.addListener("memoryPressure", onMemoryPressure);
+process.prependListener("memoryPressure", onMemoryPressure);
+process.prependOnceListener("memoryPressure", onMemoryPressure);
+process.off("memoryPressure", onMemoryPressure);
+process.removeListener("memoryPressure", onMemoryPressure);
+process.emit("memoryPressure", "critical");
+expectType(process.listeners("memoryPressure")).is<((level: "warning" | "critical") => void)[]>();
 
 process.getegid!();
 process.geteuid!();

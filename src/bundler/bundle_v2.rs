@@ -2120,16 +2120,16 @@ pub mod bv2_impl {
                 }
             }
             while let Some(resolve) = self.graph.outstanding_resolves.pop() {
-                // SAFETY: linked ⇒ arena-live for this pass and held by no one else now.
-                let resolve = unsafe { &mut *resolve };
-                if resolve
-                    .answered
-                    .swap(true, core::sync::atomic::Ordering::AcqRel)
+                // SAFETY: linked ⇒ arena-live for this pass. Claim it through the atomic first: the JS
+                // thread may be answering it right now, and only the winner may take `&mut`.
+                if unsafe { &(*resolve).answered }.swap(true, core::sync::atomic::Ordering::AcqRel)
                 {
                     // The plugin's answer is already in flight to our queue; it stays counted in
                     // `pending_items` and is consumed when it arrives.
                     continue;
                 }
+                // SAFETY: claimed above ⇒ held by no one else now.
+                let resolve = unsafe { &mut *resolve };
                 resolve.value = jsc_api::JSBundler::ResolveValue::Err(cancelled_msg(
                     &resolve.import_record.source_file,
                 ));
@@ -2137,13 +2137,11 @@ pub mod bv2_impl {
             }
             while let Some(load) = self.graph.outstanding_loads.pop() {
                 // SAFETY: as above.
-                let load = unsafe { &mut *load };
-                if load
-                    .answered
-                    .swap(true, core::sync::atomic::Ordering::AcqRel)
-                {
+                if unsafe { &(*load).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
                     continue;
                 }
+                // SAFETY: as above.
+                let load = unsafe { &mut *load };
                 if load.deferred {
                     // Its unit is parked in `deferred_pending`, not `pending_items`.
                     load.deferred = false;

@@ -92,12 +92,6 @@ public:
         WTF::Vector<SigintReceiver*, 4> m_receivers;
     };
 
-    template<typename... Ts>
-    ALWAYS_INLINE static GlobalObjectHolder hold(Ts*... held)
-    {
-        return { held... };
-    }
-
 private:
     RefPtr<WTF::Thread> m_thread;
     std::atomic_bool m_installed = false;

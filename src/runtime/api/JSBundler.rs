@@ -1586,19 +1586,19 @@ pub mod js_bundler {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn JSBundlerPlugin__onLoadAsync(
-        this: &mut Load,
+    unsafe extern "C" fn JSBundlerPlugin__onLoadAsync(
+        this: *mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
         jsc::mark_binding();
-        if this
-            .answered
-            .swap(true, core::sync::atomic::Ordering::AcqRel)
-        {
-            return; // see `JSBundlerPlugin__onResolveAsync`
+        // SAFETY: called from C++ with the live Load pointer; claim before `&mut` (see `onResolveAsync`).
+        if unsafe { &(*this).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
+            return;
         }
+        // SAFETY: claimed above ⇒ ours alone.
+        let this = unsafe { &mut *this };
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {
@@ -1879,28 +1879,26 @@ pub mod js_bundler {
         match which.as_int32() {
             0 => {
                 // SAFETY: C++ caller passes the live `*mut Resolve` it received from
-                // `Resolve::dispatch` as `ctx` when `which == 0`; sole owner on the JS thread.
-                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
-                if resolve
-                    .answered
-                    .swap(true, core::sync::atomic::Ordering::AcqRel)
+                // `Resolve::dispatch` as `ctx` when `which == 0`; claim before `&mut` (see `onResolveAsync`).
+                let resolve = ctx.cast::<Resolve>();
+                if unsafe { &(*resolve).answered }.swap(true, core::sync::atomic::Ordering::AcqRel)
                 {
-                    return; // see `JSBundlerPlugin__onResolveAsync`
+                    return;
                 }
+                // SAFETY: claimed above ⇒ sole owner on the JS thread.
+                let resolve = unsafe { &mut *resolve };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                // SAFETY: C++ caller passes the live `*mut Load` it received from
-                // `Load::dispatch` as `ctx` when `which == 1`; sole owner on the JS thread.
-                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
-                if load
-                    .answered
-                    .swap(true, core::sync::atomic::Ordering::AcqRel)
-                {
-                    return; // see `JSBundlerPlugin__onResolveAsync`
+                // SAFETY: as for `which == 0`, with the live `*mut Load` from `Load::dispatch`.
+                let load = ctx.cast::<Load>();
+                if unsafe { &(*load).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
+                    return;
                 }
+                // SAFETY: claimed above ⇒ sole owner on the JS thread.
+                let load = unsafe { &mut *load };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);

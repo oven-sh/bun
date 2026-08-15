@@ -2015,8 +2015,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                             .active_file
                             .clone()
                         {
-                            // `Err` means the exception is pending on `global_this`; the check after this loop propagates it.
-                            let _ = active_file.get().execution.handle_timeout(global_this);
+                            active_file
+                                .get()
+                                .execution
+                                .kill_dangling_processes_on_timeout(global_this);
                         }
                         let _ = subprocess.try_kill(subprocess.kill_signal);
                     }

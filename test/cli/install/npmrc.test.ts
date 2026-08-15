@@ -628,9 +628,9 @@ registry=https://somehost.com/org1/npm/registry/
 
 describe.concurrent("registry URL with embedded credentials", () => {
   // Credentials written into the registry URL are split off and the URL is
-  // stored without them. The stored URL is what manifest URLs are joined onto
-  // and what error messages print, so a registry at the root of its host has
-  // to come back as "http://host/", not "http://host//".
+  // stored without them. The stored URL is what requests are built from and
+  // what error messages print, so a registry at the root of its host has to
+  // come back as "http://host/", not "http://host//".
   test.each([
     ["http://alice:s3cret@registry.example.com/", "http://registry.example.com/"],
     ["http://alice:s3cret@registry.example.com", "http://registry.example.com/"],
@@ -657,73 +657,64 @@ describe.concurrent("registry URL with embedded credentials", () => {
   });
 
   type Req = { path: string; auth: string | null };
-  const basicAuth = `Basic ${Buffer.from("alice:s3cret").toString("base64")}`;
 
-  function unauthorizedRegistry(reqs: Req[]) {
+  function mockRegistry(reqs: Req[], respond: () => Response) {
     return Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req) {
         reqs.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
-        return new Response("unauthorized", { status: 401 });
+        return respond();
       },
     });
   }
 
-  async function install(dir: string) {
+  async function run(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), ...args],
       cwd: dir,
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache") },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stderr: stderr.split(/\r?\n/), exitCode };
+    return { stderr, exitCode };
   }
+
+  // The documented bunfig form for a token: the token rides on the end of the
+  // URL's path. `bun pm whoami` prints the stored URL verbatim when the
+  // registry does not return a username.
+  test.each([
+    ["/", "/-/whoami"],
+    ["/npm/", "/npm/-/whoami"],
+  ])("_authToken= appended to a bunfig.toml registry URL with path %s", async (path, whoami) => {
+    const reqs: Req[] = [];
+    await using server = mockRegistry(reqs, () => Response.json({}));
+    const base = `http://127.0.0.1:${server.port}${path}`;
+    using dir = tempDir("bunfig-authtoken-suffix", {
+      "bunfig.toml": `[install.registry]\nurl = "${base}_authToken=tok"\n`,
+      "package.json": JSON.stringify({ name: "app" }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "pm", "whoami");
+
+    expect(stderr).toBe(`error: failed to authenticate with registry '${base}'\n`);
+    expect(reqs).toEqual([{ path: whoami, auth: "Bearer tok" }]);
+    expect(exitCode).toBe(1);
+  });
 
   test("username:password in the .npmrc registry URL", async () => {
     const reqs: Req[] = [];
-    await using server = unauthorizedRegistry(reqs);
-    using dir = tempDir("npmrc-userinfo-root", {
+    await using server = mockRegistry(reqs, () => new Response("unauthorized", { status: 401 }));
+    using dir = tempDir("npmrc-userinfo", {
       ".npmrc": `registry=http://alice:s3cret@127.0.0.1:${server.port}/\n`,
       "package.json": JSON.stringify({ name: "app", dependencies: { "needs-creds": "1.0.0" } }),
     });
 
-    const { stderr, exitCode } = await install(String(dir));
+    const { stderr, exitCode } = await run(String(dir), "install");
 
-    expect(stderr).toContain(`error: GET http://127.0.0.1:${server.port}/needs-creds - 401`);
-    expect(reqs).toEqual([{ path: "/needs-creds", auth: basicAuth }]);
-    expect(exitCode).toBe(1);
-  });
-
-  test("_authToken= appended to the bunfig.toml registry URL", async () => {
-    const reqs: Req[] = [];
-    await using server = unauthorizedRegistry(reqs);
-    using dir = tempDir("bunfig-authtoken-suffix-root", {
-      "bunfig.toml": `[install.registry]\nurl = "http://127.0.0.1:${server.port}/_authToken=tok"\n`,
-      "package.json": JSON.stringify({ name: "app", dependencies: { "needs-token": "1.0.0" } }),
-    });
-
-    const { stderr, exitCode } = await install(String(dir));
-
-    expect(stderr).toContain(`error: GET http://127.0.0.1:${server.port}/needs-token - 401`);
-    expect(reqs).toEqual([{ path: "/needs-token", auth: "Bearer tok" }]);
-    expect(exitCode).toBe(1);
-  });
-
-  test("registry URL with a path keeps the path", async () => {
-    const reqs: Req[] = [];
-    await using server = unauthorizedRegistry(reqs);
-    using dir = tempDir("npmrc-userinfo-path", {
-      ".npmrc": `registry=http://alice:s3cret@127.0.0.1:${server.port}/npm/\n`,
-      "package.json": JSON.stringify({ name: "app", dependencies: { "needs-creds": "1.0.0" } }),
-    });
-
-    const { stderr, exitCode } = await install(String(dir));
-
-    expect(stderr).toContain(`error: GET http://127.0.0.1:${server.port}/npm/needs-creds - 401`);
-    expect(reqs).toEqual([{ path: "/npm/needs-creds", auth: basicAuth }]);
+    expect(stderr.split(/\r?\n/)).toContain(`error: GET http://127.0.0.1:${server.port}/needs-creds - 401`);
+    expect(reqs).toEqual([{ path: "/needs-creds", auth: `Basic ${Buffer.from("alice:s3cret").toString("base64")}` }]);
     expect(exitCode).toBe(1);
   });
 });

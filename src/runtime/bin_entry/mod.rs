@@ -126,6 +126,14 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         // joining it from `global_exit` would deadlock when the user is
         // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
+        // Allocations made while transpiling on the async store's worker
+        // thread (e.g. a `.jsc` sidecar's bytecode buffer) end up owned by
+        // JSC-heap objects (`CachedBytecode` inside a `SourceProvider`, freed
+        // in `~SourceProvider` since `bytecode_cache_is_owned`), and LSAN
+        // cannot scan the libpas heap, so an owner still alive at exit
+        // reports its buffer. The sync-path twin is `leak:Bun__transpileFile`
+        // in `test/leaksan.supp`.
+        "leak:runtime_transpiler_store::TranspilerJob>::run\n",
         "\0",
     )
     .as_ptr()

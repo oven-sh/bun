@@ -2968,6 +2968,7 @@ fn transpile_source_code_inner(
                         already_bundled: true,
                         bytecode_cache,
                         bytecode_cache_size,
+                        bytecode_cache_is_owned: !bytecode_cache.is_null(),
                         is_commonjs_module,
                         ..Default::default()
                     }));

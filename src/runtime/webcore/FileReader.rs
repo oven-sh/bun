@@ -49,10 +49,9 @@ pub struct FileReader {
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
-    /// Length of the blob's slice window, counted from `start_offset`; the
-    /// stream ends there even if the file goes on. Read-only after construction.
+    /// Length of the slice window at `start_offset`; the stream ends there. Read-only after init.
     pub(crate) max_size: Option<usize>,
-    /// Bytes delivered so far, charged against `max_size`; never exceeds it.
+    /// Bytes delivered so far; never exceeds `max_size`.
     pub(crate) total_readed: Cell<usize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
@@ -682,9 +681,7 @@ impl FileReader {
         Some(self.max_size? - self.total_readed.get())
     }
 
-    /// Charges `len` delivered bytes against the slice window. Returns `true` once the window is
-    /// used up: that is this stream's EOF whatever the file still holds, so the caller must
-    /// `end_at_window` after delivering the bytes.
+    /// Charges `len` bytes to the window; `true` once it is used up, which is this stream's EOF.
     fn consume_window(&self, len: usize) -> bool {
         let Some(max_size) = self.max_size else {
             return false;
@@ -695,8 +692,7 @@ impl FileReader {
         total_readed == max_size
     }
 
-    /// Closes the reader as EOF would have; `on_reader_done` then ends the sink or settles a
-    /// parked read, and the next `on_pull` reports `Done`.
+    /// Ends the stream the way EOF does; `on_reader_done` settles whatever is waiting.
     fn end_at_window(&self) {
         if !self.reader().is_done() {
             self.reader().close();

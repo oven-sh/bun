@@ -1327,10 +1327,8 @@ fn normalize_buf_or_spill<'a>(
     spill: &'a mut Vec<u8>,
     str: &[u8],
 ) -> &'a mut [u8] {
-    // Normalizing only removes bytes, except that `""` becomes `"."` and on
-    // Windows a drive-relative `C:` becomes `C:.` and a bare UNC volume gains
-    // its trailing separator (one byte each); `normalize_buf_z` then appends
-    // the NUL.
+    // Normalizing grows a path by at most one byte (`""` -> `.`; on Windows
+    // `C:` -> `C:.` or a bare UNC volume gaining its separator), plus the NUL.
     let needed = str.len() + 2;
     if needed <= buf.len() {
         return buf;
@@ -2494,7 +2492,7 @@ pub use crate::PathChar;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
 // Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
-// are only linked into the full binary, so the two they reference are satisfied
+// are only linked into the full binary, so the ones they reference are satisfied
 // below with scalar stubs (the simdutf counterparts live in string_paths.rs).
 // Under Miri the wrappers take their own scalar path and never call these.
 #[cfg(test)]
@@ -2551,8 +2549,7 @@ mod tests {
             .unwrap_or(haystack_len)
     }
 
-    /// Returns `usize::MAX` when `needle` does not occur, like the kernel. Only
-    /// reached for u16 input; the u8 tests below merely need it to link.
+    /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn highway_memrmem16(
         haystack: *const u16,

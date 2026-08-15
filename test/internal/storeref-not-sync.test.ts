@@ -12,7 +12,8 @@
 // The trip-wire catches regressions at compile time; this test is the
 // suite-level projection of the same invariants, with a readable failure
 // message instead of a rustc diagnostic. Like
-// `test/internal/dead-code-escapes.test.ts`, it asserts on the source text.
+// `test/internal/source-lints/dead-code-escapes.test.ts`, it asserts on the
+// source text.
 // (Booleans are extracted first so a failure prints `true`/`false`, not the
 // whole file.)
 

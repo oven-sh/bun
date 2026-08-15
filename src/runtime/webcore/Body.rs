@@ -44,18 +44,10 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 /// `(*blob.store.get()…as_ptr()).mime_type = …` deref used by the body-mixin
 /// `consume_` helpers.
 ///
-/// This mirrors [`blob::StoreRef::data_mut`]: it projects `&mut` to the same
-/// heap `Store` from a shared `&Blob` via `StoreRef::as_ptr()`. `StoreRef`
-/// itself is `!Sync` so a single `&Blob` can't project the handle to another
-/// thread, but cloned `StoreRef` handles (`Send`) and `Blob: Sync` projecting
-/// `fn store(&self) -> Option<&StoreRef>` both allow other references to the
-/// same `Store` to exist concurrently — discharge the precondition at every
-/// call site.
-///
 /// # Safety
-/// For the lifetime of the returned `&mut Store`, the caller asserts that no
-/// other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the same
-/// pointee is live — on this thread **or any other**. Same contract as
+/// For the lifetime of the returned `&mut Store`, no other reference
+/// (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the same pointee may be
+/// live — on this thread or any other. Same contract as
 /// [`blob::StoreRef::data_mut`].
 #[inline]
 #[allow(clippy::mut_from_ref)]
@@ -2222,7 +2214,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    // SAFETY: synchronous JS-thread `reject`-path body-consumer
+                    // SAFETY: synchronous JS-thread body-consumer
                     // continuation; no JS re-entry before the borrow ends, and
                     // other `StoreRef` clones only touch this `Store` on the
                     // same thread, so no aliasing `&`/`&mut Store` is live.

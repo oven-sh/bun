@@ -1048,10 +1048,7 @@ impl BlobExt for Blob {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
             let store = self.store().expect("infallible: store present");
-            // Shared borrow through `StoreRef: Deref<Target = Store>` — this
-            // formatter block only reads fields; no `&mut Data` is
-            // materialized. Shared `&Data` safely coexists with any
-            // concurrent worker-thread `&Data` borrow.
+            // Read-only formatter block; shared borrow suffices.
             match &store.data {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
@@ -2131,19 +2128,9 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // Do not hold a `&File` borrow across `resolve_file_stat` —
-                // it materializes `&mut File` via `data_mut()` (Stacked
-                // Borrows UB on overlap; the optimizer may legally cache the
-                // pre-call `last_modified` and return the stale
-                // `INIT_TIMESTAMP`). Snapshot first, then call
-                // `resolve_file_stat` with no outstanding `&Data`.
-                //
-                // `last_modified` is `AtomicU64`: worker-thread `ReadFile`
-                // tasks may `store(Relaxed)` this field from the work pool
-                // (`do_read_file` clones the `StoreRef` into each task). The
-                // shared `&Data` borrow this line takes on the JS thread is
-                // sound under Rust's aliasing model (no `&mut Data`
-                // materialized).
+                // Borrow discipline: see `resolve_size`. Snapshot the
+                // `AtomicU64` through a shared borrow, drop it, then let
+                // `resolve_file_stat` materialize `&mut File`.
                 let last_modified = match &store.data {
                     store::Data::File(f) => {
                         f.last_modified.load(core::sync::atomic::Ordering::Relaxed)
@@ -2151,10 +2138,11 @@ impl BlobExt for Blob {
                     _ => unreachable!("checked via matches! above"),
                 };
                 if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
-                    resolve_file_stat(store);
+                    // SAFETY: the snapshot above dropped its borrow; no
+                    // `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
-                // Fresh shared borrow after the possible mutation by
-                // `resolve_file_stat`; prior borrow is dropped.
+                // Fresh shared borrow after the possible mutation.
                 let last_modified = match &store.data {
                     store::Data::File(f) => {
                         f.last_modified.load(core::sync::atomic::Ordering::Relaxed)
@@ -2281,15 +2269,10 @@ impl BlobExt for Blob {
             self.size.set(0);
             return;
         };
-        // PORT NOTE: dispatch on the copied `DataTag` rather than
-        // `match &store.data { File(file) => … }` held across
-        // `resolve_file_stat`. The shared `&Data` borrow is fine to make
-        // (no `UnsafeCell` is needed on the read path) but we must *drop*
-        // it before `resolve_file_stat` materializes `&mut File` — under
-        // noalias the optimizer may legally cache the pre-call
-        // `seekable: None` and fall through to `self.size.get() = 0`.
-        // Snapshot shape via a shared borrow, release, then conditionally
-        // call `resolve_file_stat`, then re-borrow shared.
+        // Borrow discipline: never hold a `&Data`/`&File` across
+        // `resolve_file_stat` — it materializes `&mut File` on the same
+        // memory (aliasing UB; the optimizer may cache the pre-call field
+        // values). Snapshot via a shared borrow, drop it, call, re-borrow.
         match store.data.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2301,17 +2284,16 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::File => {
-                // Shared borrow: just read `seekable.is_none()`; drop
-                // before `resolve_file_stat` below.
                 let needs_stat = match &store.data {
                     store::Data::File(f) => f.seekable.is_none(),
                     _ => unreachable!("tag matched File"),
                 };
                 if needs_stat {
-                    resolve_file_stat(store);
+                    // SAFETY: the `needs_stat` snapshot dropped its borrow;
+                    // no `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
-                // Fresh shared borrow after possible mutation by
-                // `resolve_file_stat`.
+                // Fresh shared borrow after the possible mutation.
                 let file = match &store.data {
                     store::Data::File(f) => f,
                     _ => unreachable!("tag matched File"),
@@ -2346,9 +2328,7 @@ impl BlobExt for Blob {
         let Some(store) = self.store.get() else {
             return (self.offset.get(), 0);
         };
-        // PORT NOTE: see `resolve_size` — shared borrows through `Deref`;
-        // drop before `resolve_file_stat` so no `&Data`/`&File` is live
-        // across the call that materializes `&mut File`.
+        // Borrow discipline: see `resolve_size`.
         match store.data.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2361,14 +2341,14 @@ impl BlobExt for Blob {
                 (self.offset.get(), self.size.get())
             }
             store::DataTag::File => {
-                // Shared borrow to read `seekable.is_none()`; release before
-                // `resolve_file_stat` below.
                 let needs_stat = match &store.data {
                     store::Data::File(f) => f.seekable.is_none(),
                     _ => unreachable!("tag matched File"),
                 };
                 if needs_stat {
-                    resolve_file_stat(store);
+                    // SAFETY: the `needs_stat` snapshot dropped its borrow;
+                    // no `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
                 // Fresh shared borrow after the possible mutation.
                 let file = match &store.data {
@@ -6211,28 +6191,17 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
 }
 
 /// resolve file stat like size, last_modified
-fn resolve_file_stat(store: &StoreRef) {
-    // SAFETY: callers (`get_last_modified`, `resolve_size`, `resolved_size`)
-    // pass `store` from the JS thread and drop any prior `Data` borrow
-    // before calling; no other JS-thread `&`/`&mut Data` is live.
-    //
-    // Cross-thread aliasing note: worker-thread `ReadFile` tasks (POSIX)
-    // can concurrently hold a shared `&Data` to this same `Store` via
-    // `do_read_file`'s `StoreRef::clone` (see `read_file.rs`
-    // `resolve_size_and_last_modified`); those only access the `AtomicU64`
-    // `last_modified` field through `&File`, never `&mut`, and the atomic
-    // closes that observable data-level race. POSIX `WriteFile::run_with_fd`
-    // (`write_file.rs`) is a second worker-pool `&File` borrower: on
-    // fd-backed destinations it reads the non-atomic `seekable`/`mode`
-    // fields, so the JS-thread `&mut File` materialized below can race
-    // those reads at the data level. Both overlaps are benign in practice:
-    // every overlapping field-write by this function produces the same
-    // fstat-derived value a re-stat would (idempotent), and
-    // `seekable`/`mode`/`max_size` are small `Copy` types written once per
-    // `Store` lifetime. The `&mut File` still formally aliases the worker
-    // `&File`s under Rust's memory model; converting the whole `File` to
-    // interior-mutable fields would close both overlaps, but is out of
-    // scope for #30800 (which introduced `unsafe fn data_mut`).
+///
+/// # Safety
+/// Materializes `&mut File` via [`StoreRef::data_mut`]; the caller asserts no
+/// `&`/`&mut Data` to the same `Store` is live across the call. Worker-pool
+/// tasks (`read_file.rs`, `write_file.rs`) can still hold `&File` to this
+/// `Store`: the `AtomicU64` `last_modified` covers the observable race, and
+/// the remaining `seekable`/`mode` overlap is idempotent (every writer stores
+/// the same fstat-derived values); closing it fully means interior-mutable
+/// `File` fields, a follow-up beyond #30800.
+unsafe fn resolve_file_stat(store: &StoreRef) {
+    // SAFETY: precondition — no aliasing `Data` borrow is live (see fn doc).
     let file = unsafe { store.data_mut() }.as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {

@@ -692,15 +692,9 @@ impl ReadFile {
         };
 
         if let Some(store) = &self.store {
-            // Route through `StoreRef: Deref<Target = Store>` (shared
-            // borrow), not `data_mut()` — the only field this worker
-            // writes is `file.last_modified`, an `AtomicU64` whose
-            // `store(Relaxed)` takes `&self`. Avoiding `&mut Data`
-            // eliminates the Rust aliasing hazard entirely: N sibling
-            // `ReadFile` tasks (each `StoreRef`-cloned from the same
-            // JS-thread `Blob` via `do_read_file`) concurrently reaching
-            // this code hold `&Data` to the same allocation, which is
-            // always sound.
+            // Shared borrow: the only write is the `AtomicU64`
+            // `last_modified`, so sibling worker tasks holding `&Data` to
+            // the same allocation stay sound.
             if let Data::File(file) = &store.data {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
                 file.last_modified.store(
@@ -1230,12 +1224,7 @@ impl<'a> ReadFileUV<'a> {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        // Shared borrow through `StoreRef: Deref<Target = Store>` — the
-        // only field written is `file.last_modified` (an `AtomicU64`
-        // whose `store(Relaxed)` takes `&self`), so we never materialize
-        // `&mut Data`. Libuv fs callbacks here run on the JS event-loop
-        // thread; the atomic is kept for structural consistency with the
-        // POSIX writer (where sibling worker tasks can race).
+        // Shared borrow: the only write is the `AtomicU64` `last_modified`.
         if let Data::File(file) = &this.store.data {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.

@@ -940,6 +940,42 @@ test.concurrent("a direct row on a lower instance does not hold wants on a highe
   expect(exitCode).toBe(0);
 });
 
+// The redirect is first-wins per instance: root's row lands on 3.0.0 first, so pkg1's 4.0.0 landing is
+// never offered to peer-host's edge; that edge stays on 1.0.0 and parent's `*` want must be held.
+test.concurrent("only the first moved direct row's landing carries an instance's followers", async () => {
+  const manifests: Manifests = {
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    "peer-host": { "1.0.0": { peerDependencies: { leaf: "~1.0.0 || ~4.0.0" } } },
+    leaf: { "1.0.0": {}, "3.0.0": {}, "4.0.0": {}, "5.0.0": {} },
+  };
+  using server = await serveRegistry(manifests);
+  const { "1.0.0": kept, ...hidden } = manifests.leaf;
+  manifests.leaf = { "1.0.0": kept };
+  using tmp = tempDir("update-first-landing-", {
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { leaf: "~1.0.0 || 3.0.0", parent: "1.0.0", "peer-host": "1.0.0" },
+    }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "~1.0.0 || 4.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  Object.assign(manifests.leaf, hidden);
+
+  const { stderr, exitCode } = await run(dir, "update", "-r");
+  expect(stderr).not.toContain("error:");
+  // parent's `*` want is held and its edge carried to 3.0.0 instead of forking off a removable 5.0.0.
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.0", "4.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
@@ -1643,7 +1679,10 @@ test.concurrent("in a workspace, `bun update` from one member also re-points a s
   expect(exitCode).toBe(0);
 });
 
-type Manifests = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
+type Manifests = Record<
+  string,
+  Record<string, { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>
+>;
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.

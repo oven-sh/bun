@@ -1215,9 +1215,9 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        // Rows landing back on `current` are stayers the redirect can still carry; a moved row's landing is a redirect target only for the instance it resolved to.
+        // Rows landing back on `current` are stayers the redirect can still carry; the first moved row's landing is the instance's only direct redirect target (`redirect` is first-wins over `moved_pairs`, both in owner order).
         let mut direct_stayers: Vec<DependencyID> = Vec::new();
-        let mut direct_landings: Vec<(Semver::Version, bool)> = Vec::new();
+        let mut direct_landing: Option<(Semver::Version, bool)> = None;
         for &(dep_id, latest, keep, res_slot) in &edges_on.direct[inst_i] {
             let Some((landing, in_manifest)) = direct_row_landing(
                 &manager.lockfile,
@@ -1233,8 +1233,8 @@ fn plan_edges(
             let landing_buf = if in_manifest { manifest_buf } else { buf };
             if landing.order(inst.current, landing_buf, buf) == Ordering::Equal {
                 direct_stayers.push(dep_id);
-            } else if res_slot == inst_i as u32 {
-                direct_landings.push((landing, in_manifest));
+            } else if res_slot == inst_i as u32 && direct_landing.is_none() {
+                direct_landing = Some((landing, in_manifest));
             }
         }
         // Holds cascade (a held want stays behind and can block another), so iterate to a fixed point.
@@ -1261,7 +1261,7 @@ fn plan_edges(
                     &held_wants,
                     &edge_wants,
                     &direct_stayers,
-                    &direct_landings,
+                    direct_landing,
                     redirect_v,
                     manifest_buf,
                 ) {
@@ -1708,7 +1708,7 @@ fn forks_surviving_instance(
     held_wants: &[bool],
     edge_wants: &[(DependencyID, Option<usize>)],
     direct_stayers: &[DependencyID],
-    direct_landings: &[(Semver::Version, bool)],
+    direct_landing: Option<(Semver::Version, bool)>,
     redirect_v: Semver::Version,
     manifest_buf: &[u8],
 ) -> bool {
@@ -1726,7 +1726,7 @@ fn forks_surviving_instance(
         }
         let range = &version.npm().version;
         !range.satisfies(redirect_v, buf, manifest_buf)
-            && !direct_landings.iter().any(|&(landing, in_manifest)| {
+            && !direct_landing.is_some_and(|(landing, in_manifest)| {
                 range.satisfies(landing, buf, if in_manifest { manifest_buf } else { buf })
             })
     };

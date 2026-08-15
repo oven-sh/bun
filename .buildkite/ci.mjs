@@ -186,10 +186,13 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // The `latest` lane only has two agents behind it right now (the Studios
-  // came back on macOS 15 and can only host 15 guests), so until they are on
-  // 26 it runs on main and on opt-in (see darwinLatestLaneEnabled), not on
-  // every PR push.
+  // All three darwin lanes run on main, on manual builds and on opt-in (see
+  // darwinTestLanesEnabled), not on every PR push. The fleet cannot keep up
+  // with PR volume: `latest` is the two bare macOS 26 minis (the Studios came
+  // back on macOS 15 and can only host 15 guests), and `previous` is six tart
+  // guests on three Studios, ~26 jobs an hour against the ~60 an hour that PR
+  // builds generate, so it ran 3-6 hours behind and expired unrun on most PRs.
+  // Put a lane back on PRs once it can absorb that rate.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -1544,12 +1547,13 @@ async function getPipeline(options = {}) {
 
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
-  // on main along with its build.
-  const darwinLatestLaneEnabled =
+  // on main along with its build. The darwin lanes are the other way around:
+  // main, manual builds and `[macos tests]` commits only (see testPlatforms).
+  const darwinTestLanesEnabled =
     isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  ).filter(({ os, tier }) => os !== "darwin" || tier !== "latest" || darwinLatestLaneEnabled);
+  ).filter(({ os }) => os !== "darwin" || darwinTestLanesEnabled);
   /** @type {string[]} */
   const testStepKeys = [];
   {

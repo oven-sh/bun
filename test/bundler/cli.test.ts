@@ -601,14 +601,15 @@ describe.concurrent("bun build --watch", () => {
   }
 
   // In watch mode every failed resolution busts the resolver's directory
-  // cache for the specifier. The cache keys derived from a specifier ending in
-  // a slash kept that slash, which fails the resolver's cache key assertion in
+  // cache for the specifier. The cache keys derived from these specifiers
+  // ended in a separator, which fails the resolver's cache key assertion in
   // debug and ASAN builds, so the process aborted instead of reporting the
   // resolution error.
   test.each([
-    ["relative", (_dir: string) => "./missing/"],
-    ["absolute", (dir: string) => join(dir, "missing") + "/"],
-  ])("reports an unresolvable %s import ending in a slash and keeps watching", async (_kind, specifierFor) => {
+    ["relative import ending in a slash", (_dir: string) => "./missing/"],
+    ["absolute import ending in a slash", (dir: string) => join(dir, "missing") + "/"],
+    ["absolute import with a doubled separator", (dir: string) => dir + path.sep + path.sep + "missing"],
+  ])("reports an unresolvable %s and keeps watching", async (_kind, specifierFor) => {
     using dir = tempDir("build-watch-trailing-slash", {});
     const specifier = specifierFor(String(dir));
     const entry = join(String(dir), "index.ts");

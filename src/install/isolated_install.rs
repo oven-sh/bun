@@ -214,21 +214,11 @@ impl<'a, 'b> Wait<'a, 'b> {
 }
 
 /// Whether `dep`, declared by the package resolved as `declarer`, is a `file:`
-/// dependency on a folder inside that package.
-///
-/// Manifests in the project (the root, workspaces, and local `file:` packages,
-/// whose paths `Package::parse` rebases onto the top-level dir) and root
-/// `overrides`/`resolutions` entries (the root-authored trust rule the resolver
-/// and the hoisted installer apply to these paths as well) write paths relative to
-/// the top-level dir. A registry, git or tarball manifest's `file:` path is kept as
-/// declared (`Package::from_npm`), so it only means something inside that package;
-/// the resolver records it as a stub package without dependencies of its own.
-///
-/// Such a folder is private to the declaring package: the package links it from
-/// inside its own directory (`Installer::symlink_dependencies`), and it does not
-/// satisfy the peer dependencies of the packages below it, which is how the
-/// hoisted installer behaves as well (it installs these folders into the declaring
-/// package's own `node_modules` and never hoists them).
+/// dependency on a folder inside that package: `Package::from_npm` keeps the path
+/// as declared, while `Package::parse` (root, workspaces, local `file:` packages)
+/// and `overrides` produce paths relative to the top-level dir. Such a folder is
+/// private to the package: it is linked from inside the package's own directory
+/// and does not satisfy the peer dependencies of the packages below it.
 fn dependency_is_contained_folder(
     lockfile: &Lockfile,
     declarer: &Resolution,
@@ -251,9 +241,8 @@ fn dependency_is_contained_folder(
 struct ContainedFolders {
     /// Indexed by `DependencyID`.
     dependencies: DynamicBitSet,
-    /// Indexed by `PackageID`: the folder packages only contained-folder
-    /// dependencies resolve to. There is no top-level relative path to install
-    /// them into the store from; see `store::entry::Entry::nested_folder`.
+    /// Indexed by `PackageID`: folder packages only such dependencies resolve to,
+    /// which therefore get no store entry (`store::entry::Entry::nested_folder`).
     packages: DynamicBitSet,
 }
 
@@ -301,9 +290,8 @@ fn contained_folders(lockfile: &Lockfile) -> Result<ContainedFolders, AllocError
 }
 
 /// Whether one of `pkg_id`'s own dependencies is a `dependency_is_contained_folder`
-/// dependency on the folder package `folder_pkg_id`. A package that depends on the
-/// folder in any other way (a manifest in the project, an overridden dependency, a
-/// peer dependency bound to the folder) links to the folder's store entry instead.
+/// dependency on the folder package `folder_pkg_id`; any other kind of dependency
+/// on a folder links to the folder's store entry.
 pub(crate) fn folder_is_inside_package(
     lockfile: &Lockfile,
     pkg_id: PackageID,
@@ -400,10 +388,9 @@ pub(crate) fn build_store(
 
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
-        // filtered out by bundled/disabled/unresolved) and satisfy the peers of the
-        // packages below. A contained folder only satisfies the package's own peer
-        // of that name; leaving it out here merely lets that name leak too, which
-        // only costs first-pass deduplication.
+        // filtered out by bundled/disabled/unresolved) and satisfy peers below the
+        // package. Contained folders satisfy only the package's own peers, so
+        // leaving them out over-approximates the leaks, which is safe.
         let own_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
         let provides: DynamicBitSetList =
@@ -865,9 +852,7 @@ pub(crate) fn build_store(
                             continue;
                         }
 
-                        // A folder contained in an ancestor is private to that ancestor.
-                        // The package's own contained folder is linked as a regular
-                        // dependency and does satisfy its own peer.
+                        // private to the ancestor; a package's own one still satisfies its own peer
                         if curr_id != node_id && is_contained_folder(ids.dep_id) {
                             continue;
                         }
@@ -1133,8 +1118,7 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
-        // A nested folder has nothing that could be hoisted, so it must not take the
-        // hidden or public hoist slot for its name away from a real package below.
+        // never hoisted, so it must not claim the hoist slots for its name below
         let new_entry_nested_folder = contained.packages.is_set(pkg_id as usize);
 
         let hoisted = 'hoisted: {
@@ -2319,13 +2303,11 @@ pub(crate) fn install_isolated_packages(
                 }
                 ResolutionTag::Folder => {
                     if entry_nested_folder[entry_id.get() as usize] {
-                        // Nothing to install: the packages containing the folder link it
-                        // from inside their own directory (`Installer::symlink_dependencies`).
+                        // linked by the packages containing it (`Installer::symlink_dependencies`)
                         debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                         let folder = pkg_res.folder().slice(string_buf);
                         let state = if crate::bin::bin_target_escapes_package_dir(folder) {
-                            // Only reachable from a lockfile: the resolver rejects these
-                            // paths. Same refusal as the hoisted installer.
+                            // the resolver rejects these; only an edited or old lockfile gets here
                             Output::err_generic(
                                 "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
                                 (BStr::new(pkg_name.slice(string_buf)), BStr::new(folder)),

@@ -2815,16 +2815,10 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Appends the location of `folder`, a folder package the entry's own package
-    /// contains (`isolated_install::folder_is_inside_package`), to `buf`: the
-    /// declared path resolved inside the package directory (`package_dir_name` in
-    /// the entry's store `node_modules`).
-    ///
-    /// `Ok(false)` means there is nothing to link, which the hoisted installer
-    /// treats the same way: the path leaves the package (rejected by the
-    /// resolver, but a lockfile may still carry one; `install_isolated_packages`
-    /// reports it), or the package does not ship the folder (for example it was
-    /// excluded from the published tarball).
+    /// Appends `<entry's store node_modules>/<package_dir_name>/<folder>` to `buf`.
+    /// `Ok(false)`: nothing to link, as in the hoisted installer, because the path
+    /// leaves the package (`install_isolated_packages` reports those) or the
+    /// package does not ship the folder.
     fn append_nested_folder_path(
         &self,
         buf: &mut AutoAbsPath,

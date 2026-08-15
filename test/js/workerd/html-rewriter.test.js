@@ -2332,6 +2332,62 @@ it.each([
   await expect(res.text()).rejects.toThrow("Body already used");
 });
 
+// `on()` stores one (selector, handlers) record per call; `transform()` turns
+// the records collected so far into a fresh lol-html rewriter each time.
+describe("on() registrations", () => {
+  it("each selector runs the handlers it was registered with, also after a rejected on()", () => {
+    const rw = new HTMLRewriter();
+    const count = 24;
+    for (let i = 0; i < count; i++) {
+      if (i === count / 2) {
+        // Neither of these may leave a half-registered record behind, or the
+        // registrations after them would pair up with the wrong handlers.
+        expect(() => rw.on("p[", { element() {} })).toThrow();
+        expect(() => rw.on(`p[data-i="${i}"]`, { element: "not a function" })).toThrow("element must be a function");
+      }
+      if (i % 2 === 0) {
+        rw.on(`p[data-i="${i}"]`, { element: el => el.setInnerContent(`element ${i}`) });
+      } else {
+        rw.on(`p[data-i="${i}"]`, {
+          text(chunk) {
+            if (chunk.text) chunk.replace(`text ${i}`);
+          },
+        });
+      }
+    }
+
+    const indices = Array.from({ length: count }, (_, i) => count - 1 - i);
+    const input = indices.map(i => `<p data-i="${i}">x</p>`).join("");
+    const expected = indices.map(i => `<p data-i="${i}">${i % 2 === 0 ? "element" : "text"} ${i}</p>`).join("");
+    expect(rw.transform(input)).toBe(expected);
+    expect(rw.transform(input)).toBe(expected);
+  });
+
+  it("on() from inside a handler applies to the next transform, not the running one", () => {
+    const rw = new HTMLRewriter();
+    let grown = false;
+    rw.on("div", {
+      element(el) {
+        el.setInnerContent("div");
+        if (!grown) {
+          grown = true;
+          // Many more records than were registered before this transform
+          // started, so the registry has to grow while lol-html is still
+          // calling the handlers registered above and below.
+          for (let i = 0; i < 64; i++) {
+            rw.on("span", { element: span => span.setAttribute("n", String(i)) });
+          }
+        }
+      },
+    });
+    rw.on("span", { element: el => el.setInnerContent("span") });
+
+    const input = "<div>1</div><span>2</span><div>3</div><span>4</span>";
+    expect(rw.transform(input)).toBe("<div>div</div><span>span</span><div>div</div><span>span</span>");
+    expect(rw.transform(input)).toBe('<div>div</div><span n="63">span</span><div>div</div><span n="63">span</span>');
+  });
+});
+
 // lol-html reports an absent attribute with a NULL pointer and a
 // present-but-empty one with an empty string; they are not the same thing.
 describe("getAttribute distinguishes empty from absent", () => {

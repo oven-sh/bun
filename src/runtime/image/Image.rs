@@ -763,10 +763,12 @@ impl Image {
                     // existing fastMalloc storage in-place (zero byte copy);
                     // pinning then keeps it alive even if JS does `.buffer` →
                     // `transfer()` while the worker reads.
-                    2 => {
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -777,7 +779,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }

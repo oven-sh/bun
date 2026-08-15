@@ -361,15 +361,15 @@ impl Value {
                         // collect it (and free the backing store despite
                         // the pin) if user JS drops the last reference from
                         // a later parameter.
-                        2 => {
+                        kind @ (2 | 3) => {
                             roots.append(value);
                             Ok(Value::Bytes(Bytes {
-                                // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
+                                // SAFETY: backing storage is pinned or held (bufferless view) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
                                 slice: ZigStringSlice::from_utf8_never_free(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
-                                pinned: value,
+                                pinned: if kind == 2 { value } else { JSValue::ZERO },
                             }))
                         }
                         _ => unreachable!(),

@@ -3482,6 +3482,7 @@ bool JSC__JSValue__asArrayBuffer(
     }
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
+    out->pinned = false;
     return true;
 }
 
@@ -3506,59 +3507,43 @@ bool JSC__JSValue__asArrayBuffer(
 // pressure. Such a view cannot be detached without JS first touching
 // `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
 // `transfer()` moves (does not free) the storage — the same window Node has.
-// `heldViews()` remembers which pins were holds so the matching unpin never
-// touches a buffer that appeared in between.
-static HashMap<const JSC::JSCell*, unsigned>& heldViews()
-{
-    static thread_local NeverDestroyed<HashMap<const JSC::JSCell*, unsigned>> views;
-    return views.get();
-}
-static bool pinStorage(JSC::JSValue value)
+// The caller keeps the returned kind and only calls unpin for `Pinned`; a
+// held view is kept alive by the caller's own root, and nothing here needs
+// undoing for it.
+enum class PinKind : uint8_t { None = 0, Pinned = 1, Held = 2 };
+static PinKind pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         if (view->isDetached())
-            return false;
-        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray) {
-            heldViews().add(view, 0).iterator->value++;
-            return true;
-        }
+            return PinKind::None;
+        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
+            return PinKind::Held;
         buf = view->possiblySharedBuffer();
     }
     if (!buf)
-        return false;
+        return PinKind::None;
     if (!buf->isShared())
         buf->pin();
-    return true;
+    return PinKind::Pinned;
 }
-static void unpinStorage(JSC::JSValue value)
+CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
+    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
+}
+// Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
+CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
+{
+    auto value = JSC::JSValue::decode(v);
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
-    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        auto& held = heldViews();
-        auto it = held.find(view);
-        if (it != held.end()) {
-            if (!--it->value)
-                held.remove(it);
-            return;
-        }
-        if (view->hasArrayBuffer())
-            buf = view->possiblySharedBuffer();
-    }
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && view->hasArrayBuffer())
+        buf = view->possiblySharedBuffer();
     if (buf && !buf->isShared())
         buf->unpin();
-}
-CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
-{
-    return pinStorage(JSC::JSValue::decode(v));
-}
-CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
-{
-    unpinStorage(JSC::JSValue::decode(v));
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
@@ -3571,8 +3556,10 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
-//      MUST `unpinArrayBuffer(v)` when done.
+//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
+//      when done.
+//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
+//      the value for the duration as it already does for 2.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3585,10 +3572,11 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        if (!pinStorage(view)) return 0;
+        auto kind = pinStorage(view);
+        if (kind == PinKind::None) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return 2;
+        return kind == PinKind::Held ? 3 : 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();

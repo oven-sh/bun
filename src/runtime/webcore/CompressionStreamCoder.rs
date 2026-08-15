@@ -584,13 +584,13 @@ unsafe impl Send for AsyncInput {}
 
 /// The pin + GC protection on a chunk whose bytes went to the pool; released
 /// on drop (JS thread, with the job's Js side).
-pub(crate) struct PinnedChunk(JSValue);
+pub(crate) struct PinnedChunk(bun_jsc::ArrayBuffer);
 // SAFETY: pin/protect on a heap cell; gone with the heap.
 unsafe impl bun_jsc::job::JsAffine for PinnedChunk {}
 impl Drop for PinnedChunk {
     fn drop(&mut self) {
-        self.0.unpin_array_buffer();
-        self.0.unprotect();
+        self.0.unpin();
+        self.0.value.unprotect();
     }
 }
 
@@ -605,7 +605,7 @@ impl AsyncInput {
             // A resizable non-shared backing can `mprotect()` pages out on
             // `resize()`; pinning does not block that, so spill to a copy.
             if buf.resizable && !buf.shared {
-                chunk.unpin_array_buffer();
+                buf.unpin();
                 return (Self::Owned(fallback.to_vec()), None);
             }
             chunk.protect();
@@ -614,7 +614,7 @@ impl AsyncInput {
                     ptr: buf.ptr,
                     len: buf.byte_len,
                 },
-                Some(PinnedChunk(chunk)),
+                Some(PinnedChunk(buf)),
             );
         }
         (Self::Owned(fallback.to_vec()), None)

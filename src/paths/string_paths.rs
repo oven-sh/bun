@@ -591,11 +591,7 @@ mod tests {
             .sum()
     }
 
-    /// Scalar `simdutf::length::utf8::from::utf16::le_with_replacement`: the
-    /// byte length of the replacing encoding, 3 (U+FFFD) per unpaired
-    /// surrogate. `char::decode_utf16` pairs surrogates exactly like simdutf
-    /// does (an unpaired one is reported on its own and the next unit is
-    /// examined afresh).
+    /// Scalar `length::utf8::from::utf16::le_with_replacement`: 3 bytes per unpaired surrogate.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
         input: *const u16,
@@ -608,12 +604,7 @@ mod tests {
             .sum()
     }
 
-    /// Scalar `simdutf::convert::utf16::to::utf8::with_errors::le`: writes the
-    /// UTF-8 of the valid prefix and returns SUCCESS + bytes written, or
-    /// SURROGATE + the input position of the first unpaired surrogate, which
-    /// writes nothing. Like the real function it is never told the output
-    /// length, so under Miri a caller whose buffer does not hold the valid
-    /// prefix fails here.
+    /// Scalar `convert::utf16::to::utf8::with_errors::le`; Miri bounds-checks its writes.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
         buf: *const u16,
@@ -633,9 +624,8 @@ mod tests {
             };
             let mut encoded = [0u8; 4];
             let encoded = c.encode_utf8(&mut encoded).as_bytes();
-            // SAFETY: test stub mirroring simdutf — the caller guarantees
-            // capacity for the conversion before calling (that is the
-            // invariant under test).
+            // SAFETY: test stub mirroring simdutf; sizing the output for the whole
+            // conversion is the caller's job and the property under test.
             unsafe {
                 utf8_output
                     .add(written)
@@ -781,19 +771,9 @@ mod tests {
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
 
-    // `convert_utf16_to_utf8_in_buffer` is the other direction: it is what the
-    // Windows path code (`Path::init_fd_path`, `which`, `node:path`'s drive
-    // cwd lookup, ...) narrows OS-provided UTF-16 with, and NTFS names and
-    // environment values may contain unpaired surrogates. It used to check the
-    // buffer against the non-replacing length scan (2 bytes per surrogate
-    // unit) and then call simdutf's valid-input-only converter, which turns a
-    // lone surrogate plus whatever unit follows it into 4 bytes (one past an
-    // exactly sized buffer) and a lone surrogate at the end into "".
-
     #[test]
     fn convert_utf16_to_utf8_in_buffer_exact_fit() {
-        // 1 + 2 + 3 + 4 (surrogate pair) bytes: below 3 bytes per unit, so
-        // the buffer is checked against the exact replacing length.
+        // 1 + 2 + 3 + 4 bytes, under 3 per unit: checked against the exact length.
         let text = "a\u{E9}\u{4E16}\u{1F600}";
         let input: Vec<u16> = text.encode_utf16().collect();
         let mut out = [0u8; 10];
@@ -805,9 +785,7 @@ mod tests {
 
     #[test]
     fn convert_utf16_to_utf8_in_buffer_replaces_unpaired_surrogates() {
-        // Lone lead followed by a non-trail: U+FFFD, and the following unit
-        // survives (the old code filled these four bytes with one bogus
-        // 4-byte sequence built from both units).
+        // The unit after a lone lead survives; the valid-only converter merged the two.
         let mut out = [0u8; 4];
         assert_eq!(
             &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]),
@@ -821,8 +799,7 @@ mod tests {
             b"\xEF\xBF\xBDa\xEF\xBF\xBD"
         );
 
-        // The callers' shape: a buffer with 3 bytes per unit to spare goes to
-        // simdutf without a length scan and still takes the replacing path.
+        // The callers' shape: 3 bytes per unit to spare, so no length scan.
         let mut out = [0u8; 16];
         assert_eq!(
             &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0x61, 0xD800, 0x62]),
@@ -833,8 +810,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "out too small (3 bytes for 2 code units)")]
     fn convert_utf16_to_utf8_in_buffer_charges_the_replacement_for_a_lone_surrogate() {
-        // The non-replacing scan accepted this 3-byte buffer (2 + 1) for an
-        // input whose conversion writes 4 bytes.
+        // The non-replacing scan (2 + 1) accepted this buffer for a 4-byte conversion.
         let mut out = [0u8; 3];
         let _ = bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]);
     }

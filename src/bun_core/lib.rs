@@ -2202,12 +2202,7 @@ pub(crate) mod strings_impl {
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible: unpaired surrogates (legal in the
-    /// Windows paths, environment values and module names this is fed) become
-    /// U+FFFD. [`copy_utf16_into_utf8`] does the sizing, handing simdutf the
-    /// buffer only when it holds 3 bytes per code unit or the exact replacing
-    /// length, so an under-sized `out` ends in a partial copy, which is a
-    /// caller bug and panics in release builds too.
+    /// the written sub-slice. Unpaired surrogates become U+FFFD; a too-small `out` panics.
     pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
         let result = copy_utf16_into_utf8(out, utf16);
         assert!(

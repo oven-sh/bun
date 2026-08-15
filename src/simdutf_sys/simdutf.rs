@@ -84,14 +84,6 @@ pub mod validate {
     }
 }
 
-/// Slice wrappers over simdutf's transcoders.
-///
-/// simdutf takes only an output *pointer* and writes however many code units
-/// the input transcodes to; `output.len()` never reaches C++. Every function
-/// here is therefore `unsafe`, and its `# Safety` section names the bound the
-/// caller has to establish first, either with the matching [`length`] scan of
-/// the same input or with the worst-case multiple of `input.len()`. Debug
-/// builds re-check that bound.
 pub mod convert {
     use super::*;
 
@@ -103,18 +95,10 @@ pub mod convert {
                 use super::*;
                 pub mod with_errors {
                     use super::*;
-                    /// Transcodes `input` up to its first invalid sequence. On
-                    /// success `count` is the number of code units written; on
-                    /// error it is the byte offset of the error, and only the
-                    /// valid prefix's code units have been written.
-                    ///
                     /// # Safety
-                    /// `output.len()` must be at least `input.len()` (no code
-                    /// unit comes from less than one byte) or at least
-                    /// [`length::utf16::from::utf8`]`(input)`, which is exact
-                    /// for valid input and still covers the prefix written
-                    /// before an error, because the scan charges every lead
-                    /// byte whether or not what follows it is valid.
+                    /// simdutf is not told `output.len()`. It must be at least `input.len()`
+                    /// or at least [`length::utf16::from::utf8`]`(input)`; either also covers
+                    /// the valid prefix, which is all that invalid input gets written.
                     pub unsafe fn le(input: &[u8], output: &mut [u16]) -> SIMDUTFResult {
                         debug_assert!(
                             output.len() >= input.len()
@@ -123,9 +107,8 @@ pub mod convert {
                             output.len(),
                             input.len(),
                         );
-                        // SAFETY: `input` is a valid slice, read for exactly
-                        // `len` bytes; the caller's contract above makes
-                        // `output` hold every code unit simdutf writes.
+                        // SAFETY: the caller's contract above sizes `output` for everything
+                        // simdutf writes; `input` is read for exactly `input.len()` bytes.
                         unsafe {
                             simdutf__convert_utf8_to_utf16le_with_errors(
                                 input.as_ptr(),
@@ -147,22 +130,11 @@ pub mod convert {
                 use super::*;
                 pub mod with_errors {
                     use super::*;
-                    /// Transcodes `input` up to its first unpaired surrogate.
-                    /// On success `count` is the number of bytes written; on
-                    /// error it is the code unit offset of the surrogate, and
-                    /// only the valid prefix's bytes have been written.
-                    ///
                     /// # Safety
-                    /// `output.len()` must be at least
-                    /// [`length::utf8::from::utf16::le`]`(input)`. That is exact
-                    /// for valid input and still covers the prefix written
-                    /// before an error, because the scan charges every code
-                    /// unit at least as many bytes as transcoding it writes and
-                    /// nothing is written for the surrogate the conversion
-                    /// stops at.
-                    /// [`length::utf8::from::utf16::le_with_replacement`]`(input)`
-                    /// and `3 * input.len()` are never smaller, so sizing by
-                    /// either of those satisfies the bound too.
+                    /// simdutf is not told `output.len()`. It must be at least
+                    /// [`length::utf8::from::utf16::le`]`(input)` (`le_with_replacement` and
+                    /// `3 * input.len()` are never smaller); that also covers the valid
+                    /// prefix, which is all that input with an unpaired surrogate gets written.
                     pub unsafe fn le(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
                         debug_assert!(
                             output.len() >= input.len().saturating_mul(3)
@@ -171,9 +143,8 @@ pub mod convert {
                             output.len(),
                             input.len(),
                         );
-                        // SAFETY: `input` is a valid slice, read for exactly
-                        // `len` code units; the caller's contract above makes
-                        // `output` hold every byte simdutf writes.
+                        // SAFETY: the caller's contract above sizes `output` for everything
+                        // simdutf writes; `input` is read for exactly `input.len()` code units.
                         unsafe {
                             simdutf__convert_utf16le_to_utf8_with_errors(
                                 input.as_ptr(),

@@ -1290,10 +1290,31 @@ describe.concurrent("lockfile", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
-  // A file: path outside the project is only accepted on a row the root (or a workspace) owns. An overrides change
-  // re-resolves every row naming a previously or newly overridden package; the rows the root was loaded with have
-  // been replaced by then and belong to nobody, so re-resolving them fails the way an escaping transitive one does.
-  describe.concurrent("removing a flat rule for a root file: dependency outside the project", () => {
+  // An overrides change re-resolves every row naming a previously or newly overridden package. By then the root's
+  // rows from bun.lock have been replaced by freshly parsed ones and belong to no package; they must not be
+  // re-resolved as well: a range that is no longer in package.json would add a package the current row then dedupes
+  // onto, and a file: path outside the project is only accepted on a row the root (or a workspace) owns.
+  describe.concurrent("removing a flat rule re-resolves only the root's current rows", () => {
+    test("a range changed in the same edit resolves on its own", async () => {
+      const dir = await project({ dependencies: { "no-deps": "~1.0.0" }, overrides: { "no-deps": "2.0.0" } });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("2.0.0");
+
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "nested-overrides", dependencies: { "no-deps": "^1.0.0" } }),
+      );
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      // 1.0.1 is what the dropped ~1.0.0 range would pick.
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      const after = await lock(dir);
+      expect(after).not.toContain('"overrides"');
+      expect(after).not.toContain("no-deps@1.0.1");
+      expect(after).not.toContain("no-deps@2.0.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+
     const outside = {
       "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
       "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
@@ -1305,7 +1326,7 @@ describe.concurrent("lockfile", () => {
       overrides: { x: "file:../x2" },
     });
 
-    test("the dependency re-resolves to its own path", async () => {
+    test("a file: dependency outside the project re-resolves to its own path", async () => {
       using root = tempDir("override-removed-file-dep", { ...outside, "project/package.json": before });
       const dir = join(String(root), "project");
       await installOk(dir);
@@ -1338,7 +1359,7 @@ describe.concurrent("lockfile", () => {
       await installOk(dir, "--frozen-lockfile");
     });
 
-    test("together with the dependency itself", async () => {
+    test("a file: dependency outside the project removed together with its rule", async () => {
       using root = tempDir("override-and-file-dep-removed", { ...outside, "project/package.json": before });
       const dir = join(String(root), "project");
       await installOk(dir);

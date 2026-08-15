@@ -38,6 +38,10 @@ export function getStdioWriteStream(
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
+  // A node:worker_threads worker's process.stdout/stderr go to its parent, not to the fds.
+  const workerStream = require("internal/worker/bootstrap").workerProcessStdio(fd);
+  if (workerStream) return [workerStream, undefined];
+
   let stream;
   if (isTTY) {
     const tty = require("node:tty");
@@ -122,6 +126,9 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+  // A node:worker_threads worker's process.stdin is fed by worker.stdin (or already ended), not fd 0.
+  const workerStream = require("internal/worker/bootstrap").workerProcessStdio(0);
+  if (workerStream) return workerStream;
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 

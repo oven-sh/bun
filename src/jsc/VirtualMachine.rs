@@ -3990,6 +3990,12 @@ impl VirtualMachine {
         if worker.arm_test_gate() {
             vm_ref.handle.arm_test_gate();
         }
+        if worker.is_node_worker() {
+            // SAFETY: `console` was `heap::into_raw`'d by `init` above and is owned by this VM.
+            unsafe {
+                (*vm_ref.console).route_to_parent_worker(worker.messaging_proxy(), vm_ref.global)
+            };
+        }
         // The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
@@ -6928,4 +6934,25 @@ pub fn plugin_runner_on_resolve_jsc(
         }
     };
     Ok(Some(ErrorableString::ok(out)))
+}
+
+/// What a node worker wrote to stdout / stderr, arriving on this (its parent's) thread with no
+/// `worker.stdout` / `worker.stderr` sink to take it: it goes wherever this VM's own console output
+/// goes (its fds, or its own parent in turn).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__VirtualMachine__writeStdio(
+    vm: *mut VirtualMachine,
+    fd: i32,
+    bytes: *const u8,
+    len: usize,
+) {
+    // SAFETY: called on `vm`'s thread with its live console; `bytes[..len]` is a live buffer.
+    let (console, bytes) = unsafe { (&mut *(*vm).console, bun_core::ffi::slice(bytes, len)) };
+    let writer = if fd == 2 {
+        console.error_writer()
+    } else {
+        console.writer()
+    };
+    let _ = writer.write_all(bytes);
+    let _ = writer.flush();
 }

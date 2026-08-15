@@ -4242,6 +4242,13 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
     else
         m_nodeWorkerEntryEvaluatedHook.clear();
 }
+void GlobalObject::setNodeWorkerStdioAckHandler(JSObject* handler)
+{
+    if (handler)
+        m_nodeWorkerStdioAckHandler.set(vm(), this, handler);
+    else
+        m_nodeWorkerStdioAckHandler.clear();
+}
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 

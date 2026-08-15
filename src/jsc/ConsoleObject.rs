@@ -91,8 +91,8 @@ pub struct ConsoleObject {
     stderr_buffer: [u8; 4096],
     stdout_buffer: [u8; 4096],
 
-    error_writer_backing: Output::QuietWriterAdapter,
-    writer_backing: Output::QuietWriterAdapter,
+    error_writer_backing: WriterBacking,
+    writer_backing: WriterBacking,
 
     pub(crate) default_indent: u16,
 
@@ -123,8 +123,8 @@ impl ConsoleObject {
         let out = out.write(ConsoleObject {
             stderr_buffer: [0; 4096],
             stdout_buffer: [0; 4096],
-            error_writer_backing: Output::QuietWriterAdapter::uninit(),
-            writer_backing: Output::QuietWriterAdapter::uninit(),
+            error_writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
+            writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
             default_indent: 0,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
@@ -135,27 +135,142 @@ impl ConsoleObject {
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
         // *provided the caller never moves it* (see fn doc).
         unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
+            (*p).error_writer_backing = WriterBacking::Fd(
+                error_writer
+                    .quiet_writer()
+                    .adapt_to_new_api(&mut (*p).stderr_buffer),
+            );
+            (*p).writer_backing = WriterBacking::Fd(
+                writer
+                    .quiet_writer()
+                    .adapt_to_new_api(&mut (*p).stdout_buffer),
+            );
         }
         out
+    }
+
+    /// A node:worker_threads worker's console: what it writes to stdout / stderr goes to the parent
+    /// thread (`worker.stdout` / `worker.stderr`, else the parent's own stdio), not to the fds.
+    pub(crate) fn route_to_parent_worker(
+        &mut self,
+        messaging_proxy: *mut c_void,
+        global: *mut crate::JSGlobalObject,
+    ) {
+        self.error_writer_backing =
+            WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 2));
+        self.writer_backing =
+            WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 1));
+    }
+
+    /// Hands anything still buffered to the underlying sink.
+    pub(crate) fn flush(&mut self) {
+        let _ = self.writer().flush();
+        let _ = self.error_writer().flush();
     }
 
     /// Returns the buffered stderr writer interface.
     #[inline]
     pub(crate) fn error_writer(&mut self) -> &mut bun_core::io::Writer {
-        self.error_writer_backing.new_interface()
+        self.error_writer_backing.interface()
     }
 
     /// Returns the buffered stdout writer interface.
     #[inline]
     pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
-        self.writer_backing.new_interface()
+        self.writer_backing.interface()
     }
+}
+
+enum WriterBacking {
+    Fd(Output::QuietWriterAdapter),
+    Parent(ParentWorkerWriter),
+}
+
+impl WriterBacking {
+    #[inline]
+    fn interface(&mut self) -> &mut bun_core::io::Writer {
+        match self {
+            WriterBacking::Fd(adapter) => adapter.new_interface(),
+            WriterBacking::Parent(writer) => &mut writer.head,
+        }
+    }
+}
+
+/// `bun_core::io::Writer` whose bytes are posted to the parent thread of this node worker
+/// (WorkerMessagingProxy::postStdioToWorkerObject) on flush, or once 16 KiB have accumulated.
+#[repr(C)]
+struct ParentWorkerWriter {
+    head: bun_core::io::Writer,
+    messaging_proxy: *mut c_void,
+    global: *mut crate::JSGlobalObject,
+    fd: i32,
+    buffered: Vec<u8>,
+}
+
+impl ParentWorkerWriter {
+    const FLUSH_AT: usize = 16 * 1024;
+
+    fn new(messaging_proxy: *mut c_void, global: *mut crate::JSGlobalObject, fd: i32) -> Self {
+        Self {
+            head: bun_core::io::Writer {
+                write_all: Self::write_all,
+                flush: Self::flush,
+            },
+            messaging_proxy,
+            global,
+            fd,
+            buffered: Vec::new(),
+        }
+    }
+
+    /// SAFETY: `writer` is the `head` of a live `ParentWorkerWriter` (repr(C), first field).
+    unsafe fn write_all(
+        writer: *mut bun_core::io::Writer,
+        bytes: &[u8],
+    ) -> bun_core::CrateResult<()> {
+        let this = unsafe { &mut *writer.cast::<Self>() };
+        this.buffered.extend_from_slice(bytes);
+        if this.buffered.len() >= Self::FLUSH_AT {
+            this.post();
+        }
+        Ok(())
+    }
+
+    /// SAFETY: as for [`Self::write_all`].
+    unsafe fn flush(writer: *mut bun_core::io::Writer) -> bun_core::CrateResult<()> {
+        unsafe { &mut *writer.cast::<Self>() }.post();
+        Ok(())
+    }
+
+    fn post(&mut self) {
+        if self.buffered.is_empty() {
+            return;
+        }
+        // Take the buffer first: posting may run script (the worker's own stdout stream), which may log again.
+        let bytes = core::mem::take(&mut self.buffered);
+        WebWorker__postStdio(
+            self.messaging_proxy,
+            self.global,
+            self.fd,
+            bytes.as_ptr(),
+            bytes.len(),
+        );
+        if self.buffered.is_empty() {
+            self.buffered = bytes;
+            self.buffered.clear();
+        }
+    }
+}
+
+// TODO: move to *_sys
+unsafe extern "C" {
+    safe fn WebWorker__postStdio(
+        messaging_proxy: *mut c_void,
+        global: *mut crate::JSGlobalObject,
+        fd: i32,
+        bytes: *const u8,
+        len: usize,
+    );
 }
 
 #[repr(u32)]

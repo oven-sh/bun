@@ -28,6 +28,8 @@
 #include "Worker.h"
 
 #include "BunClientData.h"
+#include "InternalModuleRegistry.h"
+#include "JSWorker.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -137,6 +139,79 @@ void Worker::dispatchEvent(Event& event)
 void Worker::dispatchCloseEvent(Event& event)
 {
     EventTargetWithInlineData::dispatchEvent(event);
+    m_stdioSink[0].clear();
+    m_stdioSink[1].clear();
+}
+
+void Worker::setStdioSink(JSC::VM& vm, int fd, JSC::JSObject* sink, bool captureOnly)
+{
+    ASSERT(fd == 1 || fd == 2);
+    if (sink)
+        m_stdioSink[fd - 1].set(vm, sink);
+    else
+        m_stdioSink[fd - 1].clear();
+    m_stdioCaptureOnly[fd - 1] = sink && captureOnly;
+}
+
+extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8_t* bytes, size_t length);
+
+void Worker::deliverStdio(ScriptExecutionContext& context, int fd, std::span<const uint8_t> bytes)
+{
+    ASSERT(fd == 1 || fd == 2);
+    auto* globalObject = defaultGlobalObject(context.globalObject());
+    JSC::JSObject* sink = m_stdioSink[fd - 1].get();
+    if (sink) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSC::MarkedArgumentBuffer args;
+        if (bytes.empty())
+            args.append(JSC::jsNull());
+        else {
+            auto* chunk = JSC::JSUint8Array::create(globalObject, globalObject->JSBufferSubclassStructure(), bytes.size());
+            if (scope.exception()) [[unlikely]] {
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+                return;
+            }
+            memcpySpan(chunk->typedSpan(), bytes);
+            args.append(chunk);
+        }
+        JSC::call(globalObject, sink, JSC::getCallData(sink), JSC::jsUndefined(), args);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!vm.isTerminationException(exception)) {
+                (void)scope.tryClearException();
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            }
+            return;
+        }
+        if (m_stdioCaptureOnly[fd - 1])
+            return;
+    }
+    if (bytes.empty())
+        return;
+    Bun__VirtualMachine__writeStdio(globalObject->bunVM(), fd, bytes.data(), bytes.size());
+    if (!sink)
+        ackStdio(fd);
+}
+
+void Worker::ackStdio(int fd)
+{
+    m_contextProxy->postTaskToWorkerGlobalScope([fd](ScriptExecutionContext& context) {
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        JSC::JSObject* handler = globalObject->nodeWorkerStdioAckHandler();
+        if (!handler)
+            return;
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (scope.exception()) [[unlikely]]
+            return; // the worker is being stopped
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSC::jsNumber(fd));
+        JSC::call(globalObject, handler, JSC::getCallData(handler), JSC::jsUndefined(), args);
+        if (auto* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]] {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+    });
 }
 
 // ---- Worker-thread side: hooks the native thread object calls, and the script-facing functions that
@@ -202,6 +277,12 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetStdioSink);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionWorkerStdioWrite);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetStdioAckHandler);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStdioAck);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRefEventLoop);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetStdioDiverted);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -344,7 +425,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 18);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -358,6 +439,12 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 4, "setStdioSink"_s, jsFunctionSetStdioSink, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 2, "workerStdioWrite"_s, jsFunctionWorkerStdioWrite, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 14, JSFunction::create(vm, globalObject, 1, "setStdioAckHandler"_s, jsFunctionSetStdioAckHandler, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 15, JSFunction::create(vm, globalObject, 2, "stdioAck"_s, jsFunctionStdioAck, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 16, JSFunction::create(vm, globalObject, 1, "refEventLoop"_s, jsFunctionRefEventLoop, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 17, JSFunction::create(vm, globalObject, 2, "setStdioDiverted"_s, jsFunctionSetStdioDiverted, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 
@@ -370,6 +457,91 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetParentPort, (JSGlobalObject * lexicalGloba
         return JSValue::encode(jsUndefined());
     globalObject->setNodeParentPort(&port->wrapped());
     return JSValue::encode(jsUndefined());
+}
+
+// Parent side: worker_threads' Worker installs the function that feeds worker.stdout / worker.stderr.
+// setStdioSink(webWorker, fd, sink | undefined, captureOnly)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStdioSink, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* worker = dynamicDowncast<JSWorker>(callFrame->argument(0));
+    JSValue fdValue = callFrame->argument(1);
+    int fd = fdValue.isInt32() ? fdValue.asInt32() : 0;
+    if (!worker || (fd != 1 && fd != 2))
+        return JSValue::encode(jsUndefined());
+    JSValue sink = callFrame->argument(2);
+    worker->wrapped().setStdioSink(vm, fd, sink.isCallable() ? sink.getObject() : nullptr, callFrame->argument(3).toBoolean(lexicalGlobalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8_t* bytes, size_t length);
+
+// Worker side: process.stdout / process.stderr writes travel the same way console output does; null ends
+// that stream on the parent. workerStdioWrite(fd, chunk: Uint8Array | null)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerStdioWrite, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue fdValue = callFrame->argument(0);
+    int fd = fdValue.isInt32() ? fdValue.asInt32() : 0;
+    auto* chunk = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(1));
+    if ((!chunk && !callFrame->argument(1).isNull()) || (fd != 1 && fd != 2))
+        return JSValue::encode(jsUndefined());
+    std::span<const uint8_t> bytes = chunk ? chunk->span() : std::span<const uint8_t> {};
+    if (auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM()); proxy && proxy->options().kind == WorkerOptions::Kind::Node)
+        proxy->postStdioToWorkerObject(fd, bytes, !chunk);
+    else if (chunk)
+        Bun__VirtualMachine__writeStdio(globalObject->bunVM(), fd, bytes.data(), bytes.size());
+    return JSValue::encode(jsUndefined());
+}
+
+// Worker side: the function told when the parent has taken a stream's pending writes. setStdioAckHandler(fn)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStdioAckHandler, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue handler = callFrame->argument(0);
+    defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerStdioAckHandler(handler.isCallable() ? handler.getObject() : nullptr);
+    return JSValue::encode(jsUndefined());
+}
+
+// Parent side: worker.stdout / worker.stderr wants more. stdioAck(webWorker, fd)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStdioAck, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* worker = dynamicDowncast<JSWorker>(callFrame->argument(0));
+    JSValue fdValue = callFrame->argument(1);
+    int fd = fdValue.isInt32() ? fdValue.asInt32() : 0;
+    if (worker && (fd == 1 || fd == 2))
+        worker->wrapped().ackStdio(fd);
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM, int delta);
+
+// Worker side: its process.stdout / stderr stream has writes queued (or no longer has). setStdioDiverted(fd, on)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStdioDiverted, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue fdValue = callFrame->argument(0);
+    int fd = fdValue.isInt32() ? fdValue.asInt32() : 0;
+    if (auto* proxy = WebWorker__getMessagingProxy(defaultGlobalObject(lexicalGlobalObject)->bunVM()); proxy && (fd == 1 || fd == 2))
+        proxy->setStdioDiverted(fd, callFrame->argument(1).toBoolean(lexicalGlobalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+// Worker side: keep the thread alive while a write's completion is outstanding. refEventLoop(+1 | -1)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRefEventLoop, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue delta = callFrame->argument(0);
+    if (delta.isInt32() && delta.asInt32())
+        Bun__eventLoop__refKeepAlive(defaultGlobalObject(lexicalGlobalObject)->bunVM(), delta.asInt32() > 0 ? 1 : -1);
+    return JSValue::encode(jsUndefined());
+}
+
+// Runs node's per-thread bootstrap (internal/worker/bootstrap) in a node:worker_threads worker
+// before its preloads and entry point. False with the exception pending if it threw.
+extern "C" bool WebWorker__bootstrapNodeWorker(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::InternalWorkerBootstrap);
+    return !scope.exception();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,

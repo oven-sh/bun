@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -66,7 +67,8 @@ void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    bool isNodeWorker);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -157,7 +159,8 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        m_options.kind == WorkerOptions::Kind::Node);
     m_options.preloadModules.clear();
 
     if (!m_workerThread) {
@@ -418,6 +421,80 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
         Locker locker { m_toParent.lock };
         m_toParent.drainScheduled = false;
     }
+}
+
+void WorkerMessagingProxy::postStdioToWorkerObject(int fd, std::span<const uint8_t> bytes, bool endOfStream)
+{
+    if (bytes.empty() && !endOfStream)
+        return;
+    {
+        Locker locker { m_stdioToParent.lock };
+        auto& segments = m_stdioToParent.segments;
+        // One segment per write, as node delivers them (an empty one is that stream's end); one task drains all.
+        if (!bytes.empty())
+            segments.append({ fd, Vector<uint8_t>(bytes) });
+        if (endOfStream)
+            segments.append({ fd, {} });
+        if (m_stdioToParent.drainScheduled)
+            return;
+        m_stdioToParent.drainScheduled = true;
+    }
+    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        protectedThis->drainStdioToWorkerObject(context);
+    });
+    if (!posted) {
+        Locker locker { m_stdioToParent.lock };
+        m_stdioToParent.drainScheduled = false;
+    }
+}
+
+extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8_t* bytes, size_t length);
+
+void WorkerMessagingProxy::drainStdioToWorkerObject(ScriptExecutionContext& context)
+{
+    Vector<std::pair<int, Vector<uint8_t>>> segments;
+    {
+        Locker locker { m_stdioToParent.lock };
+        segments = std::exchange(m_stdioToParent.segments, {});
+        m_stdioToParent.drainScheduled = false;
+    }
+    for (auto& [fd, bytes] : segments) {
+        if (RefPtr workerObject = m_workerObject)
+            workerObject->deliverStdio(context, fd, bytes.span());
+        else if (!bytes.isEmpty())
+            Bun__VirtualMachine__writeStdio(defaultGlobalObject(context.globalObject())->bunVM(), fd, bytes.span().data(), bytes.size());
+    }
+}
+
+// The worker's console output. Straight to the parent, unless the worker's own process.stdout / stderr stream
+// has writes queued ahead of it, in which case it goes through that stream to keep their order.
+extern "C" void WebWorker__postStdio(WorkerMessagingProxy* proxy, Zig::GlobalObject* globalObject, int32_t fd, const uint8_t* bytes, size_t length)
+{
+    if (proxy->stdioDiverted(fd) && length) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        JSC::JSObject* handler = globalObject->nodeWorkerStdioAckHandler();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (handler && !scope.exception() && vm.currentThreadIsHoldingAPILock()) {
+            auto* chunk = JSC::JSUint8Array::create(globalObject, globalObject->JSBufferSubclassStructure(), length);
+            if (!scope.exception()) [[likely]] {
+                memcpySpan(chunk->typedSpan(), std::span { bytes, length });
+                JSC::MarkedArgumentBuffer args;
+                args.append(JSC::jsNumber(fd));
+                args.append(chunk);
+                JSC::call(globalObject, handler, JSC::getCallData(handler), JSC::jsUndefined(), args);
+                if (!scope.exception()) [[likely]]
+                    return;
+            }
+            if (!vm.hasPendingTerminationException())
+                (void)scope.tryClearException();
+        }
+    }
+    proxy->postStdioToWorkerObject(fd, { bytes, length });
+}
+
+extern "C" void WebWorker__setStdioDiverted(WorkerMessagingProxy* proxy, int32_t fd, bool diverted)
+{
+    proxy->setStdioDiverted(fd, diverted);
 }
 
 void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)

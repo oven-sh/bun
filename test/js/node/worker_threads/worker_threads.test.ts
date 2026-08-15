@@ -523,6 +523,60 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(exitCode).toBe(0);
   });
 
+  // node's default: worker.stdout is always readable, and without { stdout: true } the worker's output is
+  // also piped to the parent's own stdout. Reading it must not stop it reaching the parent's stdout, and
+  // console output and process.stdout writes arrive on it in the order they were made.
+  test("worker.stdout without { stdout: true } sees the output, which still reaches the parent's stdout", async () => {
+    const workerSrc = `console.log("A"); process.stdout.write("B\\n"); console.log("C"); process.stderr.write("E\\n");`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         let seen = "";
+         w.stdout.setEncoding("utf8").on("data", d => (seen += d));
+         w.stderr.on("data", () => {});
+         w.on("exit", c => console.error("[exit " + c + "] seen=" + JSON.stringify(seen)));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("A\nB\nC\n");
+    expect(stderr).toBe(`E\n[exit 0] seen=${JSON.stringify("A\nB\nC\n")}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // A worker's worker: its output goes to its parent, and from there — nobody reading it — on to the
+  // process's stdout, as node routes it.
+  test("a nested worker's output reaches the process's stdout through its parent", async () => {
+    using dir = tempDir("worker-nested-stdio", {
+      "nested.js": `
+        const { Worker, workerData } = require("node:worker_threads");
+        const depth = workerData?.depth ?? 0;
+        if (depth < 2) {
+          new Worker(__filename, { workerData: { depth: depth + 1 } }).on("exit", () => console.log("[depth " + depth + "] child exited"));
+        } else {
+          console.log("out from depth 2");
+          process.stderr.write("err from depth 2\\n");
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "nested.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("out from depth 2\n[depth 1] child exited\n[depth 0] child exited\n");
+    expect(stderr).toBe("err from depth 2\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Output buffered behind the parked batch is flushed first, then each write
   // from the user's 'exit' handler goes through synchronously; all of it arrives,
   // in order, before the parent's 'exit', and the exitCode the handler sets wins.

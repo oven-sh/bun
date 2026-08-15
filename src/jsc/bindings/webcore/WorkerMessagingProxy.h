@@ -101,6 +101,13 @@ public:
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // Node worker_threads: bytes the worker wrote to stdout (fd 1) / stderr (fd 2). Delivered in order,
+    // on the parent thread, to Worker::deliverStdio(), one chunk per write; a burst of writes is one task.
+    void postStdioToWorkerObject(int fd, std::span<const uint8_t>, bool endOfStream = false);
+    // While the worker's process.stdout / stderr stream has writes queued, its console output is sent through
+    // that stream too, so the two stay in order (worker thread; set from internal/worker/bootstrap).
+    void setStdioDiverted(int fd, bool diverted) { diverted ? m_stdioDivertedMask.fetch_or(fd) : m_stdioDivertedMask.fetch_and(~fd); }
+    bool stdioDiverted(int fd) const { return m_stdioDivertedMask.load(std::memory_order_relaxed) & fd; }
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -115,6 +122,11 @@ public:
         Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
         bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
     };
+    struct StdioOutbox {
+        Lock lock;
+        Vector<std::pair<int, Vector<uint8_t>>> segments WTF_GUARDED_BY_LOCK(lock);
+        bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
+    };
 
 private:
     WorkerMessagingProxy(Worker&, ScriptExecutionContext& parentContext, WorkerOptions&&);
@@ -122,6 +134,7 @@ private:
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
+    void drainStdioToWorkerObject(ScriptExecutionContext&);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
@@ -151,6 +164,8 @@ private:
 
     MessageInbox m_toWorker;
     MessageInbox m_toParent;
+    StdioOutbox m_stdioToParent;
+    std::atomic<uint8_t> m_stdioDivertedMask { 0 };
 };
 
 } // namespace WebCore

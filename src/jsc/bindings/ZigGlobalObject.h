@@ -547,6 +547,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
+    /* internal/worker/bootstrap's stdio hook in a node worker: (fd) = the parent took that stream's */      \
+    /* pending write; (fd, chunk) = console output to send through the stream while it has writes queued. */ \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioAckHandler)                                          \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -796,6 +799,8 @@ public:
     bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
     void nodeWorkerEntryDidSettle();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
+    JSObject* nodeWorkerStdioAckHandler() { return m_nodeWorkerStdioAckHandler.get(); }
+    void setNodeWorkerStdioAckHandler(JSObject* handler);
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }

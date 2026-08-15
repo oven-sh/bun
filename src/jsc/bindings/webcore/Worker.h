@@ -70,6 +70,17 @@ public:
     void dispatchEvent(Event&) final;
     void dispatchCloseEvent(Event&);
 
+    // Node worker_threads stdio: what the worker writes to stdout/stderr arrives here on the parent
+    // thread. With a sink installed (worker.stdout / worker.stderr materialised) the bytes go to it;
+    // without one, or unless the sink captures exclusively ({ stdout: true }), they are written to the
+    // parent's own stdout/stderr — Node's default pipe, minus the streams.
+    // Node's flow control rides along: the worker's process.stdout/stderr hold each write's completion until
+    // the parent acks — from the stream's _read() when a sink has it, right after writing it out otherwise —
+    // and an empty delivery is the worker ending that stream.
+    void setStdioSink(JSC::VM&, int fd, JSC::JSObject* sink, bool captureOnly);
+    void deliverStdio(ScriptExecutionContext&, int fd, std::span<const uint8_t>);
+    void ackStdio(int fd);
+
     const String& name() const { return m_name; }
     // Both identifiers are process-unique; threadId is derived from the worker's.
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_contextProxy->workerContextIdentifier(); }
@@ -92,6 +103,8 @@ private:
     const String m_name;
     const Ref<WorkerMessagingProxy> m_contextProxy;
     bool m_wasTerminated { false };
+    JSC::Strong<JSC::JSObject> m_stdioSink[2];
+    bool m_stdioCaptureOnly[2] { false, false };
 };
 
 JSC::JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);

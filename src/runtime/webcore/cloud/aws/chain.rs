@@ -813,6 +813,7 @@ impl<'c> Resolver<'c> {
         let result = bun_spawn::run(bun_spawn::RunOptions {
             argv: &argv,
             env_map: &self.cfg.env_map,
+            windows_verbatim_arguments: true,
         })
         .map_err(|e| {
             fail!(

@@ -29,13 +29,18 @@ impl IniFile {
     pub fn parse(contents: &[u8], is_config: bool) -> IniFile {
         let mut file = IniFile::default();
         let mut current: Option<usize> = None;
+        // Set by a `key =` line with no value: the indented lines that follow
+        // are its sub-properties (`s3 =\n  max_concurrent_requests = 20`).
+        let mut in_subsection = false;
         for raw_line in strings::split(contents, b"\n") {
             let line = strings::trim(raw_line, b" \t\r");
             if line.is_empty() || line[0] == b'#' || line[0] == b';' {
                 continue;
             }
+            let indented = raw_line.first().is_some_and(|c| *c == b' ' || *c == b'\t');
             if line[0] == b'[' {
                 current = None;
+                in_subsection = false;
                 let Some(end) = strings::index_of_char_usize(line, b']') else {
                     continue;
                 };
@@ -64,16 +69,20 @@ impl IniFile {
                 );
                 continue;
             }
-            // Indented lines are sub-section values (`s3 =\n  max_concurrent_requests = 20`).
-            if raw_line.first().is_some_and(|c| *c == b' ' || *c == b'\t') {
+            if indented && in_subsection {
                 continue;
             }
+            in_subsection = false;
             let Some(section) = current else { continue };
             let Some(eq) = strings::index_of_char_usize(line, b'=') else {
                 continue;
             };
             let key = strings::trim(&line[..eq], b" \t");
             let mut value = strings::trim(&line[eq + 1..], b" \t");
+            if value.is_empty() {
+                in_subsection = true;
+                continue;
+            }
             // Trailing ` # comment` / ` ; comment` (only when preceded by whitespace,
             // so `#` inside values like ARNs or URLs survives).
             for marker in [b" #", b" ;", b"\t#", b"\t;"] {

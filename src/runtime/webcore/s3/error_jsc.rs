@@ -215,3 +215,32 @@ impl S3ErrorJsc for S3Error<'_> {
         ))
     }
 }
+
+/// For synchronous entry points (`presign`, `new Response(s3File)`): if the
+/// credentials come from the ambient chain and are not cached yet, resolve
+/// them now (blocking) so that a failure throws the chain's explanation
+/// instead of the signer's generic "missing credentials".
+pub(crate) fn resolve_ambient_credentials_or_throw(
+    credentials: &bun_s3_signing::S3Credentials,
+    global: &JSGlobalObject,
+    path: Option<&[u8]>,
+) -> bun_jsc::JsResult<()> {
+    if credentials.needs_credentials_resolution()
+        && let Some(provider) = &credentials.provider
+        && let Err(err) = provider.resolve_blocking()
+    {
+        return Err(global.throw_value(s3_error_to_js(
+            &S3Error {
+                code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
+                    b"ERR_S3_MISSING_CREDENTIALS"
+                } else {
+                    err.code.as_bytes()
+                },
+                message: &err.message,
+            },
+            global,
+            path,
+        )));
+    }
+    Ok(())
+}

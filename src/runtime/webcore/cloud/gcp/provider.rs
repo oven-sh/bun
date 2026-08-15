@@ -141,8 +141,35 @@ impl JobContext for ResolveJob {
     type Js = JsSide;
 
     fn run(off: &mut Off, done: Completion<Self>) -> Option<Completion<Self>> {
-        off.result = Some(off.provider.resolve_with(&off.cfg));
-        Some(done)
+        // Resolution blocks on network round-trips whose DNS lookups are
+        // themselves serviced by the work pool, so wait on a short-lived
+        // thread of our own instead of parking a pool worker. The Completion
+        // (and with it the job's Ticket) travels with the work.
+        let slot = Arc::new(bun_threading::Guarded::new(Some(done)));
+        let for_thread = Arc::clone(&slot);
+        let spawned = std::thread::Builder::new()
+            .name("gcp-credentials".into())
+            .spawn(move || {
+                // Stdio + WTF stack bounds for this thread (the parsers' stack checks need them).
+                bun_core::output::Source::configure_thread();
+                let Some(done) = for_thread.lock().take() else {
+                    return;
+                };
+                // SAFETY: the pool callback has returned by the time this
+                // runs far enough to matter, and nothing else touches the
+                // off-thread half until `finish` posts it back.
+                let off = unsafe { &mut *done.off_thread() };
+                off.result = Some(off.provider.resolve_with(&off.cfg));
+                done.finish();
+            });
+        match spawned {
+            Ok(_) => None,
+            Err(_) => {
+                let done = slot.lock().take()?;
+                off.result = Some(off.provider.resolve_with(&off.cfg));
+                Some(done)
+            }
+        }
     }
 
     fn then(off: Off, mut js: JsSide, _cx: &JsThread<'_>) -> JsResult<()> {

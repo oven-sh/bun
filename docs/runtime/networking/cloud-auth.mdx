@@ -29,7 +29,7 @@ When a request needs AWS credentials and none were passed explicitly, Bun tries,
 
 A source that isn't configured is skipped. A source that _is_ configured but fails (an expired SSO session, an STS `AccessDenied`, a `credential_process` that exits non-zero) is an error — Bun does not silently fall through to the next one.
 
-Environment variables are read from `process.env` when credentials are resolved, so setting `process.env.AWS_PROFILE` at startup works.
+As in the AWS SDKs, selecting a profile (`AWS_PROFILE` or the `profile` option) takes precedence over exported `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. Environment variables are read from `process.env` when credentials are resolved, so setting `process.env.AWS_PROFILE` at startup works.
 
 ### `Bun.aws.credentials()`
 
@@ -83,6 +83,8 @@ await fetch("https://api.example.com/orders", {
 | `unsignedPayload`                                | `false` — send `UNSIGNED-PAYLOAD` (S3-style services only)    |
 
 Bun adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary credentials) and, for S3, `x-amz-content-sha256`; setting those yourself alongside `aws` is an error. `ReadableStream` bodies can only be signed for S3-style services (as `UNSIGNED-PAYLOAD`), since other services need the body's SHA-256 up front.
+
+A signature is only valid for the exact host and path it was computed for, so signed requests default to `redirect: "manual"` — a `307` from S3 pointing at another region comes back as a `307` rather than being followed unsigned. Pass `redirect: "follow"` explicitly if you really want that.
 
 ### `Bun.aws.presign(url, options?)`
 

@@ -254,7 +254,8 @@ describe.concurrent("Bun.aws.credentials", () => {
   test("static profile in ~/.aws/credentials, region from ~/.aws/config", async () => {
     using dir = tempDir("aws-static-profile", {
       ".aws": {
-        credentials: `[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = default-secret\n\n[other]\naws_access_key_id=AKIAOTHER\naws_secret_access_key=other-secret # trailing comment\naws_session_token = other-token\n`,
+        // [default] is indented the way some editors leave it; [other] has an inline comment
+        credentials: `[default]\n  aws_access_key_id = AKIADEFAULT\n  aws_secret_access_key = default-secret\n\n[other]\naws_access_key_id=AKIAOTHER\naws_secret_access_key=other-secret # trailing comment\naws_session_token = other-token\n`,
         config: `[default]\nregion = ap-south-1\n\n[profile other]\nregion=us-west-2\ns3 =\n  max_concurrent_requests = 20\n`,
       },
     });
@@ -550,29 +551,32 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(count() - before).toBe(2);
   });
 
-  test("credentials that expire inside the refresh window are re-fetched on next use", async () => {
-    // Serve credentials that are already inside the 5-minute refresh window.
+  test("short-lived credentials do not cause back-to-back refreshes", async () => {
+    // Credentials issued already inside the 5-minute refresh window: they are
+    // used as-is for a while rather than re-fetched on every request.
+    let n = 0;
     using server = Bun.serve({
       port: 0,
       fetch() {
         return Response.json({
-          AccessKeyId: "ASIASOON" + ++(server as any).n,
+          AccessKeyId: "ASIASOON" + ++n,
           SecretAccessKey: "s",
           Token: "t",
           Expiration: new Date(Date.now() + 60_000).toISOString(),
         });
       },
     });
-    (server as any).n = 0;
     const { stdout, exitCode } = await run(
       `
         const a = await Bun.aws.credentials();
         const b = await Bun.aws.credentials();
+        await fetch(${JSON.stringify(s3.url.href)}, { aws: { service: "s3", region: "us-east-1" } });
         console.log(a.accessKeyId, b.accessKeyId);
       `,
       { AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${server.port}/` },
     );
-    expect(stdout.trim()).toBe("ASIASOON1 ASIASOON2");
+    expect(stdout.trim()).toBe("ASIASOON1 ASIASOON1");
+    expect(n).toBe(1);
     expect(exitCode).toBe(0);
   });
 

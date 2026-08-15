@@ -23,7 +23,6 @@ type Hit = { method: string; path: string; headers: Record<string, string>; body
 const hits = { token: [] as Hit[], metadata: [] as Hit[] };
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" }) as string;
-let metadataHasServiceAccount = true;
 
 function b64urlDecode(s: string) {
   return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -110,9 +109,6 @@ beforeAll(() => {
         return new Response("Missing Metadata-Flavor:Google header", { status: 403, headers });
       }
       const url = new URL(req.url);
-      if (!metadataHasServiceAccount && url.pathname.includes("/service-accounts/")) {
-        return new Response("Not Found", { status: 404, headers });
-      }
       switch (url.pathname) {
         case "/computeMetadata/v1/instance/service-accounts/default/token":
           return Response.json(
@@ -302,13 +298,15 @@ describe.concurrent("Bun.gcp", () => {
     expect(JSON.parse(b64urlDecode(id.token.split(".")[1]).toString()).aud).toBe("https://example.com");
     expect(id.source).toBe("metadata");
 
-    metadataHasServiceAccount = false;
-    try {
-      const none = await token(env);
+    {
+      // a VM with no service account attached
+      using bare = Bun.serve({
+        port: 0,
+        fetch: () => new Response("Not Found", { status: 404, headers: { "metadata-flavor": "Google" } }),
+      });
+      const none = await token({ NO_GCE_CHECK: undefined, GCE_METADATA_HOST: `127.0.0.1:${bare.port}` });
       expect(none.error.code).toBe("ERR_GCP_CREDENTIALS");
       expect(none.error.message).toContain("no default service account");
-    } finally {
-      metadataHasServiceAccount = true;
     }
 
     // an unreachable metadata host means "not on GCP"

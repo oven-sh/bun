@@ -253,6 +253,12 @@
       "WriteFile"
     ]
   },
+  "src/runtime/webcore/cloud/aws/provider.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/webcore/cloud/gcp/provider.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/webcore/cloud/http_sync.rs": {
     "HTTPThread::schedule": 1
   },

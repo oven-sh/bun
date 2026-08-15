@@ -242,12 +242,7 @@ fn construct_s3_file_internal_store(
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
     // for the process-singleton dotenv loader (set during init).
     let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
-        global
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_s3_credentials(),
+        global.bun_vm().as_mut().transpiler.env_mut(),
     );
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
@@ -604,27 +599,11 @@ pub(crate) fn get_presign_url_from(
     }
     let path = s3.path();
 
-    // Ambient credentials: resolve here (blocking, once) so a failure carries
-    // the chain's explanation rather than a generic "missing credentials".
-    if credentials_with_options
-        .credentials
-        .needs_credentials_resolution()
-        && let Some(provider) = &credentials_with_options.credentials.provider
-        && let Err(err) = provider.resolve_blocking()
-    {
-        return Err(global.throw_value(s3::s3_error_to_js(
-            &s3::Error::S3Error {
-                code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
-                    b"ERR_S3_MISSING_CREDENTIALS"
-                } else {
-                    err.code.as_bytes()
-                },
-                message: &err.message,
-            },
-            global,
-            Some(path),
-        )));
-    }
+    s3::resolve_ambient_credentials_or_throw(
+        &credentials_with_options.credentials,
+        global,
+        Some(path),
+    )?;
 
     let result = match credentials_with_options.credentials.sign_request::<false>(
         &bun_s3_signing::SignOptions {

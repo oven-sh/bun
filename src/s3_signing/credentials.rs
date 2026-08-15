@@ -262,9 +262,16 @@ impl S3Credentials {
 
     /// True when signing would have to wait on the provider (nothing static,
     /// nothing cached). Asynchronous callers resolve first in that case.
+    /// Ambient credentials apply only when *neither* key was given; one
+    /// without the other is a configuration error, not a cue to go looking.
+    pub fn uses_provider(&self) -> bool {
+        self.access_key_id.is_empty()
+            && self.secret_access_key.is_empty()
+            && self.provider.is_some()
+    }
+
     pub fn needs_credentials_resolution(&self) -> bool {
-        !self.has_static_credentials()
-            && self.provider.as_ref().is_some_and(|p| p.needs_resolution())
+        self.uses_provider() && self.provider.as_ref().is_some_and(|p| p.needs_resolution())
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -341,7 +348,9 @@ impl S3Credentials {
                         Some(&self.session_token)
                     },
                 )
-            } else if let Some(provider) = &self.provider {
+            } else if self.uses_provider()
+                && let Some(provider) = &self.provider
+            {
                 resolved = Some(
                     provider
                         .resolve_blocking()

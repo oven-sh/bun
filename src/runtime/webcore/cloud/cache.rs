@@ -27,6 +27,10 @@ pub fn now_secs() -> u64 {
 
 struct State<V> {
     cached: Option<Arc<V>>,
+    /// When `cached` was obtained. A value counts as fresh for at least
+    /// `MIN_REFRESH_INTERVAL` after that even if it was issued already inside
+    /// the refresh window, so short-lived credentials do not refresh back to back.
+    resolved_at: u64,
     resolving: bool,
     /// Outcome of the last failed resolution and when it happened; served to
     /// callers that joined it, and for `NEGATIVE_TTL` afterwards so a burst of
@@ -46,12 +50,15 @@ pub struct SingleFlightCache<V> {
 const EXPIRY_MARGIN: u64 = 5;
 /// A failure is remembered (and returned without retrying) for this long.
 const NEGATIVE_TTL: u64 = 3;
+/// See `State::resolved_at`.
+const MIN_REFRESH_INTERVAL: u64 = 60;
 
 impl<V: Expiring> SingleFlightCache<V> {
     pub const fn new(refresh_window: u64) -> Self {
         Self {
             state: Guarded::new(State {
                 cached: None,
+                resolved_at: 0,
                 resolving: false,
                 last_error: None,
             }),
@@ -60,8 +67,11 @@ impl<V: Expiring> SingleFlightCache<V> {
         }
     }
 
-    fn is_fresh(&self, v: &V, now: u64) -> bool {
-        v.expiration().is_none_or(|e| e > now + self.refresh_window)
+    fn is_fresh(&self, st: &State<V>, v: &V, now: u64) -> bool {
+        v.expiration().is_none_or(|e| {
+            e > now + self.refresh_window
+                || (now < st.resolved_at + MIN_REFRESH_INTERVAL && e > now + EXPIRY_MARGIN)
+        })
     }
 
     fn is_usable(v: &V, now: u64) -> bool {
@@ -74,7 +84,7 @@ impl<V: Expiring> SingleFlightCache<V> {
         let now = now_secs();
         st.cached
             .as_ref()
-            .filter(|v| self.is_fresh(v, now))
+            .filter(|v| self.is_fresh(&st, v, now))
             .cloned()
     }
 
@@ -104,7 +114,7 @@ impl<V: Expiring> SingleFlightCache<V> {
     ) -> Result<Arc<V>, Arc<ProviderError>> {
         let mut st = self.state.lock();
         let now = now_secs();
-        if let Some(v) = st.cached.as_ref().filter(|v| self.is_fresh(v, now)) {
+        if let Some(v) = st.cached.as_ref().filter(|v| self.is_fresh(&st, v, now)) {
             return Ok(Arc::clone(v));
         }
         if let Some((e, at)) = &st.last_error {
@@ -137,6 +147,7 @@ impl<V: Expiring> SingleFlightCache<V> {
             Ok(v) => {
                 let v = Arc::new(v);
                 st.cached = Some(Arc::clone(&v));
+                st.resolved_at = now_secs();
                 Ok(v)
             }
             Err(e) => {

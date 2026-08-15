@@ -25,6 +25,7 @@ pub use bun_s3_signing::error as Error;
 pub mod error_jsc;
 pub(crate) use error_jsc::S3ErrorJsc;
 pub(crate) use error_jsc::get_js_sign_error;
+pub(crate) use error_jsc::resolve_ambient_credentials_or_throw;
 pub(crate) use error_jsc::s3_error_to_js;
 pub(crate) use error_jsc::throw_sign_error;
 

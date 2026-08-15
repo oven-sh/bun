@@ -58,11 +58,11 @@ pub fn sign_fetch_request(
             sigv4::Payload::Unsigned
         }
         Body::Bytes(b) => sigv4::Payload::Bytes(b),
-        Body::Streaming if s3 || opts.unsigned_payload => sigv4::Payload::Unsigned,
+        Body::Streaming if s3 => sigv4::Payload::Unsigned,
         Body::Streaming => {
             return Err(
-                "a streaming request body cannot be SigV4-signed because its SHA-256 is not known up front; \
-                 buffer it first, or pass aws: { unsignedPayload: true } if the service accepts UNSIGNED-PAYLOAD"
+                "a streaming request body cannot be SigV4-signed for this service because its SHA-256 \
+                 is not known up front (only S3-style services accept UNSIGNED-PAYLOAD); buffer the body first"
                     .into(),
             );
         }

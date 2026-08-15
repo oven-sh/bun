@@ -2012,6 +2012,8 @@ interface BunFetchRequestInit extends RequestInit {
    *
    * The `Authorization`, `x-amz-date`, `x-amz-content-sha256` and (for
    * temporary credentials) `x-amz-security-token` headers are added for you.
+   * Because a signature is bound to the URL it was computed for, signed
+   * requests default to `redirect: "manual"`.
    *
    * Not part of the Fetch API specification.
    *

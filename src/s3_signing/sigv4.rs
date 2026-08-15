@@ -140,6 +140,10 @@ pub fn parse_iso8601(s: &[u8]) -> Option<u64> {
         match rest {
             [] | [b'Z'] | [b'z'] => {}
             [sign @ (b'+' | b'-'), tail @ ..] if tail.len() >= 5 && tail[2] == b':' => {
+                if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60
+                {
+                    return None;
+                }
                 let oh: u64 = core::str::from_utf8(&tail[0..2]).ok()?.parse().ok()?;
                 let om: u64 = core::str::from_utf8(&tail[3..5]).ok()?.parse().ok()?;
                 let offset = oh * 3600 + om * 60;

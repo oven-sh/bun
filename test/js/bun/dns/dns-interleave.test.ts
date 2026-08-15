@@ -224,6 +224,9 @@ describe("loopback names", () => {
       "app.localhost": true,
       "app.localhost.": true,
       "a.b.LocalHost": true,
+      // Chrome's EndsWith(".localhost") accepts the bare suffix too.
+      ".localhost": true,
+      ".localhost.": true,
       "notlocalhost": false,
       "localhost.example": false,
       "localhost2": false,

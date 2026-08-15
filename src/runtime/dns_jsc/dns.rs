@@ -2668,8 +2668,7 @@ pub mod internal {
         results
     }
 
-    /// A getaddrinfo()-shaped list over `addrs` (filled-in `sockaddr_in`/`sockaddr_in6`) for
-    /// [`process_results`]; the nodes point into `addrs`, so it must outlive them.
+    /// addrinfo nodes for [`process_results`]; they point into `addrs`, which must outlive them.
     fn addrinfo_chain(addrs: &mut [SockaddrStorage]) -> Box<[AddrInfo]> {
         let mut nodes: Box<[AddrInfo]> = addrs
             .iter_mut()
@@ -2782,8 +2781,7 @@ pub mod internal {
                 .unwrap_or(ptr::null());
             let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
 
-            // AI_ADDRCONFIG judges a family by the non-loopback interfaces, so retry without it
-            // when it left nothing, or only the loopback addresses of one family (Chrome does both).
+            // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
             if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
                 && (err == netc::EAI_NONAME
                     || (err == 0 && is_all_loopback_of_one_family(addrinfo)))

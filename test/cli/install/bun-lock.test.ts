@@ -1573,6 +1573,159 @@ it.each([
   await run(["install", "--frozen-lockfile"]);
 });
 
+// When no version in the lockfile satisfies a required peer's range, the resolver binds the
+// edge to whichever version it saw first and later installs keep that binding, so the only
+// record of it is the tree: the version is printed next to the dependent when it conflicts
+// with the version hoisted above, and otherwise the edge was deduped onto the hoisted one.
+// Loading has to read that record. Picking the highest version in the file instead moved
+// the edge whenever the file held another out-of-range version, and the re-save then
+// printed a different tree: the recorded copy dropped, or a new nested copy added. These
+// shapes are what a lockfile looks like once the package that provided the version the
+// peer was first bound to has left the project.
+describe("loading bun.lock keeps a peer nothing in the file satisfies where the file records it", () => {
+  const pkg = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
+  const oneDep = pkg("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } });
+  const strictPeerDep = pkg("strict-peer-dep@1.0.0", { peerDependencies: { "no-deps": "^2.0.0" } });
+
+  type Shape = {
+    root: Record<string, unknown>;
+    workspaces?: Record<string, Record<string, unknown>>;
+    packages: Record<string, unknown[]>;
+    kept: string[];
+    absent?: string[];
+  };
+
+  const shapes: [string, Shape][] = [
+    [
+      "a package's peer on the copy printed next to it",
+      {
+        root: { dependencies: { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" } },
+        packages: {
+          "no-deps": pkg("no-deps@1.0.1"),
+          "one-dep": oneDep,
+          "strict-peer-dep": strictPeerDep,
+          "strict-peer-dep/no-deps": pkg("no-deps@1.0.0"),
+        },
+        kept: ['"no-deps": ["no-deps@1.0.1"', '"strict-peer-dep/no-deps": ["no-deps@1.0.0"'],
+      },
+    ],
+    [
+      "a package's peer on the copy hoisted above it",
+      {
+        // one-dep is a devDependency so that its no-deps@1.0.1 is hoisted first and holds the
+        // root slot; the higher 1.1.0 is nested, and the peer was deduped onto the root copy.
+        root: {
+          devDependencies: { "one-dep": "1.0.0" },
+          dependencies: { "normal-dep-and-dev-dep": "1.0.1", "strict-peer-dep": "1.0.0" },
+        },
+        packages: {
+          "no-deps": pkg("no-deps@1.0.1"),
+          "normal-dep-and-dev-dep": pkg("normal-dep-and-dev-dep@1.0.1", { dependencies: { "no-deps": "1.1.0" } }),
+          "normal-dep-and-dev-dep/no-deps": pkg("no-deps@1.1.0"),
+          "one-dep": oneDep,
+          "strict-peer-dep": strictPeerDep,
+        },
+        kept: ['"no-deps": ["no-deps@1.0.1"', '"normal-dep-and-dev-dep/no-deps": ["no-deps@1.1.0"'],
+        absent: ['"strict-peer-dep/no-deps"'],
+      },
+    ],
+    [
+      "a workspace's peer on the copy printed next to it",
+      {
+        // workspace `a` is hoisted before `w`, so its no-deps holds the root slot
+        root: { workspaces: ["packages/*"] },
+        workspaces: {
+          "packages/a": { name: "a", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } },
+          "packages/w": { name: "w", version: "1.0.0", peerDependencies: { "no-deps": "^2.0.0" } },
+        },
+        packages: {
+          "a": ["a@workspace:packages/a"],
+          "w": ["w@workspace:packages/w"],
+          "no-deps": pkg("no-deps@1.0.1"),
+          "w/no-deps": pkg("no-deps@1.0.0"),
+        },
+        kept: ['"no-deps": ["no-deps@1.0.1"', '"w/no-deps": ["no-deps@1.0.0"'],
+      },
+    ],
+    [
+      "the root's own peer on the copy at the root",
+      {
+        root: { dependencies: { "one-dep": "1.0.0" }, peerDependencies: { "no-deps": "^2.0.0" } },
+        packages: {
+          "no-deps": pkg("no-deps@1.0.0"),
+          "one-dep": oneDep,
+          "one-dep/no-deps": pkg("no-deps@1.0.1"),
+        },
+        kept: ['"no-deps": ["no-deps@1.0.0"', '"one-dep/no-deps": ["no-deps@1.0.1"'],
+      },
+    ],
+  ];
+
+  async function writeProject(packageDir: string, shape: Shape) {
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "foo", ...shape.root }));
+    for (const [path, manifest] of Object.entries(shape.workspaces ?? {})) {
+      await write(join(packageDir, path, "package.json"), JSON.stringify(manifest));
+    }
+    await write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 0,
+        workspaces: { "": { name: "foo", ...shape.root, workspaces: undefined }, ...shape.workspaces },
+        packages: shape.packages,
+      }),
+    );
+  }
+
+  it.each(shapes)("re-saving keeps %s", async (_, shape) => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+    const run = makeInstallRunner(packageDir);
+    await writeProject(packageDir, shape);
+
+    await run(["install", "--lockfile-only"]);
+    const saved = await file(join(packageDir, "bun.lock")).text();
+    for (const entry of shape.kept) {
+      expect(saved).toContain(entry);
+    }
+    for (const entry of shape.absent ?? []) {
+      expect(saved).not.toContain(entry);
+    }
+
+    await run(["install", "--lockfile-only"]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+  });
+
+  const [, nestedCopy] = shapes[0];
+
+  it("the hoisted linker installs the recorded copy next to the dependent", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true, linker: "hoisted" } });
+    const run = makeInstallRunner(packageDir);
+    await writeProject(packageDir, nestedCopy);
+
+    await run(["install", "--frozen-lockfile"]);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.1",
+    });
+    expect(
+      await file(join(packageDir, "node_modules", "strict-peer-dep", "node_modules", "no-deps", "package.json")).json(),
+    ).toMatchObject({ version: "1.0.0" });
+  });
+
+  it("the isolated linker links the dependent against the recorded copy", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true, linker: "isolated" } });
+    const run = makeInstallRunner(packageDir);
+    await writeProject(packageDir, nestedCopy);
+
+    await run(["install", "--frozen-lockfile"]);
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = (await readdirSorted(bunDir)).filter(entry => entry.startsWith("strict-peer-dep@"));
+    expect(entries).toHaveLength(1);
+    expect(await file(join(bunDir, entries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+  });
+});
+
 it("adding a dependency keeps an optional peer on the package bun.lock bound it to while that package stays next to it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
   const run = makeInstallRunner(packageDir);

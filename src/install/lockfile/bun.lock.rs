@@ -3336,13 +3336,9 @@ fn deferred_peer_range<'a>(
 /// `install_peer`): scan the package ids recorded for the dependency's
 /// name — `package_index` lists are kept ordered by descending
 /// `Resolution::order` — and take the first whose resolution satisfies
-/// the range. When nothing satisfies, fall back to the highest-ordered
-/// candidate, and only when it is the same kind as the dependency (the
-/// "incorrect peer dependency" case; the fresh resolver inspects only
-/// `list[0]` there, and reproducing its choice exactly is the point of
-/// this helper). Returns `None` when no package with the name exists
-/// or the fallback is a different kind; the caller then falls back to
-/// the path walk. Edges `deferred_peer_range` rejects also return `None`.
+/// the range. Returns `None` when no candidate satisfies it (the tree the
+/// caller falls back to is the only record of the resolver's "incorrect
+/// peer dependency" pick) and for the edges `deferred_peer_range` rejects.
 ///
 /// Peer edges cannot be resolved from the printed tree the way regular
 /// edges are: a peer never materializes its own `node_modules` path when
@@ -3414,18 +3410,6 @@ pub(crate) fn resolve_peer_dep_version_based(
                 .satisfies_dependency_version(range, string_buf, string_buf)
         {
             return Some(id);
-        }
-    }
-
-    let &first = candidates.first()?;
-    if (first as usize) < pkg_resolutions.len() {
-        let res_tag = pkg_resolutions[first as usize].tag;
-        let ver_tag = range.tag;
-        if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
-            || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
-            || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)
-        {
-            return Some(first);
         }
     }
 

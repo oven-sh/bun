@@ -87,6 +87,7 @@ pub struct UnmatchedAdvisory {
 }
 
 pub struct UnauditedRegistry {
+    /// The registry's href without URL credentials or a trailing slash.
     pub registry: Box<[u8]>,
     pub packages: Vec<Box<[u8]>>,
     /// Status code or error name; empty when unknown.
@@ -297,13 +298,13 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
         if group.reason.is_empty() {
             bun_core::warn!(
                 "{} did not answer the audit request; skipped {}",
-                BStr::new(&group.registry),
+                bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&packages)
             );
         } else {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
-                BStr::new(&group.registry),
+                bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&group.reason),
                 BStr::new(&packages)
             );

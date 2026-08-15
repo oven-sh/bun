@@ -4082,7 +4082,7 @@ pub mod bv2_impl {
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
-                // No early return before the drain; see `generate_from_cli`.
+                // Entry point errors are reported after the drain; see `generate_from_cli`.
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {

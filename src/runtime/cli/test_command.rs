@@ -1524,6 +1524,7 @@ impl CommandLineReporter {
                         if this.jest.bail == 1 { "" } else { "s" }
                     );
                     Output::flush();
+                    this.write_snapshots_before_bail();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
                     Global::exit(1);
@@ -1550,6 +1551,20 @@ impl CommandLineReporter {
         );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
+    }
+
+    /// Snapshots are otherwise only written back when the next file opens its
+    /// own `.snap` or when the whole run ends, so a bail exit has to flush them
+    /// itself: the open `.snap` was created (and, under `--update-snapshots`,
+    /// truncated) when it was opened and would be left empty on disk, and
+    /// pending inline snapshots would be dropped.
+    pub(crate) fn write_snapshots_before_bail(&mut self) {
+        if let Err(err) = self.jest.snapshots.write_inline_snapshots() {
+            Output::err(err, "Failed to write inline snapshots", ());
+        }
+        if let Err(err) = self.jest.snapshots.write_snapshot_file() {
+            Output::err(err, "Failed to write snapshot file", ());
+        }
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -3300,6 +3315,7 @@ impl TestCommand {
                             reporter.jest.bail,
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
+                        reporter.write_snapshots_before_bail();
                         reporter.write_junit_report_if_needed();
                         reporter.write_timings_if_needed();
 

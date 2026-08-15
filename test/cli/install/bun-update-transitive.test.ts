@@ -887,7 +887,10 @@ test.concurrent("a removed workspace member's rows do not hold the remaining wan
   expect(deduped.exitCode).toBe(0);
   expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
 
-  await write(join(dir, "package.json"), stringify({ name: "root", workspaces: [], dependencies: { parent: "1.0.0" } }));
+  await write(
+    join(dir, "package.json"),
+    stringify({ name: "root", workspaces: [], dependencies: { parent: "1.0.0" } }),
+  );
   const { stderr, exitCode } = await run(dir, "update");
   expect(stderr).not.toContain("error:");
   expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);

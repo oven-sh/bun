@@ -2595,13 +2595,15 @@ static int zero_length_finalize_unexpected_args = 0;
 
 static void zero_length_external_buffer_finalizer(napi_env, void *data,
                                                   void *hint) {
-  char *slot = static_cast<char *>(data);
-  if (hint != zero_length_finalize_calls || slot < zero_length_slots ||
-      slot >= zero_length_slots + kZeroLengthSlots) {
-    zero_length_finalize_unexpected_args++;
-    return;
+  if (hint == zero_length_finalize_calls) {
+    for (uint32_t slot = 0; slot < kZeroLengthSlots; slot++) {
+      if (data == &zero_length_slots[slot]) {
+        zero_length_finalize_calls[slot]++;
+        return;
+      }
+    }
   }
-  zero_length_finalize_calls[slot - zero_length_slots]++;
+  zero_length_finalize_unexpected_args++;
 }
 
 // create_zero_length_external_buffer(slot): returns the Buffer after printing

@@ -20,7 +20,7 @@ With a scanner configured, Bun:
 
 - Scans all packages before installation
 - Displays security warnings and advisories
-- Cancels installation if fatal advisories are found
+- Cancels installation if the scanner finds fatal advisories
 
 ---
 
@@ -55,8 +55,8 @@ bun add -d @oven/bun-security-scanner
 
 <Note>
   `@oven/bun-security-scanner` is an example package name, not a real package. Replace it with the scanner you want to
-  use, and consult that scanner's documentation for the exact package name and installation instructions. Most scanners
-  are installed with `bun add`.
+  use, and consult that scanner's documentation for the exact package name and installation instructions. You install
+  most scanners with `bun add`.
 </Note>
 
 ### Configuring the Scanner

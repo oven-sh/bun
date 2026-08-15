@@ -2288,7 +2288,7 @@ where
         // and set_routes would swap the context onto the node:http handler
         // instantiation under those already-sized allocations, so the node
         // request path would construct and index past them.
-        if !self.config.on_node_http_request.is_empty()
+        if self.config.is_node_http_server
             && self.config.on_node_http_request != new_config.on_node_http_request
         {
             super::wrap_handler_slot(
@@ -2395,7 +2395,8 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                has_user_routes: !self.user_routes.is_empty(),
+                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
+                previous_routes: !self.user_routes.is_empty(),
             },
         )?;
         if global.has_exception() {
@@ -2605,10 +2606,10 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
-        // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it. One-shot sweep (Node semantics): busy
-        // connections are spared and are NOT marked to close later.
+        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // the guard so it cannot re-derive `&mut self` while this frame owns
+        // it. One-shot sweep (Node semantics): busy connections are spared
+        // and are NOT marked to close later.
         self.deinit_running.set(true);
         let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
@@ -2826,11 +2827,7 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener()
-            && self.pending_requests.get() == 0
-            && !self.has_active_connections()
-            && !self.has_active_web_sockets()
-        {
+        if self.is_closed() {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {

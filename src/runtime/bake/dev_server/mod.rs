@@ -1029,24 +1029,13 @@ pub struct DirectoryWatchStore {
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
 }
-impl DirectoryWatchStore {
-    /// Intrusive backref: recover `*mut DevServer`.
-    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
-    /// callers must scope their borrow of fields disjoint from
-    /// `directory_watchers` to avoid aliasing UB.
-    #[inline]
-    fn owner(&mut self) -> *mut DevServer {
-        // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
-        // field of a heap-allocated `DevServer` (never moved post-init).
-        unsafe {
-            bun_core::from_field_ptr!(
-                DevServer,
-                directory_watchers,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
+// SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
+// a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
+// DevServer`) because `&mut self` is live; callers scope their borrows to
+// fields disjoint from `directory_watchers`.
+bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
 
+impl DirectoryWatchStore {
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
     /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
     /// so the returned `&mut Watcher` does not alias `self`.

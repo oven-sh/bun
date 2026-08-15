@@ -326,11 +326,10 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
 }
 
-// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
-// `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
-// field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
-// method this reaches is `&self`.
-bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
+// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed).
+// `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the field offset is
+// unchanged. Every `JSValkeyClient` method this reaches is `&self`.
+bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; fn mut parent_ptr; }
 
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
@@ -914,8 +913,7 @@ impl ValkeyClient {
                 Ok(SubscribeHandled::Handled)
             }
             RESPValue::Push(push) => {
-                let p = self.parent();
-                let sub_count = p._subscription_ctx.get().channels_subscribed_to_count();
+                let sub_count = self.parent().channels_subscribed_to_count();
 
                 let is_pattern_or_sharded =
                     protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);
@@ -929,7 +927,7 @@ impl ValkeyClient {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
-                            p.add_subscription();
+                            self.parent().add_subscription();
                             self.on_valkey_subscribe(value);
 
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
@@ -1527,11 +1525,10 @@ impl ValkeyClient {
     }
 
     pub fn deref(&mut self) {
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         // SAFETY: only called in balanced `ref_()`/`deref()` pairs
         // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
         // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(parent) };
+        unsafe { JSValkeyClient::deref(self.parent_ptr()) };
     }
 
     #[inline]

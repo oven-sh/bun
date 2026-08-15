@@ -98,6 +98,7 @@
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
+#include "JavaScriptCore/InstantCore.h"
 #include "JavaScriptCore/TemporalCoreTypes.h"
 #include "JavaScriptCore/TemporalDuration.h"
 #include "JavaScriptCore/TemporalEnums.h"
@@ -108,6 +109,7 @@
 #include "JavaScriptCore/TemporalPlainTime.h"
 #include "JavaScriptCore/TemporalPlainYearMonth.h"
 #include "JavaScriptCore/TemporalZonedDateTime.h"
+#include "JavaScriptCore/TemporalObject.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -6169,6 +6171,159 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     return static_cast<double>(r->epochMilliseconds());
 }
 
+// Materializes a date/time literal as a Temporal object through the same
+// paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
+// `bun_ast::E::TomlDateTimeKind` discriminants.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* text, size_t len, uint8_t kind)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The Temporal structures on the global object only exist when the
+    // option is on; reaching for them would crash.
+    if (!JSC::Options::useTemporal()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Date/time values require Temporal, which is disabled in this process"_s);
+        return {};
+    }
+
+    WTF::String string { std::span(reinterpret_cast<const Latin1Character*>(text), len) };
+    JSC::JSValue item = JSC::jsString(vm, string);
+
+    JSC::JSObject* result = nullptr;
+    switch (kind) {
+    case 1:
+        result = JSC::TemporalInstant::toInstant(globalObject, item);
+        break;
+    case 2:
+        result = JSC::TemporalPlainDateTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 3:
+        result = JSC::TemporalPlainDate::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 4:
+        result = JSC::TemporalPlainTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(result);
+    return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
+{
+    return JSC::temporalType(JSC::JSValue::decode(encodedValue));
+}
+
+static Int128 ceilToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem + (ns > 0 ? unit : 0);
+}
+
+static Int128 floorToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
+}
+
+// The `±HH:MM` offset to spell `exactTime` with so its local year has TOML's
+// four digits: `preferredNs` if that fits, else the closest whole-hour (then
+// whole-minute) offset that does; nullopt if none within ±23:59 does.
+static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+{
+    using JSC::ISO8601::ExactTime;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+
+    Int128 epoch = exactTime.epochNanoseconds();
+    // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    if (lo > hi)
+        return std::nullopt;
+    Int128 preferred { preferredNs };
+    if (preferred < lo) {
+        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour <= hi ? hour : lo);
+    }
+    if (preferred > hi) {
+        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour >= lo ? hour : hi);
+    }
+    return preferredNs;
+}
+
+// Formats a Temporal object as a TOML date/time literal into `buf` and
+// returns the length written, or -1 if its year is outside TOML's
+// 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
+// cannot carry, are dropped.
+extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSCell* cell = JSC::JSValue::decode(encodedValue).asCell();
+    constexpr JSC::PrecisionData autoPrecision { { JSC::Precision::Auto, 0 }, JSC::TemporalUnit::Nanosecond, 1 };
+
+    WTF::String string;
+    switch (temporalType) {
+    case JSC::TemporalType::Instant: {
+        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
+        if (!offsetNs)
+            return -1;
+        if (!*offsetNs)
+            offsetNs = std::nullopt; // `Z`
+        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
+        break;
+    }
+    case JSC::TemporalType::PlainDateTime: {
+        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
+        string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    }
+    case JSC::TemporalType::PlainDate:
+        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
+        break;
+    case JSC::TemporalType::PlainTime:
+        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    case JSC::TemporalType::ZonedDateTime: {
+        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
+        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
+        ASSERT(zoneOffsetNs);
+        // TOML offsets are `HH:MM`; a historic sub-minute (LMT) offset is
+        // spelled as `Z` instead.
+        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        if (!offsetNs)
+            return -1;
+        if (!wholeMinutes && !*offsetNs)
+            offsetNs = std::nullopt;
+        string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // The expanded-year form of a PlainDate/PlainDateTime (`+010000-…`, `-000001-…`).
+    if (!isASCIIDigit(string[0]))
+        return -1;
+
+    unsigned length = string.length();
+    RELEASE_ASSERT(length <= bufLen);
+    for (unsigned i = 0; i < length; i++) {
+        ASSERT(isASCII(string[i]));
+        buf[i] = static_cast<uint8_t>(string[i]);
+    }
+    return static_cast<int32_t>(length);
+}
+
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6797,7 +6952,12 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The Rust caller (repl.rs) has no exception scope, so nothing may escape.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto clearAndEncode = [&](JSC::JSValue v) {
+        scope.clearException();
+        return JSC::JSValue::encode(v);
+    };
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6806,7 +6966,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
         target = boxed;
     }
 
@@ -6814,46 +6975,58 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
+    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
         if (prefix.isEmpty() || name.startsWith(prefix)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            if (scope.exception()) [[unlikely]]
+                return clearAndEncode(JSC::jsUndefined());
         }
-    }
-
-    // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-    while (proto && proto.isObject()) {
-        JSC::JSObject* protoObj = proto.getObject();
-        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-        for (const auto& propertyName : protoNames) {
-            WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
-                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-            }
-        }
-
-        proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
     }
 
     return JSC::JSValue::encode(completions);
+}
+
+// One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
+extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue baseValue,
+    const unsigned char* namePtr,
+    size_t nameLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue base = JSC::JSValue::decode(baseValue);
+    WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
+    if (!base || base.isUndefinedOrNull() || name.isNull())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = base.toObject(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
 }
 
 // Format a value for REPL output using util.inspect style

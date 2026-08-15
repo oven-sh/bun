@@ -69,7 +69,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
@@ -166,7 +166,7 @@ impl ByteBlobLoader {
             blob.content_type.set(ct);
         }
 
-        self.parent_const().is_closed.set(true);
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 

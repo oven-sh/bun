@@ -952,13 +952,23 @@ describe.concurrent("property lookup throws while formatting", () => {
   }
 
   it("lazy static property whose builder throws", async () => {
-    // Formatting Bun reifies its static table. Its first entry is `$`, whose
-    // builder calls into JS. Right after a stack overflow unwinds, native code
-    // may still run but JSC refuses to enter JS, so at the first depth where
-    // Bun.inspect(Bun) gets through, `$` throws and the entries after it must
-    // still be walked.
+    // Formatting Bun reifies its static table, and the builders of `$`, `sql`,
+    // `postgres` and `SQL` call into JS. Right after a stack overflow unwinds,
+    // native code may still run but JSC refuses to enter JS, so at the first
+    // depth where Bun.inspect(Bun) gets through those builders throw, and the
+    // entry after the last of them is only printed if the walk kept going
+    // (debug builds used to abort instead).
+    //
+    // process.env and util.inspect are set up before recursing: creating
+    // either one enters JS too, and failing inside their lazy initializers
+    // aborts the process regardless of this fix (Bun.env is a Proxy with a
+    // custom inspect function on Windows).
     expect(
       await run(`
+        void process.env;
+        Bun.inspect({ [Symbol.for("nodejs.util.inspect.custom")]() { return ""; } });
+        const names = Object.getOwnPropertyNames(Bun);
+        const afterSQL = names[names.indexOf("SQL") + 1];
         let result;
         function recurse() {
           try { recurse(); } catch {}
@@ -967,9 +977,9 @@ describe.concurrent("property lookup throws while formatting", () => {
           }
         }
         recurse();
-        console.log(result.includes("Archive: [class Archive]"), result.includes("$:"));
+        console.log(result.includes("\\n  " + afterSQL + ":"));
       `),
-    ).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
 
   it("proxy get trap in the prototype chain throws", async () => {

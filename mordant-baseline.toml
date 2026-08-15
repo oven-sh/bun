@@ -30,7 +30,6 @@
 "reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_runtime]
-"bare_bool_args:src/runtime/api.rs" = 2
 "defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4

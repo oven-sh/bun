@@ -1026,13 +1026,13 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
+    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
         call_frame,
         b"input.yaml",
-        true,
-        false,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::ToString,
         |arena, log, source| {
             // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
             // once by pointer identity, so a cyclic graph is fine here.

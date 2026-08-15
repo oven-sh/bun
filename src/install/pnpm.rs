@@ -6,7 +6,7 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
-use bun_core::{Global, strings};
+use bun_core::{Global, Output, strings};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -2741,16 +2741,19 @@ fn update_package_json_after_migration(
         Global::crash();
     }
 
-    if sys::File::write_file(
+    let moved = moved.join(", ");
+    // The install that follows resolves from the updated entry, so a bun.lock
+    // saved after a failed write here would not match the package.json on disk.
+    if let Err(err) = sys::File::write_file(
         dir,
         bun_core::zstr!("package.json"),
         root_pkg_json.source.contents(),
-    )
-    .is_ok()
-        && !moved.is_empty()
-        && !silent
-    {
-        bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+    ) {
+        Output::err(err, "failed to move {} in package.json", (&moved,));
+        Global::crash();
+    }
+    if !silent {
+        bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved);
     }
 
     Ok(())

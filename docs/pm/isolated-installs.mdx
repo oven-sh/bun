@@ -214,7 +214,7 @@ rm -rf node_modules
 bun install --linker isolated
 ```
 
-Keep `pnpm-lock.yaml` around for this first install: Bun converts it to `bun.lock`, so you keep the versions pnpm had resolved. The workspace list, catalogs and overrides in `pnpm-workspace.yaml` are moved into the root `package.json` whether or not a `pnpm-lock.yaml` is present. See [pnpm migration](/pm/cli/install#pnpm-migration) for what is converted.
+Keep `pnpm-lock.yaml` around for this first install: Bun converts it to `bun.lock`, so you keep the versions pnpm had resolved. The same first install (no `bun.lock` yet, no `workspaces` field in the root `package.json`) also moves the workspace list, catalogs and overrides from `pnpm-workspace.yaml` into the root `package.json`, with or without a `pnpm-lock.yaml`. See [pnpm migration](/pm/cli/install#pnpm-migration) for what is converted.
 
 The main difference is that Bun uses symlinks in `node_modules` while pnpm uses a global store with symlinks.
 

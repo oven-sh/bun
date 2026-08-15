@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe("pnpm-lock.yaml migration", () => {
@@ -635,5 +635,46 @@ importers:
 
     expect(readPackageJson(dir)).toEqual(single);
     expect(fs.readFileSync(join(dir, "bun.lock"), "utf8")).not.toContain("@w/a");
+  });
+
+  // A 0444 package.json does not stop root from writing it, and the mode bits mean something else on Windows.
+  test.skipIf(isWindows || process.getuid?.() === 0).each([
+    ["without a lockfile", {}],
+    [
+      "while migrating pnpm-lock.yaml",
+      {
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/a: {}
+
+  packages/b:
+    dependencies:
+      '@w/a':
+        specifier: workspace:*
+        version: link:../a
+`,
+      },
+    ],
+  ])("and the install fails when package.json cannot be written back, %s", async (_, lockfile) => {
+    const original = JSON.stringify(rootPackageJson);
+    await using dir = tempDir("pnpm-workspace-yaml-readonly", {
+      "package.json": original,
+      "pnpm-workspace.yaml": workspaceYaml,
+      ...workspacePackages,
+      ...lockfile,
+    });
+    fs.chmodSync(join(dir, "package.json"), 0o444);
+
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).toContain("failed to move pnpm-workspace.yaml to workspaces in package.json");
+    expect(stderr).not.toContain("moved pnpm");
+    expect(exitCode).toBe(1);
+
+    expect(fs.readFileSync(join(dir, "package.json"), "utf8")).toBe(original);
+    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(false);
   });
 });

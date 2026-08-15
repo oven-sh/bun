@@ -11,7 +11,7 @@ use bun_paths::fs::Path;
 pub use crate::{ImportKind, Index, Loader};
 
 pub struct ImportRecord {
-    pub range: Range,
+    pub range: Option<Range>,
     // TODO: lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
     // strings. Uses 'static (PORTING.md: no struct lifetime params).
     pub path: Path<'static>,

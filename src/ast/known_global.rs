@@ -66,7 +66,7 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new(e: &mut E::New, loc: Option<crate::Loc>) -> js_ast::Expr {
         let call = E::Call {
             target: e.target,
             args: bun_alloc::AstAlloc::take(&mut e.args),
@@ -83,7 +83,7 @@ impl KnownGlobal {
         _bump: &Bump,
         e: &mut E::New,
         symbols: &[Symbol],
-        loc: crate::Loc,
+        loc: Option<crate::Loc>,
         minify_whitespace: bool,
     ) -> Option<js_ast::Expr> {
         let id = if let js_ast::ExprData::EIdentifier(ident) = e.target.data {

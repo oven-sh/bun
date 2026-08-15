@@ -14,14 +14,14 @@ use crate::{StoreSlice, StoreStr};
 
 pub struct Block {
     pub stmts: StmtNodeList,
-    pub close_brace_loc: crate::Loc, // = crate::Loc::EMPTY
+    pub close_brace_loc: Option<crate::Loc>, // = None
 }
 
 impl Default for Block {
     fn default() -> Self {
         Self {
             stmts: StmtNodeList::EMPTY,
-            close_brace_loc: crate::Loc::EMPTY,
+            close_brace_loc: None,
         }
     }
 }
@@ -167,11 +167,11 @@ pub struct While {
 pub struct With {
     pub value: ExprNodeIndex,
     pub body: StmtNodeIndex,
-    pub body_loc: crate::Loc, // = crate::Loc::EMPTY
+    pub body_loc: Option<crate::Loc>, // = None
 }
 
 pub struct Try {
-    pub body_loc: crate::Loc,
+    pub body_loc: Option<crate::Loc>,
     pub body: StmtNodeList,
 
     pub catch: Option<Catch>,     // = None
@@ -180,7 +180,7 @@ pub struct Try {
 
 pub struct Switch {
     pub test: ExprNodeIndex,
-    pub body_loc: crate::Loc,
+    pub body_loc: Option<crate::Loc>,
     pub cases: StoreSlice<Case>, // arena-owned
 }
 
@@ -203,9 +203,9 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>,  // = None
-    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
-    pub star_name_loc: crate::Loc,     // = Loc::EMPTY
+    pub default_name: Option<LocRef>,      // = None
+    pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
+    pub star_name_loc: Option<crate::Loc>, // = None
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
     /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
@@ -220,7 +220,7 @@ impl Default for Import {
             namespace_ref: Ref::NONE,
             default_name: None,
             items: StoreSlice::EMPTY,
-            star_name_loc: crate::Loc::EMPTY,
+            star_name_loc: None,
             import_record_index: u32::MAX,
             is_single_line: false,
             phase_defer: false,

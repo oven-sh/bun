@@ -54,12 +54,12 @@ pub struct ExportStarAlias {
 }
 
 pub struct Class {
-    pub class_keyword: crate::Range,
+    pub class_keyword: Option<crate::Range>,
     pub ts_decorators: ExprNodeList,
     pub class_name: Option<LocRef>,
     pub extends: Option<ExprNodeIndex>,
-    pub body_loc: crate::Loc,
-    pub close_brace_loc: crate::Loc,
+    pub body_loc: Option<crate::Loc>,
+    pub close_brace_loc: Option<crate::Loc>,
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
@@ -68,12 +68,12 @@ pub struct Class {
 impl Default for Class {
     fn default() -> Self {
         Self {
-            class_keyword: crate::Range::NONE,
+            class_keyword: None,
             ts_decorators: bun_alloc::AstAlloc::vec(),
             class_name: None,
             extends: None,
-            body_loc: crate::Loc::EMPTY,
-            close_brace_loc: crate::Loc::EMPTY,
+            body_loc: None,
+            close_brace_loc: None,
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
@@ -127,14 +127,14 @@ pub struct Comment {
 
 pub struct ClassStaticBlock {
     pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
 }
 
 impl Default for ClassStaticBlock {
     fn default() -> Self {
         Self {
             stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
+            loc: None,
         }
     }
 }
@@ -253,7 +253,7 @@ pub enum PropertyKind {
 }
 
 pub struct FnBody {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub stmts: StmtNodeList,
 }
 
@@ -274,7 +274,7 @@ impl FnBody {
 
 pub struct Fn {
     pub name: Option<LocRef>,
-    pub open_parens_loc: crate::Loc,
+    pub open_parens_loc: Option<crate::Loc>,
     pub args: StoreSlice<Arg>,
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
@@ -290,10 +290,10 @@ impl Default for Fn {
     fn default() -> Self {
         Self {
             name: None,
-            open_parens_loc: crate::Loc::EMPTY,
+            open_parens_loc: None,
             args: StoreSlice::EMPTY,
             body: FnBody {
-                loc: crate::Loc::EMPTY,
+                loc: None,
                 stmts: StmtNodeList::EMPTY,
             },
             arguments_ref: Ref::NONE,

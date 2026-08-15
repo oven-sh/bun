@@ -4,7 +4,7 @@ use crate::{DebugOnlyDisabler, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub data: Data,
 }
 
@@ -55,7 +55,7 @@ impl Stmt {
     pub fn empty() -> Stmt {
         Stmt {
             data: Data::SEmpty(NONE),
-            loc: crate::Loc::default(),
+            loc: None,
         }
     }
 
@@ -74,7 +74,7 @@ impl Default for Stmt {
     fn default() -> Self {
         Stmt {
             data: Data::SEmpty(NONE),
-            loc: crate::Loc::default(),
+            loc: None,
         }
     }
 }
@@ -95,15 +95,18 @@ pub trait StatementData: Sized {
 
 impl Stmt {
     #[inline]
-    pub fn init<T: StatementData>(orig_data: StoreRef<T>, loc: crate::Loc) -> Stmt {
+    pub fn init<T: StatementData>(
+        orig_data: StoreRef<T>,
+        loc: impl Into<Option<crate::Loc>>,
+    ) -> Stmt {
         Stmt {
-            loc,
+            loc: loc.into(),
             data: T::wrap_ref(orig_data),
         }
     }
 
     #[inline]
-    fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
+    fn comptime_alloc<T: StatementData>(orig_data: T, loc: Option<crate::Loc>) -> Stmt {
         Stmt {
             loc,
             data: orig_data.store_alloc(),
@@ -113,7 +116,7 @@ impl Stmt {
     fn allocate_data<T: StatementData>(
         bump: &bun_alloc::Arena,
         orig_data: T,
-        loc: crate::Loc,
+        loc: Option<crate::Loc>,
     ) -> Stmt {
         Stmt {
             loc,
@@ -122,9 +125,9 @@ impl Stmt {
     }
 
     #[inline]
-    pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
+    pub fn alloc<T: StatementData>(orig_data: T, loc: impl Into<Option<crate::Loc>>) -> Stmt {
         data::Store::assert();
-        Stmt::comptime_alloc(orig_data, loc)
+        Stmt::comptime_alloc(orig_data, loc.into())
     }
 }
 
@@ -137,10 +140,10 @@ impl Stmt {
     pub fn allocate<T: StatementData>(
         bump: &bun_alloc::Arena,
         orig_data: T,
-        loc: crate::Loc,
+        loc: impl Into<Option<crate::Loc>>,
     ) -> Stmt {
         data::Store::assert();
-        Stmt::allocate_data(bump, orig_data, loc)
+        Stmt::allocate_data(bump, orig_data, loc.into())
     }
 
     pub fn allocate_expr(bump: &bun_alloc::Arena, expr: Expr) -> Stmt {

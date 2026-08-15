@@ -237,7 +237,7 @@ impl Scope {
 #[derive(Clone, Copy, Default)]
 pub struct Member {
     pub ref_: Ref,
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

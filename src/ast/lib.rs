@@ -565,53 +565,78 @@ impl Kind {
 // Loc
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+/// A byte offset into a source file. Always a real offset: a node or
+/// diagnostic that has no source position carries `Option<Loc>::None`, and
+/// `Option<Loc>` is the same 4 bytes as `Loc` (the offset is stored as
+/// `start + 1` in a `NonZeroU32`, so `u32::MAX` itself is not representable).
+///
+/// `Option<Loc>` orders `None` before every `Some`, so comparing optional
+/// locations (`close_brace_loc > body_loc`) treats an absent one as "before
+/// the start of the file".
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct Loc {
-    pub start: i32,
-}
+pub struct Loc(core::num::NonZeroU32);
 
-impl Default for Loc {
-    fn default() -> Self {
-        Loc { start: -1 }
-    }
-}
+const _: () = assert!(core::mem::size_of::<Option<Loc>>() == 4);
 
 impl Loc {
-    pub const EMPTY: Loc = Loc { start: -1 };
-
     #[inline]
-    pub fn to_nullable(self) -> Option<Loc> {
-        if self.start == -1 { None } else { Some(self) }
+    pub const fn new(start: u32) -> Loc {
+        match start.checked_add(1) {
+            Some(n) => Loc(core::num::NonZeroU32::new(n).expect("start + 1 is non-zero")),
+            None => panic!("Loc offset out of range"),
+        }
     }
 
     #[inline]
-    pub fn to_usize(self) -> usize {
-        self.i()
+    pub fn from_usize(start: usize) -> Loc {
+        Loc::new(u32::try_from(start).expect("Loc offset out of range"))
+    }
+
+    /// The byte offset.
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0.get() - 1
     }
 
     #[inline]
-    pub fn i(self) -> usize {
-        usize::try_from(self.start.max(0)).expect("int cast")
+    pub const fn usize(self) -> usize {
+        self.get() as usize
     }
 
-    /// The byte offset of this location in `contents`, if it is one: `None` for
-    /// [`Loc::EMPTY`], a negative start, or a start at or past the end.
+    /// This offset as an index into `contents`: `None` if it is at or past the
+    /// end.
     #[inline]
     pub fn index_in(self, contents: &[u8]) -> Option<usize> {
-        usize::try_from(self.start)
-            .ok()
-            .filter(|&i| i < contents.len())
+        Some(self.usize()).filter(|&i| i < contents.len())
     }
 
+    /// The location `bytes` further into the file.
     #[inline]
-    pub fn eql(self, other: Loc) -> bool {
-        self.start == other.start
+    pub fn add(self, bytes: u32) -> Loc {
+        Loc::new(self.get() + bytes)
     }
 
+    /// The location `bytes` further into the file (`bytes` may be negative).
     #[inline]
-    pub fn is_empty(self) -> bool {
-        self.eql(Self::EMPTY)
+    pub fn offset(self, bytes: i32) -> Loc {
+        Loc::new(
+            self.get()
+                .checked_add_signed(bytes)
+                .expect("Loc offset out of range"),
+        )
+    }
+
+    /// The location `bytes` back towards the start of the file.
+    #[inline]
+    pub fn sub(self, bytes: u32) -> Loc {
+        Loc::new(self.get() - bytes)
+    }
+}
+
+impl fmt::Debug for Loc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Loc({})", self.get())
     }
 }
 
@@ -752,7 +777,7 @@ impl Location {
         }
     }
 
-    pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
+    pub fn init_or_null(_source: Option<&Source>, r: Option<Range>) -> Option<Location> {
         Self::init_or_null_impl(_source, r, None)
     }
 
@@ -761,7 +786,7 @@ impl Location {
     /// don't rescan it from the start for every message.
     fn init_or_null_tracked(
         _source: Option<&Source>,
-        r: Range,
+        r: Option<Range>,
         tracker: &mut LineColumnTracker,
     ) -> Option<Location> {
         Self::init_or_null_impl(_source, r, Some(tracker))
@@ -769,11 +794,11 @@ impl Location {
 
     fn init_or_null_impl(
         _source: Option<&Source>,
-        r: Range,
+        r: Option<Range>,
         tracker: Option<&mut LineColumnTracker>,
     ) -> Option<Location> {
         if let Some(source) = _source {
-            if r.is_empty() {
+            let Some(r) = r else {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
                     namespace: source.path.namespace,
@@ -783,7 +808,7 @@ impl Location {
                     line_text: Some(Cow::Borrowed(b"")),
                     offset: 0,
                 });
-            }
+            };
             let data = match tracker {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
@@ -812,8 +837,8 @@ impl Location {
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
                 namespace: source.path.namespace,
-                line: usize2loc(data.line_count).start,
-                column: usize2loc(data.column_count).start,
+                line: i32::try_from(data.line_count).expect("int cast"),
+                column: i32::try_from(data.column_count).expect("int cast"),
                 length: if r.len > -1 {
                     u32::try_from(r.len).expect("int cast") as usize
                 } else {
@@ -826,7 +851,7 @@ impl Location {
                 // bounded (≤ ~120 bytes) and only materialized on diagnostic
                 // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
-                offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
+                offset: r.loc.usize(),
             });
         }
         None
@@ -1238,44 +1263,35 @@ impl Default for MetadataResolve {
 // Range
 // ───────────────────────────────────────────────────────────────────────────
 
+/// `len` bytes of a source file starting at `loc`. Like [`Loc`] it is always
+/// a real span; "no range" is `Option<Range>`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Range {
     pub loc: Loc,
     pub len: i32,
 }
 
-impl Default for Range {
-    fn default() -> Self {
-        Range {
-            loc: Loc::EMPTY,
-            len: 0,
-        }
-    }
-}
-
 /// Was `bun_js_parser::lexer::rangeOfIdentifier`.
 /// Moved into logger to break logger→js_parser. Includes the full Unicode
 /// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
-/// `\u{...}` escape skipping.
-pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
-    let Some(start) = loc.index_in(contents) else {
-        return Range::NONE;
-    };
-    let text = &contents[start..];
+/// `\u{...}` escape skipping. `None` if `loc` is at or past the end of
+/// `contents`.
+pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Option<Range> {
+    let text = &contents[loc.index_in(contents)?..];
     let mut r = Range { loc, len: 0 };
     let end = text.len() as u32;
 
     let iter = bun_core::strings::CodepointIterator::init(text);
     let mut cursor = bun_core::strings::Cursor::default();
     if !iter.next(&mut cursor) {
-        return r;
+        return Some(r);
     }
 
     // Handle private names
     if cursor.c == '#' as i32 {
         if !iter.next(&mut cursor) {
             r.len = 1;
-            return r;
+            return Some(r);
         }
     }
 
@@ -1313,7 +1329,7 @@ pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
                 skip_bracketed_escape(&mut cursor);
             } else if !lexer_tables::is_identifier_continue(cursor.c) {
                 r.len = i32::try_from(cursor.i).expect("int cast");
-                return r;
+                return Some(r);
             }
         }
 
@@ -1322,31 +1338,22 @@ pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
         r.len = i32::try_from(cursor.i + cursor.width as u32).expect("int cast");
     }
 
-    r
+    Some(r)
 }
 
 impl Range {
-    /// Deprecated: use `NONE`
-    #[allow(non_upper_case_globals)]
-    pub const None: Range = Self::NONE;
-    pub const NONE: Range = Range {
-        loc: Loc::EMPTY,
-        len: 0,
-    };
-
-    pub fn is_empty(self) -> bool {
-        self.len == 0 && self.loc.start == Loc::EMPTY.start
+    /// The empty range at `loc`.
+    #[inline]
+    pub const fn at(loc: Loc) -> Range {
+        Range { loc, len: 0 }
     }
 
     pub fn end(self) -> Loc {
-        Loc {
-            start: self.loc.start + self.len,
-        }
+        self.loc.offset(self.len)
     }
 
     pub fn end_i(self) -> usize {
-        // Saturates negatives to 0.
-        (self.loc.start + self.len).max(0) as usize
+        self.end().usize()
     }
 }
 
@@ -1465,7 +1472,7 @@ impl Log {
     fn tracked_range_data(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: Option<Range>,
         text: impl IntoText,
     ) -> Data {
         let location = if source.is_some() {
@@ -1526,7 +1533,12 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_debug_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
+    pub fn add_debug_fmt(
+        &mut self,
+        source: Option<&Source>,
+        l: impl Into<Option<Loc>>,
+        args: fmt::Arguments<'_>,
+    ) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
@@ -1534,10 +1546,7 @@ impl Log {
         self.add_formatted_msg(
             Kind::Debug,
             source,
-            Range {
-                loc: l,
-                ..Default::default()
-            },
+            l.into().map(Range::at),
             text,
             Box::default(),
             true,
@@ -1616,7 +1625,7 @@ impl Log {
         &mut self,
         kind: Kind,
         source: Option<&Source>,
-        r: Range,
+        r: Option<Range>,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
         clone: bool,
@@ -1644,7 +1653,7 @@ impl Log {
     fn add_resolve_error_with_level<const DUPE_TEXT: bool, const IS_ERR: bool>(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: Option<Range>,
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
@@ -1693,7 +1702,7 @@ impl Log {
     pub fn add_resolve_error(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
@@ -1703,7 +1712,7 @@ impl Log {
         // outlives the source's backing memory (which may be arena-allocated).
         self.add_resolve_error_with_level::<true, true>(
             source,
-            r,
+            r.into(),
             args,
             specifier_arg,
             import_kind,
@@ -1715,14 +1724,14 @@ impl Log {
     pub fn add_resolve_error_with_text_dupe(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
         self.add_resolve_error_with_level::<true, true>(
             source,
-            r,
+            r.into(),
             args,
             specifier_arg,
             import_kind,
@@ -1731,9 +1740,14 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_error(
+        &mut self,
+        source: Option<&Source>,
+        r: impl Into<Option<Range>>,
+        text: Str,
+    ) {
         self.errors += 1;
-        let data = self.tracked_range_data(source, r, text);
+        let data = self.tracked_range_data(source, r.into(), text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1745,40 +1759,45 @@ impl Log {
     pub fn add_range_error_fmt(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(
+            Kind::Err,
+            source,
+            r.into(),
+            text,
+            Box::default(),
+            true,
+            false,
+        )
     }
 
     #[inline]
     pub fn add_range_error_fmt_with_notes(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         notes: Box<[Data]>,
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r.into(), text, notes, true, false)
     }
 
     #[inline]
     pub fn add_error_fmt<'a>(
         &mut self,
         source: impl Into<Option<&'a Source>>,
-        l: Loc,
+        l: impl Into<Option<Loc>>,
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
             source.into(),
-            Range {
-                loc: l,
-                ..Default::default()
-            },
+            l.into().map(Range::at),
             text,
             Box::default(),
             true,
@@ -1793,10 +1812,7 @@ impl Log {
         self.add_formatted_msg(
             Kind::Err,
             opts.source,
-            Range {
-                loc: opts.loc,
-                len: opts.len,
-            },
+            opts.range(),
             text,
             Box::default(),
             true,
@@ -1807,10 +1823,10 @@ impl Log {
     /// Use a bun.sys.Error's message in addition to some extra context.
     pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
-            return self.add_error_fmt(None, Loc::EMPTY, args);
+            return self.add_error_fmt(None, None, args);
         };
         let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
-        self.add_error_fmt(None, Loc::EMPTY, format_args!("{}: {}", prefix, args))
+        self.add_error_fmt(None, None, format_args!("{}: {}", prefix, args))
     }
 
     #[cold]
@@ -1821,9 +1837,9 @@ impl Log {
     ) {
         self.errors += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(None, None, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(None, Range::NONE, err_name.as_bytes());
+        let data = self.tracked_range_data(None, None, err_name.as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1833,13 +1849,18 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_warning(
+        &mut self,
+        source: Option<&Source>,
+        r: impl Into<Option<Range>>,
+        text: Str,
+    ) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         self.warnings += 1;
         let data = self
-            .tracked_range_data(source, r, text)
+            .tracked_range_data(source, r.into(), text)
             .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind: Kind::Warn,
@@ -1849,7 +1870,12 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_warning_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
+    pub fn add_warning_fmt(
+        &mut self,
+        source: Option<&Source>,
+        l: impl Into<Option<Loc>>,
+        args: fmt::Arguments<'_>,
+    ) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -1857,10 +1883,7 @@ impl Log {
         self.add_formatted_msg(
             Kind::Warn,
             source,
-            Range {
-                loc: l,
-                ..Default::default()
-            },
+            l.into().map(Range::at),
             text,
             Box::default(),
             true,
@@ -1920,24 +1943,32 @@ impl Log {
     pub fn add_range_warning_fmt(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
     ) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(
+            Kind::Warn,
+            source,
+            r.into(),
+            text,
+            Box::default(),
+            true,
+            false,
+        )
     }
 
     #[cold]
     pub fn add_range_warning_fmt_with_note(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
-        note_range: Range,
+        note_range: impl Into<Option<Range>>,
     ) {
         if !Kind::Warn.should_print(self.level) {
             return;
@@ -1945,9 +1976,9 @@ impl Log {
         self.warnings += 1;
 
         let notes: Box<[Data]> =
-            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
+            Box::new([self.tracked_range_data(source, note_range.into(), alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(source, r, alloc_print(args));
+        let data = self.tracked_range_data(source, r.into(), alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -1960,22 +1991,22 @@ impl Log {
     pub fn add_range_warning_fmt_with_notes(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         notes: Box<[Data]>,
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r.into(), text, notes, true, false)
     }
 
     #[cold]
     pub fn add_range_error_fmt_with_note(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
-        note_range: Range,
+        note_range: impl Into<Option<Range>>,
     ) {
         if !Kind::Err.should_print(self.level) {
             return;
@@ -1983,9 +2014,9 @@ impl Log {
         self.errors += 1;
 
         let notes: Box<[Data]> =
-            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
+            Box::new([self.tracked_range_data(source, note_range.into(), alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(source, r, alloc_print(args));
+        let data = self.tracked_range_data(source, r.into(), alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1995,19 +2026,12 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: Str) {
+    pub fn add_warning(&mut self, source: Option<&Source>, l: impl Into<Option<Loc>>, text: Str) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         self.warnings += 1;
-        let data = self.tracked_range_data(
-            source,
-            Range {
-                loc: l,
-                ..Default::default()
-            },
-            text,
-        );
+        let data = self.tracked_range_data(source, l.into().map(Range::at), text);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -2019,7 +2043,7 @@ impl Log {
     pub fn add_warning_with_note(
         &mut self,
         source: Option<&Source>,
-        l: Loc,
+        l: impl Into<Option<Loc>>,
         warn: Str,
         note_args: fmt::Arguments<'_>,
     ) {
@@ -2030,14 +2054,11 @@ impl Log {
 
         let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             source,
-            Range {
-                loc: l,
-                ..Default::default()
-            },
+            l.into().map(Range::at),
             alloc_print(note_args),
         )]);
 
-        let data = self.tracked_range_data(None, Range::NONE, warn);
+        let data = self.tracked_range_data(None, None, warn);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -2047,11 +2068,16 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_debug(
+        &mut self,
+        source: Option<&Source>,
+        r: impl Into<Option<Range>>,
+        text: Str,
+    ) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
-        let data = self.tracked_range_data(source, r, text);
+        let data = self.tracked_range_data(source, r.into(), text);
         self.add_msg(Msg {
             kind: Kind::Debug,
             data,
@@ -2063,12 +2089,12 @@ impl Log {
     pub fn add_range_error_with_notes(
         &mut self,
         source: Option<&Source>,
-        r: Range,
+        r: impl Into<Option<Range>>,
         text: impl IntoText,
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
-        let data = self.tracked_range_data(source, r, text);
+        let data = self.tracked_range_data(source, r.into(), text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2082,16 +2108,14 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
+    pub fn add_error(
+        &mut self,
+        _source: Option<&Source>,
+        loc: impl Into<Option<Loc>>,
+        text: impl IntoText,
+    ) {
         self.errors += 1;
-        let data = self.tracked_range_data(
-            _source,
-            Range {
-                loc,
-                ..Default::default()
-            },
-            text,
-        );
+        let data = self.tracked_range_data(_source, loc.into().map(Range::at), text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2103,14 +2127,7 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
-            opts.source,
-            Range {
-                loc: opts.loc,
-                len: opts.len,
-            },
-            text,
-        );
+        let data = self.tracked_range_data(opts.source, opts.range(), text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2123,8 +2140,8 @@ impl Log {
         &mut self,
         source: &Source,
         name: &[u8],
-        new_loc: Loc,
-        old_loc: Loc,
+        new_loc: impl Into<Option<Loc>>,
+        old_loc: impl Into<Option<Loc>>,
     ) {
         let note_text = alloc_print(format_args!(
             "\"{}\" was originally declared here",
@@ -2209,9 +2226,16 @@ impl Log {
 #[derive(Clone, Copy, Default)]
 pub struct AddErrorOptions<'a> {
     pub source: Option<&'a Source>,
-    pub loc: Loc,
+    pub loc: Option<Loc>,
+    /// Bytes to highlight from `loc`; unused without one.
     pub len: i32,
     pub redact_sensitive_information: bool,
+}
+
+impl AddErrorOptions<'_> {
+    fn range(&self) -> Option<Range> {
+        self.loc.map(|loc| Range { loc, len: self.len })
+    }
 }
 
 /// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
@@ -2318,9 +2342,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
 
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
-    Loc {
-        start: i32::try_from(loc).expect("int cast"),
-    }
+    Loc::from_usize(loc)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2476,7 +2498,7 @@ fn scan_line_end(contents: &[u8], offset: usize) -> usize {
 /// always has.
 #[inline]
 fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
-    (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
+    offset_loc.usize().min(contents.len().max(1) - 1)
 }
 
 /// Incremental line/column scanner for diagnostics (the esbuild
@@ -2528,7 +2550,6 @@ impl LineColumnTracker {
     /// [`Source::init_error_position`], resuming from the previous call's
     /// offset when possible instead of rescanning from the start.
     pub(crate) fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
-        debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &source.contents;
         let offset = clamp_error_offset(contents, offset_loc);
 
@@ -2576,9 +2597,17 @@ impl Source {
         self.path.name().fmt_identifier()
     }
 
-    pub fn range_of_identifier(&self, loc: Loc) -> Range {
-        // Scan from `loc` while bytes are JS identifier-part.
-        range_of_identifier(&self.contents, loc)
+    /// The source text from `loc` to the end: `None` if `loc` is at or past
+    /// the end.
+    #[inline]
+    pub fn text_from(&self, loc: Loc) -> Option<&[u8]> {
+        self.contents.get(loc.usize()..).filter(|t| !t.is_empty())
+    }
+
+    /// The identifier starting at `loc`; `None` without a location or with one
+    /// at or past the end of the file.
+    pub fn range_of_identifier(&self, loc: impl Into<Option<Loc>>) -> Option<Range> {
+        range_of_identifier(&self.contents, loc.into()?)
     }
 
     pub fn is_web_assembly(&self) -> bool {
@@ -2635,35 +2664,33 @@ impl Source {
     }
 
     pub fn text_for_range(&self, r: Range) -> &[u8] {
-        &self.contents[r.loc.i()..r.end_i()]
+        &self.contents[r.loc.usize()..r.end_i()]
     }
 
-    pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
-        let text = &self.contents[0..loc.i()];
+    /// The last `op` before `loc` (or the empty range at `loc` if there is
+    /// none); `None` without a location.
+    pub fn range_of_operator_before(
+        &self,
+        loc: impl Into<Option<Loc>>,
+        op: &[u8],
+    ) -> Option<Range> {
+        let loc = loc.into()?;
+        let text = &self.contents[0..loc.usize()];
         if let Some(index) = bun_core::strings::last_index_of(text, op) {
-            return Range {
+            return Some(Range {
                 loc: usize2loc(index),
                 len: i32::try_from(op.len()).expect("int cast"),
-            };
+            });
         }
 
-        Range {
-            loc,
-            ..Default::default()
-        }
+        Some(Range::at(loc))
     }
 
-    pub fn range_of_string(&self, loc: Loc) -> Range {
-        if loc.start < 0 {
-            return Range::NONE;
-        }
-
-        let text = &self.contents[loc.i()..];
-
-        if text.is_empty() {
-            return Range::NONE;
-        }
-
+    /// The string literal starting at `loc`; `None` without a location or with
+    /// one at or past the end of the file.
+    pub fn range_of_string(&self, loc: impl Into<Option<Loc>>) -> Option<Range> {
+        let loc = loc.into()?;
+        let text = self.text_from(loc)?;
         let quote = text[0];
 
         if quote == b'"' || quote == b'\'' {
@@ -2673,10 +2700,10 @@ impl Source {
                 c = text[i];
 
                 if c == quote {
-                    return Range {
+                    return Some(Range {
                         loc,
                         len: i32::try_from(i + 1).expect("int cast"),
-                    };
+                    });
                 } else if c == b'\\' {
                     i += 1;
                 }
@@ -2684,11 +2711,10 @@ impl Source {
             }
         }
 
-        Range { loc, len: 0 }
+        Some(Range::at(loc))
     }
 
     pub(crate) fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &self.contents;
         let offset = clamp_error_offset(contents, offset_loc);
 
@@ -2756,10 +2782,14 @@ impl Source {
     }
 }
 
-pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
+pub fn range_data(
+    source: Option<&Source>,
+    r: impl Into<Option<Range>>,
+    text: impl IntoText,
+) -> Data {
     Data {
         text: text.into_text(),
-        location: Location::init_or_null(source, r),
+        location: Location::init_or_null(source, r.into()),
     }
 }
 
@@ -3246,7 +3276,7 @@ mod range_of_identifier_tests {
     use super::*;
 
     fn len_of(src: &[u8]) -> i32 {
-        range_of_identifier(src, Loc { start: 0 }).len
+        range_of_identifier(src, Loc::new(0)).map_or(0, |r| r.len)
     }
 
     #[test]

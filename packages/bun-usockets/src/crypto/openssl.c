@@ -2470,6 +2470,22 @@ unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
   return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
 }
 
+/* Plaintext sealed per SSL_write call: one full TLS record. */
+#define US_SSL_RECORD_PLAINTEXT 16384
+
+/* Ciphertext per batch flush, i.e. per send(): four records (64 KiB plus record
+ * overhead), plus the write's partial last record when that is all that is
+ * left, so the common 64 KiB chunk plus a few bytes of framing (an h2 DATA
+ * flight, a node:tls header + chunk writev) still goes out in one send()
+ * instead of trailing a tiny record in its own segment. Every send() must stay
+ * below 128 KiB: on Windows (64 KiB default SO_SNDBUF) a refused send() of
+ * 128 KiB or more is not reported writable again until the next ~15.6 ms timer
+ * tick even though the peer drains the socket at once, while smaller refused
+ * sends are reported as soon as space frees up. The former 8-record batches
+ * (131248 bytes) paid that tick on every backpressure round of every large TLS
+ * write; a batch is now at most about 80 KiB. */
+#define US_SSL_WRITE_BATCH_FLUSH_BYTES (4 * US_SSL_RECORD_PLAINTEXT)
+
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
@@ -2517,7 +2533,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   int last_ssl_written = 1;
   while (total < length) {
     int chunk = length - total;
-    if (chunk > 16384) chunk = 16384;
+    if (chunk > US_SSL_RECORD_PLAINTEXT) chunk = US_SSL_RECORD_PLAINTEXT;
     /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
     s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
@@ -2535,7 +2551,9 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     /* A batching allocation failure marks the socket fatal from inside the BIO;
      * stop sealing records for a connection that is being torn down. */
     if (s->ssl_fatal_error) break;
-    if (batching && loop_ssl_data->ssl_write_batch_len >= 131072) {
+    /* A partial last record rides along with the batch (see the flush size). */
+    if (batching && loop_ssl_data->ssl_write_batch_len >= US_SSL_WRITE_BATCH_FLUSH_BYTES &&
+        length - total >= US_SSL_RECORD_PLAINTEXT) {
       if (!ssl_flush_write_batch(loop_ssl_data, s)) break; /* wire blocked: stop consuming */
       if (s->ssl_fatal_error) break;
     }

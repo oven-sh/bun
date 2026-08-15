@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -593,5 +593,98 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // BUN_JSC_validateExceptionChecks=1 aborts the child on the first JSC call whose
+  // exception state goes unchecked. Debug and ASAN builds enforce it; release builds
+  // ignore the option, so there these only check that the build succeeds.
+  describe("exception checks", () => {
+    async function buildApp(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", ...args],
+        cwd,
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_JSC_dumpSimulatedThrows: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The validator's report names the scope that can throw and the scope that failed to
+      // check it; surfacing those two lines makes a failure point at the offending call.
+      const uncheckedScopes = stderr
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+      return { stdout, exitCode, signalCode: proc.signalCode, uncheckedScopes };
+    }
+
+    test("loading the config file", async () => {
+      // No routes directory, so the build stops after reading the config's default export
+      // (BakeGetDefaultExportFromModule) and bundles nothing.
+      using dir = tempDir("bake-production-validate-config", {
+        "bun.app.ts": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+            },
+          },
+        };`,
+        "server.ts": `export function render() { return new Response("unused"); }`,
+      });
+
+      const { stdout, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
+      expect({ stdout, exitCode, signalCode, uncheckedScopes }).toEqual({
+        stdout: "done\n",
+        exitCode: 0,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
+    });
+
+    test("loading the server entry point and prerendering routes", async () => {
+      // Reaches the rest of the production path: the server entry point is loaded
+      // (BakeLoadModuleByKey, BakeGetModuleNamespace), its prerender and getParams
+      // exports are read (BakeGetOnModuleNamespace), and rendering import()s the
+      // bundled modules through Bake::GlobalObject's module loader hooks. The client
+      // component matters: server-side rendering it is what makes a bundled "bake:/"
+      // module itself call import(), the hook's second branch.
+      const dir = await tempDirWithBakeDeps("bake-production-validate-prerender", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import Greeting from "../components/Greeting";
+
+export default function IndexPage() {
+  return (
+    <main>
+      <h1>Static Home</h1>
+      <Greeting />
+    </main>
+  );
+}`,
+        "components/Greeting.tsx": `"use client";
+
+export default function Greeting() {
+  return <p>Hello from the client</p>;
+}`,
+        "pages/posts/[slug].tsx": `export default function Post({ params }) {
+  return <h1>{"Post " + params.slug}</h1>;
+}
+
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "first" } }, { params: { slug: "second" } }], fallback: false };
+}`,
+      });
+
+      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
+      expect({ exitCode, signalCode, uncheckedScopes }).toEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+
+      const rendered = await Promise.all(
+        ["index.html", "posts/first/index.html", "posts/second/index.html"].map(file =>
+          Bun.file(path.join(dir, "dist", file)).text(),
+        ),
+      );
+      expect(rendered[0]).toContain("<h1>Static Home</h1>");
+      expect(rendered[0]).toContain("<p>Hello from the client</p>");
+      expect(rendered[1]).toContain("<h1>Post first</h1>");
+      expect(rendered[2]).toContain("<h1>Post second</h1>");
+    });
   });
 });

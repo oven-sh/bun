@@ -22,35 +22,36 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     bool deferred)
 {
     UNUSED_PARAM(deferred);
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Returning nullptr with an exception pending is fine: globalFuncImportModule rejects the import() promise with it.
     WTF::String keyString = moduleNameValue->getString(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (keyString.startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
+            JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
         WTF::String refererString = sourceOrigin.string();
-        WTF::String keyString = moduleNameValue->getString(global);
 
         if (!keyString) {
             auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
             promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
+            RETURN_IF_EXCEPTION(scope, nullptr);
             return promise;
         }
 
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
+            JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     // TODO: make static cast instead of jscast
-    return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
+    RELEASE_AND_RETURN(scope, uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false));
 }
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,

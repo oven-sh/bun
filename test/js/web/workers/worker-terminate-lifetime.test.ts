@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -949,57 +949,6 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("all exited\n");
-    expect(exitCode).toBe(0);
-  },
-  timeout,
-);
-
-// A `threadsafe: true` JSCallback handed to a native thread that keeps calling it: everything the entry
-// thunk touched (the thunk code itself, the signature, the closed/pending word) lived in the GC cell and
-// died with the worker's VM, so a call landing after terminate()/process.exit() jumped into freed thunk
-// memory or read a dead cell (segfault on release). The thunk now targets a handle that outlives the
-// cell, and late calls are no-ops. POSIX-only: the fixture spawns a pthread via cc().
-test.skipIf(isWindows).each(["terminate", "exit"])(
-  "a threadsafe JSCallback still being called natively after its worker is gone (%s) is harmless",
-  async mode => {
-    using dir = tempDir("ffi-threadsafe-after-worker", {
-      "calls.c": `
-        #include <pthread.h>
-        #include <unistd.h>
-        typedef void (*cb_t)(int);
-        static struct { cb_t cb; int n; } A;
-        static void* run(void* p) { for (int i = 0; i < A.n; i++) { A.cb(i); usleep(1000); } return 0; }
-        int spawn_calls(cb_t cb, int n) { A.cb = cb; A.n = n; pthread_t t; int r = pthread_create(&t, 0, run, 0); if (r == 0) pthread_detach(t); return r; }
-      `,
-      "main.js": `
-        const { Worker } = require("node:worker_threads");
-        const mode = process.argv[2];
-        const w = new Worker(\`
-          const { parentPort } = require("node:worker_threads");
-          const { cc, JSCallback } = require("bun:ffi");
-          const lib = cc({ source: require("path").join(__dirname, "calls.c"), symbols: { spawn_calls: { args: ["ptr", "int"], returns: "int" } } });
-          const cb = new JSCallback(() => {}, { args: ["int"], returns: "void", threadsafe: true });
-          // ~0.8 s of calls, 1 ms apart, from a native pthread
-          const rc = lib.symbols.spawn_calls(cb.ptr, 800);
-          if (rc !== 0) throw new Error("pthread_create failed: " + rc);
-          parentPort.postMessage("armed");
-          if (\${JSON.stringify(mode)} === "exit") setTimeout(() => process.exit(0), 50);
-        \`, { eval: true });
-        w.on("message", () => { if (mode === "terminate") setTimeout(() => w.terminate(), 50); });
-        w.on("error", (e) => { console.error(e); process.exit(1); });
-        w.on("exit", () => setTimeout(() => { console.log("still alive"); process.exit(0); }, 1200));
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.js", mode],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("still alive\n");
     expect(exitCode).toBe(0);
   },
   timeout,

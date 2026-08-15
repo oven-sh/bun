@@ -103,10 +103,9 @@ impl readable_stream::SourceContext for ByteStream {
 }
 
 // SAFETY: `ByteStream` is always the `context` field of a `Source`
-// (ReadableStream.NewSource); never constructed standalone. `parent` returns
-// `*mut Source` (not `&mut`) — retained for the `finalize` (GC-teardown) path
-// only; all host-fn-reachable callers use `parent_const`.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
+// (ReadableStream.NewSource); never constructed standalone. Everything it
+// touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
     #[inline]

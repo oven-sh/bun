@@ -1666,11 +1666,38 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `convertUTF16ToUTF8Append`. Caller must reserve
-    /// `simdutf::length::utf8::from::utf16::le(utf16)` spare bytes for the fast path.
+    /// Port of `convertUTF16ToUTF8Append`: append the UTF-8 form of `utf16` to
+    /// `list`, replacing unpaired surrogates with U+FFFD. Grows `list` as
+    /// needed; [`try_convert_utf16_to_utf8_append`] reports allocation failure
+    /// instead of crashing.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
-        // SAFETY: simdutf writes only initialized bytes into the spare slice and
-        // reports the count; on SURROGATE we commit 0 and fall back below.
+        crate::handle_oom(try_convert_utf16_to_utf8_append(list, utf16))
+    }
+
+    /// [`convert_utf16_to_utf8_append`] returning `Err` instead of crashing when
+    /// the output cannot be allocated; nothing is appended in that case.
+    pub fn try_convert_utf16_to_utf8_append(
+        list: &mut Vec<u8>,
+        utf16: &[u16],
+    ) -> core::result::Result<(), ::bun_alloc::AllocError> {
+        if utf16.is_empty() {
+            return Ok(());
+        }
+        // simdutf is not told the output length: it writes the converted
+        // prefix of `utf16` (at most `length::utf8::from::utf16::le(utf16)`
+        // bytes) unconditionally, so the spare capacity must cover that before
+        // the call. The length scan is skipped when the 3-bytes-per-code-unit
+        // worst case already fits.
+        if list.capacity() - list.len() < utf16.len().saturating_mul(3) {
+            let need = simdutf::length::utf8::from::utf16::le(utf16);
+            list.try_reserve(need)
+                .map_err(|_| ::bun_alloc::AllocError)?;
+        }
+        // SAFETY: the spare slice holds at least `utf8_length_from_utf16le(utf16)`
+        // bytes (reserved just above, or implied by the 3x worst case), which
+        // bounds what simdutf writes. On success `count` is the number of bytes
+        // it initialized; on error it is an input position, so commit nothing
+        // and re-encode everything below.
         let r = unsafe {
             crate::vec::fill_spare(list, 0, |spare| {
                 let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
@@ -1678,24 +1705,22 @@ pub(crate) mod strings_impl {
                     utf16.len(),
                     spare.as_mut_ptr(),
                 );
-                (
-                    if r.status == simdutf::Status::SURROGATE {
-                        0
-                    } else {
-                        r.count
-                    },
-                    r,
-                )
+                (if r.is_successful() { r.count } else { 0 }, r)
             })
         };
-        if r.status == simdutf::Status::SURROGATE {
+        if !r.is_successful() {
+            // The replacement encoding spends 3 bytes on each unpaired surrogate
+            // where the length scan above counted 2, so it can exceed what was
+            // reserved; reserving it up front keeps the scalar fallback from
+            // reallocating (and from crashing on OOM).
+            list.try_reserve(element_length_utf16_into_utf8(utf16))
+                .map_err(|_| ::bun_alloc::AllocError)?;
             append_wtf8_from_utf16(list, utf16);
         }
+        Ok(())
     }
 
     pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve(need + 16);
         convert_utf16_to_utf8_append(&mut list, utf16);
         list
     }
@@ -1744,8 +1769,6 @@ pub(crate) mod strings_impl {
     }
 
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve(need + 16);
         convert_utf16_to_utf8_append(list, utf16);
     }
 
@@ -1785,10 +1808,21 @@ pub(crate) mod strings_impl {
         } else {
             element_length_utf16_into_utf8(utf16)
         };
-        copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
+        // SAFETY: `utf8_len` is either the exact encoded length of `utf16` or
+        // the 3-bytes-per-code-unit worst case, which the replacement encoding
+        // never exceeds.
+        unsafe { copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len) }
     }
 
-    pub fn copy_utf16_into_utf8_with_utf8_len(
+    /// [`copy_utf16_into_utf8`] for callers that already computed the encoded
+    /// length and want to skip the second length scan.
+    ///
+    /// # Safety
+    /// `utf8_len` must be at least [`element_length_utf16_into_utf8`]`(utf16)`
+    /// (any larger upper bound is fine). Whenever `utf8_len <= buf.len()` the
+    /// whole conversion is written by simdutf, which is not told `buf.len()`,
+    /// so an undersized `utf8_len` lets it write past the end of `buf`.
+    pub unsafe fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],
         utf8_len: usize,
@@ -1799,7 +1833,9 @@ pub(crate) mod strings_impl {
         }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
         if utf8_len > 0 && utf8_len <= buf.len() {
-            // SAFETY: buf has `utf8_len` writable bytes; simdutf reads exactly utf16.len() u16.
+            // SAFETY: by this function's contract `utf8_len` bounds the encoded
+            // length, and `buf` holds `utf8_len` bytes; simdutf reads exactly
+            // `utf16.len()` code units.
             let r = unsafe {
                 simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),

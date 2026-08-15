@@ -308,4 +308,73 @@ pub mod unicode_testing_apis {
         out.deref();
         js
     }
+
+    /// `stringsInternals.convertUTF16ToUTF8Append(units, prefix, spare, fallible)`
+    /// in `internal-for-testing.ts`: appends `units` (a `Uint16Array`) as UTF-8
+    /// to a `Vec` holding `prefix` with exactly `spare` bytes of spare capacity,
+    /// via `convert_utf16_to_utf8_append` or, when `fallible`,
+    /// `to_utf8_list_with_type`. Returns `{ bytes, reallocated }`: the whole
+    /// `Vec` and whether the conversion had to grow it. The starting spare
+    /// capacity is what the conversion sizes its output from, and no caller
+    /// reachable from JS lets a test choose it.
+    pub fn convert_utf16_to_utf8_append(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let Some(units) = frame.argument(0).as_array_buffer(global) else {
+            return Err(global.throw(format_args!(
+                "convertUTF16ToUTF8Append: expected a Uint16Array"
+            )));
+        };
+        let Some(prefix) = frame.argument(1).as_array_buffer(global) else {
+            return Err(global.throw(format_args!(
+                "convertUTF16ToUTF8Append: expected a Uint8Array"
+            )));
+        };
+        let spare = frame.argument(2).to_int32();
+        if spare < 0 {
+            return Err(global.throw(format_args!(
+                "convertUTF16ToUTF8Append: expected a non-negative spare capacity"
+            )));
+        }
+        let fallible = frame.argument(3).to_boolean();
+
+        // Copy the code units out rather than viewing the array's bytes as
+        // `&[u16]`, which would depend on the view's alignment.
+        let utf16: Vec<u16> = units
+            .byte_slice()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
+            .collect();
+        let prefix = prefix.byte_slice();
+
+        let mut list = Vec::with_capacity(prefix.len() + spare as usize);
+        list.extend_from_slice(prefix);
+        let capacity_before = list.capacity();
+
+        let list = if fallible {
+            match strings::to_utf8_list_with_type(list, &utf16) {
+                Ok(list) => list,
+                Err(err) => return Err(global.throw(format_args!("{err}"))),
+            }
+        } else {
+            strings::convert_utf16_to_utf8_append(&mut list, &utf16);
+            list
+        };
+
+        let result = JSValue::create_empty_object(global, 2);
+        result.put(
+            global,
+            b"bytes",
+            crate::ArrayBuffer::create_uint8_array(global, &list)?,
+        );
+        result.put(
+            global,
+            b"reallocated",
+            JSValue::js_boolean(list.capacity() != capacity_before),
+        );
+        Ok(result)
+    }
 }

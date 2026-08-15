@@ -131,8 +131,6 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Output of the latest `step`, which clears it on entry.
-    out: Vec<u8>,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -258,7 +256,6 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            out: Vec::new(),
         }))
     }
 
@@ -277,11 +274,11 @@ impl CompressionStreamCoder {
     }
 
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
-    /// collects at most `max(high_water_mark, chunk length)` bytes into `self.out` and
+    /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
-    fn step(&mut self, input: &[u8], finish: bool) -> Result<bool, CodecError> {
-        self.out.clear();
+    fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
+        out.clear();
         if let Some(mut pending) = self.pending.take() {
             debug_assert!(input.is_empty());
             return match self.run(
@@ -289,6 +286,7 @@ impl CompressionStreamCoder {
                 pending.finish,
                 true,
                 pending.cap,
+                out,
             )? {
                 Progress::Done => Ok(false),
                 Progress::More { consumed } => {
@@ -308,7 +306,7 @@ impl CompressionStreamCoder {
             input
         };
         let cap = self.high_water_mark.max(input.len());
-        match self.run(bytes, finish, false, cap)? {
+        match self.run(bytes, finish, false, cap, out)? {
             Progress::Done => Ok(false),
             Progress::More { consumed } => {
                 self.pending = Some(Pending {
@@ -322,7 +320,7 @@ impl CompressionStreamCoder {
         }
     }
 
-    /// Drives the codec until the chunk is done or `self.out` holds `cap` bytes.
+    /// Drives the codec until the chunk is done or `out` holds `cap` bytes.
     /// A `continuing` step (not the chunk's first) calls the codec even with no
     /// input left, to drain the output it is holding.
     fn run(
@@ -331,8 +329,8 @@ impl CompressionStreamCoder {
         finish: bool,
         continuing: bool,
         cap: usize,
+        out: &mut Vec<u8>,
     ) -> Result<Progress, CodecError> {
-        let out = &mut self.out;
         match &mut self.backend {
             Backend::Deflate(s) => {
                 // `avail_in` is `uInt`; clamp and refill so a ≥4 GiB chunk
@@ -793,18 +791,18 @@ pub extern "C" fn CompressionStreamCoder__transform(
         // escape this call (`step` copies whatever it leaves unconsumed).
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
+    let rare = global.bun_vm().as_mut().rare_data();
+    let mut out = rare.take_compression_scratch();
     // SAFETY: `this` is the live coder owned by the calling JS cell; it is
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
-    // alias. No JS runs between `step` and `take` below.
-    match unsafe { (*this).step(slice, finish) } {
+    // alias.
+    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
-            // SAFETY: as above.
-            let out = unsafe { core::mem::take(&mut (*this).out) };
             if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
-                JSUint8Array::from_bytes(global, out.into())
+                JSUint8Array::from_bytes_copy(global, &out)
             }
         }
         Err(e) => {
@@ -812,7 +810,9 @@ pub extern "C" fn CompressionStreamCoder__transform(
             throw_codec_error(global, e);
             JSValue::ZERO
         }
-    }
+    };
+    rare.put_back_compression_scratch(out);
+    result
 }
 
 fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
@@ -862,36 +862,38 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
         // SAFETY: as in `CompressionStreamCoder__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
+    let rare = global.bun_vm().as_mut().rare_data();
+    let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
-    match unsafe { (*this).step(slice, finish) } {
+    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
-            // SAFETY: as above; the sink copies before returning.
-            let out = unsafe { &(*this).out };
-            if out.is_empty() {
-                return JSValue::UNDEFINED;
+            'write: {
+                let Some(sink_ptr) = NonNull::new(sink_ptr).filter(|_| !out.is_empty()) else {
+                    break 'write JSValue::UNDEFINED;
+                };
+                // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
+                // copies what it needs before returning.
+                let handle =
+                    unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
+                if handle.is_none() {
+                    break 'write JSValue::UNDEFINED;
+                }
+                handle
+                    .write(&crate::webcore::streams::Result::Temporary(
+                        bun_ptr::RawSlice::new(&out),
+                    ))
+                    .to_js(global)
             }
-            let Some(sink_ptr) = NonNull::new(sink_ptr) else {
-                return JSValue::UNDEFINED;
-            };
-            // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
-            // copies what it needs before returning.
-            let handle = unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
-            if handle.is_none() {
-                return JSValue::UNDEFINED;
-            }
-            handle
-                .write(&crate::webcore::streams::Result::Temporary(
-                    bun_ptr::RawSlice::new(out),
-                ))
-                .to_js(global)
         }
         Err(e) => {
             *more = false;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
-    }
+    };
+    rare.put_back_compression_scratch(out);
+    result
 }
 
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
@@ -919,6 +921,7 @@ pub struct CompressionAsyncCtx {
     /// Empty on a continuation step: the coder holds the chunk's tail.
     input: AsyncInput,
     finish: bool,
+    out: Vec<u8>,
     more: bool,
     error: Option<CodecError>,
 }
@@ -953,7 +956,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder).step(this.input.slice(), this.finish) } {
+        match unsafe { (*this.coder).step(this.input.slice(), this.finish, &mut this.out) } {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }
@@ -967,12 +970,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     ) -> bun_jsc::JsResult<()> {
         let global = cx.global();
         let (out, out_len, err) = match &this.error {
-            None => {
-                // SAFETY: `this` holds a coder reference until the end of this fn,
-                // and `deliverAsync` copies `out` before it can re-dispatch the coder.
-                let coder = unsafe { &*this.coder };
-                (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
-            }
+            None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
             Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
         };
         // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
@@ -1021,6 +1019,7 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
             coder: this,
             input,
             finish,
+            out: Vec::new(),
             more: false,
             error: None,
         },

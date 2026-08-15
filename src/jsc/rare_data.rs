@@ -270,6 +270,8 @@ pub struct RareData {
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+    /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
+    compression_scratch: Option<Vec<u8>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -330,6 +332,7 @@ impl Default for RareData {
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             h2_padded_frame_buffer: None,
+            compression_scratch: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -680,6 +683,20 @@ impl RareData {
     /// Hand a taken buffer back; the slot keeps the first one returned.
     pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
         self.h2_padded_frame_buffer.get_or_insert(buffer);
+    }
+
+    /// Empty `Vec` with whatever capacity the last step left behind.
+    pub fn take_compression_scratch(&mut self) -> Vec<u8> {
+        self.compression_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_compression_scratch(&mut self, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        if self.compression_scratch.is_none() && buffer.capacity() <= KEEP {
+            buffer.clear();
+            self.compression_scratch = Some(buffer);
+        }
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {

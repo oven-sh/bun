@@ -1789,6 +1789,15 @@ pub fn is_set_state_type(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_SET_STATE_ID)
 }
 
+pub fn is_set_state_identifier(
+    identifier_id: IdentifierId,
+    identifiers: &[Identifier],
+    types: &[Type],
+) -> bool {
+    let ident = &identifiers[identifier_id.0 as usize];
+    is_set_state_type(&types[ident.type_.0 as usize])
+}
+
 /// Returns true if the type is a useEffect hook.
 pub fn is_use_effect_hook_type(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_USE_EFFECT_HOOK_ID)

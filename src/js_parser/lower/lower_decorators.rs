@@ -128,7 +128,8 @@ fn defines_static_name_method(props: &[Property]) -> bool {
     props.iter().any(|prop| {
         prop.flags.contains(Flags::Property::IsStatic)
             && (prop.flags.contains(Flags::Property::IsMethod)
-                || prop.kind == PropertyKind::AutoAccessor)
+                // A decorated accessor is installed from the suffix instead.
+                || (prop.kind == PropertyKind::AutoAccessor && prop.ts_decorators.len_u32() == 0))
             && match &prop.key {
                 Some(key) => {
                     matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"name"))

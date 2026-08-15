@@ -126,10 +126,20 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `panic(message?: string)`. Tests pass a message to check how it comes
+    /// out in the trace string.
     #[bun_jsc::host_fn]
-    fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_panic(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let message_arg = frame.argument(0);
+        let custom_message;
+        let message: &[u8] = if message_arg.is_string() {
+            custom_message = BunString::from_js(message_arg, global)?.to_utf8();
+            custom_message.slice()
+        } else {
+            b"invoked crashByPanic() handler"
+        };
         crash_handler::suppress_core_dumps_if_necessary();
-        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+        crash_handler::panic_impl(message, None, None);
     }
 
     #[bun_jsc::host_fn]

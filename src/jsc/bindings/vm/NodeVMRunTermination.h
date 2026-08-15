@@ -29,8 +29,8 @@ public:
     ~NodeVMRunTermination();
 
     // Call once, right after the run (and any microtask checkpoint it bounds). If the run was cut short
-    // by its own timeout or SIGINT and the VM is not being stopped as a whole: the termination has been
-    // withdrawn, `microtaskContext`'s (the vm context's) queued microtasks discarded, and the
+    // by its own timeout or SIGINT and the VM is not being stopped as a whole: `microtaskContext`'s (the vm
+    // context's) queued microtasks have been discarded, the termination withdrawn, and the
     // ERR_SCRIPT_EXECUTION_* error thrown on `scope` from `errorRealm`. Otherwise nothing is touched and
     // whatever is pending — an ordinary exception, or a termination that is not this run's — is the
     // caller's to propagate. Either way the caller follows with RETURN_IF_EXCEPTION.

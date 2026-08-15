@@ -16,7 +16,6 @@
 #include "JavaScriptCore/ModuleProgramCodeBlock.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/Watchdog.h"
 
 namespace Bun {
 using namespace NodeVM;

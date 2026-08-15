@@ -119,7 +119,8 @@ void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
     }
 
     WTF::Locker lock(m_globalObjectsMutex);
-    m_globalObjects.appendIfNotContains(globalObject);
+    // One entry per registration, so nested holds of the same realm each keep it registered until they end.
+    m_globalObjects.append(globalObject);
 }
 
 void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)

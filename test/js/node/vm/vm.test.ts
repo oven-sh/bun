@@ -1605,6 +1605,21 @@ test("a vm timeout that never fires leaves nothing behind either", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Microtasks a timed-out script left on an afterEvaluate context are discarded, not run after the timeout
+// (they would run with no deadline armed).
+test("microtasks queued by a timed-out script on an afterEvaluate context are discarded", () => {
+  const ctx = createContext({}, { microtaskMode: "afterEvaluate" });
+  let error;
+  try {
+    runInContext("Promise.resolve().then(() => { for (;;) {} }); for (;;) {}", ctx, { timeout: 20 });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+  // ...and the context is still usable, with nothing of that promise job left to run.
+  expect(runInContext("1 + 1", ctx, { timeout: 1000 })).toBe(2);
+});
+
 // The next two run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
 // a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.

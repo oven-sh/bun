@@ -39,14 +39,19 @@ public:
             (assign(held), ...);
         }
 
+        // The realm before the receivers: signalAll() flags receivers and then notifies realms, so a SIGINT that
+        // still reaches this realm has already been recorded on its receivers.
         ~GlobalObjectHolder()
         {
+            if (m_globalObject) {
+                get().unregisterGlobalObject(m_globalObject);
+            }
+
             for (auto* receiver : m_receivers) {
                 get().unregisterReceiver(receiver);
             }
 
             if (m_globalObject) {
-                get().unregisterGlobalObject(m_globalObject);
                 get().deref();
             }
         }

@@ -76,6 +76,12 @@ pub struct Chunk {
     pub intermediate_output: IntermediateOutput,
     pub(crate) isolated_hash: u64,
 
+    /// When an earlier chunk with identical content claimed the same output
+    /// path, this is that chunk's index and this chunk's output is not
+    /// emitted; importers resolve to the canonical chunk's path instead.
+    /// `u32::MAX` = not a duplicate. See `generate_chunks_in_parallel`.
+    pub(crate) duplicate_of_chunk_index: u32,
+
     // Set before use. The borrowed enum (`Renamer<'r,'src>`)
     // borrows from the symbol table and so can't live in this owning struct.
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
@@ -209,6 +215,7 @@ impl Default for Chunk {
             output_source_map: source_map::SourceMapPieces::default(),
             intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
+            duplicate_of_chunk_index: u32::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
             compile_results_for_chunk: CompileResultSlots::default(),
             metafile_chunk_json: Box::default(),
@@ -218,6 +225,11 @@ impl Default for Chunk {
 }
 
 impl Chunk {
+    #[inline]
+    pub(crate) fn is_duplicate_output(&self) -> bool {
+        self.duplicate_of_chunk_index != u32::MAX
+    }
+
     /// Write `result` into `compile_results_for_chunk[i]` through a raw
     /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
     /// callbacks.

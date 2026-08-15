@@ -92,6 +92,10 @@ impl OutputFileList {
             'brk: {
                 let mut count: usize = 0;
                 for chunk in chunks {
+                    // Duplicate chunks emit no output of their own.
+                    if chunk.is_duplicate_output() {
+                        continue;
+                    }
                     if chunk
                         .content
                         .sourcemap(c.options.source_maps)
@@ -110,6 +114,9 @@ impl OutputFileList {
                 let mut bytecode_count: usize = 0;
                 let loaders = parse_graph.input_files.items_loader();
                 for chunk in chunks {
+                    if chunk.is_duplicate_output() {
+                        continue;
+                    }
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
                         loaders[chunk.entry_point.source_index() as usize]
                     } else {

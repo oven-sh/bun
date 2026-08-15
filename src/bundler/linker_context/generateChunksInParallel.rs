@@ -351,7 +351,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<()> = StringHashMap::default();
+        // Maps output path -> index of the first chunk that claimed it.
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
 
         #[derive(Default)]
         struct DuplicateEntry {
@@ -378,31 +379,62 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &mut chunk_visit_map,
             );
             chunk_visit_map.set_all(false);
-            let chunk = &mut chunks[index];
-            chunk.template.placeholder.hash = Some(hash.digest());
-
             let mut rel_path: Vec<u8> = Vec::new();
-            // Use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path.
-            // Disk output sanitizes leading `..`; `--compile` keeps it so
-            // runtime bunfs references to out-of-root entrypoints resolve.
-            chunk
-                .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
-                .expect("write to Vec<u8>");
+            {
+                let chunk = &mut chunks[index];
+                chunk.template.placeholder.hash = Some(hash.digest());
+
+                // Use the byte-writer (`PathTemplate::print`) directly —
+                // routing through `Display`/`write!` goes via `from_utf8_lossy`,
+                // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
+                // the output path.
+                // Disk output sanitizes leading `..`; `--compile` keeps it so
+                // runtime bunfs references to out-of-root entrypoints resolve.
+                chunk
+                    .template
+                    .print(&mut rel_path, !c.options.compile_mode.is_executable())
+                    .expect("write to Vec<u8>");
+            }
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
-            if path_names_map.get_or_put(&rel_path)?.found_existing {
+            let entry = path_names_map.get_or_put(&rel_path)?;
+            if entry.found_existing {
+                let canonical_index = *entry.value_ptr as usize;
+
+                // Two shared split chunks can compile to identical content
+                // (e.g. two fully tree-shaken stubs that re-export the same
+                // chunk), in which case a `[hash]` naming template yields the
+                // same path for both. That collision is benign: equal digests
+                // imply byte-identical final output, because the digest covers
+                // the chunk's own pieces plus every transitively imported
+                // chunk's hash, and cross-chunk import specifiers are
+                // substituted from paths derived from those same hashes. Emit
+                // one file and alias the duplicate to it, matching esbuild.
+                // Entry-point chunks are excluded so every entry point keeps
+                // its own output file.
+                if !chunks[index].entry_point.is_entry_point()
+                    && !chunks[canonical_index].entry_point.is_entry_point()
+                    && chunks[index].template.placeholder.hash
+                        == chunks[canonical_index].template.placeholder.hash
+                {
+                    let canonical_path = chunks[canonical_index].final_rel_path.clone();
+                    chunks[index].final_rel_path = canonical_path;
+                    chunks[index].duplicate_of_chunk_index =
+                        u32::try_from(canonical_index).expect("int cast");
+                    continue;
+                }
+
                 // collect all duplicates in a list
                 let dup = duplicates_map.get_or_put(&rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
+                dup.value_ptr
+                    .sources
+                    .push(bun_ptr::BackRef::new(&chunks[index]));
                 continue;
             }
+            *entry.value_ptr = u32::try_from(index).expect("int cast");
 
             // resolve any /./ and /../ occurrences
             // use resolvePosix since we asserted above all seps are '/'
@@ -412,11 +444,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
                     path::platform::Posix,
                 >(&rel_path, &mut buf));
-                chunk.final_rel_path = rel_path_fixed;
+                chunks[index].final_rel_path = rel_path_fixed;
                 continue;
             }
 
-            chunk.final_rel_path = rel_path.into_boxed_slice();
+            chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {
@@ -425,7 +457,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut entry_naming: Option<&[u8]> = None;
             let mut chunk_naming: Option<&[u8]> = None;
-            let mut asset_naming: Option<&[u8]> = None;
 
             writeln!(&mut msg, "Multiple files share the same output path")?;
 
@@ -447,7 +478,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             chunk_naming = Some(&chunk.template.data);
                         }
                     } else {
-                        asset_naming = Some(&chunk.template.data);
+                        // Shared split chunks are named by the chunk template.
+                        chunk_naming = Some(&chunk.template.data);
                     }
 
                     let source_index = chunk.entry_point.source_index();
@@ -463,11 +495,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
 
-            for (name, template) in [
-                ("entry", entry_naming),
-                ("chunk", chunk_naming),
-                ("asset", asset_naming),
-            ] {
+            for (name, template) in [("entry", entry_naming), ("chunk", chunk_naming)] {
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
@@ -579,6 +607,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Reshaped for borrowck — `generate_chunk_json` reads all chunks
         // immutably while we write one chunk's `metafile_chunk_json`; index split.
         for i in 0..chunks.len() {
+            // A duplicate chunk shares its canonical chunk's output path, so
+            // emitting a fragment for it would repeat that key in "outputs".
+            if chunks[i].is_duplicate_output() {
+                continue;
+            }
             let json =
                 metafile_builder::generate_chunk_json(c, &chunks[i], chunks).unwrap_or_default();
             chunks[i].metafile_chunk_json = json;
@@ -650,7 +683,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             if matches!(chunks[ci].content, crate::chunk::Content::Html) {
                 continue;
             }
-            let sourcemap_option = chunks[ci].content.sourcemap(c.options.source_maps);
+            // Duplicate chunks emit no .map file of their own (the canonical
+            // chunk's path is shared, so its .map covers both).
+            let sourcemap_option = if chunks[ci].is_duplicate_output() {
+                SourceMapOption::None
+            } else {
+                chunks[ci].content.sourcemap(c.options.source_maps)
+            };
             let mut ds: usize = 0;
             // Pass `scc` so that `.asset` pieces (e.g. `import logo from "./logo.svg"` with
             // the file loader) are resolved to data: URIs from `url_for_css` instead of
@@ -862,6 +901,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         entry_point_index: None,
                         referenced_css_chunks: Box::default(),
                         bake_extra: BakeExtra::default(),
+                        ..Default::default()
+                    },
+                ));
+                continue;
+            }
+
+            // A duplicate chunk's content is emitted by its canonical chunk.
+            // Insert a placeholder to keep chunk indices aligned; it is
+            // removed (with index remapping) before the list is returned.
+            if chunks[chunk_index_in_chunks_list].is_duplicate_output() {
+                let _ = output_files.insert_for_chunk(options::OutputFile::init(
+                    options::OutputFileInit {
+                        data: options::OutputFileData::Buffer {
+                            data: Box::default(),
+                        },
+                        loader: chunks[chunk_index_in_chunks_list].content.loader(),
+                        output_kind: options::OutputKind::Chunk,
+                        input_loader: Loader::Js,
                         ..Default::default()
                     },
                 ));
@@ -1329,7 +1386,54 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         return Ok(result);
     }
 
-    Ok(output_files.take())
+    let result = output_files.take();
+
+    // Drop the placeholder entries of duplicate chunks (identical content at
+    // the same output path as their canonical chunk) and remap every stored
+    // index into the list: `source_map_index`/`bytecode_index`/
+    // `module_info_index` shift with the removals, and `referenced_css_chunks`
+    // entries pointing at a duplicate redirect to its canonical chunk.
+    if chunks.iter().any(Chunk::is_duplicate_output) {
+        let is_removed = |i: usize| i < chunks.len() && chunks[i].is_duplicate_output();
+
+        let mut new_index: Vec<u32> = vec![u32::MAX; result.len()];
+        let mut kept: u32 = 0;
+        for (i, slot) in new_index.iter_mut().enumerate() {
+            if !is_removed(i) {
+                *slot = kept;
+                kept += 1;
+            }
+        }
+        for (i, chunk) in chunks.iter().enumerate() {
+            if chunk.is_duplicate_output() {
+                new_index[i] = new_index[chunk.duplicate_of_chunk_index as usize];
+            }
+        }
+
+        let mut compacted: Vec<options::OutputFile> = Vec::with_capacity(kept as usize);
+        for (i, mut file) in result.into_iter().enumerate() {
+            if is_removed(i) {
+                continue;
+            }
+            let remap = |index: u32| {
+                if index == u32::MAX {
+                    u32::MAX
+                } else {
+                    new_index[index as usize]
+                }
+            };
+            file.source_map_index = remap(file.source_map_index);
+            file.bytecode_index = remap(file.bytecode_index);
+            file.module_info_index = remap(file.module_info_index);
+            for chunk_ref in file.referenced_css_chunks.iter_mut() {
+                *chunk_ref = crate::output_file::Index::init(new_index[chunk_ref.get() as usize]);
+            }
+            compacted.push(file);
+        }
+        return Ok(compacted);
+    }
+
+    Ok(result)
 }
 
 use crate::EntryPoint;

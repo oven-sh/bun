@@ -401,7 +401,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // Write outputs by joining pre-built chunk JSON fragments
     let mut first_output = true;
     for chunk in chunks.iter() {
-        if chunk.final_rel_path.is_empty() {
+        // `metafile_chunk_json` stays empty for duplicate chunks (deduplicated
+        // output paths) and for chunks whose fragment failed to generate.
+        if chunk.final_rel_path.is_empty() || chunk.metafile_chunk_json.is_empty() {
             continue;
         }
 

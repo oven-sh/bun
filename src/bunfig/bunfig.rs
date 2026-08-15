@@ -1207,8 +1207,7 @@ impl<'a> Parser<'a> {
         let password = obj.get(b"password");
         let token = obj.get(b"token");
 
-        // Keys replace the URL's credentials as a set: `Scope::from_api` prefers a
-        // token, so a `:token@` from the URL would outrank username/password keys.
+        // Keys replace the URL's credentials as a set: from_api would favor a URL token over keys.
         if username.is_some() || password.is_some() || token.is_some() {
             registry = api::NpmRegistry {
                 url: registry.url,

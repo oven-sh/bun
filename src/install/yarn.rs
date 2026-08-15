@@ -101,9 +101,8 @@ pub(crate) struct ParsedNpmAlias<'a> {
 }
 
 impl<'a> Entry<'a> {
-    /// An alias entry is keyed `alias@npm:<name>@<range>`, so the key line itself carries the
-    /// package name. yarn puts every pattern that resolved to the same tarball on one key line,
-    /// so the alias spec may come after plain `<name>@<range>` specs of the same package.
+    /// yarn lists every spec that resolved to the same tarball on one key line, so the alias spec
+    /// naming the package may come after plain specs of it.
     pub(crate) fn package_name_of(specs: &[&'a [u8]]) -> &'a [u8] {
         if let Some(name) = specs.iter().find_map(|spec| Self::npm_alias_target(spec)) {
             return name;
@@ -129,9 +128,8 @@ impl<'a> Entry<'a> {
         })
     }
 
-    /// The name that, together with `version`, decides which entries become one package: the
-    /// repository for a git entry (its spec name is whatever the dependent chose to call it),
-    /// otherwise the package name. Consolidation and the package-id pass must agree on this.
+    /// Package identity (with `version`) for both consolidation and the package-id pass: a git
+    /// entry is its repository, since its spec name is whatever the dependent called it.
     pub(crate) fn dedupe_name(&self) -> &[u8] {
         match &self.git_repo_name {
             Some(repo_name) if !self.has_direct_url_spec() => repo_name,
@@ -260,8 +258,7 @@ impl<'a> Entry<'a> {
         })
     }
 
-    /// Splits `npm:<name>@<range>`. `<name>` may be scoped, so the `@` that starts it is
-    /// skipped before looking for the separator; a missing range means `*`.
+    /// Splits `npm:<name>@<range>`; the `@` of a scoped `<name>` is not the separator.
     pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
         let target = version.strip_prefix(b"npm:").unwrap_or(version);
         let scope_len = usize::from(target.starts_with(b"@"));

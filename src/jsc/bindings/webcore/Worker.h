@@ -74,11 +74,11 @@ public:
     // thread. With a sink installed (worker.stdout / worker.stderr materialised) the bytes go to it;
     // without one, or unless the sink captures exclusively ({ stdout: true }), they are written to the
     // parent's own stdout/stderr — Node's default pipe, minus the streams.
-    // Node's flow control rides along: the worker's process.stdout/stderr hold each write's completion until
-    // the parent acks — from the stream's _read() when a sink has it, right after writing it out otherwise —
-    // and an empty delivery is the worker ending that stream.
+    // Node's flow control rides along: the worker's process.stdout/stderr hold a batch's completion until the
+    // parent acks — from the stream's _read() when a sink has it, right after writing out a segment that asks
+    // for it otherwise — and an empty delivery is the worker ending that stream.
     void setStdioSink(JSC::VM&, int fd, JSC::JSObject* sink, bool captureOnly);
-    void deliverStdio(ScriptExecutionContext&, int fd, std::span<const uint8_t>);
+    void deliverStdio(ScriptExecutionContext&, int fd, std::span<const uint8_t>, bool wantsAck);
     void ackStdio(int fd);
 
     const String& name() const { return m_name; }

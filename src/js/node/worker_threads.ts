@@ -67,7 +67,6 @@ const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
 const {
-  0: _workerData,
   1: _threadId,
   2: _receiveMessageOnPort,
   3: environmentData,
@@ -76,9 +75,7 @@ const {
   6: _markAsUntransferable,
   7: _isMarkedAsUntransferable,
   8: _markAsUncloneable,
-  9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
-  11: _setParentPort,
   12: _setStdioSink,
   15: _stdioAck,
 } = bootstrap.binding as [

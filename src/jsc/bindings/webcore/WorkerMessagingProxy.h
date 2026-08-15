@@ -103,7 +103,9 @@ public:
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
     // Node worker_threads: bytes the worker wrote to stdout (fd 1) / stderr (fd 2). Delivered in order,
     // on the parent thread, to Worker::deliverStdio(), one chunk per write; a burst of writes is one task.
-    void postStdioToWorkerObject(int fd, std::span<const uint8_t>, bool endOfStream = false);
+    // wantsAck: the worker's stream holds a write's completion until Worker::ackStdio (once per batch; console
+    // output never asks). endOfStream: the worker ended that stream.
+    void postStdioToWorkerObject(int fd, std::span<const uint8_t>, bool wantsAck = false, bool endOfStream = false);
     // While the worker's process.stdout / stderr stream has writes queued, its console output is sent through
     // that stream too, so the two stay in order (worker thread; set from internal/worker/bootstrap).
     void setStdioDiverted(int fd, bool diverted) { diverted ? m_stdioDivertedMask.fetch_or(fd) : m_stdioDivertedMask.fetch_and(~fd); }
@@ -122,9 +124,14 @@ public:
         Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
         bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
     };
+    struct StdioSegment {
+        int fd;
+        Vector<uint8_t> bytes; // empty: end of that stream
+        bool wantsAck;
+    };
     struct StdioOutbox {
         Lock lock;
-        Vector<std::pair<int, Vector<uint8_t>>> segments WTF_GUARDED_BY_LOCK(lock);
+        Vector<StdioSegment> segments WTF_GUARDED_BY_LOCK(lock);
         bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
     };
 

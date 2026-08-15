@@ -549,6 +549,38 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Empty writes complete at once (nothing is sent, so no ack would come), and a burst of writes in one tick
+  // — one write plus a writev batch behind it — completes and arrives whole, in order, in the default mode
+  // where the parent's acks come from having written the chunks out.
+  test("empty and batched process.stdout writes in a worker complete and arrive in order", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(
+           `let done = 0;
+            process.stdout.write("", () => done++);
+            process.stdout.write(Buffer.alloc(0), () => done++);
+            for (let i = 0; i < 50; i++) process.stdout.write("L" + i + "\\n", () => done++);
+            process.stdout.write("", () => {
+              done++;
+              require("node:worker_threads").parentPort.postMessage(done);
+            });`,
+         )}, { eval: true });
+         w.on("message", done => console.error("[done " + done + "]"));
+         w.on("exit", c => console.error("[exit " + c + "]"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(Array.from({ length: 50 }, (_, i) => "L" + i + "\n").join(""));
+    expect(stderr).toBe("[done 53]\n[exit 0]\n");
+    expect(exitCode).toBe(0);
+  });
+
   // A worker's worker: its output goes to its parent, and from there — nobody reading it — on to the
   // process's stdout, as node routes it.
   test("a nested worker's output reaches the process's stdout through its parent", async () => {

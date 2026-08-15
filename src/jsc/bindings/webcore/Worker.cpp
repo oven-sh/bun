@@ -155,7 +155,7 @@ void Worker::setStdioSink(JSC::VM& vm, int fd, JSC::JSObject* sink, bool capture
 
 extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8_t* bytes, size_t length);
 
-void Worker::deliverStdio(ScriptExecutionContext& context, int fd, std::span<const uint8_t> bytes)
+void Worker::deliverStdio(ScriptExecutionContext& context, int fd, std::span<const uint8_t> bytes, bool wantsAck)
 {
     ASSERT(fd == 1 || fd == 2);
     auto* globalObject = defaultGlobalObject(context.globalObject());
@@ -163,13 +163,19 @@ void Worker::deliverStdio(ScriptExecutionContext& context, int fd, std::span<con
     if (sink) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto reportUnlessTerminating = [&](JSC::Exception* exception) {
+            if (vm.isTerminationException(exception))
+                return;
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        };
         JSC::MarkedArgumentBuffer args;
         if (bytes.empty())
             args.append(JSC::jsNull());
         else {
             auto* chunk = JSC::JSUint8Array::create(globalObject, globalObject->JSBufferSubclassStructure(), bytes.size());
-            if (scope.exception()) [[unlikely]] {
-                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                reportUnlessTerminating(exception);
                 return;
             }
             memcpySpan(chunk->typedSpan(), bytes);
@@ -177,19 +183,16 @@ void Worker::deliverStdio(ScriptExecutionContext& context, int fd, std::span<con
         }
         JSC::call(globalObject, sink, JSC::getCallData(sink), JSC::jsUndefined(), args);
         if (auto* exception = scope.exception()) [[unlikely]] {
-            if (!vm.isTerminationException(exception)) {
-                (void)scope.tryClearException();
-                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            }
+            reportUnlessTerminating(exception);
             return;
         }
+        // The stream's _read() acks as it wants more.
         if (m_stdioCaptureOnly[fd - 1])
             return;
     }
-    if (bytes.empty())
-        return;
-    Bun__VirtualMachine__writeStdio(globalObject->bunVM(), fd, bytes.data(), bytes.size());
-    if (!sink)
+    if (!bytes.empty())
+        Bun__VirtualMachine__writeStdio(globalObject->bunVM(), fd, bytes.data(), bytes.size());
+    if (!sink && wantsAck)
         ackStdio(fd);
 }
 
@@ -440,7 +443,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 4, "setStdioSink"_s, jsFunctionSetStdioSink, ImplementationVisibility::Public, NoIntrinsic));
-    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 2, "workerStdioWrite"_s, jsFunctionWorkerStdioWrite, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 3, "workerStdioWrite"_s, jsFunctionWorkerStdioWrite, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 14, JSFunction::create(vm, globalObject, 1, "setStdioAckHandler"_s, jsFunctionSetStdioAckHandler, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 15, JSFunction::create(vm, globalObject, 2, "stdioAck"_s, jsFunctionStdioAck, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 16, JSFunction::create(vm, globalObject, 1, "refEventLoop"_s, jsFunctionRefEventLoop, ImplementationVisibility::Public, NoIntrinsic));
@@ -474,24 +477,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStdioSink, (JSGlobalObject * lexicalGlobal
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8_t* bytes, size_t length);
-
 // Worker side: process.stdout / process.stderr writes travel the same way console output does; null ends
-// that stream on the parent. workerStdioWrite(fd, chunk: Uint8Array | null)
+// that stream on the parent; wantsAck asks the parent to ack once it has taken it (the last chunk of a batch).
+// Returns whether an ack will come. workerStdioWrite(fd, chunk: Uint8Array | null, wantsAck)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerStdioWrite, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue fdValue = callFrame->argument(0);
     int fd = fdValue.isInt32() ? fdValue.asInt32() : 0;
     auto* chunk = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(1));
-    if ((!chunk && !callFrame->argument(1).isNull()) || (fd != 1 && fd != 2))
-        return JSValue::encode(jsUndefined());
+    bool endOfStream = callFrame->argument(1).isNull();
+    if ((!chunk && !endOfStream) || (fd != 1 && fd != 2))
+        return JSValue::encode(jsBoolean(false));
     std::span<const uint8_t> bytes = chunk ? chunk->span() : std::span<const uint8_t> {};
-    if (auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM()); proxy && proxy->options().kind == WorkerOptions::Kind::Node)
-        proxy->postStdioToWorkerObject(fd, bytes, !chunk);
-    else if (chunk)
+    if (bytes.empty() && !endOfStream)
+        return JSValue::encode(jsBoolean(false));
+    bool wantsAck = callFrame->argument(2).toBoolean(lexicalGlobalObject);
+    if (auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM()); proxy && proxy->options().kind == WorkerOptions::Kind::Node) {
+        proxy->postStdioToWorkerObject(fd, bytes, wantsAck, endOfStream);
+        return JSValue::encode(jsBoolean(wantsAck));
+    }
+    if (chunk)
         Bun__VirtualMachine__writeStdio(globalObject->bunVM(), fd, bytes.data(), bytes.size());
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(false));
 }
 
 // Worker side: the function told when the parent has taken a stream's pending writes. setStdioAckHandler(fn)

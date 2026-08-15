@@ -9,7 +9,7 @@ const threadId = binding[1] as number;
 const setEntryEvaluatedHook = binding[9] as (hook: () => void) => void;
 const isNodeWorker = binding[10] as boolean;
 const setParentPort = binding[11] as (port: MessagePort) => void;
-const workerStdioWrite = binding[13] as (fd: number, chunk: Uint8Array | null) => void;
+const workerStdioWrite = binding[13] as (fd: number, chunk: Uint8Array | null, wantsAck?: boolean) => boolean;
 const setStdioAckHandler = binding[14] as (handler: (fd: number, consoleChunk?: Uint8Array) => void) => void;
 const refEventLoop = binding[16] as (delta: 1 | -1) => void;
 const setStdioDiverted = binding[17] as (fd: number, diverted: boolean) => void;
@@ -62,9 +62,9 @@ function workerProcessStdio(fd: number) {
 }
 
 // process.stdout / process.stderr in the worker, with node's flow control (lib/internal/worker/io.js): the
-// bytes leave right away, but a write's callback is held until the parent says it has taken them — from
-// worker.stdout's _read() when the parent captures or reads it, straight after writing them out otherwise
-// — so write() returns false and 'drain' waits while the parent is not keeping up. One batch is
+// bytes leave right away, but a batch's callback is held until the parent says it has taken it — from
+// worker.stdout's _read() when the parent captures or reads it, straight after writing out its last chunk
+// otherwise — so write() returns false and 'drain' waits while the parent is not keeping up. One batch is
 // outstanding at a time and the thread stays alive while it is. end() ends worker.stdout on the parent.
 const parentWritables: any[] = [];
 function makeParentWritable(fd: number) {
@@ -91,21 +91,26 @@ function makeParentWritable(fd: number) {
       refEventLoop(1);
     }
   }
+  const toBytes = (chunk, encoding) => (typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
   const stream = new Writable({
     decodeStrings: false,
     write(chunk, encoding, cb) {
-      workerStdioWrite(fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
-      awaitAck(cb);
+      // One ack per batch, asked for with its last non-empty chunk; nothing sent, nothing to wait for.
+      if (workerStdioWrite(fd, toBytes(chunk, encoding), true)) awaitAck(cb);
+      else cb();
     },
     writev(chunks, cb) {
-      for (let i = 0; i < chunks.length; i++) {
-        const { chunk, encoding } = chunks[i];
-        workerStdioWrite(fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+      let last = chunks.length - 1;
+      while (last >= 0 && toBytes(chunks[last].chunk, chunks[last].encoding).length === 0) last--;
+      let acked = false;
+      for (let i = 0; i <= last; i++) {
+        acked = workerStdioWrite(fd, toBytes(chunks[i].chunk, chunks[i].encoding), i === last) || acked;
       }
-      awaitAck(cb);
+      if (acked) awaitAck(cb);
+      else cb();
     },
     final(cb) {
-      workerStdioWrite(fd, null);
+      workerStdioWrite(fd, null, false);
       cb();
     },
     destroy(err, cb) {

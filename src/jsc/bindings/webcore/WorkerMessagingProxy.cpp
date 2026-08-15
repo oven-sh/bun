@@ -423,18 +423,17 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-void WorkerMessagingProxy::postStdioToWorkerObject(int fd, std::span<const uint8_t> bytes, bool endOfStream)
+void WorkerMessagingProxy::postStdioToWorkerObject(int fd, std::span<const uint8_t> bytes, bool wantsAck, bool endOfStream)
 {
-    if (bytes.empty() && !endOfStream)
-        return;
+    ASSERT(!bytes.empty() || endOfStream);
     {
         Locker locker { m_stdioToParent.lock };
         auto& segments = m_stdioToParent.segments;
-        // One segment per write, as node delivers them (an empty one is that stream's end); one task drains all.
+        // One segment per write, as node delivers them; one task drains all.
         if (!bytes.empty())
-            segments.append({ fd, Vector<uint8_t>(bytes) });
+            segments.append({ fd, Vector<uint8_t>(bytes), wantsAck && !endOfStream });
         if (endOfStream)
-            segments.append({ fd, {} });
+            segments.append({ fd, {}, wantsAck });
         if (m_stdioToParent.drainScheduled)
             return;
         m_stdioToParent.drainScheduled = true;
@@ -452,17 +451,17 @@ extern "C" void Bun__VirtualMachine__writeStdio(void* bunVM, int fd, const uint8
 
 void WorkerMessagingProxy::drainStdioToWorkerObject(ScriptExecutionContext& context)
 {
-    Vector<std::pair<int, Vector<uint8_t>>> segments;
+    Vector<StdioSegment> segments;
     {
         Locker locker { m_stdioToParent.lock };
         segments = std::exchange(m_stdioToParent.segments, {});
         m_stdioToParent.drainScheduled = false;
     }
-    for (auto& [fd, bytes] : segments) {
+    for (auto& segment : segments) {
         if (RefPtr workerObject = m_workerObject)
-            workerObject->deliverStdio(context, fd, bytes.span());
-        else if (!bytes.isEmpty())
-            Bun__VirtualMachine__writeStdio(defaultGlobalObject(context.globalObject())->bunVM(), fd, bytes.span().data(), bytes.size());
+            workerObject->deliverStdio(context, segment.fd, segment.bytes.span(), segment.wantsAck);
+        else if (!segment.bytes.isEmpty())
+            Bun__VirtualMachine__writeStdio(defaultGlobalObject(context.globalObject())->bunVM(), segment.fd, segment.bytes.span().data(), segment.bytes.size());
     }
 }
 

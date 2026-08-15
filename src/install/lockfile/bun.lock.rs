@@ -1708,6 +1708,18 @@ impl<T> PkgMap<T> {
         self.map.contains_key(path)
     }
 
+    /// The entry printed inside `pkg_path`'s own `node_modules`: the first probe of `find_resolution`.
+    fn get_nested(&self, pkg_path: &[u8], dep_name: &[u8], path_buf: &mut [u8]) -> Option<&T> {
+        let len = pkg_path.len() + 1 + dep_name.len();
+        if len > path_buf.len() {
+            return None;
+        }
+        path_buf[..pkg_path.len()].copy_from_slice(pkg_path);
+        path_buf[pkg_path.len()] = b'/';
+        path_buf[pkg_path.len() + 1..len].copy_from_slice(dep_name);
+        self.get(&path_buf[..len])
+    }
+
     fn find_resolution(
         &self,
         pkg_path: &[u8],
@@ -3088,6 +3100,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
+                // Every entry at the root level is a hoisted one, so none of them is a recorded peer binding.
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
                     catalogs,
@@ -3095,6 +3108,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    || None,
                 );
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
@@ -3177,6 +3191,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         overrides,
                         pkg_resolutions,
                         string_buf,
+                        || pkg_map.get(workspace_node_modules).copied(),
                     );
                     let Some(res_id) = peer_res_id.or_else(|| {
                         pkg_map
@@ -3241,6 +3256,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     continue 'deps;
                 }
 
+                let dep_name = dep.name.slice(string_buf);
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
                     catalogs,
@@ -3248,6 +3264,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    || {
+                        pkg_map
+                            .get_nested(pkg_path, dep_name, &mut path_buf[..])
+                            .copied()
+                    },
                 );
                 let res_id = match peer_res_id {
                     Some(id) => id,
@@ -3336,13 +3357,23 @@ fn deferred_peer_range<'a>(
 /// `install_peer`): scan the package ids recorded for the dependency's
 /// name — `package_index` lists are kept ordered by descending
 /// `Resolution::order` — and take the first whose resolution satisfies
-/// the range. When nothing satisfies, fall back to the highest-ordered
-/// candidate, and only when it is the same kind as the dependency (the
-/// "incorrect peer dependency" case; the fresh resolver inspects only
-/// `list[0]` there, and reproducing its choice exactly is the point of
-/// this helper). Returns `None` when no package with the name exists
-/// or the fallback is a different kind; the caller then falls back to
-/// the path walk. Edges `deferred_peer_range` rejects also return `None`.
+/// the range. When nothing satisfies, the binding is `nested()`, the entry
+/// the printed tree has inside the dependent's own `node_modules`, if any:
+/// the hoister nests a peer under its dependent exactly when nothing
+/// enclosing satisfies it, so that entry is the binding the file records
+/// (1.3.x bound every peer by path and wrote many such entries), and it is
+/// also what node resolves from the dependent; binding anything else would
+/// leave it without a dependent and drop it from the lockfile on the next
+/// save. A tree written by this version has the fallback candidate there,
+/// nothing, or a copy a dependency of the dependent could not hoist any
+/// further, which node resolves from the dependent as well. Without such
+/// an entry, fall back to the highest-ordered candidate, and only when it is
+/// the same kind as the dependency (the "incorrect peer dependency" case;
+/// the fresh resolver inspects only `list[0]` there, and reproducing its
+/// choice exactly is the point of this helper). Returns `None` when no
+/// package with the name exists or the fallback is a different kind; the
+/// caller then falls back to the path walk. Edges `deferred_peer_range`
+/// rejects also return `None`.
 ///
 /// Peer edges cannot be resolved from the printed tree the way regular
 /// edges are: a peer never materializes its own `node_modules` path when
@@ -3367,6 +3398,7 @@ pub(crate) fn resolve_peer_dep_version_based(
     overrides: &OverrideMap,
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
+    nested: impl FnOnce() -> Option<PackageID>,
 ) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
     // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
@@ -3415,6 +3447,10 @@ pub(crate) fn resolve_peer_dep_version_based(
         {
             return Some(id);
         }
+    }
+
+    if let Some(id) = nested() {
+        return Some(id);
     }
 
     let &first = candidates.first()?;

@@ -1450,6 +1450,56 @@ it("--frozen-lockfile keeps a package that an older lockfile lists only as an op
   expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
 
+// bun 1.3.x bound every peer to the entry the tree placed next to it, so a
+// bun.lock it wrote can nest a copy under a dependent whose peer range no
+// version in the lockfile satisfies. Loading has to bind the peer to that copy,
+// as 1.3.x did: bound to the hoisted version instead, the copy is not installed
+// and has no dependent left, so the next save drops it.
+it("installs and keeps the copy an older lockfile nests under a dependent whose peer range nothing satisfies", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+  });
+  const run = makeInstallRunner(packageDir);
+  const dependencies = { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" };
+  const nestedEntry = '"strict-peer-dep/no-deps": ["no-deps@1.0.0"';
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "foo", dependencies })),
+    write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies } },
+        packages: {
+          "no-deps": ["no-deps@1.0.1", "", {}, ""],
+          "one-dep": ["one-dep@1.0.0", "", { dependencies: { "no-deps": "1.0.1" } }, ""],
+          // strict-peer-dep wants no-deps@^2.0.0; neither copy satisfies it, and
+          // this nested one is the binding an earlier install recorded.
+          "strict-peer-dep": ["strict-peer-dep@1.0.0", "", { peerDependencies: { "no-deps": "^2.0.0" } }, ""],
+          "strict-peer-dep/no-deps": ["no-deps@1.0.0", "", {}, ""],
+        },
+      }),
+    ),
+  ]);
+
+  await run(["install", "--frozen-lockfile"]);
+  const installedVersion = (...segments: string[]) =>
+    file(join(packageDir, "node_modules", ...segments, "package.json"))
+      .json()
+      .then(({ version }) => version)
+      .catch(() => null);
+  expect(
+    await Promise.all([installedVersion("no-deps"), installedVersion("strict-peer-dep", "node_modules", "no-deps")]),
+  ).toEqual(["1.0.1", "1.0.0"]);
+
+  await run(["install", "--lockfile-only"]);
+  const saved = await file(join(packageDir, "bun.lock")).text();
+  expect(saved).toContain(nestedEntry);
+
+  await run(["install", "--frozen-lockfile"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+});
+
 // The optional-peer-hoist-* fixtures are described in
 // registry/packages/create-optional-peer-hoist-packages.ts. In short: consumer
 // has an optional peer on target, and deep -> deep-child reaches target@1.0.0

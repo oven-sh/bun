@@ -62,7 +62,6 @@
 "same_match_twice:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "same_match_twice:src/runtime/bake/production.rs" = 2
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
-"same_match_twice:src/runtime/cli/publish_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
 "same_match_twice:src/runtime/server/RequestContext.rs" = 4
 "same_match_twice:src/runtime/server/server_body.rs" = 1

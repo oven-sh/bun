@@ -572,12 +572,15 @@ mod errno_name_tests {
     #[cfg(windows)]
     #[test]
     fn e_and_system_errno_declare_the_same_discriminants() {
-        for n in 0..=u16::MAX {
-            assert_eq!(
-                E::from_repr(n).is_some(),
-                SystemErrno::from_repr(n).is_some(),
-                "discriminant {n}"
-            );
+        use enum_map::Enum;
+        assert_eq!(E::LENGTH, SystemErrno::LENGTH);
+        for i in 0..SystemErrno::LENGTH {
+            let s = SystemErrno::from_usize(i);
+            assert_eq!(s.to_e() as u16, s as u16, "{s:?}");
+        }
+        for i in 0..E::LENGTH {
+            let e = E::from_usize(i);
+            assert_eq!(SystemErrno::from_raw(e as u16) as u16, e as u16, "{e:?}");
         }
     }
 

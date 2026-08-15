@@ -108,6 +108,18 @@ enum DeclarationLoc {
     ParamOrContext,
 }
 
+impl DeclarationLoc {
+    fn instruction(&self) -> Option<(usize, usize)> {
+        match self {
+            DeclarationLoc::Instruction {
+                block_index,
+                instr_local_index,
+            } => Some((*block_index, *instr_local_index)),
+            DeclarationLoc::ParamOrContext => None,
+        }
+    }
+}
+
 pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
     func: &mut HirFunction,
     env: &Environment,
@@ -178,16 +190,9 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                         let decl_id = ident.declaration_id;
                         if let Some(existing) = declarations.get(decl_id) {
                             // Reassignment: mark existing declaration as Let, current as Reassign
-                            match existing {
-                                DeclarationLoc::Instruction {
-                                    block_index: bi,
-                                    instr_local_index: ili,
-                                } => {
-                                    let_locs.push((*bi, *ili));
-                                }
-                                DeclarationLoc::ParamOrContext => {
-                                    // Already Let, no-op
-                                }
+                            // A parameter or context variable is already Let.
+                            if let Some(loc) = existing.instruction() {
+                                let_locs.push(loc);
                             }
                             reassign_locs.push((block_index, local_idx));
                         } else {
@@ -247,16 +252,9 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                                     ));
                                 }
                                 kind = Some(InstructionKind::Reassign);
-                                match existing {
-                                    DeclarationLoc::Instruction {
-                                        block_index: bi,
-                                        instr_local_index: ili,
-                                    } => {
-                                        let_locs.push((*bi, *ili));
-                                    }
-                                    DeclarationLoc::ParamOrContext => {
-                                        // Already Let
-                                    }
+                                // A parameter or context variable is already Let.
+                                if let Some(loc) = existing.instruction() {
+                                    let_locs.push(loc);
                                 }
                             } else {
                                 // New declaration
@@ -304,16 +302,9 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                             lvalue.loc,
                         ));
                     };
-                    match existing {
-                        DeclarationLoc::Instruction {
-                            block_index: bi,
-                            instr_local_index: ili,
-                        } => {
-                            let_locs.push((*bi, *ili));
-                        }
-                        DeclarationLoc::ParamOrContext => {
-                            // Already Let
-                        }
+                    // A parameter or context variable is already Let.
+                    if let Some(loc) = existing.instruction() {
+                        let_locs.push(loc);
                     }
                 }
                 _ => {}

@@ -3358,6 +3358,28 @@ pub(crate) fn resolve_peer_dep_version_based(
     string_buf: &[u8],
 ) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
+    resolve_peer_dep_by_range(
+        dep,
+        range,
+        package_index,
+        overrides,
+        pkg_resolutions,
+        string_buf,
+    )
+}
+
+/// The scan behind `resolve_peer_dep_version_based`, for callers that have no printed tree to fall
+/// back on: lockfile migration binds every non-optional peer of the root and the workspaces this
+/// way, `*` ranges included. `None` (overridden name, or nothing to bind to) leaves the edge to a
+/// fresh resolve.
+pub(crate) fn resolve_peer_dep_by_range(
+    dep: &Dependency,
+    range: &DependencyVersion,
+    package_index: &PackageIndexMap,
+    overrides: &OverrideMap,
+    pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+) -> Option<PackageID> {
     // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
     let name_hash = match range.tag {
         DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),

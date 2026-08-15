@@ -336,10 +336,7 @@ impl AliasingState {
             // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
             // Collect edges to avoid borrow conflict
             let edges: Vec<Edge> = node.edges.clone();
-            let node_value_kind = match &node.value {
-                NodeValue::Phi => "Phi",
-                _ => "Other",
-            };
+            let node_is_phi = matches!(node.value, NodeValue::Phi);
             let node_aliases: Vec<(IdentifierId, usize)> =
                 node.aliases.iter().map(|(&k, &v)| (k, v)).collect();
             let node_maybe_aliases: Vec<(IdentifierId, usize)> =
@@ -378,7 +375,7 @@ impl AliasingState {
                 });
             }
 
-            if entry.direction == Direction::Backwards || node_value_kind != "Phi" {
+            if entry.direction == Direction::Backwards || !node_is_phi {
                 // Backward alias edges
                 for (alias, when) in &node_aliases {
                     if *when >= index {

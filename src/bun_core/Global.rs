@@ -800,7 +800,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
 
-        // The mask is inherited across execve; a blocked `sig` would only go pending.
+        // Whatever left `sig` blocked, raise() would only make it pending.
         // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
         unsafe {
             let mut set: libc::sigset_t = crate::ffi::zeroed();

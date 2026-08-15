@@ -124,7 +124,10 @@ async function compile(cwd: string, args: string[]) {
   expect(exitCode, stderr).toBe(0);
 }
 
-describe.concurrent.skipIf(!cc)("dies from the child's signal when bun inherited it blocked", () => {
+// The re-raise has to unblock the signal first; otherwise raise() only leaves it
+// pending and bun does not die from it. A launcher that blocked the signal is
+// how a blocked one gets handed to bun from outside.
+describe.concurrent.skipIf(!cc)("dies from the child's signal when bun was started with it blocked", () => {
   test.each(entryPoints)("%s", async (_, cmd, reports) => {
     using dir = project("propagate-signal-blocked");
     const sigmask = join(String(dir), "sigmask");

@@ -2,8 +2,7 @@
 #![warn(unused_must_use)]
 //! Re-exports of the install config types (`BunInstall`, `NpmRegistry`, …)
 //! whose canonical definitions live in `bun_options_types::schema::api`, plus
-//! the `Parser` handle through which the bunfig and npmrc loaders parse
-//! registry URL strings (`NpmRegistry::from_url`).
+//! the `Parser` handle used by the bunfig and npmrc loaders.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports — canonical definitions live in `bun_options_types::schema::api`.
@@ -33,8 +32,6 @@ pub mod npm_registry {
     }
 
     impl<'a, L, S> Parser<'a, L, S> {
-        /// The bunfig / .npmrc entry point of `NpmRegistry::from_url`;
-        /// `--registry` and the registry env vars call that directly.
         pub fn parse_registry_url_string_impl(
             &mut self,
             str: &[u8],

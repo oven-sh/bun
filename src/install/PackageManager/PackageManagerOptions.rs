@@ -608,9 +608,7 @@ impl Options {
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
-                        // Credentials written into the URL replace the configured
-                        // ones, like a `registry=` line with userinfo does in .npmrc.
-                        // Otherwise a token configured for the same host carries over.
+                        // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         if !api_registry.has_credentials() {
                             let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
@@ -687,8 +685,6 @@ impl Options {
             if !cli.registry.is_empty() {
                 let api_registry = Api::NpmRegistry::from_url(cli.registry);
                 if api_registry.has_credentials() {
-                    // Same rule as the env registry above: credentials in the
-                    // URL replace whatever was configured for the registry.
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
                     let new_url = bun_url::URL::parse(&api_registry.url);

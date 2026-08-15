@@ -153,12 +153,8 @@ pub mod api {
     }
 
     impl NpmRegistry {
-        /// Parses a registry given as a bare URL string (`registry=` in
-        /// .npmrc, `install.registry = "..."` in bunfig, `--registry`,
-        /// `BUN_CONFIG_REGISTRY`). Credentials written into the URL are moved
-        /// out of it: `https://user:pass@host/` becomes `username`/`password`
-        /// and `https://:token@host/` becomes `token`, so the stored `url`
-        /// never carries them.
+        /// `https://user:pass@host/` fills `username`/`password` and
+        /// `https://:token@host/` fills `token`; `url` is stored without them.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();

@@ -1005,6 +1005,29 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("console.log and Bun.inspect show the inferred name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Item = class { accessor id; };
+        const Decorated = class { @dec m() {} };
+        class Child extends Item {}
+        console.log(Item, Bun.inspect(new Item(), { compact: true }), Bun.inspect({ item: new Item() }, { compact: true }));
+        console.log(Decorated, Bun.inspect(new Decorated(), { compact: true }), Child);
+        const id = x => x;
+        const Nameless = id(class { @dec m() {} });
+        console.log(Nameless, Bun.inspect(new Nameless(), { compact: true }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        [
+          "[class Item] Item { id: [Getter/Setter] } { item: Item { id: [Getter/Setter] } }",
+          "[class Decorated] Decorated { m: [Function: m] } [class Child extends Item]",
+          "[class (anonymous)] { m: [Function: m] }",
+        ].join("\n") + "\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("every naming context", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec() {}

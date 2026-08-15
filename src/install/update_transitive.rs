@@ -1285,8 +1285,7 @@ fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> Vec<Vec<De
     edges_on
 }
 
-/// True when some edge on the instance cannot follow the move to `v` and stays at `current`,
-/// which still satisfies the moving range: the fork would re-add the duplicate `bun dedupe` removes.
+/// An edge left behind at a still-satisfying `current` would re-create the duplicate `bun dedupe` removes.
 fn forks_surviving_instance(
     lockfile: &Lockfile,
     inst: &Instance,

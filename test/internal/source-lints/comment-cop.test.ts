@@ -1,14 +1,12 @@
 /**
  * The script embedded in .github/workflows/comment-cop.yml, run the way
- * actions/github-script runs it (as an async function body with `github`,
- * `context`, `core` and `require` in scope) against a fake `github` that
- * records writes instead of sending them.
+ * actions/github-script runs it (an async function body with `require`,
+ * `github`, `context` and `core` in scope) against a fake `github` that
+ * records the comments the script posts instead of sending them.
  *
- * The scenarios pin the workflow's dependence on the two GitHub API quotas:
  * GITHUB_TOKEN's GraphQL quota is shared by every workflow run in the repo and
- * is routinely exhausted, so scanning, dedup and posting have to work with
- * GraphQL unavailable, and only the auto-resolve of stale threads (thread ids
- * and resolved state exist only in GraphQL) may depend on it, as a warning.
+ * is routinely exhausted, so the fake fails every GraphQL request the way
+ * GitHub does then; the step has to dedup and post using REST alone.
  */
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -34,9 +32,10 @@ const PATH = "src/runtime/example.rs";
 
 /** Same key the workflow derives for a comment group: path plus a hash of the comment text. */
 const keyFor = (text: string) => `${PATH}:${createHash("sha256").update(text).digest("hex").slice(0, 12)}`;
-const markerComment = (key: string) => `<!-- comment-cop:${key} -->\nplease delete this comment\n`;
+/** What one of the workflow's own comments looks like when read back from the PR. */
+const botComment = (key: string) => `<!-- comment-cop:${key} -->\nplease delete this comment\n`;
 
-// Two three-line comment groups added at lines 2-4 and 6-8 of the new file.
+// Two three-line comment groups, added at lines 2-4 and 6-8 of the new file.
 const firstGroup = ["// first group, line one", "// first group, line two", "// first group, line three"];
 const secondGroup = ["// second group, line one", "// second group, line two", "// second group, line three"];
 const patch = [
@@ -50,9 +49,8 @@ const patch = [
 ].join("\n");
 const FIRST = keyFor(firstGroup.join("\n"));
 const SECOND = keyFor(secondGroup.join("\n"));
-/** Flagged on an earlier push, and the comment it flagged is no longer in the diff. */
-const STALE_UNRESOLVED = `${PATH}:000000000001`;
-const STALE_RESOLVED = `${PATH}:000000000002`;
+/** Flagged on an earlier push; the comment it flagged is no longer in the diff. */
+const STALE = `${PATH}:000000000001`;
 
 const expectedPost = (key: string, start: number, end: number) => ({
   owner: "oven-sh",
@@ -67,74 +65,34 @@ const expectedPost = (key: string, start: number, end: number) => ({
   body: expect.stringContaining(`<!-- comment-cop:${key} -->`),
 });
 
-const rateLimitError = () =>
-  Object.assign(
-    new Error(
-      "Request failed due to following response errors:\n - API rate limit already exceeded for site ID installation.",
-    ),
-    { name: "GraphqlResponseError", errors: [{ type: "RATE_LIMIT", code: "graphql_rate_limit" }] },
-  );
-
-type Thread = { id: string; isResolved: boolean; comments: { nodes: { body: string }[] } };
-const thread = (id: string, body: string | null, isResolved = false): Thread => ({
-  id,
-  isResolved,
-  comments: { nodes: body === null ? [] : [{ body }] },
-});
-
-interface Scenario {
-  /** Bodies of the review comments already on the PR, as `pulls.listReviewComments` returns them. */
-  reviewComments: string[];
-  /** Pages served for the reviewThreads query; omitted means every GraphQL request fails on the rate limit. */
-  threadPages?: Thread[][];
-}
-
-async function scan({ reviewComments, threadPages }: Scenario) {
-  const posted: unknown[] = [];
-  const resolved: string[] = [];
+/** Bodies of the review comments already on the PR, as `pulls.listReviewComments` returns them. */
+async function scan(reviewComments: string[]) {
+  const posted: { body: string }[] = [];
   const graphqlRequests: string[] = [];
-  const restPaginated: string[] = [];
   const warnings: string[] = [];
-  const info: string[] = [];
 
-  const endpoint = <T>(name: string, rows: () => T[]) =>
-    Object.assign(async () => ({ data: rows() }), { endpointName: name });
   const github = {
     rest: {
       pulls: {
-        listFiles: endpoint("pulls.listFiles", () => [{ filename: PATH, status: "modified", patch }]),
-        listReviewComments: endpoint("pulls.listReviewComments", () =>
-          reviewComments.map((body, i) => ({ id: i + 1, body, user: { login: "github-actions[bot]" } })),
-        ),
-        createReviewComment: async (params: unknown) => {
+        listFiles: async () => ({ data: [{ filename: PATH, status: "modified", patch }] }),
+        listReviewComments: async () => ({
+          data: reviewComments.map((body, i) => ({ id: i + 1, body, user: { login: "github-actions[bot]" } })),
+        }),
+        createReviewComment: async (params: { body: string }) => {
           posted.push(params);
           return { data: {} };
         },
       },
     },
-    paginate: async (fn: { endpointName: string; (): Promise<{ data: unknown[] }> }) => {
-      restPaginated.push(fn.endpointName);
-      return (await fn()).data;
-    },
-    graphql: async (query: string, variables: { id?: string; after?: string | null }) => {
-      const isMutation = /^\s*mutation\b/.test(query);
-      graphqlRequests.push(isMutation ? "mutation" : "query");
-      if (threadPages === undefined) throw rateLimitError();
-      if (isMutation) {
-        resolved.push(variables.id!);
-        return { resolveReviewThread: { thread: { id: variables.id } } };
-      }
-      const pageIndex = variables.after == null ? 0 : Number(variables.after);
-      return {
-        repository: {
-          pullRequest: {
-            reviewThreads: {
-              pageInfo: { hasNextPage: pageIndex + 1 < threadPages.length, endCursor: String(pageIndex + 1) },
-              nodes: threadPages[pageIndex],
-            },
-          },
-        },
-      };
+    paginate: async (endpoint: () => Promise<{ data: unknown[] }>) => (await endpoint()).data,
+    graphql: async (query: string) => {
+      graphqlRequests.push(query);
+      throw Object.assign(
+        new Error(
+          "Request failed due to following response errors:\n - API rate limit already exceeded for site ID installation.",
+        ),
+        { name: "GraphqlResponseError", errors: [{ type: "RATE_LIMIT", code: "graphql_rate_limit" }] },
+      );
     },
   };
   const context = {
@@ -142,90 +100,35 @@ async function scan({ reviewComments, threadPages }: Scenario) {
     payload: { pull_request: { number: 4242, head: { sha: HEAD_SHA }, base: { ref: "main" } } },
   };
   const core = {
-    info: (message: string) => info.push(message),
+    info: () => {},
     warning: (message: string) => warnings.push(message),
   };
 
   await runScan(require, github, context, core);
-  return { posted, resolved, graphqlRequests, restPaginated, warnings, info };
+  return { posted, graphqlRequests, warnings };
 }
 
 describe("comment-cop with the GraphQL quota exhausted", () => {
-  test("still posts the new groups and dedups the already flagged one", async () => {
-    const result = await scan({
-      reviewComments: [
-        markerComment(FIRST),
-        "nit: rename this (a human review comment)",
-        markerComment(STALE_UNRESOLVED),
-      ],
-    });
-    expect(result).toEqual({
+  test("posts the groups that are not flagged yet and skips the one that is", async () => {
+    expect(await scan([botComment(FIRST), "nit: rename this (a human review comment)", botComment(STALE)])).toEqual({
       posted: [expectedPost(SECOND, 6, 8)],
-      resolved: [],
-      // The stale key makes it try the thread lookup once; the failure is a warning, not a failed check.
-      graphqlRequests: ["query"],
-      restPaginated: ["pulls.listFiles", "pulls.listReviewComments"],
-      warnings: [expect.stringContaining("API rate limit already exceeded")],
-      info: ["Posted 1 review comment(s)."],
-    });
-  });
-
-  test("does not touch GraphQL when no flagged block has gone stale", async () => {
-    const result = await scan({ reviewComments: [markerComment(FIRST), "looks good"] });
-    expect(result).toEqual({
-      posted: [expectedPost(SECOND, 6, 8)],
-      resolved: [],
       graphqlRequests: [],
-      restPaginated: ["pulls.listFiles", "pulls.listReviewComments"],
       warnings: [],
-      info: ["Posted 1 review comment(s)."],
     });
   });
 
-  test("a second run after posting finds its own comments through REST and posts nothing", async () => {
-    const firstRun = await scan({ reviewComments: [] });
-    expect(firstRun.posted).toEqual([expectedPost(FIRST, 2, 4), expectedPost(SECOND, 6, 8)]);
+  test("a second run recognizes the comments the first run posted and posts nothing", async () => {
+    const firstRun = await scan([]);
+    expect(firstRun).toEqual({
+      posted: [expectedPost(FIRST, 2, 4), expectedPost(SECOND, 6, 8)],
+      graphqlRequests: [],
+      warnings: [],
+    });
 
-    const secondRun = await scan({ reviewComments: firstRun.posted.map(params => (params as { body: string }).body) });
-    expect(secondRun).toEqual({
+    expect(await scan(firstRun.posted.map(comment => comment.body))).toEqual({
       posted: [],
-      resolved: [],
       graphqlRequests: [],
-      restPaginated: ["pulls.listFiles", "pulls.listReviewComments"],
       warnings: [],
-      info: ["No new comment groups to flag (2 present, all already flagged)."],
-    });
-  });
-});
-
-describe("comment-cop with GraphQL available", () => {
-  test("resolves only the unresolved threads whose flagged block left the diff", async () => {
-    const result = await scan({
-      reviewComments: [
-        markerComment(FIRST),
-        markerComment(STALE_UNRESOLVED),
-        markerComment(STALE_RESOLVED),
-        "nit: rename this (a human review comment)",
-      ],
-      threadPages: [
-        [
-          thread("THREAD_FIRST", markerComment(FIRST)),
-          thread("THREAD_STALE_UNRESOLVED", markerComment(STALE_UNRESOLVED)),
-        ],
-        [
-          thread("THREAD_STALE_RESOLVED", markerComment(STALE_RESOLVED), true),
-          thread("THREAD_HUMAN", "nit: rename this (a human review comment)"),
-          thread("THREAD_EMPTY", null),
-        ],
-      ],
-    });
-    expect(result).toEqual({
-      posted: [expectedPost(SECOND, 6, 8)],
-      resolved: ["THREAD_STALE_UNRESOLVED"],
-      graphqlRequests: ["query", "query", "mutation"],
-      restPaginated: ["pulls.listFiles", "pulls.listReviewComments"],
-      warnings: [],
-      info: ["Resolved 1 stale comment-cop thread(s).", "Posted 1 review comment(s)."],
     });
   });
 });

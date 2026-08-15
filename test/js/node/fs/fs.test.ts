@@ -5925,6 +5925,17 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
     const fifo = join(String(dir), "thefifo");
     mkfifo(fifo);
 
+    // readFileSync reads 256 KB before it calls fstat; only the bytes after that
+    // go through the grow path under test, and one read() from a pipe returns at
+    // most one pipe buffer (64 KB on Linux, no larger on macOS), so the 768 KB
+    // after it are at least 13 grow steps however the kernel chunks the data.
+    // Before the fix every step doubled the buffer: 13 steps is a 2 GB buffer,
+    // and copying into it raises the fixture's peak RSS by 1.5 GB or more,
+    // against a few MB now. Hosts with smaller pipe buffers get more steps; a
+    // regression there keeps doubling until the kernel kills the fixture or the
+    // test times out.
+    const SIZE = 1024 * 1024;
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), fifo],
       env: bunEnv,
@@ -5932,30 +5943,25 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
       stderr: "pipe",
     });
 
-    // readFileSync reads 256 KB before it calls fstat; only the bytes after that
-    // go through the grow path under test, and one read() from a pipe returns at
-    // most one pipe buffer, which is 64 KB on Linux and no larger on macOS. 1 MB
-    // past the pre-stat buffer is therefore at least 16 grow steps however the
-    // kernel chunks the data, and before the fix every step doubled the buffer.
-    const SIZE = 256 * 1024 + 1024 * 1024;
-
-    // Fed from this process, on the fs thread pool, rather than by a second bun
-    // process: on a debug build each extra bun startup costs most of a second
-    // of this test's budget. writeFile's open() parks on the pool until the
-    // fixture opens the read end, and its close() is the fixture's EOF.
-    //
-    // The fixture's output is asserted before the writer is awaited so that a
-    // failure reports the fixture's error: pre-fix it either never returns
-    // (RawVec doubling balloons RSS to multiple GB) or dies with ENOMEM, which
-    // fails the writer with EPIPE, and a fixture that dies before opening the
-    // FIFO leaves the writer parked in open() with nothing to report.
-    const writer = promises.writeFile(fifo, Buffer.alloc(SIZE, "a")).catch(err => err);
+    // The FIFO is fed by a throwaway cat: a second bun process costs most of a
+    // second of startup on a debug build, and writing from this process would
+    // leave an uncancellable open() on the fs thread pool if the fixture died
+    // before opening its end. sh blocks in the open() until the fixture opens
+    // the read end, cat exiting is the fixture's EOF, and `await using` kills
+    // whatever is still around if an assertion below fails.
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", 'exec cat > "$1"', "sh", fifo],
+      stdin: Buffer.alloc(SIZE, "a"),
+      stdout: "ignore",
+    });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe(`len=${SIZE} allA=true`);
     expect(exitCode).toBe(0);
-    expect(await writer).toBeUndefined();
+    const { peakGrowth, ...read } = JSON.parse(stdout);
+    expect(read).toEqual({ len: SIZE, allA: true });
+    expect(peakGrowth).toBeLessThan(64 * 1024 * 1024);
+    expect(await writer.exited).toBe(0);
   });
 });
 

@@ -1,8 +1,7 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-// Export functions for C++. The monitor lives in `runtime_state().timer`, not
-// on the VM, so the VM pointer C++ passes is not dereferenced.
+// Export functions for C++
 #[unsafe(no_mangle)]
 extern "C" fn Timer_enableEventLoopDelayMonitoring(
     _vm: *mut VirtualMachine,

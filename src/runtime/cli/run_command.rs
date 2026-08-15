@@ -957,14 +957,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             ..Default::default()
         })?;
-        // SAFETY: `init` returned the VM it just created and installed for this
-        // thread. Nothing reaches it through `VirtualMachine::get()` until
-        // `Run::start` runs code, so this exclusive borrow, which ends when
-        // `configure_vm` returns, is the only access during configuration.
+        // SAFETY: the VM `init` just created; nothing else reaches it until
+        // `Run::start`, and this borrow ends when `configure_vm` returns.
         let run_entry = Self::configure_vm(unsafe { &mut *vm_ptr }, ctx, entry_path, loader);
 
-        // `init` installed the VM it returned as this thread's VM, so from
-        // here on it is driven through the same accessor everything else uses.
         debug_assert!(::core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         Run {
             ctx,
@@ -974,14 +970,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
-    /// Everything `boot` does to the freshly created VM before `Run::start`:
-    /// CLI state hand-off, `--eval`/cron entry synthesis, transpiler options,
-    /// `$TZ`, env, preconnects. Returns the path `Run::start` loads.
-    ///
-    /// Takes the VM exclusively because this is the one window where that is
-    /// true: no JS has run yet, so nothing re-derives the VM through its
-    /// thread-local. `Run::start` runs JS and therefore holds only a shared
-    /// reference.
+    /// The CLI-state hand-off, `--eval`/cron entry synthesis and option wiring
+    /// `boot` does before `Run::start`; returns the path `Run::start` loads.
+    /// Exclusive access is sound here and only here: no JS has run yet.
     fn configure_vm(
         vm: &mut VirtualMachine,
         ctx: &mut ContextData,
@@ -1176,9 +1167,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         })?;
-        // SAFETY: as in `boot`: the VM was just created for this thread and
-        // nothing else reaches it until `Run::start`; the borrow ends when
-        // `configure_standalone_vm` returns.
+        // SAFETY: as in `boot`.
         let entry = Self::configure_standalone_vm(unsafe { &mut *vm_ptr }, ctx, entry_path, graph);
 
         debug_assert!(::core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
@@ -1190,8 +1179,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
-    /// Standalone counterpart of [`Self::configure_vm`]; same exclusivity
-    /// argument. Returns the entry path `Run::start` loads.
+    /// Standalone counterpart of [`Self::configure_vm`].
     fn configure_standalone_vm(
         vm: &mut VirtualMachine,
         ctx: &mut ContextData,
@@ -1259,12 +1247,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 /// `RunCommand::boot` / `boot_standalone`.
 pub struct Run<'a> {
     ctx: &'a ContextData,
-    /// Shared, not `&mut`: `start` runs JS, and everything JS calls back into
-    /// reaches this same VM through `VirtualMachine::get()`, so an exclusive
-    /// borrow held across `load_entry_point`/`tick`/`on_exit` would be
-    /// aliased by every one of those accesses. The `&mut self` VM methods are
-    /// called through `as_mut()`, which mints a borrow that lasts for that
-    /// one call, the same way `WebWorker::spin` drives a worker's VM.
+    /// Shared: `start` runs JS, which reaches this VM through
+    /// `VirtualMachine::get()`, so a `&mut` held across `tick()`/`on_exit()`
+    /// would be aliased. `&mut self` methods go through `as_mut()`, one
+    /// borrow per call, as in `WebWorker::spin`.
     vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
@@ -1416,9 +1402,8 @@ impl Run<'_> {
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
-        // The reloader stores a back-reference it later writes through, so it
-        // gets the thread-local `*mut` (the pointer every other mutation of
-        // this VM derives from), not a pointer cast from the shared `vm`.
+        // The reloader writes through the pointer it stores, so it gets the
+        // thread-local `*mut`, not one cast from the shared `vm`.
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
                 // SAFETY: the main-thread VM is process-lifetime; it outlives
@@ -1658,9 +1643,6 @@ fn dump_build_error(vm: &VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     vm.as_mut().exit_handler.exit_code = 1;
-    // Runs the user's 'exit' listeners; `process.exitCode = n` in one of them
-    // lands in `Bun__setExitCode` with its own `&mut` to this VM, so the borrow
-    // that set the code above must not still be live here.
     vm.as_mut().on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();

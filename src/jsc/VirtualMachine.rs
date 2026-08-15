@@ -479,10 +479,8 @@ impl VMHolder {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__setDefaultGlobalObject(global: *mut JSGlobalObject) {
         if let Some(vm_instance) = VM.get() {
-            // SAFETY: vm pointer set by init() on this thread. Called back from
-            // inside the global-object FFI that `init` (or the test runner's
-            // global swap) is in the middle of, so touch the fields through the
-            // pointer rather than forming a `&mut` over the whole VM.
+            // SAFETY: vm pointer set by init() on this thread. Raw accesses: this
+            // is a callback out of FFI the caller may be holding a VM borrow across.
             unsafe {
                 (*vm_instance).global = global;
                 if (*vm_instance).is_main_thread {
@@ -518,9 +516,6 @@ impl VMHolder {
     pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
-        // Shared, not `&mut`: writing the heap profile can run a GC whose
-        // finalizers reach this VM through the same thread-local, so each
-        // `take()` below is its own `as_mut()` borrow.
         let vm = unsafe { &*vm_ptr };
         if let Some(config) = vm.as_mut().cpu_profiler_config.take() {
             if let Err(e) =
@@ -4031,12 +4026,9 @@ impl VirtualMachine {
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(init_opts)?;
-        // SAFETY: `vm` is the live VM `init` just installed for this thread.
-        // `BakeCreateProdGlobal` reaches back into it (`Bun__getVM()`, then
-        // `Bun__VmHandle__retain` reads `vm.handle`), so, exactly as `init` does
-        // around `Zig__GlobalObject__create`, the global is created and the
-        // fields patched through the raw pointer, with no `&mut VirtualMachine`
-        // live across the FFI call. The uws loop is this thread's live loop.
+        // SAFETY: `vm` is the VM `init` just installed for this thread; the uws
+        // loop is this thread's. Raw accesses, as in `init`: `BakeCreateProdGlobal`
+        // re-enters the VM (`Bun__getVM` -> `Bun__VmHandle__retain`).
         unsafe {
             // `console` is the opaque round-trip pointer C++ stores into the new global.
             let new_global = BakeCreateProdGlobal((*vm).console.cast());

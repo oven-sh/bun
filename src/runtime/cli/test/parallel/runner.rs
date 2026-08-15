@@ -623,11 +623,8 @@ impl<'a> WorkerLoop<'a> {
 /// `vm` must be a valid pointer to this thread's live `VirtualMachine` for the
 /// entire duration of the call (i.e. for the rest of the process, since this
 /// never returns).
-// `vm` stays a raw pointer because `WorkerLoop` stores it as one. Everything
-// here goes through `vm_ref`, a shared reference: `begin()` runs the test
-// files, and the JS in them reaches this VM through `VirtualMachine::get()`,
-// so no `&mut` to it may be live across that call (or the ticks below). The
-// writes are one `as_mut()` borrow each.
+// Raw because `WorkerLoop` stores it; used here only as the shared `vm_ref`,
+// since `begin()` runs JS that reaches the VM through `VirtualMachine::get()`.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,

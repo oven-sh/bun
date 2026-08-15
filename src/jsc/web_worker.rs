@@ -703,8 +703,7 @@ impl WebWorker {
             },
         )?;
         // SAFETY: init_worker returns a valid heap-allocated VM ptr; not yet
-        // published, so nothing else can reach it. Per-field writes through the
-        // raw pointer, like the rest of this function (and `VirtualMachine::init`).
+        // published, so nothing else can reach it.
         unsafe {
             // arena initialised above; worker-thread only field. `with_mut`
             // scopes a `&mut Option<Arena>` to the closure; we extract the raw
@@ -1001,11 +1000,8 @@ impl WebWorker {
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr is this thread's live VM; no other thread holds a
-            // pointer to it (they only ever held its handle). `on_exit` runs
-            // the user's 'exit' listeners, which reach the VM again through its
-            // thread-local (e.g. `process.exitCode = n` writes the field read
-            // right after), so each access here is its own statement-scoped
-            // borrow rather than one `&mut` held across the call.
+            // pointer to it (they only ever held its handle). Per-statement
+            // accesses: `on_exit` runs 'exit' listeners, which reach the VM too.
             unsafe {
                 (*vm_ptr).is_shutting_down = true;
                 (*vm_ptr).on_exit();

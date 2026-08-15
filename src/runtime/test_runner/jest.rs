@@ -534,9 +534,7 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
-/// node:test `t.skip()`/`t.todo()` at runtime: marks the sequence the bound
-/// `DoneCallback` was created for as skip/todo, rejecting late calls whose
-/// sequence already finished.
+/// node:test `t.skip()`/`t.todo()` at runtime: marks the bound `DoneCallback`'s sequence as skip/todo.
 pub(crate) fn js_node_test_mark_result(
     _global: &JSGlobalObject,
     callframe: &CallFrame,

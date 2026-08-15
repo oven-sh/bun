@@ -1826,3 +1826,113 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 });
+
+// A lockfile stores the `file:` path of a dependency exactly as the declaring
+// package.json wrote it, i.e. relative to that package.json, while a fresh parse
+// of the same package.json stores it relative to the project. The rows below
+// only get resolved again from the loaded lockfile (an override for their name
+// went away, or `bun update <name>` targets them), which is when the two forms
+// have to agree.
+describe.concurrent("re-resolving file: dependencies declared by a file: package or a workspace", () => {
+  const pkg = (name: string, version: string, dependencies?: Record<string, string>) =>
+    JSON.stringify({ name, version, dependencies });
+  const app = (overrides?: Record<string, string>) =>
+    JSON.stringify({ name: "app", dependencies: { a: "file:./vendor/a" }, overrides });
+  const installedVersion = async (packageDir: string, ...segments: string[]) =>
+    (await file(join(packageDir, ...segments, "package.json")).json()).version;
+
+  // `a` declares `b` relative to itself; the override redirects `b` elsewhere.
+  const vendored = {
+    "vendor/a/package.json": pkg("a", "1.0.0", { b: "file:../b" }),
+    "vendor/b/package.json": pkg("b", "1.0.0"),
+    "vendor/b2/package.json": pkg("b", "2.0.0"),
+  };
+
+  it.each([
+    ["bun.lock", true],
+    ["bun.lockb", false],
+  ])("removing an override resolves the file: package's dependency next to it again (%s)", async (_, text) => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted", saveTextLockfile: text },
+      files: { ...vendored, "package.json": app({ b: "file:./vendor/b2" }) },
+    });
+    const run = makeInstallRunner(packageDir);
+
+    await run(["install"]);
+    expect(await installedVersion(packageDir, "node_modules", "a", "node_modules", "b")).toBe("2.0.0");
+    expect(await exists(join(packageDir, text ? "bun.lock" : "bun.lockb"))).toBe(true);
+
+    await write(packageJson, app());
+    await run(["install"]);
+    expect(await installedVersion(packageDir, "node_modules", "a", "node_modules", "b")).toBe("1.0.0");
+    await run(["install", "--frozen-lockfile"]);
+
+    await run(["install", "--save-text-lockfile", "--lockfile-only"]);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]');
+    expect(lockfile).toContain('"a/b": ["b@file:vendor/b", {}]');
+  });
+
+  it("a path without .. is resolved from the declaring package, not from the project root", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "vendor/a/package.json": pkg("a", "1.0.0", { b: "file:./b" }),
+        "vendor/a/b/package.json": pkg("b", "1.0.0"),
+        // same relative path from the project root
+        "b/package.json": pkg("b", "9.9.9"),
+        "vendor/b2/package.json": pkg("b", "2.0.0"),
+        "package.json": app({ b: "file:./vendor/b2" }),
+      },
+    });
+    const run = makeInstallRunner(packageDir);
+
+    await run(["install"]);
+    await write(packageJson, app());
+    await run(["install"]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"a/b": ["b@file:vendor/a/b", {}]');
+    expect(await installedVersion(packageDir, "node_modules", "a", "node_modules", "b")).toBe("1.0.0");
+  });
+
+  it("bun update <name> re-resolves the file: package's dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { ...vendored, "package.json": app() },
+    });
+    const run = makeInstallRunner(packageDir);
+
+    await run(["install"]);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"a/b": ["b@file:vendor/b", {}]');
+
+    await run(["update", "b"]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    expect(await installedVersion(packageDir, "node_modules", "a", "node_modules", "b")).toBe("1.0.0");
+  });
+
+  it("removing an override resolves a workspace's file: dependency relative to the workspace again", async () => {
+    const workspaceRoot = (overrides?: Record<string, string>) =>
+      JSON.stringify({ name: "app", workspaces: ["packages/*"], overrides });
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "packages/ws1/package.json": pkg("ws1", "1.0.0", { b: "file:../../vendor/b" }),
+        "vendor/b/package.json": pkg("b", "1.0.0"),
+        "vendor/b2/package.json": pkg("b", "2.0.0"),
+        "package.json": workspaceRoot({ b: "file:./vendor/b2" }),
+      },
+    });
+    const run = makeInstallRunner(packageDir);
+
+    await run(["install"]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"ws1/b": ["b@file:vendor/b2", {}]');
+
+    await write(packageJson, workspaceRoot());
+    await run(["install"]);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"b": "file:../../vendor/b"');
+    expect(lockfile).toContain('"ws1/b": ["b@file:vendor/b", {}]');
+    expect(await installedVersion(packageDir, "packages", "ws1", "node_modules", "b")).toBe("1.0.0");
+    await run(["install", "--frozen-lockfile"]);
+  });
+});

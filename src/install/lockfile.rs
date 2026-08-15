@@ -11,7 +11,7 @@ use bun_collections::{
     HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, UnwrapOrOom as _};
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
@@ -500,6 +500,21 @@ impl Lockfile {
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
+        manager: Option<&mut PackageManager>,
+        log: &mut bun_ast::Log,
+    ) -> LoadResult<'a> {
+        let mut result =
+            self.read_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(dir, manager, log);
+        if let LoadResult::Ok(ok) = &mut result {
+            ok.lockfile.rebase_folder_dependencies().unwrap_or_oom();
+        }
+        result
+    }
+
+    /// bun.lock, bun.lockb or, failing both, a foreign lockfile to migrate from.
+    fn read_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+        &'a mut self,
+        dir: Fd,
         mut manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
@@ -710,6 +725,83 @@ impl Lockfile {
             migrated: Migrated::None,
             format: LockfileFormat::Binary,
         })
+    }
+
+    /// A loaded lockfile only carries each dependency's literal, and for a folder
+    /// dependency that is the path as the declaring package.json wrote it,
+    /// relative to that package. `Package::parse` stores `Version.value.folder`
+    /// relative to the top-level dir and the resolver relies on that whenever a
+    /// row is resolved again (`bun update <name>`, a changed override), so derive
+    /// the value of every folder row the same way from its literal and the
+    /// declaring package's directory, for every package whose directory the
+    /// lockfile records. Rows declared by registry, git and tarball packages are
+    /// not rebased by `Package::from_npm` either and are left alone. Only the
+    /// value changes, never the literal, so this is idempotent and the lockfile
+    /// is written back unchanged.
+    pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
+        let Lockfile {
+            packages,
+            buffers,
+            string_pool,
+            ..
+        } = self;
+        let Buffers {
+            string_bytes,
+            dependencies,
+            ..
+        } = buffers;
+        let pkgs = packages.slice();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+
+        for (pkg_resolution, pkg_dependencies) in pkgs
+            .items_resolution()
+            .iter()
+            .zip(pkgs.items_dependencies())
+        {
+            let pkg_dir: SemverString = match pkg_resolution.tag {
+                ResolutionTag::Root => SemverString::default(),
+                ResolutionTag::Workspace => *pkg_resolution.workspace(),
+                ResolutionTag::Folder => *pkg_resolution.folder(),
+                _ => continue,
+            };
+
+            for dep in pkg_dependencies.mut_(dependencies.as_mut_slice()) {
+                if dep.version.tag != dependency::Tag::Folder {
+                    continue;
+                }
+                let relative = {
+                    let buf = string_bytes.as_slice();
+                    let literal = dep.version.literal.sliced(buf);
+                    let Some(declared) = dependency::parse_with_tag(
+                        dep.name,
+                        Some(dep.name_hash),
+                        literal.slice,
+                        dependency::Tag::Folder,
+                        &literal,
+                        None,
+                        None,
+                    ) else {
+                        continue;
+                    };
+                    let declared_folder = *declared.folder();
+                    package::folder_relative_to_top_level_dir(
+                        pkg_dir.slice(buf),
+                        declared_folder.slice(buf),
+                        &mut path_buf[..],
+                    )
+                };
+                let Some(relative) = relative else {
+                    continue;
+                };
+                dep.version.value.folder = SemverStringBuf {
+                    bytes: &mut *string_bytes,
+                    pool: &mut *string_pool,
+                }
+                .append(relative)?;
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) fn is_resolved_dependency_disabled(

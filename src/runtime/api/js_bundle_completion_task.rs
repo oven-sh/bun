@@ -1004,44 +1004,15 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
-
-        let compile_to_standalone_html = 'brk: {
-            if config.compile.is_none() || config.target != bun_ast::Target::Browser {
-                break 'brk false;
-            }
-            // Only activate standalone HTML when all entrypoints are HTML files
-            for ep in config.entry_points.keys() {
-                if !ep.ends_with(b".html") {
-                    break 'brk false;
-                }
-            }
-            config.entry_points.count() > 0
+        transpiler.options.compile_mode = if config.compile.is_some() {
+            options::CompileMode::Executable
+        } else {
+            options::CompileMode::None
         };
-        // When compiling to standalone HTML, don't use the bun executable compile path
-        if compile_to_standalone_html {
-            config.compile = None;
-        }
 
-        match &config.compile {
-            Some(compile_opts) => {
-                transpiler.options.compile_mode = options::CompileMode::Executable;
-                // Executables load emitted asset paths (e.g. yoga.wasm) out of
-                // the embedded virtual filesystem. Standalone HTML is fetched by
-                // a browser, so it keeps the caller's publicPath like the CLI does.
-                transpiler.options.public_path = Box::from(target_base_public_path(
-                    compile_opts.compile_target.os,
-                    b"root/",
-                ));
-            }
-            None => {
-                transpiler.options.compile_mode = if compile_to_standalone_html {
-                    options::CompileMode::StandaloneHtml
-                } else {
-                    options::CompileMode::None
-                };
-                transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
-            }
-        }
+        // Executable builds already had their public_path replaced with the
+        // virtual filesystem root in `Config::from_js`.
+        transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
 
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
@@ -1066,6 +1037,23 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
+        let compile_to_standalone_html = 'brk: {
+            if config.compile.is_none() || config.target != bun_ast::Target::Browser {
+                break 'brk false;
+            }
+            // Only activate standalone HTML when all entrypoints are HTML files
+            for ep in config.entry_points.keys() {
+                if !ep.ends_with(b".html") {
+                    break 'brk false;
+                }
+            }
+            config.entry_points.count() > 0
+        };
+        // When compiling to standalone HTML, don't use the bun executable compile path
+        if compile_to_standalone_html {
+            transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
+            config.compile = None;
+        }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
         // Owned so the static bound holds without tying `&mut self` to `'a`.
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());

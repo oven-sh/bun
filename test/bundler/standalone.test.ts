@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
@@ -393,6 +393,46 @@ body { color: blue; }`,
     expect(result.success).toBe(true);
   });
 
+  // Writing the executable copies the whole bun binary, which can exceed the
+  // default timeout under debug + ASAN.
+  const EXECUTABLE_TIMEOUT = 60_000;
+
+  test(
+    "executable fallback replaces publicPath with the virtual filesystem root",
+    async () => {
+      using dir = tempDir("compile-browser-no-html-public-path", {
+        "app.js": `
+          import asset from "./data.bin" with { type: "file" };
+          import { readFileSync } from "node:fs";
+          console.log(JSON.stringify({ asset, content: readFileSync(asset, "utf8") }));
+        `,
+        "data.bin": "embedded",
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/app.js`],
+        compile: { outfile: `${dir}/app` },
+        target: "browser",
+        publicPath: "https://cdn.example.com/assets/",
+      });
+      expect(result.success).toBe(true);
+
+      await using proc = Bun.spawn({
+        cmd: [`${dir}/app${isWindows ? ".exe" : ""}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { asset, content } = JSON.parse(stdout);
+      expect(asset).toStartWith(isWindows ? "B:/~BUN/root/" : "/$bunfs/root/");
+      expect(content).toBe("embedded");
+      expect(exitCode).toBe(0);
+    },
+    EXECUTABLE_TIMEOUT,
+  );
+
   test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
     using dir = tempDir("compile-browser-cli-no-html", {
       "app.js": `console.log("test");`,
@@ -638,8 +678,8 @@ console.log(greet("world"));`,
       expect(mapFile).toMatch(/\.js\.map$/);
 
       // The inline <script> must reference the .map artifact relative to the
-      // HTML document, like the CLI does, not the virtual filesystem root that
-      // executable builds use ("/$bunfs/root/" or "B:/~BUN/root/").
+      // HTML document, not the virtual filesystem root executable builds use
+      // ("/$bunfs/root/" or "B:/~BUN/root/").
       const html = await htmlOutput!.text();
       expect(html).toContain(`//# sourceMappingURL=./${mapFile}\n</script>`);
 

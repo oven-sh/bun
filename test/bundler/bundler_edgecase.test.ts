@@ -3340,6 +3340,67 @@ describe("bundler", () => {
     },
     run: { stdout: "1 2" },
   });
+  // Inside a loop body the temporaries are declared with `let`, one set per
+  // iteration, while the symbols are still registered with the module or
+  // function scope for renaming. Every class is instantiated after its loop
+  // has finished, which reads the iteration's own temporaries. `E` has no
+  // members, so its `let _base = Base` is directly followed by
+  // `let _init = __decoratorStart(_base)`: --minify-syntax must not inline
+  // `_base` there, the class's extends clause reads it too.
+  const decoratorTempsInLoops = {
+    "/entry.js": /* js */ `
+      function dec(value, ctx) {}
+      class Base {}
+      const classes = [];
+      const subclasses = [];
+      for (let i = 0; i < 2; i++) {
+        class A { @dec accessor x = "a" + i; }
+        @dec class E extends Base {}
+        classes.push(A, class { @dec accessor x = "b" + i; });
+        subclasses.push(E);
+      }
+      function inner() {
+        const out = [];
+        for (const tag of ["c", "d"]) out.push(class { @dec accessor x = tag; });
+        return out;
+      }
+      classes.push(...inner());
+      console.log(classes.map(C => new C().x).join(","), subclasses.every(E => new E() instanceof Base));
+    `,
+  };
+  itBundled("edgecase/DecoratorLoweringTempsInLoops", {
+    files: decoratorTempsInLoops,
+    run: { stdout: "a0,b0,a1,b1,c,d true" },
+  });
+  itBundled("edgecase/DecoratorLoweringTempsInLoopsMinifyIdentifiers", {
+    files: decoratorTempsInLoops,
+    minifyIdentifiers: true,
+    run: { stdout: "a0,b0,a1,b1,c,d true" },
+  });
+  itBundled("edgecase/DecoratorLoweringTempsInLoopsMinifySyntax", {
+    files: decoratorTempsInLoops,
+    minifySyntax: true,
+    run: { stdout: "a0,b0,a1,b1,c,d true" },
+  });
+  // require() of an ES module wraps the module in an __esm closure, which
+  // hoists the module's top-level declarations out of the closure.
+  itBundled("edgecase/DecoratorLoweringTempsInLoopsInWrappedModule", {
+    files: {
+      "/entry.js": /* js */ `
+        const { classes } = require("./classes.js");
+        console.log(classes.map(C => new C().x).join(","));
+      `,
+      "/classes.js": /* js */ `
+        function dec(value, ctx) {}
+        export const classes = [];
+        for (let i = 0; i < 2; i++) {
+          class A { @dec accessor x = "a" + i; }
+          classes.push(A, class { @dec accessor x = "b" + i; });
+        }
+      `,
+    },
+    run: { stdout: "a0,b0,a1,b1" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

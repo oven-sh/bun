@@ -1516,4 +1516,275 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // A class keeps using its temporaries after it has been created: the
+  // constructor reads _init, _computedKey and the _<name> WeakMaps whenever an
+  // instance is made, and the getters/setters installed by __decorateElement
+  // hold the WeakMap that existed when the class was decorated. A class
+  // created by a loop body must therefore get its own temporaries on every
+  // iteration instead of sharing one binding with the classes of the other
+  // iterations.
+  describe.concurrent("lowering temporaries of a class created in a loop", () => {
+    test("class statement: initializers registered for each iteration's class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let n = 0;
+        function dec(value, ctx) {
+          const id = ++n;
+          ctx.addInitializer(function () { this.id = id; });
+        }
+        const classes = [];
+        for (let i = 0; i < 2; i++) {
+          class K { @dec m() {} }
+          classes.push(K);
+        }
+        console.log(new classes[0]().id, new classes[1]().id);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement: accessor storage of instances created during the loop", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const objs = [];
+        for (let i = 0; i < 2; i++) {
+          class K { accessor x = i; }
+          objs.push(new K());
+        }
+        console.log(objs[0].x, objs[1].x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement: private members of a class lowered for a decorated method", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const objs = [];
+        for (let i = 0; i < 2; i++) {
+          class K {
+            @dec m() {}
+            #v = i;
+            get v() { return this.#v; }
+          }
+          objs.push(new K());
+        }
+        console.log(objs[0].v, objs[1].v);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement: two classes in one loop body", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const classes = [];
+        for (let i = 0; i < 2; i++) {
+          class A { @dec accessor x = "a" + i; }
+          class B { @dec accessor x = "b" + i; }
+          classes.push(A, B);
+        }
+        console.log(classes.map(C => new C().x).join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a0,b0,a1,b1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement: every kind of lowered member", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        const classes = [];
+        for (const tag of ["a", "b"]) {
+          class Base {}
+          @dec class K extends Base {
+            @dec accessor decorated = tag;
+            accessor plain = tag;
+            #field = tag;
+            #method() { return this.#field + "()"; }
+            get #pair() { return this.#field + "!"; }
+            set #pair(v) { this.#field = v; }
+            @dec #decoratedField = tag + "#";
+            @dec [tag + "Key"] = tag;
+            static #s = tag;
+            static readStatic() { return K.#s; }
+            read() {
+              this.#pair = this.#field;
+              return [this.#method(), this.#pair, this.#decoratedField, this.decorated, this.plain, this.viaTemp];
+            }
+            // A receiver that is not an identifier or this is captured in a
+            // temporary that is declared together with the other temporaries.
+            @dec viaTemp = [this][0].#method();
+          }
+          classes.push(K);
+        }
+        const a = new classes[0]();
+        const b = new classes[1]();
+        console.log(JSON.stringify([
+          a.read(), b.read(),
+          Object.keys(a), Object.keys(b),
+          classes[0].readStatic(), classes[1].readStatic(),
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        ["a()", "a!", "a#", "a", "a", "a()"],
+        ["b()", "b!", "b#", "b", "b", "b()"],
+        ["aKey", "viaTemp"],
+        ["bKey", "viaTemp"],
+        "a",
+        "b",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement: class decorator and extends clause only", async () => {
+      // With no members, nothing is declared between `let _base = Base` and
+      // `let _init = __decoratorStart(_base)`, which is the shape the
+      // single-use inlining of the runtime transpiler (minify-syntax is on)
+      // looks at. _base is also read by the extends clause, so inlining it
+      // would leave that read dangling.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base {}
+        const classes = [];
+        for (let i = 0; i < 2; i++) {
+          @dec class K extends Base {}
+          classes.push(K);
+        }
+        console.log(new classes[0]() instanceof Base, new classes[1]() instanceof Base);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression: decorated accessor of instances created after the loop", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const classes = [];
+        for (let i = 0; i < 2; i++) classes.push(class { @dec accessor x = i; });
+        console.log(new classes[0]().x, new classes[1]().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression: accessor storage of instances created during the loop", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const objs = [];
+        for (let i = 0; i < 2; i++) objs.push(new (class { accessor x = i; })());
+        console.log(objs[0].x, objs[1].x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The accessor decorator gives each class's accessor the initial value of
+    // the class's position in the loop. Block bodies and single-statement
+    // bodies alternate on purpose: the temporaries of a class expression are
+    // declared at the top of the statement list the expression is in, which
+    // for a single-statement body is the block the transpiler wraps around it.
+    test.each([
+      ["for", "for (let k = 0; k < 2; k++) { BODY }"],
+      ["for-of", "for (const k of [0, 1]) BODY"],
+      ["for-in", "for (const k in { a: 0, b: 0 }) { BODY }"],
+      ["while", "while (classes.length < 2) BODY"],
+      ["do-while", "do { BODY } while (classes.length < 2);"],
+    ])("class expression in the body of a %s loop", async (_kind, loop) => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let decorated = 0;
+        function dec(value, ctx) {
+          const position = decorated++;
+          return { init() { return position; } };
+        }
+        const classes = [];
+        ${loop.replace("BODY", "classes.push(class { @dec accessor x; });")}
+        console.log(classes.length, new classes[0]().x, new classes[1]().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression in a block nested in the loop body", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const classes = [];
+        for (let i = 0; i < 2; i++) {
+          if (classes.length === i) {
+            classes.push(class { @dec accessor x = i; });
+          }
+        }
+        console.log(new classes[0]().x, new classes[1]().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression: class decorator, extends clause and computed key", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        const classes = [];
+        for (const name of ["a", "b"]) {
+          class Base { static tag = name; }
+          classes.push(@dec class extends Base { @dec [name] = name; });
+        }
+        console.log(JSON.stringify([
+          new classes[0](), new classes[1](),
+          classes[0].tag, classes[1].tag,
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([{ a: "a" }, { b: "b" }, "a", "b"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expressions in the cases of a switch inside a loop", async () => {
+      // The declarations land in the case clauses, which share the scope of
+      // the switch block.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const classes = [];
+        for (let i = 0; i < 4; i++) {
+          switch (i % 2) {
+            case 0:
+              classes.push(class { @dec accessor x = "even" + i; });
+              break;
+            default:
+              classes.push(class { @dec accessor x = "odd" + i; });
+          }
+        }
+        console.log(classes.map(C => new C().x).join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("even0,odd1,even2,odd3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression in a static field of a class created in the loop", async () => {
+      // The static initializer runs once per evaluation of the outer class,
+      // i.e. once per iteration, and the inner class's temporaries are
+      // declared in the loop body: a class body does not end the loop.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {}
+        const outers = [];
+        for (let i = 0; i < 2; i++) {
+          class Outer {
+            static Inner = class { @dec accessor x = i; };
+          }
+          outers.push(Outer);
+        }
+        console.log(new outers[0].Inner().x, new outers[1].Inner().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 1\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -55,6 +55,9 @@ pub struct Graph<'a> {
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
+    /// The pass's `DeferredBatchTask` is on (or on its way back from) the plugins' thread; the pass is
+    /// not done until it is back. Bundle thread only.
+    pub(crate) defer_hop_out: bool,
 
     /// onResolve / onLoad requests a plugin currently holds (dispatched to its
     /// VM, not yet answered). Bundle thread only. Failed wholesale when that
@@ -169,6 +172,7 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
+            defer_hop_out: false,
             outstanding_resolves: OutstandingList::default(),
             outstanding_loads: OutstandingList::default(),
             cancelled: false,
@@ -243,7 +247,7 @@ impl<'a> Graph<'a> {
                 }
             }
 
-            transpiler.drain_defer_task.init();
+            self.defer_hop_out = true;
             transpiler.drain_defer_task.schedule();
 
             return true;

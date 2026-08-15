@@ -655,4 +655,50 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     }
     expect(onFinalizeCallCount).toBe(3);
   });
+
+  // A plugin that calls defer() WITHOUT awaiting it and answers straight away: the deferral notice and the
+  // answer used to share one intrusive queue node (the second enqueue clobbered the first), and the pass
+  // could finish — freeing the BundleV2 that embeds the defer hop — while that hop was still on its way to
+  // the JS thread (heap-use-after-free in DeferredBatchTask::run_on_js_thread under ASAN, `unreachable`
+  // in on_load otherwise). Run in a child so a regression fails it instead of taking this file down.
+  test("an un-awaited defer() with an immediate answer neither corrupts the queue nor outlives the pass", async () => {
+    using dir = tempDir("defer-unawaited", {
+      "entry.ts": `import { x, foo } from "./shared"; console.log(x, foo());`,
+      "shared.ts": `export const x: number = 0; export function foo() { return "s"; }`,
+      "build.js": `
+        const path = require("path");
+        // Many builds at once (they queue on the one bundle thread) while this thread stays busy, so a
+        // defer hop is still in flight when its pass could otherwise finish.
+        (async () => {
+          const busy = setInterval(() => { const t = Date.now(); while (Date.now() - t < 2); }, 1);
+          const results = await Promise.all(Array.from({ length: 24 }, () => {
+            let n = 0;
+            return Bun.build({
+              entrypoints: [path.join(__dirname, "entry.ts")],
+              plugins: [{ name: "defer", setup(b) {
+                b.onLoad({ filter: /\\.ts$/ }, async a => {
+                  if (n++ === 0) a.defer();   // not awaited
+                  return { contents: "export const x: number = " + n + "; export function foo() { return 'd' }", loader: "ts" };
+                });
+              } }],
+            });
+          }));
+          clearInterval(busy);
+          console.log(results.map(r => (r.success ? "." : "x")).join(""));
+        })();
+      `,
+    });
+    for (const inWorker of [false, true]) {
+      const script = inWorker
+        ? `const { Worker } = require("worker_threads");
+           const w = new Worker(require("path").join(${JSON.stringify(String(dir))}, "build.js"));
+           w.on("exit", c => process.exit(c));`
+        : `require(require("path").join(${JSON.stringify(String(dir))}, "build.js"))`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(".".repeat(24) + "\n");
+      expect(exitCode).toBe(0);
+    }
+  }, 60_000);
 });

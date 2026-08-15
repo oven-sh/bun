@@ -1542,7 +1542,7 @@ pub mod js_bundler {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
-                            core::mem::offset_of!(Load, task),
+                            core::mem::offset_of!(Load, defer_task),
                         );
                     }
                 }

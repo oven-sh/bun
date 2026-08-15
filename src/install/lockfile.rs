@@ -745,8 +745,7 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
-    /// The version a semver range can be checked against: `None` for packages that
-    /// have none (git, tarball and folder resolutions, workspaces without a `version`).
+    /// `None` for git, tarball and unversioned workspace packages (no version to compare).
     pub(crate) fn package_version(&self, id: PackageID) -> Option<Semver::Version> {
         let resolution = &self.packages.items_resolution()[id as usize];
         match resolution.tag {

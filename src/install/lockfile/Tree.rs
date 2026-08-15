@@ -492,8 +492,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
-    /// Same message as the resolver prints when it binds a peer to a version outside its
-    /// range, plus the dependent and the range, which this site knows.
+    /// The resolver's "incorrect peer dependency" message, with the dependent and range added.
     #[cold]
     fn warn_peer_out_of_range(
         &mut self,
@@ -920,8 +919,7 @@ impl Tree {
                     builder.resolutions[dep_id as usize] = res_id;
                 }
                 HoistDependencyResult::HoistedOutOfRange(res_id) => {
-                    // Only the build whose tree is installed reports it: the `Resolvable` build
-                    // also runs on every lockfile load and again when the lockfile is cleaned.
+                    // Resolvable builds also run on load and clean; only the installed tree warns.
                     if METHOD == BuilderMethod::Filter {
                         builder.warn_peer_out_of_range(parent_pkg_id, dependency, res_id);
                     }
@@ -1078,9 +1076,7 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
-                    // Optional peers take whatever the tree offers them (the resolver never binds
-                    // them either), and a copy without a version (git, tarball, unversioned
-                    // workspace) has nothing to check the range against.
+                    // Optional peers take whatever the tree offers, as they do in the resolver.
                     let rejected = !dependency.behavior.is_optional_peer()
                         && peer_range.tag == crate::dependency::VersionTag::Npm
                         && builder

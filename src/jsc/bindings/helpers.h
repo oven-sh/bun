@@ -72,12 +72,10 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-// fromUTF8ReplacingInvalidSequences sizes an intermediate Vector<char16_t> by
-// the UTF-8 byte count, which Vector CRASH()es past ~2^30 entries, so above
-// that cap convert with an exact-size allocation instead (returning null on
-// overflow like the other too-long paths here).
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
+    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
+    // (it sizes an intermediate Vector<char16_t> by byte count).
     if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
         return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
 
@@ -85,10 +83,17 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
         return {};
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
-    if (utf16Length == bytes.size())
-        return WTF::StringImpl::create(bytes); // all-ASCII: stays 8-bit
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
+    if (utf16Length == bytes.size()) {
+        // all-ASCII: stays 8-bit
+        std::span<Latin1Character> out;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), out);
+        if (!impl) [[unlikely]]
+            return {};
+        memcpy(out.data(), bytes.data(), bytes.size());
+        return WTF::String(WTF::move(impl));
+    }
     std::span<char16_t> out;
     auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
     if (!impl) [[unlikely]]

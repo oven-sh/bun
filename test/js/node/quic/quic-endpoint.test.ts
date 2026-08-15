@@ -1,12 +1,14 @@
 // lsquic fixes HTTP/3-vs-raw framing per client *engine*, set by the first
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { BlockList } from "node:net";
+import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";
 
@@ -308,5 +310,38 @@ describe("endpoint.close() while a session is live", () => {
     held.close();
     await server.closed;
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
+  });
+});
+
+// The endpoint binds through bsd_create_udp_socket(), whose IPV6_V6ONLY
+// setsockopt failure used to report errno 0, so the close reason read
+// "Bind failure (0)". The option does not fail on its own, so the failure is
+// injected; on Windows the errno would need to be a WSA code.
+describe("endpoint bind failure", () => {
+  test.skipIf(!fault.available() || isWindows)("carries the errno of a failing IPV6_V6ONLY setsockopt", async () => {
+    const { ENOPROTOOPT } = osConstants.errno;
+    fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: ENOPROTOOPT });
+    let endpoint: any;
+    try {
+      // Like Node, listen() hands back the already-destroyed endpoint and the
+      // bind error is the rejection reason of its `closed` promise (which is
+      // also why `await using` is not an option here: disposing rethrows it).
+      endpoint = await listen(() => {}, {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["quic-test"],
+        endpoint: { address: { address: "::1", family: "ipv6", port: 0 } },
+      });
+      const closed = await endpoint.closed.then(
+        () => "resolved",
+        (error: any) => ({ code: error.code, message: error.message }),
+      );
+      expect({ destroyed: endpoint.destroyed, closed }).toEqual({
+        destroyed: true,
+        closed: { code: "ERR_QUIC_ENDPOINT_CLOSED", message: `QUIC endpoint closed: Bind failure (${ENOPROTOOPT})` },
+      });
+    } finally {
+      fault.clear();
+      if (endpoint && !endpoint.destroyed) await endpoint.close();
+    }
   });
 });

@@ -96,6 +96,23 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
   );
 });
 
+// bsd_set_v6only() is shared by the TCP listen, UDP create and raw UDP bind
+// paths; the UDP consumers are covered next to their own suites (udp/,
+// node/quic/), this is the TCP one. getaddrinfo("::1") yields a single
+// AF_INET6 candidate, so a failing IPV6_V6ONLY setsockopt fails the listen.
+describe.skipIf(skip)("setsockopt_v6only failure while listening", () => {
+  afterEach(() => fault.clear());
+
+  test("Bun.listen fails, and the next listen on the same address works", () => {
+    fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: "EINVAL" });
+    expect(() => Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } })).toThrow("Failed to listen at ::1");
+
+    // The one-shot rule is spent: same address, same options, now listening.
+    using server = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+    expect(server.port).toBeGreaterThan(0);
+  });
+});
+
 // uSockets' TLS low-priority handshake queue (loop->data.low_prio_head)
 // shares its prev/next links with group->head_sockets. A socket already
 // parked in the queue used to be parked a SECOND time whenever a writable

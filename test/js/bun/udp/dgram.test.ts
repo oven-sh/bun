@@ -1,5 +1,7 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { constants as osConstants } from "node:os";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -359,6 +361,32 @@ describe("bind()", () => {
     await listening;
     expect(onError).not.toHaveBeenCalled();
   });
+
+  // A udp6 bind sets IPV6_V6ONLY inside bsd_create_udp_socket(); when that
+  // failed, 'error' used to carry a code-less "Failed to bind socket"
+  // (udp_socket.test.ts covers the descriptor that leaked along with it). The
+  // option does not fail on its own, so the failure is injected; on Windows
+  // the errno would need to be a WSA code.
+  test.skipIf(!fault.available() || isWindows)("emits the errno of a failing IPV6_V6ONLY setsockopt", async () => {
+    await using socket = createSocket("udp6");
+    const { promise: error, resolve: onError, reject } = Promise.withResolvers<any>();
+    socket.on("error", onError);
+    socket.on("listening", () => reject(new Error("expected bind() to fail")));
+    fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
+    try {
+      socket.bind(0, "::1");
+      const { name, code, syscall, address, message } = await error;
+      expect({ name, code, syscall, address, message }).toEqual({
+        name: "Error",
+        code: "ENOPROTOOPT",
+        syscall: "bind",
+        address: "::1",
+        message: "bind ENOPROTOOPT ::1",
+      });
+    } finally {
+      fault.clear();
+    }
+  });
 });
 
 // _createSocketHandle's three return shapes, from node's
@@ -389,6 +417,19 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
   const err = _createSocketHandle("localhost", 0, "udp4");
 
   expect(err).toBe(-22);
+});
+
+// The raw-descriptor bind shares bsd_set_v6only() with the bind() path tested
+// above; flags bit 0 is UV_UDP_IPV6ONLY.
+test.skipIf(!fault.available() || isWindows)("_createSocketHandle() reports a failing IPV6_V6ONLY setsockopt", () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const { ENOPROTOOPT } = osConstants.errno;
+  fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: ENOPROTOOPT });
+  try {
+    expect(_createSocketHandle("::1", 0, "udp6", undefined, 1)).toBe(-ENOPROTOOPT);
+  } finally {
+    fault.clear();
+  }
 });
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST

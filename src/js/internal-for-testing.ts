@@ -607,6 +607,7 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
+  | "setsockopt_v6only"
   | "ssl_loop_buffer"
   | "poll_start"
   | "session_buffer";

@@ -1123,6 +1123,20 @@ static int bsd_set_reuseport(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 #endif
 }
 
+/* Every IPV6_V6ONLY setsockopt in this file (TCP listen, UDP create, raw UDP
+ * bind) goes through here so one fault rule reaches all of them. */
+static int bsd_set_v6only(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SETSOCKOPT_V6ONLY, fd, injected, unused)) return (int) injected;
+    (void)injected; (void)unused;
+#ifdef IPV6_V6ONLY
+    return setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &enabled, sizeof(enabled));
+#else
+    (void) fd; (void) enabled;
+    return 0;
+#endif
+}
+
 static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
     int result = 0;
 
@@ -1181,14 +1195,12 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif
 
-#ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+        if (bsd_set_v6only(listenFd, enabled) != 0) {
             return LIBUS_SOCKET_ERROR;
         }
     }
-#endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
         return LIBUS_SOCKET_ERROR;
@@ -1716,18 +1728,26 @@ int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     return 0;
 }
 
+/* Failure exit of bsd_create_udp_socket once it owns a descriptor. The error is
+ * read before close() / freeaddrinfo() get a chance to overwrite it. */
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket_fail(LIBUS_SOCKET_DESCRIPTOR fd, struct addrinfo *result, int *err) {
+    if (err != NULL) {
+        *err = LIBUS_ERR;
+    }
+    bsd_close_socket(fd);
+    freeaddrinfo(result);
+    return LIBUS_SOCKET_ERROR;
+}
+
 /* Binds a raw datagram descriptor. `flags` uses libuv's UV_UDP_* bits (bit 0
  * IPV6ONLY, bit 2 REUSEADDR). Shared by internal/dgram so it doesn't fork
  * bsd_set_reuseaddr's platform gate. Returns 0 or -1 with the error in errno. */
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags) {
-#ifdef IPV6_V6ONLY
     if ((flags & 1) && addr->sa_family == AF_INET6) {
-        int on = 1;
-        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &on, sizeof(on)) != 0) {
+        if (bsd_set_v6only(fd, 1) != 0) {
             return -1;
         }
     }
-#endif
     if (flags & 4) {
         if (bsd_set_reuseaddr(fd) != 0) {
             return -1;
@@ -1784,41 +1804,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (bsd_set_reuse(listenFd, options) != 0) {
-        if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
-            *err = errno;
-#endif
-        }
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+        return bsd_create_udp_socket_fail(listenFd, result, err);
     }
 
-#ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
-            return LIBUS_SOCKET_ERROR;
+        if (bsd_set_v6only(listenFd, enabled) != 0) {
+            return bsd_create_udp_socket_fail(listenFd, result, err);
         }
     }
-#endif
 
     bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family, options);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
-        if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
-            *err = errno;
-#endif
-        }
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+        return bsd_create_udp_socket_fail(listenFd, result, err);
     }
 
     freeaddrinfo(result);

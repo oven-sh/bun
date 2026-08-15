@@ -1642,9 +1642,14 @@ fn direct_row_stays(
     excludes: Option<&[&[u8]]>,
 ) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
-    // `patched_package_satisfying` captures the row before any lookup.
-    if let Some(patched) = patched_capture(lockfile, dep_id) {
-        return patched.order(current, buf, buf) == Ordering::Equal;
+    // `patched_package_satisfying` captures the row before any lookup; peer rows fall through.
+    if !lockfile.buffers.dependencies[dep_id as usize]
+        .behavior
+        .is_peer()
+    {
+        if let Some(patched) = patched_capture(lockfile, dep_id) {
+            return patched.order(current, buf, buf) == Ordering::Equal;
+        }
     }
     let found = if latest {
         manifest

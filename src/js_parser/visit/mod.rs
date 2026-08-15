@@ -232,8 +232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Decorator lowering turns the initializer into `_class = class {}`, so an anonymous
-    /// class gets the binding's name through `decorator_class_name` (see `e_class`).
+    /// Names an anonymous decorated class after the binding it initializes (`decorator_class_name`).
     pub(crate) fn visit_binding_initializer(
         &mut self,
         binding: BindingNodeIndex,

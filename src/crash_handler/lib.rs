@@ -2599,9 +2599,7 @@ mod draft {
         action: TraceStringAction,
     }
 
-    /// Trace strings are built in a stack buffer of this size. Everything in
-    /// them has a small fixed bound except the panic message, which gets cut
-    /// down to whatever room the header and frames leave (`write_panic_message`).
+    /// Trace strings are built in a stack buffer of this size; the panic message is cut to fit.
     const TRACE_STRING_MAX_LEN: usize = 1024;
     type TraceStringBuf = BoundedArray<u8, TRACE_STRING_MAX_LEN>;
 
@@ -2705,11 +2703,8 @@ mod draft {
     /// Largest zlib stream whose unpadded base64 form fits a trace string.
     const MAX_COMPRESSED_MESSAGE_LEN: usize = TRACE_STRING_MAX_LEN * 3 / 4;
 
-    /// Appends `message` as the unpadded base64 of its zlib stream. When that
-    /// does not fit in the room left in `writer` (less the `reserved` bytes the
-    /// caller appends afterwards), the longest prefix of the message that does
-    /// fit is written instead, so the report keeps the start of the message
-    /// rather than losing all of it.
+    /// Appends the unpadded base64 zlib stream of the longest prefix of `message` that fits in
+    /// the room left in `writer`, keeping `reserved` bytes free for what the caller appends next.
     fn write_panic_message(
         writer: &mut TraceStringBuf,
         message: &[u8],
@@ -2721,9 +2716,7 @@ mod draft {
         let mut compressed: [u8; MAX_COMPRESSED_MESSAGE_LEN] = [0; MAX_COMPRESSED_MESSAGE_LEN];
         let dest = &mut compressed[..max_compressed_len];
 
-        // The whole message normally fits and is tried first. Otherwise binary
-        // search the cut: `fits` is a prefix length known to fit (0 until
-        // something has been tried), `too_long` one known not to.
+        // Bisect on the prefix length; the whole message is tried first since it normally fits.
         let mut fits = 0;
         let mut too_long = message.len() + 1;
         let mut len = message.len();
@@ -2752,17 +2745,15 @@ mod draft {
         Ok(())
     }
 
-    /// zlib-compresses `message` into `dest`, returning the stream length, or
-    /// `None` when the stream does not fit in `dest`.
+    /// Length of the zlib stream of `message` written into `dest`, or `None` if it does not fit.
     fn compress_message(dest: &mut [u8], message: &[u8]) -> crate::Result<Option<usize>> {
-        // `uLong` is 32 bits on Windows. A message too long to hand to zlib at
-        // all certainly does not fit.
+        // `uLong` is 32-bit on Windows; a message zlib cannot even take does not fit either.
         let Ok(source_len) = bun_zlib::uLong::try_from(message.len()) else {
             return Ok(None);
         };
         let mut dest_len = dest.len() as bun_zlib::uLong;
-        // SAFETY: both pointers are valid for the lengths passed with them;
-        // zlib writes at most `dest_len` bytes and sets it to the number written.
+        // SAFETY: both pointers are valid for the lengths passed with them, and zlib writes at
+        // most `dest_len` bytes.
         let ret = unsafe {
             bun_zlib::compress2(
                 dest.as_mut_ptr(),
@@ -2772,9 +2763,7 @@ mod draft {
                 9,
             )
         };
-        // Match on the raw zlib return code so this stays ABI-correct
-        // regardless of whether the platform `compress2` binding returns
-        // `c_int` (posix) or the `ReturnCode` enum (win32).
+        // The `compress2` binding returns `c_int` on posix and `ReturnCode` on win32.
         match ret as i32 {
             r if r == bun_zlib::ReturnCode::Ok as i32 => Ok(Some(dest_len as usize)),
             r if r == bun_zlib::ReturnCode::BufError as i32 => Ok(None),
@@ -2786,9 +2775,8 @@ mod draft {
         }
     }
 
-    /// The first `len` bytes of `message`, backed up so the cut does not land
-    /// inside a multi-byte UTF-8 sequence. The whole message (`len ==
-    /// message.len()`) is returned as-is, whatever its encoding.
+    /// `message[..len]`, shortened so it does not end inside a multi-byte UTF-8 sequence.
+    /// The whole message (`len == message.len()`) is returned as-is, whatever its encoding.
     fn utf8_prefix(message: &[u8], mut len: usize) -> &[u8] {
         while len < message.len() && len > 0 && message[len] & 0xC0 == 0x80 {
             len -= 1;

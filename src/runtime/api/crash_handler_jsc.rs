@@ -126,8 +126,7 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `panic(message?: string)`. Tests pass a message to check how it comes
-    /// out in the trace string.
+    /// `panic(message?: string)`; tests pass a message to see how it ends up in the trace string.
     #[bun_jsc::host_fn]
     fn js_panic(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let message_arg = frame.argument(0);

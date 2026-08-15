@@ -2750,17 +2750,28 @@ fn update_package_json_after_migration(
                 .to_vec(),
         );
 
-        // Write the updated package.json
-        if sys::File::write_file(
+        let written = sys::File::write_file(
             dir,
             bun_core::zstr!("package.json"),
             root_pkg_json.source.contents(),
-        )
-        .is_ok()
-            && !moved.is_empty()
-            && !silent
-        {
-            bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+        );
+        if silent || moved.is_empty() {
+            return Ok(());
+        }
+        match written {
+            Ok(()) => {
+                bun_core::pretty_errorln!(
+                    "<d>moved {} in <r><green>package.json<r>",
+                    moved.join(", ")
+                );
+            }
+            Err(err) => {
+                bun_core::warn!(
+                    "failed to write package.json ({}): {} not moved",
+                    bstr::BStr::new(err.name()),
+                    moved.join(", ")
+                );
+            }
         }
     }
 

@@ -5878,10 +5878,7 @@ impl DevServer {
         // TODO: maybe this should track the error, send over HmrSocket?
         Output::err_generic(
             "Multiple {} matching the same route pattern is ambiguous",
-            (match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            },),
+            (ty.collision_noun(),),
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
         let mut buf = paths::path_buffer_pool::get();

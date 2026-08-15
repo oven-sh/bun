@@ -257,8 +257,7 @@ function detachSocket(self) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
-// Node's `wrap.on('close', () => this.destroy())` for the connection a TLS socket was upgraded over:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+// Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] === connection) self.destroy();
 }

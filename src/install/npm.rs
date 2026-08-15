@@ -1174,17 +1174,14 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                match bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath) {
-                    Ok(()) => return Ok(()),
-                    // linkat() cannot replace the existing entry, and unlinking it first
-                    // is not an option: nothing waits for this task (see `save_async`), so
-                    // exiting in between would leave the cache without an entry. Give the
-                    // file a temporary name and rename it over the entry below instead.
-                    Err(err) if err.get_errno() == bun_sys::Errno::EEXIST => {
-                        bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
-                    }
-                    Err(err) => return Err(err.into()),
+                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                    return Ok(());
                 }
+                // Usually because an entry exists, which linkat() cannot replace. Unlinking
+                // it first is not an option: nothing waits for this task (see `save_async`),
+                // so exiting in between would leave the cache without an entry. Give the
+                // file a temporary name and rename it over the entry below instead.
+                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]

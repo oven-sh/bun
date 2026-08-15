@@ -106,8 +106,7 @@ fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
         .filter(|rest| !rest.is_empty())
 }
 
-/// A folder inside a cache-installed dependent; the installer reads its row relative to that
-/// package (`PackageInstaller`, transitive folder branch), so it is built per dependent.
+/// Folder inside a cache-installed dependent; the installer reads its row relative to the package.
 #[derive(Clone, Copy)]
 struct FolderInDependent<'k> {
     path: &'k [u8],

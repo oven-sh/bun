@@ -1647,8 +1647,7 @@ fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
     MigratePnpmLockfileError::InvalidPnpmLockfile
 }
 
-/// pnpm resolved these against the project; the installer reads a folder row under a
-/// cache-installed package relative to that package (`PackageInstaller`, transitive folder branch).
+/// pnpm resolved these against the project; bun installs them relative to the declaring package.
 fn warn_folders_resolved_inside_installed_packages(
     lockfile: &Lockfile,
     workspace_pkgs_end: usize,

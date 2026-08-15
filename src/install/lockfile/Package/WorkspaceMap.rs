@@ -8,7 +8,7 @@ use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
 
-use crate::lockfile_real::StringBuilder;
+use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
@@ -115,6 +115,14 @@ impl<'a> NamesArray<'a> {
     }
 }
 
+// What to do with a listed (non-glob) workspace whose package.json is missing.
+#[derive(Clone, Copy)]
+pub(crate) enum MissingWorkspace<'a> {
+    Error,
+    Skip,
+    SkipIfInLockfile(&'a Lockfile),
+}
+
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
@@ -166,6 +174,28 @@ fn process_workspace_name(
     Ok(entry)
 }
 
+fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
+    strings::without_suffix_comptime(
+        abs_package_json_path,
+        const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
+    )
+}
+
+fn relative_workspace_path<'b>(
+    buf: &'b mut [u8],
+    root_dir: &[u8],
+    abs_workspace_dir: &[u8],
+) -> &'b [u8] {
+    let len = resolve_path::relative_platform_buf::<path::platform::Auto, true>(
+        buf,
+        root_dir,
+        abs_workspace_dir,
+    )
+    .len();
+    resolve_path::platform_to_posix_in_place::<u8>(&mut buf[..len]);
+    &buf[..len]
+}
+
 impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
@@ -175,6 +205,7 @@ impl WorkspaceMap {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
+        missing_workspace: MissingWorkspace<'_>,
     ) -> crate::Result<u32> {
         let workspace_names = self;
         let item_count = arr.len();
@@ -188,6 +219,8 @@ impl WorkspaceMap {
         let mut filepath_buf_os: Box<PathBuffer> = Box::new(PathBuffer::uninit());
         // Boxed to avoid a large stack frame.
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
+        let mut rel_path_buf = path::path_buffer_pool::get();
+        let root_dir: &[u8] = source.path.name().dir;
 
         let scratch = Arena::new();
 
@@ -215,16 +248,17 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let processed = match resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                source.path.name().dir,
-                filepath_buf,
-                &[input_path, b"package.json"],
-            ) {
+            let abs_package_json_path = resolve_path::join_abs_string_buf_checked::<
+                path::platform::Auto,
+            >(
+                root_dir, filepath_buf, &[input_path, b"package.json"]
+            );
+            let processed = match abs_package_json_path {
                 Some(abs_package_json_path) => {
                     // skip root package.json
                     if strings::eql_long(
                         resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
-                        source.path.name().dir,
+                        root_dir,
                         true,
                     ) {
                         continue;
@@ -239,6 +273,26 @@ impl WorkspaceMap {
             let (abs_package_json_path, workspace_entry) = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
+                    if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        let tolerated = match missing_workspace {
+                            MissingWorkspace::Skip => true,
+                            MissingWorkspace::Error => false,
+                            MissingWorkspace::SkipIfInLockfile(lockfile) => abs_package_json_path
+                                .is_some_and(|abs| {
+                                    pruned_workspaces::lockfile_lists_workspace_path(
+                                        lockfile,
+                                        relative_workspace_path(
+                                            &mut rel_path_buf.0,
+                                            root_dir,
+                                            workspace_dir_of(abs),
+                                        ),
+                                    )
+                                }),
+                        };
+                        if tolerated {
+                            continue;
+                        }
+                    }
                     if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
                         || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
@@ -279,31 +333,11 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
-                source.path.name().dir,
-                strings::without_suffix_comptime(
-                    abs_package_json_path,
-                    const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
-                ),
+            let rel_input_path = relative_workspace_path(
+                &mut rel_path_buf.0,
+                root_dir,
+                workspace_dir_of(abs_package_json_path),
             );
-            #[cfg(windows)]
-            let rel_input_path: &[u8] = {
-                // `rel_input_path` is a shared borrow into the thread-local
-                // `relative_to_common_path_buf()`. Deriving a `&mut` from
-                // `rel_input_path.as_ptr().cast_mut()` and writing through it is
-                // Stacked-Borrows UB (SharedReadOnly provenance), and the still-live
-                // shared ref would alias it. Instead capture the length, drop the
-                // shared borrow, take a single fresh `&mut` reborrow from the raw
-                // threadlocal pointer, mutate, then downgrade to `&[u8]`.
-                let len = rel_input_path.len();
-                let _ = rel_input_path;
-                // SAFETY: thread-local scratch; this is the only live borrow on this
-                // thread for the remainder of this block.
-                let s: &mut [u8] =
-                    &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
-                path::dangerously_convert_path_to_posix_in_place::<u8>(s);
-                &*s
-            };
 
             if let Some(builder) = string_builder.as_deref_mut() {
                 builder.count(&workspace_entry.name);
@@ -493,33 +527,11 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    let abs_workspace_dir_path: &[u8] =
-                        strings::without_suffix_comptime(abs_package_json_path, b"package.json");
-                    let workspace_path: &[u8] =
-                        resolve_path::relative_platform::<path::platform::Auto, true>(
-                            source.path.name().dir,
-                            abs_workspace_dir_path,
-                        );
-                    #[cfg(windows)]
-                    let workspace_path: &[u8] = {
-                        // `workspace_path` is a shared borrow into the thread-local
-                        // `relative_to_common_path_buf()`. Deriving a `&mut` from
-                        // `workspace_path.as_ptr().cast_mut()` and writing through it is
-                        // Stacked-Borrows UB (SharedReadOnly provenance), and the
-                        // still-live shared ref would alias it. Instead capture the
-                        // length, drop the shared borrow, take a single fresh `&mut`
-                        // reborrow from the raw threadlocal pointer, mutate, then
-                        // downgrade to `&[u8]`.
-                        let len = workspace_path.len();
-                        let _ = workspace_path;
-                        // SAFETY: thread-local scratch; this is the only live borrow on
-                        // this thread for the remainder of this block.
-                        let s: &mut [u8] =
-                            &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }
-                                [0..len];
-                        path::dangerously_convert_path_to_posix_in_place::<u8>(s);
-                        &*s
-                    };
+                    let workspace_path: &[u8] = relative_workspace_path(
+                        &mut rel_path_buf.0,
+                        root_dir,
+                        workspace_dir_of(abs_package_json_path),
+                    );
 
                     if let Some(builder) = string_builder.as_deref_mut() {
                         builder.count(&workspace_entry.name);

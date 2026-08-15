@@ -5,7 +5,6 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -217,14 +216,9 @@ impl YesTask {
         // backrefs (single-threaded shell).
         unsafe {
             match (*this).evtloop {
+                // Next loop iteration, after I/O has had a turn.
                 EventLoopHandle::Js { owner } => {
-                    owner.tick();
-                    let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
-                        EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
-                        EventLoopTask::Mini(_) => unreachable!(),
-                    });
-                    // Same-thread bounce on the loop's own thread: always accepted.
-                    let _ = owner.js_poster().post(ct);
+                    owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

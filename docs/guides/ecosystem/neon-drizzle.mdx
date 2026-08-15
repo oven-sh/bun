@@ -4,7 +4,7 @@ sidebarTitle: Neon Drizzle with Bun
 mode: center
 ---
 
-[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. You can use Neon from Bun directly with the `@neondatabase/serverless` driver or through an ORM like Drizzle.
+[Neon](https://neon.com/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. You can use Neon from Bun directly with the `@neondatabase/serverless` driver or through an ORM like Drizzle.
 
 Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing it with `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/).
 
@@ -18,10 +18,10 @@ bun add -D drizzle-kit
 
 ---
 
-Create a `.env.local` file and add your [Neon Postgres connection string](https://neon.tech/docs/connect/connect-from-any-app) to it.
+Create a `.env.local` file and add your [Neon Postgres connection string](https://neon.com/docs/connect/connect-from-any-app) to it.
 
 ```ini .env.local icon="settings"
-DATABASE_URL=postgresql://usertitle:password@ep-adj-noun-guid.us-east-1.aws.neon.tech/neondb?sslmode=require
+DATABASE_URL=postgresql://username:password@ep-adj-noun-guid.us-east-1.aws.neon.tech/neondb?sslmode=require
 ```
 
 ---
@@ -36,7 +36,7 @@ import { drizzle } from "drizzle-orm/neon-http";
 // Refer to: https://bun.com/docs/runtime/environment-variables for more information
 const sql = neon(process.env.DATABASE_URL!);
 
-export const db = drizzle(sql);
+export const db = drizzle({ client: sql });
 ```
 
 ---
@@ -77,7 +77,7 @@ import { pgTable, integer, serial, text, timestamp } from "drizzle-orm/pg-core";
 
 export const authors = pgTable("authors", {
   id: serial("id").primaryKey(),
-  title: text("name").notNull(),
+  name: text("name").notNull(),
   bio: text("bio"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -147,15 +147,15 @@ import * as schema from "./schema";
 async function seed() {
   await db.insert(schema.authors).values([
     {
-      title: "J.R.R. Tolkien",
+      name: "J.R.R. Tolkien",
       bio: "The creator of Middle-earth and author of The Lord of the Rings.",
     },
     {
-      title: "George R.R. Martin",
+      name: "George R.R. Martin",
       bio: "The author of the epic fantasy series A Song of Ice and Fire.",
     },
     {
-      title: "J.K. Rowling",
+      name: "J.K. Rowling",
       bio: "The creator of the Harry Potter series.",
     },
   ]);
@@ -210,17 +210,17 @@ bun run index.ts
 [
   {
     id: 1,
-    title: "J.R.R. Tolkien",
+    name: "J.R.R. Tolkien",
     bio: "The creator of Middle-earth and author of The Lord of the Rings.",
     createdAt: 2024-05-11T10:28:46.029Z,
   }, {
     id: 2,
-    title: "George R.R. Martin",
+    name: "George R.R. Martin",
     bio: "The author of the epic fantasy series A Song of Ice and Fire.",
     createdAt: 2024-05-11T10:28:46.029Z,
   }, {
     id: 3,
-    title: "J.K. Rowling",
+    name: "J.K. Rowling",
     bio: "The creator of the Harry Potter series.",
     createdAt: 2024-05-11T10:28:46.029Z,
   }
@@ -229,6 +229,6 @@ bun run index.ts
 
 ---
 
-This example used the Neon serverless driver's SQL-over-HTTP functionality. Neon's serverless driver also exposes `Client` and `Pool` constructors to enable sessions, interactive transactions, and node-postgres compatibility. Refer to [Neon's documentation](https://neon.tech/docs/serverless/serverless-driver) for a complete overview.
+This example used the Neon serverless driver's SQL-over-HTTP functionality. Neon's serverless driver also exposes `Client` and `Pool` constructors to enable sessions, interactive transactions, and node-postgres compatibility. Refer to [Neon's documentation](https://neon.com/docs/serverless/serverless-driver) for a complete overview.
 
 Refer to the [Drizzle website](https://orm.drizzle.team/docs/overview) for complete documentation.

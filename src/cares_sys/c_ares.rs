@@ -7,16 +7,15 @@
 
 #[cfg(windows)]
 use core::ffi::c_short;
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
-use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
 #[cfg(not(windows))]
-use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
 
 pub type ares_socklen_t = socklen_t;
-type ares_ssize_t = isize;
 
 #[cfg(windows)]
 pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not a pointer).
@@ -580,8 +579,6 @@ impl struct_nameinfo {
     }
 }
 
-pub(crate) type struct_timeval = timeval;
-
 bun_opaque::opaque_ffi! { pub struct struct_Channeldata; }
 
 #[repr(C)]
@@ -989,15 +986,12 @@ pub(crate) type ares_addrinfo_callback =
     unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
 
 unsafe extern "C" {
-    pub fn ares_library_init(flags: c_int) -> c_int;
     fn ares_library_init_mem(
         flags: c_int,
         amalloc: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
-    pub fn ares_version(version: *mut c_int) -> *const u8;
-    pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
     pub fn ares_init_options(
         channelptr: *mut *mut Channel,
         options: *mut Options,
@@ -1025,63 +1019,13 @@ unsafe extern "C" {
     pub fn ares_freeaddrinfo(ai: *mut AddrInfo);
 }
 
-#[repr(C)]
-pub struct ares_socket_functions {
-    pub socket: Option<unsafe extern "C" fn(c_int, c_int, c_int, *mut c_void) -> ares_socket_t>,
-    pub close: Option<unsafe extern "C" fn(ares_socket_t, *mut c_void) -> c_int>,
-    pub connect: Option<
-        unsafe extern "C" fn(ares_socket_t, *const sockaddr, ares_socklen_t, *mut c_void) -> c_int,
-    >,
-    pub recvfrom: Option<
-        unsafe extern "C" fn(
-            ares_socket_t,
-            *mut c_void,
-            usize,
-            c_int,
-            *mut sockaddr,
-            *mut ares_socklen_t,
-            *mut c_void,
-        ) -> ares_ssize_t,
-    >,
-    pub sendv: Option<
-        unsafe extern "C" fn(ares_socket_t, *const iovec, c_int, *mut c_void) -> ares_ssize_t,
-    >,
-}
-
 unsafe extern "C" {
-    pub fn ares_set_socket_functions(
-        channel: *mut Channel,
-        funcs: *const ares_socket_functions,
-        user_data: *mut c_void,
-    );
-    pub fn ares_send(
-        channel: *mut Channel,
-        qbuf: *const u8,
-        qlen: c_int,
-        callback: ares_callback,
-        arg: *mut c_void,
-    );
     pub fn ares_query(
         channel: *mut Channel,
         name: *const c_char,
         dnsclass: NSClass,
         type_: NSType,
         callback: ares_callback,
-        arg: *mut c_void,
-    );
-    pub fn ares_search(
-        channel: *mut Channel,
-        name: *const c_char,
-        dnsclass: c_int,
-        type_: c_int,
-        callback: ares_callback,
-        arg: *mut c_void,
-    );
-    pub fn ares_gethostbyname(
-        channel: *mut Channel,
-        name: *const c_char,
-        family: c_int,
-        callback: ares_host_callback,
         arg: *mut c_void,
     );
     pub fn ares_gethostbyaddr(
@@ -1100,45 +1044,12 @@ unsafe extern "C" {
         callback: ares_nameinfo_callback,
         arg: *mut c_void,
     );
-    // pub fn ares_fds(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set) -> c_int;
-    pub fn ares_getsock(channel: *mut Channel, socks: *mut ares_socket_t, numsocks: c_int)
-    -> c_int;
-    pub fn ares_timeout(
-        channel: *mut Channel,
-        maxtv: *mut struct_timeval,
-        tv: *mut struct_timeval,
-    ) -> *mut struct_timeval;
-    // pub fn ares_process(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set);
     // Opaque handle by exclusive reference + scalars only.
     pub safe fn ares_process_fd(
         channel: &mut Channel,
         read_fd: ares_socket_t,
         write_fd: ares_socket_t,
     );
-    pub fn ares_create_query(
-        name: *const c_char,
-        dnsclass: c_int,
-        type_: c_int,
-        id: c_ushort,
-        rd: c_int,
-        buf: *mut *mut u8,
-        buflen: *mut c_int,
-        max_udp_size: c_int,
-    ) -> c_int;
-    pub fn ares_expand_name(
-        encoded: *const u8,
-        abuf: *const u8,
-        alen: c_int,
-        s: *mut *mut u8,
-        enclen: *mut c_long,
-    ) -> c_int;
-    pub fn ares_expand_string(
-        encoded: *const u8,
-        abuf: *const u8,
-        alen: c_int,
-        s: *mut *mut u8,
-        enclen: *mut c_long,
-    ) -> c_int;
     // Pure read of opaque `!Sync` handle.
     pub safe fn ares_queue_active_queries(channel: &Channel) -> usize;
 }
@@ -1360,15 +1271,6 @@ impl AresReply for struct_ares_soa_reply {
         // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_soa_reply(abuf, alen, out) }
     }
-}
-
-#[repr(C)]
-pub struct struct_ares_uri_reply {
-    pub next: *mut struct_ares_uri_reply,
-    pub priority: c_ushort,
-    pub weight: c_ushort,
-    pub uri: *mut u8,
-    pub ttl: c_int,
 }
 
 pub struct struct_any_reply {
@@ -1635,12 +1537,6 @@ unsafe extern "C" {
         alen: c_int,
         soa_out: *mut *mut struct_ares_soa_reply,
     ) -> c_int;
-    pub fn ares_parse_uri_reply(
-        abuf: *const u8,
-        alen: c_int,
-        uri_out: *mut *mut struct_ares_uri_reply,
-    ) -> c_int;
-    pub fn ares_free_string(str_: *mut c_void);
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
     pub safe fn ares_strerror(code: c_int) -> *const u8;

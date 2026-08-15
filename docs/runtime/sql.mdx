@@ -43,6 +43,7 @@ const sqliteResults = await sqlite`
 - Binary protocol support makes it faster
 - TLS support (and auth mode)
 - Automatic configuration with environment variables
+- PostgreSQL `LISTEN` / `NOTIFY`
 
 ---
 
@@ -138,6 +139,25 @@ MySQL databases support:
 - **SSL/TLS connections**: Configurable SSL modes similar to PostgreSQL
 - **Connection attributes**: Client information sent to server for monitoring
 - **Query pipelining**: Execute multiple prepared statements without waiting for responses
+
+</Accordion>
+
+<Accordion title="MySQL 8 authentication over plain TCP (allowPublicKeyRetrieval)">
+
+MySQL 8 accounts default to the `caching_sha2_password` plugin. The first connection for a user requires full authentication: over an unencrypted connection the client has to download the server's RSA public key to encrypt the password. Bun refuses that by default (the same default as mysql2 and Connector/J), because an attacker on the network path could substitute their own key and recover the password. The connection fails with `ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED`.
+
+Connect with TLS, or opt in explicitly if you trust the network (for example a local development database):
+
+```ts
+const mysql = new SQL({
+  adapter: "mysql",
+  hostname: "localhost",
+  username: "root",
+  password: "secret",
+  database: "myapp",
+  allowPublicKeyRetrieval: true, // permit RSA public key retrieval without TLS
+});
+```
 
 </Accordion>
 
@@ -984,6 +1004,63 @@ try {
 
 ---
 
+## LISTEN / NOTIFY (PostgreSQL)
+
+`sql.listen()` subscribes to a PostgreSQL notification channel and `sql.notify()` publishes to one. Processes sharing a database can use this as a lightweight message bus: cache invalidation, waking workers when rows are inserted (typically from a trigger calling `pg_notify`), fan-out of small events.
+
+```ts
+import { sql } from "bun";
+
+const subscription = await sql.listen("orders", payload => {
+  console.log("new order", JSON.parse(payload));
+});
+
+await sql.notify("orders", JSON.stringify({ id: 42 }));
+
+await subscription.unlisten();
+```
+
+`listen()` resolves once PostgreSQL has acknowledged the `LISTEN`, so a `notify()` issued after it resolves is delivered. The subscription it resolves to is also an async disposable:
+
+```ts
+{
+  await using subscription = await sql.listen("orders", handleOrder);
+  await doWork();
+} // unlistened here
+```
+
+### How it works
+
+- All subscriptions on a client share one dedicated connection. The first `listen()` opens it and removing the last subscription closes it, so a client that never listens never pays for it, and unlistening everything lets the process exit without `sql.close()`.
+- While anything is subscribed, that connection keeps the process alive, like a listening server.
+- If the connection drops, it is re-established with exponential backoff (250ms doubling to 32s, with jitter) and every channel is re-subscribed. PostgreSQL only delivers to connected listeners, so notifications sent in between are lost; the optional third argument to `listen()` runs on the initial subscribe and after every reconnect, which is the place to catch up:
+
+```ts
+await sql.listen("orders", handleOrder, async () => {
+  for (const order of await sql`SELECT * FROM orders WHERE processed = false`) handleOrder(order);
+});
+```
+
+- Every `listen()` call is its own subscription. Several on one channel share a single server-side `LISTEN`, each callback receives every notification, and each handle's `unlisten()` removes only what its own call registered. A callback (either argument) that throws is reported as an uncaught exception and stays subscribed.
+- Channel names are quoted as identifiers for you; like any PostgreSQL identifier they are limited to 63 bytes, and longer names are rejected rather than silently truncated. PostgreSQL limits payloads to 8000 bytes by default.
+
+### `notify()`
+
+`notify()` is an ordinary query (`SELECT pg_notify($1, $2)`) on whichever handle you call it through. On `sql` it uses the pool; inside `sql.begin()` it runs in the transaction, so PostgreSQL delivers it on `COMMIT` and drops it on `ROLLBACK`, which is how to announce a change only once it is visible:
+
+```ts
+await sql.begin(async tx => {
+  const [order] = await tx`INSERT INTO orders ${sql(data)} RETURNING id`;
+  await tx.notify("orders", String(order.id)); // delivered when the transaction commits
+});
+```
+
+The payload is optional: `sql.notify("cache-invalidated")` is PostgreSQL's bare `NOTIFY`. Reserved and transaction handles also have `listen()`; it always uses the client's shared listen connection.
+
+`LISTEN`/`NOTIFY` is PostgreSQL-only; on MySQL and SQLite these methods reject.
+
+---
+
 ## Prepared Statements
 
 By default, Bun's SQL client creates named prepared statements for queries it can infer are static, which is faster. To disable this, set `prepare: false` in the connection options:
@@ -1303,8 +1380,6 @@ We haven't implemented `LOAD DATA INFILE` support yet.
 We haven't implemented these yet:
 
 - `COPY` support
-- `LISTEN` support
-- `NOTIFY` support
 
 We also haven't implemented some of the more uncommon features like:
 

@@ -4,7 +4,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
@@ -572,7 +572,6 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let pkg_resolutions = pkgs.items_resolution();
 
     let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-    let res = &pkg_resolutions[pkg_id as usize];
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
     if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
@@ -614,64 +613,19 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    // Filtering only applies to the root package dependencies. Also
-    // --filter has a different meaning if a new package is being installed.
-    if manager.subcommand != crate::package_manager::Subcommand::Install || parent_pkg_id != 0 {
+    if parent_pkg_id != 0 {
         return false;
     }
 
     if !dep.behavior.is_workspace() {
-        if !install_root_dependencies {
-            return true;
-        }
-
-        return false;
+        return !install_root_dependencies;
     }
 
-    let mut workspace_matched = workspace_filters.is_empty();
-
-    for filter in workspace_filters {
-        // Separator is a const generic on `bun_paths::AbsPath`.
-        let mut filter_path = bun_paths::AbsPath::<
-            u8,
-            { bun_paths::path_options::PathSeparators::POSIX },
-        >::init_top_level_dir();
-        // filter_path drops at end of iteration.
-
-        let (pattern, name_or_path): (&[u8], &[u8]) = match filter {
-            WorkspaceFilter::All => {
-                workspace_matched = true;
-                continue;
-            }
-            WorkspaceFilter::Name(name_pattern) => (
-                name_pattern,
-                pkg_names[pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice()),
-            ),
-            WorkspaceFilter::Path(path_pattern) => 'path_pattern: {
-                if res.tag != crate::resolution::Tag::Workspace {
-                    return false;
-                }
-
-                // path-buffer overflow unreachable for bounded inputs
-                let _ = filter_path.join(&[res
-                    .workspace()
-                    .slice(lockfile.buffers.string_bytes.as_slice())]);
-
-                break 'path_pattern (path_pattern, filter_path.slice());
-            }
-        };
-
-        let result = bun_glob::r#match(pattern, name_or_path);
-        if result.matches() {
-            workspace_matched = true;
-        } else if result.is_negated() {
-            // always skip if a pattern specifically says "!<name|path>"
-            workspace_matched = false;
-            break;
-        }
+    if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
+        return true;
     }
 
-    !workspace_matched
+    !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -831,6 +785,20 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                    // Folder packages never hoist, so a cycle between them would nest forever.
+                    let mut tree_id = next_id;
+                    while tree_id != INVALID_ID {
+                        let tree: Tree = builder.list.items_tree()[tree_id as usize];
+                        let ancestor_dep_id = tree.dependency_id;
+                        if (ancestor_dep_id as usize) < dependencies.len()
+                            && builder.resolutions[ancestor_dep_id as usize] == pkg_id
+                            && dependencies[ancestor_dep_id as usize].name_hash
+                                == dependency.name_hash
+                        {
+                            continue 'dep;
+                        }
+                        tree_id = tree.parent;
+                    }
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: false,
@@ -1065,10 +1033,14 @@ impl Tree {
                     }
                 };
 
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
+                let peer_range: &crate::dependency::Version = builder
+                    .lockfile()
+                    .catalogs
+                    .resolve_range(builder.buf(), dependency);
+                if peer_range.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.npm().version;
+                    let version = &peer_range.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {

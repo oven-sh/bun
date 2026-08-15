@@ -24,6 +24,7 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
+    indentation_guessed: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
@@ -49,6 +50,7 @@ impl Default for MapEntry {
             root: Expr::default(),
             source: Source::default(),
             indentation: Indentation::default(),
+            indentation_guessed: false,
             _path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
             stale_contents: Vec::new(),
@@ -157,6 +159,11 @@ impl WorkspacePackageJSONCache {
         // membership up front and only insert into the map after a successful
         // read+parse. Net map state is identical on every path.
         if self.map.contains_key(path) {
+            let entry = self.map.get_mut(path).unwrap();
+            if opts.guess_indentation && !entry.indentation_guessed {
+                entry.indentation = json::guess_indentation(&entry.source.contents);
+                entry.indentation_guessed = true;
+            }
             return GetResult::Entry(self.map.get_mut(path).unwrap());
         }
 
@@ -192,6 +199,7 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source,
             indentation: parsed.indentation,
+            indentation_guessed: opts.guess_indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,

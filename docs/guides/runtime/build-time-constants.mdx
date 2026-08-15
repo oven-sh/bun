@@ -94,7 +94,7 @@ bun build --compile \
 
 Use build-time constants to enable/disable features:
 
-```ts src/version.ts icon="/icons/typescript.svg"
+```ts src/app.ts icon="/icons/typescript.svg"
 // Replaced at build time
 declare const ENABLE_ANALYTICS: boolean;
 declare const ENABLE_DEBUG: boolean;
@@ -115,7 +115,7 @@ if (ENABLE_DEBUG) {
 # Production build - analytics enabled, debug disabled
 bun build --compile --define ENABLE_ANALYTICS=true --define ENABLE_DEBUG=false src/app.ts --outfile app-prod
 
-# Development build - both enabled
+# Development build - analytics disabled, debug enabled
 bun build --compile --define ENABLE_ANALYTICS=false --define ENABLE_DEBUG=true src/app.ts --outfile app-dev
 ```
 
@@ -123,7 +123,7 @@ bun build --compile --define ENABLE_ANALYTICS=false --define ENABLE_DEBUG=true s
 
 Replace configuration objects at build time:
 
-```ts src/version.ts icon="/icons/typescript.svg"
+```ts src/app.ts icon="/icons/typescript.svg"
 declare const CONFIG: {
   apiUrl: string;
   timeout: number;

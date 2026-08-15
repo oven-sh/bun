@@ -1,7 +1,8 @@
 ## CLI Usage
 
 ```bash terminal icon="terminal"
-bun update <name>@<version>
+bun update [<name>[@<version>] | <pattern>]...
+bun up
 ```
 
 ### Update Strategy
@@ -11,13 +12,22 @@ bun update <name>@<version>
 </ParamField>
 
 <ParamField path="--latest" type="boolean">
-  Update packages to their latest versions
+  Update packages to their latest versions. Alias: <code>-L</code>
 </ParamField>
 
 ### Dependency Scope
 
-<ParamField path="--production" type="boolean">
-  Don't install devDependencies. Alias: <code>-p</code>
+<ParamField path="--dev" type="boolean">
+  Only update <code>devDependencies</code>. Alias: <code>-D</code>
+</ParamField>
+
+<ParamField path="--prod" type="boolean">
+  Only update <code>dependencies</code> and <code>optionalDependencies</code>. Aliases: <code>-P</code>,{" "}
+  <code>--production</code>
+</ParamField>
+
+<ParamField path="--no-optional" type="boolean">
+  Don't update <code>optionalDependencies</code>
 </ParamField>
 
 <ParamField path="--global" type="boolean">

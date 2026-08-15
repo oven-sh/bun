@@ -694,6 +694,14 @@ pub type HTMLRewriterTransform = RewriterPipe;
 /// when a content handler returns a pending Promise), and emits output either
 /// into a pre-stream buffer or — once JS reads `.body` — a [`ByteStream`]
 /// whose `producer` is [`SourceHandle::HTMLRewriter`].
+///
+/// Flow control follows the output's reader. While something is positioned
+/// to drain the output ([`Self::output_observed`]) the input is held whenever
+/// that reader falls a high-water mark behind, and its drain signal resumes
+/// it. While nothing is, the rewrite still runs to completion — its handlers
+/// are side effects callers rely on — but one upstream chunk per event-loop
+/// turn ([`Self::schedule_background_pull`]), so a synchronous source such as
+/// a regular file is never read through inside a single call.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
@@ -722,15 +730,25 @@ pub struct RewriterPipe {
     js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,
-    high_water_mark: Cell<BlobSizeType>,
+    /// A [`Self::run_background_pull`] task is in the event-loop queue.
+    background_pull_queued: Cell<bool>,
+    /// That task should pull the input when it runs; cleared when a reader
+    /// attaches and drives the input itself first.
+    background_pull_armed: Cell<bool>,
 
     // ── output side ──────────────────────────────────────────────────────
     /// Set by [`Self::on_readable_stream_available`]; `None` until JS reads
     /// `.body` on the output Response. Kept alive by the cell's `outputStream`
     /// slot.
     output: Cell<Option<bun_ptr::BackRef<ByteStream>>>,
-    /// lol-html output buffered before the output ByteStream exists.
+    /// lol-html output of the current `write`/`end`/`resume` call; flushed to
+    /// `output` when the call returns, or kept here until the output stream
+    /// exists (`on_start_streaming`) or the rewrite finishes.
     output_buffer: JsCell<Vec<u8>>,
+    /// A consumer is waiting on the pending body as a whole (`.text()`,
+    /// `Bun.write`, … via [`Self::on_start_buffering`]): the output is
+    /// observed and never backpressured.
+    buffered_consumer: Cell<bool>,
     /// Output Response. The pipe holds a native `+1` (released in `Drop`) so
     /// the body stays reachable on the abandon-suspension path after the
     /// Response JS wrapper has been swept alongside the Transform cell.
@@ -770,6 +788,11 @@ pub struct RewriterPipe {
 }
 
 impl RewriterPipe {
+    /// How far the output may run ahead of its reader before the input is
+    /// held (or, unobserved, before the turn is yielded). The same distance
+    /// `fetch()` lets a request-body stream run ahead of the socket.
+    const HIGH_WATER_MARK: BlobSizeType = 16384;
+
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept. So only release the
@@ -851,22 +874,16 @@ impl RewriterPipe {
     }
 
     /// Sever the wired input source: null the upstream's raw `sink` backref
-    /// so it can no longer dispatch into this pipe, and clear its `sinkOwner`
-    /// slot so I/O no longer roots the Transform cell through it. With
-    /// `cancel_upstream`, also close a native producer afterwards, so a
-    /// failed or cancelled rewrite stops a fetch mid-download and closes a
-    /// file fd instead of draining to upstream EOF; EOF paths pass `false`.
-    /// Only called from terminal paths on the JS thread, where the source is
-    /// still alive (it is rooted by the cell's `inputStream` slot until the
-    /// handle is dropped here). Idempotent: the handle is `None` after the
-    /// first call.
-    fn detach_input_source(&self, cancel_upstream: bool) {
+    /// so it can no longer dispatch into this pipe. With `cancel_upstream`,
+    /// also close a native producer afterwards, so a failed or cancelled
+    /// rewrite stops a fetch mid-download and closes a file fd instead of
+    /// draining to upstream EOF; EOF paths pass `false`. Only called from
+    /// terminal paths on the JS thread. Idempotent: the handle is `None`
+    /// after the first call. Returns the severed handle for
+    /// [`Self::release_input_roots`], which the caller runs after its
+    /// terminal work.
+    fn detach_input_source(&self, cancel_upstream: bool) -> SourceHandle {
         let mut src = self.input_source.replace(SourceHandle::None);
-        match &src {
-            SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
-            SourceHandle::FileReader(fr) => fr.parent_const().set_sink_owner(JSValue::UNDEFINED),
-            _ => {}
-        }
         let mut upstream = src;
         JSSink::<RewriterPipe>::detach(&mut src, &self.global);
         if cancel_upstream {
@@ -877,6 +894,29 @@ impl RewriterPipe {
                 _ => {}
             }
         }
+        upstream
+    }
+
+    /// Drop the GC edges between the Transform cell and its (severed) input:
+    /// the source's `sinkOwner` slot, through which I/O rooted the cell, and
+    /// the cell's `inputStream` slot, which rooted the source. Terminal paths
+    /// run this last, after end handlers, body resolution and error
+    /// construction, because those allocate while the source's own frames may
+    /// still be on the stack below (a file's read loop delivering EOF, an
+    /// upstream pipe delivering `Done`) and while this cell may be reachable
+    /// only through that source.
+    fn release_input_roots(&self, src: SourceHandle) {
+        let cell = self.cell.get();
+        if !cell.is_cell() {
+            // Swept together with everything these edges pointed at.
+            return;
+        }
+        match src {
+            SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
+            SourceHandle::FileReader(fr) => fr.parent_const().set_sink_owner(JSValue::UNDEFINED),
+            _ => {}
+        }
+        js_HTMLRewriterTransform::input_stream_set_cached(cell, &self.global, JSValue::UNDEFINED);
     }
 
     /// Sever the output `ByteStream`'s `SourceHandle::HTMLRewriter` backref
@@ -895,7 +935,37 @@ impl RewriterPipe {
         self.suspended_wrapper.get().is_some() || self.pending_suspension.take_peek().is_some()
     }
 
-    #[inline]
+    /// Output emitted but not yet taken by a reader.
+    fn unread_output(&self) -> BlobSizeType {
+        let staged = self.output_buffer.get().len();
+        let queued = self.output.get().map_or(0, |out| out.buffer.get().len());
+        (staged + queued) as BlobSizeType
+    }
+
+    /// Whether anything is positioned to drain the output: a native sink or a
+    /// buffered collector on the output stream, a parked or possible
+    /// (`locked`) JS read on it, or a consumer waiting on the pending body.
+    /// The same test `fetch()` applies to its own body stream before letting
+    /// it hold the connection.
+    fn output_observed(&self) -> bool {
+        let Some(out) = self.output.get() else {
+            return self.buffered_consumer.get();
+        };
+        if out.sink.get().is_some()
+            || out.buffer_action.get().is_some()
+            || out.pending.get().state == streams::PendingState::Pending
+        {
+            return true;
+        }
+        let cell = self.cell.get();
+        cell.is_cell()
+            && js_HTMLRewriterTransform::output_stream_get_cached(cell).is_some_and(|stream| {
+                webcore::readable_stream::is_locked_value(stream, &self.global)
+            })
+    }
+
+    /// An observed reader has fallen behind: hold the input until its drain
+    /// signal (`resume()`).
     fn output_backpressured(&self) -> bool {
         if let Some(out) = self.output.get() {
             if out.sink_paused.get() {
@@ -905,12 +975,15 @@ impl RewriterPipe {
             if out.buffer_action.get().is_some() {
                 return false;
             }
-            return out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
+        } else if self.buffered_consumer.get() {
+            return false;
         }
-        // No output ByteStream yet: the pre-stream buffer has no drain signal
-        // (only `on_start_streaming`/`finish` consume it), so backpressuring
-        // the input here would deadlock the body-mixin (`.text()` etc.) path.
-        false
+        self.output_observed() && self.unread_output() > Self::HIGH_WATER_MARK
+    }
+
+    /// Nobody is draining the output: keep going, but not within this turn.
+    fn should_yield(&self) -> bool {
+        !self.output_observed() && self.unread_output() > Self::HIGH_WATER_MARK
     }
 
     fn init(
@@ -928,9 +1001,11 @@ impl RewriterPipe {
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
             pending_input: JsCell::new(Vec::new()),
-            high_water_mark: Cell::new(16384),
+            background_pull_queued: Cell::new(false),
+            background_pull_armed: Cell::new(false),
             output: Cell::new(None),
             output_buffer: JsCell::new(Vec::new()),
+            buffered_consumer: Cell::new(false),
             response: Cell::new(None),
             phase: Cell::new(RewritePhase::WritePending),
             sync_only_noun: Cell::new(sync_only_noun),
@@ -946,8 +1021,6 @@ impl RewriterPipe {
         // `BackRef` is sound across the re-entrant lol-html calls below.
         let this = BackRef::from(pipe);
 
-        let input_size = original.get_body_len();
-
         // The handler closures point into `Box`es owned by `(*pipe).context`,
         // which `pipe` keeps alive for the rewriter's whole lifetime.
         let (element_content_handlers, document_content_handlers) =
@@ -957,15 +1030,11 @@ impl RewriterPipe {
                 element_content_handlers,
                 document_content_handlers,
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+                // Default parsing-buffer preallocation: it only ever holds the
+                // unparsed tail of one write (a token split across chunks).
                 memory_settings: lol_html::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
-                    {
-                        1024
-                    } else {
-                        input_size.max(1024) as usize
-                    },
                     max_allowed_memory_usage: u32::MAX as usize,
+                    ..lol_html::MemorySettings::new()
                 },
                 strict: false,
                 enable_esi_tags: false,
@@ -986,6 +1055,7 @@ impl RewriterPipe {
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
+                pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
                 pv.producer = SourceHandle::HTMLRewriter(this);
@@ -1190,6 +1260,75 @@ impl RewriterPipe {
         this.end_from_stream(None);
     }
 
+    /// `PendingValue::on_start_buffering` — `.text()`/`.json()`/`Bun.write`
+    /// want the whole output: pull the rest of the input now, unbounded.
+    fn on_start_buffering(ctx: NonNull<c_void>) {
+        // Same liveness argument as `on_start_streaming`.
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        this.buffered_consumer.set(true);
+        this.resume();
+    }
+
+    /// Hold a ref on the pipe across an externally-entered call whose work
+    /// (user handlers, body resolution) can drop the last GC path to the
+    /// Transform cell and sweep it, releasing the cell's ref mid-call.
+    fn pin(&self) -> bun_ptr::ScopedRef<Self> {
+        // SAFETY: `self` is live; the guard's own ref keeps the allocation
+        // valid until it drops.
+        unsafe { bun_ptr::ScopedRef::new(core::ptr::from_ref(self).cast_mut()) }
+    }
+
+    /// Nothing is draining the output, so nothing will signal `resume()`:
+    /// continue the rewrite from the event loop instead, one upstream chunk
+    /// per turn. The queued task holds a pipe ref and protects the cell, which
+    /// roots the Response, both streams and the handlers until it runs — an
+    /// unobserved rewrite is otherwise reachable from nothing.
+    fn schedule_background_pull(&self) {
+        self.background_pull_armed.set(true);
+        if self.background_pull_queued.replace(true) {
+            return;
+        }
+        let vm = self.global.bun_vm();
+        if vm.is_shutting_down() {
+            self.background_pull_queued.set(false);
+            return;
+        }
+        let cell = self.cell.get();
+        if cell.is_cell() {
+            cell.protect();
+        }
+        self.ref_();
+        vm.as_mut()
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+                core::ptr::from_ref(self).cast_mut(),
+                Self::run_background_pull,
+            ));
+    }
+
+    fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
+        // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
+        // the allocation live until the `deref_nn` below.
+        let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
+        let cell = this.cell.get();
+        this.background_pull_queued.set(false);
+        if this.background_pull_armed.replace(false)
+            && !this.done.get()
+            && this.phase.get() != RewritePhase::Done
+            && !this.driving.get()
+            && !this.is_suspended()
+            && !this.output_backpressured()
+        {
+            this.drain_pending_input(PullPacing::AlreadyYielded);
+        }
+        // The cell cannot have been swept while protected, so this balances
+        // the `protect()` exactly.
+        if cell.is_cell() {
+            cell.unprotect();
+        }
+        Self::deref_nn(this.into());
+        Ok(())
+    }
+
     /// `PendingValue::on_start_streaming` — the output Response's body is
     /// being realised as a ByteStream: hand over everything lol-html has
     /// already emitted.
@@ -1238,7 +1377,7 @@ impl RewriterPipe {
                 .is_none_or(|v| v.is_empty_or_undefined_or_null())
         {
             if let Some(out) = this.output.get() {
-                let _ = out.on_data(StreamResult::Done);
+                out.on_data(StreamResult::Done);
             }
             this.detach_output();
         }
@@ -1246,14 +1385,30 @@ impl RewriterPipe {
 
     /// `SinkHandle::write` entry — input bytes arrived.
     pub fn write(&self, data: &StreamResult) -> Writable {
+        let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
+        // A chunk that carries EOF is never answered with `Backpressure`: there
+        // is no further input to hold back, and the source follows any other
+        // answer with `end()`, which is what lets a document that arrived in
+        // one piece finish inside `transform()`.
+        let held = |len| {
+            if data.is_done() {
+                Writable::Owned(len)
+            } else {
+                Writable::Backpressure(len)
+            }
+        };
         if self.done.get() || self.phase.get() == RewritePhase::Done {
             return Writable::Done;
         }
-        if self.driving.get() || self.is_suspended() || self.output_backpressured() {
+        if self.driving.get()
+            || self.is_suspended()
+            || self.output_backpressured()
+            || self.background_pull_armed.get()
+        {
             self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
-            return Writable::Backpressure(len);
+            return held(len);
         }
         let fed = self.feed(bytes);
         // `feed` ran user JS; a handler may have cancelled the output reader
@@ -1266,11 +1421,18 @@ impl RewriterPipe {
             // `feed` returns false for both a handler suspension and a fatal
             // error. Only the latter should detach the upstream sink.
             if self.is_suspended() {
-                return Writable::Backpressure(len);
+                return held(len);
             }
             return Writable::Done;
         }
+        if data.is_done() {
+            return Writable::Owned(len);
+        }
         if self.is_suspended() || self.output_backpressured() {
+            return Writable::Backpressure(len);
+        }
+        if self.should_yield() {
+            self.schedule_background_pull();
             return Writable::Backpressure(len);
         }
         Writable::Owned(len)
@@ -1278,12 +1440,13 @@ impl RewriterPipe {
 
     /// `SinkHandle::end` entry — input EOF or terminal upstream error.
     pub fn end_from_stream(&self, err: Option<StreamError>) {
+        let _pin = self.pin();
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `m_sinkPtr` is nulled before any path can free the
         // pipe; otherwise the controller's destructor would later dispatch
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
-        self.detach_input_source(false);
+        let src = self.detach_input_source(false);
 
         if self.js_pump_reaction_pending.get() {
             // The pump-promise `.then()` reaction is the single terminal
@@ -1295,15 +1458,8 @@ impl RewriterPipe {
             return;
         }
 
-        js_HTMLRewriterTransform::input_stream_set_cached(
-            self.cell.get(),
-            &self.global,
-            JSValue::UNDEFINED,
-        );
         if self.done.get() || self.phase.get() == RewritePhase::Done {
-            return;
-        }
-        if let Some(err) = err {
+        } else if let Some(err) = err {
             let value_error = match err {
                 StreamError::JSValue(v) => webcore::body::ValueError::JSValue(v),
                 StreamError::Error(e) => {
@@ -1312,13 +1468,13 @@ impl RewriterPipe {
                 StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
             };
             self.fail(value_error);
-            return;
-        }
-        if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty() {
+        } else if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty()
+        {
             self.input_ended.set(true);
-            return;
+        } else {
+            self.end_rewrite();
         }
-        self.end_rewrite();
+        self.release_input_roots(src);
     }
 
     /// `SourceHandle::on_ready` entry — the output ByteStream drained.
@@ -1331,24 +1487,22 @@ impl RewriterPipe {
         {
             return;
         }
-        self.drain_pending_input();
+        let _pin = self.pin();
+        self.drain_pending_input(PullPacing::YieldIfUnobserved);
     }
 
     /// `SourceHandle::on_close` entry — the output reader cancelled.
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
+        let _pin = self.pin();
         self.detach_output();
-        self.detach_input_source(true);
-        js_HTMLRewriterTransform::input_stream_set_cached(
-            self.cell.get(),
-            &self.global,
-            JSValue::UNDEFINED,
-        );
+        let src = self.detach_input_source(true);
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
         self.pending.with_mut(|p| {
             p.result = Writable::Done;
             p.run();
         });
+        self.release_input_roots(src);
     }
 
     /// Run one lol-html `write`/`end_mut`/`resume` call under the
@@ -1363,8 +1517,23 @@ impl RewriterPipe {
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
         let res = self.rewriter.with_mut(|r| r.as_deref_mut().map(f));
+        // Hand this call's output to the stream as one chunk: lol-html emits a
+        // fragment per token piece, and each `on_data` may be a socket write
+        // or a downstream rewriter's `write`. Still under `driving`, so the
+        // stream's re-entrant drain signal defers as it did per fragment.
+        self.flush_output();
         self.driving.set(false);
         res
+    }
+
+    fn flush_output(&self) {
+        let Some(out) = self.output.get() else {
+            return;
+        };
+        if self.output_buffer.get().is_empty() {
+            return;
+        }
+        out.on_data(StreamResult::Owned(self.output_buffer.replace(Vec::new())));
     }
 
     /// Feed `bytes` through lol-html once. Returns `true` if the write
@@ -1406,7 +1575,7 @@ impl RewriterPipe {
         debug_assert!(!self.is_suspended());
         self.rewriter.set(None);
         if let Some(out) = self.output.get() {
-            let _ = out.on_data(StreamResult::Done);
+            out.on_data(StreamResult::Done);
             self.detach_output();
             return;
         }
@@ -1415,6 +1584,8 @@ impl RewriterPipe {
         let Some(response) = self.response.get() else {
             return;
         };
+        // For a waiting `.blob()`'s content type.
+        let headers = response.get_fetch_headers().map(NonNull::from);
         let body_value = response.get_body_value();
         let bytes = self.output_buffer.replace(Vec::new());
         let mut prev_value = core::mem::replace(
@@ -1424,12 +1595,12 @@ impl RewriterPipe {
                 was_string: false,
             }),
         );
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
+        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, headers);
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,
     /// then signal the upstream source to resume.
-    fn drain_pending_input(&self) {
+    fn drain_pending_input(&self, pacing: PullPacing) {
         let pending = self.pending_input.replace(Vec::new());
         if !pending.is_empty() && !self.feed(&pending) {
             return;
@@ -1439,13 +1610,24 @@ impl RewriterPipe {
         if self.done.get() || self.phase.get() == RewritePhase::Done {
             return;
         }
-        if self.is_suspended() || self.output_backpressured() {
+        if self.is_suspended() {
             return;
         }
+        // Output backpressure only gates pulling more input; once the input
+        // is exhausted, finishing frees the parser and settles the body.
         if self.input_ended.get() {
             self.end_rewrite();
             return;
         }
+        if self.output_backpressured() {
+            return;
+        }
+        if pacing == PullPacing::YieldIfUnobserved && self.should_yield() {
+            self.schedule_background_pull();
+            return;
+        }
+        // Pulling now; a queued background pull has nothing left to do.
+        self.background_pull_armed.set(false);
         // `ready()` may re-enter and write `input_source` (sink → feed →
         // fail/end_from_stream), so copy the handle out instead of holding a
         // `with_mut` borrow across the call.
@@ -1467,7 +1649,7 @@ impl RewriterPipe {
             return self.on_rewriting_error(&e);
         }
         match self.phase.get() {
-            RewritePhase::WritePending => self.drain_pending_input(),
+            RewritePhase::WritePending => self.drain_pending_input(PullPacing::YieldIfUnobserved),
             RewritePhase::EndPending => self.finish(),
             RewritePhase::Done => {}
         }
@@ -1563,17 +1745,10 @@ impl RewriterPipe {
 
     /// Put `err` on the output `Response`'s body / ByteStream.
     fn fail(&self, err: webcore::body::ValueError) {
+        let _pin = self.pin();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        self.detach_input_source(true);
-        let cell = self.cell.get();
-        if cell.is_cell() {
-            js_HTMLRewriterTransform::input_stream_set_cached(
-                cell,
-                &self.global,
-                JSValue::UNDEFINED,
-            );
-        }
+        let src = self.detach_input_source(true);
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors
         // `cancel_from_output`).
@@ -1583,32 +1758,43 @@ impl RewriterPipe {
         });
 
         if let Some(out) = self.output.get() {
+            // Output emitted before the failure still precedes the error.
+            self.flush_output();
             let mut err = err;
-            let _ = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
-            return;
+        } else if let Some(response) = self.response.get() {
+            let body_value = response.get_body_value();
+            let has_readable = match body_value {
+                webcore::body::Value::Locked(l) => l.readable.has(),
+                _ => false,
+            };
+            if !has_readable
+                && matches!(body_value, webcore::body::Value::Locked(l)
+                    if l.promise.is_none() && l.on_receive_value.is_none())
+            {
+                *body_value = webcore::body::Value::Empty;
+            }
+            let _ = body_value.to_error_instance(err, &self.global);
         }
-        let Some(response) = self.response.get() else {
-            return;
-        };
-        let body_value = response.get_body_value();
-        let has_readable = match body_value {
-            webcore::body::Value::Locked(l) => l.readable.has(),
-            _ => false,
-        };
-        if !has_readable
-            && matches!(body_value, webcore::body::Value::Locked(l)
-                if l.promise.is_none() && l.on_receive_value.is_none())
-        {
-            *body_value = webcore::body::Value::Empty;
-        }
-        let _ = body_value.to_error_instance(err, &self.global);
+        self.release_input_roots(src);
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PullPacing {
+    /// Entered from a reader's drain signal or a settled handler: if nobody is
+    /// reading and the output is already a high-water mark ahead, defer the
+    /// pull to the event loop.
+    YieldIfUnobserved,
+    /// Entered from that deferred task: this is the next turn, pull now.
+    AlreadyYielded,
 }
 
 /// `lol_html::OutputSink` for the rewriter built in [`RewriterPipe::init`].
 /// The pipe owns the `Box<LolRewriter>` that owns this `PipeOutput`, so the
 /// back-reference invariant (pointee outlives holder) is structurally upheld.
+/// Output is staged in `output_buffer`; `drive_rewriter` forwards it.
 pub struct PipeOutput(BackRef<RewriterPipe>);
 
 impl lol_html::OutputSink for PipeOutput {
@@ -1616,12 +1802,9 @@ impl lol_html::OutputSink for PipeOutput {
         if chunk.is_empty() {
             return;
         }
-        let pipe = &*self.0;
-        if let Some(out) = pipe.output.get() {
-            let _ = out.on_data(StreamResult::Temporary(RawSlice::new(chunk)));
-        } else {
-            pipe.output_buffer.with_mut(|v| v.extend_from_slice(chunk));
-        }
+        self.0
+            .output_buffer
+            .with_mut(|v| v.extend_from_slice(chunk));
     }
 }
 
@@ -1704,7 +1887,12 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
                 JSValue::js_number(0.0),
             ));
         }
-        if wait && (self.driving.get() || self.is_suspended() || self.output_backpressured()) {
+        if wait
+            && (self.driving.get()
+                || self.is_suspended()
+                || self.output_backpressured()
+                || self.background_pull_armed.get())
+        {
             let prom = self.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
                 p.promise(global)
@@ -1718,12 +1906,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
             JSValue::js_number(0.0),
         ))
     }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        if let Start::ChunkSize(chunk_size) = config {
-            if chunk_size > 0 {
-                self.high_water_mark.set(chunk_size);
-            }
-        }
+    fn start(&mut self, _config: Start) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {

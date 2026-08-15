@@ -63,62 +63,6 @@ extern "C" size_t TextEncoder__encodeInto8(const Latin1Character* stringPtr, siz
 extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
-template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
-    TextEncoder::EncodeIntoResult result;
-    JSValue readValue;
-    if (isNullOrUndefined)
-        readValue = jsUndefined();
-    else {
-        readValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!readValue.isUndefined()) {
-        result.read = convert<IDLUnsignedLongLong>(lexicalGlobalObject, readValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue writtenValue;
-    if (isNullOrUndefined)
-        writtenValue = jsUndefined();
-    else {
-        writtenValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "written"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!writtenValue.isUndefined()) {
-        result.written = convert<IDLUnsignedLongLong>(lexicalGlobalObject, writtenValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    return result;
-}
-
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const TextEncoder::EncodeIntoResult& dictionary)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-
-    if (!IDLUnsignedLongLong::isNullValue(dictionary.read)) {
-        auto readValue = toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, IDLUnsignedLongLong::extractValueFromNullable(dictionary.read));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "read"_s), readValue);
-    }
-    if (!IDLUnsignedLongLong::isNullValue(dictionary.written)) {
-        auto writtenValue = toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, IDLUnsignedLongLong::extractValueFromNullable(dictionary.written));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "written"_s), writtenValue);
-    }
-    return result;
-}
-
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encode);

@@ -304,6 +304,12 @@ bun_io::impl_buffered_reader_parent! {
         #[cfg(not(windows))] { ev.r#loop() }
     };
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
+    // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
+    // as HTMLRewriter) that can drop this stream's last GC root and allocate
+    // before the read loop's frames unwind, so the reader pins its parent —
+    // and, through `increment_count`, the JS wrapper — for the duration.
+    ref_  = |this| (*(&*this).parent()).increment_count();
+    deref = |this| { let _ = Source::decrement_count((&*this).parent()); };
 }
 
 impl FileReader {
@@ -576,6 +582,7 @@ impl FileReader {
             match sink.write(&chunk) {
                 streams::Writable::Backpressure(_) => {
                     self.sink_paused.set(true);
+                    self.reader().pause();
                     return;
                 }
                 streams::Writable::Err(e) => {
@@ -712,7 +719,12 @@ impl FileReader {
                 }
                 match wrote {
                     streams::Writable::Backpressure(_) => {
+                        // Returning `false` ends a synchronous read loop; an
+                        // event-driven reader (Windows, pollable fds) has to
+                        // be paused, or its next completion lands here again
+                        // and piles into the sink. `pull_into_sink` unpauses.
                         self.sink_paused.set(true);
+                        self.reader().pause();
                         close_if_needed!();
                         return false;
                     }
@@ -1262,14 +1274,12 @@ impl FileReader {
 
 pub type Source = readable_stream::NewSource<FileReader>;
 
-// Intrusive backref: `self` is always the `context` field of a heap-allocated
-// `Source`. Returns `*mut Source`
-// (NOT `&mut Source`) because `self` IS the `context` field — materializing
-// `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
-// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
-// `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn parent_const; }
+// SAFETY: `FileReader` is always the `context` field of a heap-allocated
+// `Source`. `parent` is the `raw` arm because the ref-count pin
+// (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
+// fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
+// hold `&mut Source` across other `self.*` accesses.
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
@@ -1290,7 +1300,7 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)

@@ -1608,8 +1608,10 @@ test("a vm timeout that never fires leaves nothing behind either", async () => {
 // The next two run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
 // a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
-test.skipIf(process.platform === "win32")("breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers", async () => {
-  const code = `
+test.skipIf(process.platform === "win32")(
+  "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",
+  async () => {
+    const code = `
     const vm = require("node:vm");
     const { Worker } = require("node:worker_threads");
     new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
@@ -1621,12 +1623,14 @@ test.skipIf(process.platform === "win32")("breakOnSigint interrupts a stuck run 
     process.kill(process.pid, "SIGINT");
     setTimeout(() => { console.log("no second SIGINT"); process.exit(1); }, 5000);
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 test("nested vm runs each keep their own deadline", async () => {
   const code = `

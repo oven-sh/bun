@@ -2,7 +2,6 @@
 
 #include "NodeVM.h"
 
-
 namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {

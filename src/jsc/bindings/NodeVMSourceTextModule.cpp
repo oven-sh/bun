@@ -19,7 +19,6 @@
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
-
 namespace Bun {
 using namespace NodeVM;
 

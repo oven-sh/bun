@@ -5,7 +5,6 @@
 #include "JavaScriptCore/AbstractModuleRecord.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
-
 namespace Bun {
 
 class NodeVMSourceTextModule;

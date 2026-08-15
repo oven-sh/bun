@@ -5,7 +5,6 @@
 
 #include "JavaScriptCore/SyntheticModuleRecord.h"
 
-
 namespace Bun {
 
 class NodeVMSyntheticModule final : public NodeVMModule {

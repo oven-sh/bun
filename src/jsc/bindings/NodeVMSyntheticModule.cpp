@@ -18,7 +18,6 @@
 #include "JavaScriptCore/SourceCodeKey.h"
 #include "JavaScriptCore/Watchdog.h"
 
-
 namespace Bun {
 using namespace NodeVM;
 

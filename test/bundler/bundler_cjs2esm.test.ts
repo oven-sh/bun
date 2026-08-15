@@ -366,15 +366,70 @@ describe("bundler", () => {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
     },
   });
-  // A require() of an unwrapped package that initializes a destructuring
-  // declaration is kept as a require expression that remembers it was
-  // unwrapped, and prints as the namespace object. One inside try/catch is
+  // The required packages assign module.exports, so they stay wrapped in __commonJS.
+  // A destructuring declaration has to read from the import the require() became,
+  // not from the wrapped module's own `exports` binding.
+  itBundled("cjs2esm/UnwrappedModuleRequireDestructured", {
+    files: {
+      "/entry.js": /* js */ `
+        const { react } = require("react");
+        console.log(react);
+
+        let { react: renamed, missing = "fallback" } = require("react");
+        console.log(renamed, missing);
+
+        var { react: { length } } = require("react");
+        console.log(length);
+
+        const before = require("react"),
+          { react: between } = require("react"),
+          after = require("react");
+        console.log(before.react, between, after.react);
+
+        function inFunction() {
+          const { react } = require("react");
+          return react;
+        }
+        console.log(inFunction());
+
+        const [first, second] = require("scheduler");
+        console.log(first, second);
+      `,
+      ...fakeReactNodeModules,
+      "/node_modules/scheduler/index.js": /* js */ `
+        module.exports = ["first", "second"];
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        {
+          "name": "scheduler",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toContain("var require_react = __commonJS(");
+      expect(code).toContain("var require_scheduler = __commonJS(");
+      expect(code).toMatch(/\{ react: between \} = \w+;/);
+      expect(code).toMatch(/\[first, second\] = \w+;/);
+    },
+    run: {
+      stdout: "react\nreact fallback\n5\nreact react react\nreact\nfirst second",
+    },
+  });
+  // Against a package that does convert to ESM, a destructuring declaration
+  // reads from the generated namespace object. A require() inside try/catch is
   // never unwrapped and prints as an ordinary require.
   itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
     files: {
       "/entry.js": /* js */ `
-        const { react: named } = require("react");
-        console.log(named);
+        const { react: named, version = "none" } = require("react");
+        console.log(named, version);
+
+        const whole = require("react"),
+          { react: again } = require("react");
+        console.log(whole.react, again);
 
         let inTry = "missing";
         try {
@@ -395,11 +450,12 @@ describe("bundler", () => {
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
+      expect(code).toMatch(/\{ react: named, version = "none" \} = \(?exports_react\)?;/);
+      expect(code).toMatch(/\{ react: again \} = \(?exports_react\)?;/);
       expect(code).toContain("__toCommonJS(exports_react)).react");
     },
     run: {
-      stdout: "react\nreact",
+      stdout: "react none\nreact react\nreact",
     },
   });
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package

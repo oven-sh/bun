@@ -422,6 +422,17 @@ pub trait Encoding: Copy + 'static {
     }
 }
 
+#[inline]
+fn byte_literal(s: &'static [u8]) -> EncLit<u8> {
+    debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+    let mut buf = [0u8; 8];
+    buf[..s.len()].copy_from_slice(s);
+    EncLit {
+        buf,
+        len: s.len() as u8,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Latin1;
 #[derive(Clone, Copy)]
@@ -438,13 +449,7 @@ impl Encoding for Latin1 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -470,13 +475,7 @@ impl Encoding for Utf8 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {

@@ -24,7 +24,7 @@ const githubCommit = "1234567890abcdef1234567890abcdef12345678";
 const githubDependency = `${githubOwner}/${githubRepo}#${githubCommit}`;
 const githubTarballPath = `/repos/${githubOwner}/${githubRepo}/tarball/${githubCommit}`;
 const githubLifecycleScripts = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];
-const githubRepositoryTarball = githubTarball(`${githubOwner}-${githubRepo}-${githubCommit.slice(0, 7)}`, {
+const githubRepositoryTarball = await githubTarball(`${githubOwner}-${githubRepo}-${githubCommit.slice(0, 7)}`, {
   "package.json": JSON.stringify({
     name: githubRepo,
     version: "1.0.0",

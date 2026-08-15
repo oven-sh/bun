@@ -36,7 +36,7 @@ function incompressible(bytes: number): Uint8Array {
   return new Uint8Array(words.buffer);
 }
 
-const tarball = githubTarball(resolved, {
+const tarball = await githubTarball(resolved, {
   "package.json": JSON.stringify({ name, version: "1.0.0" }),
   "index.js": "module.exports = 1;\n",
   // The HTTP client reads at most 512 KiB (LIBUS_RECV_BUFFER_LENGTH) per socket read, so a

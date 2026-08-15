@@ -8,8 +8,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
 void NapiRef::ref()
 {
-    // Node's Reference::Ref(): once the value is gone (weak referent collected, or a value that
-    // cannot be held weakly was released when the count hit zero) the count stays at 0.
+    // Node's Reference::Ref(): once the value is gone, the count stays at 0.
     if (refCount == 0 && !weakValueRef.get()) {
         NAPI_LOG("ref %p (value released)", this);
         return;

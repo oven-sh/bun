@@ -1143,9 +1143,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     bool can_be_weak = true;
 
     if (!(val.isObject() || val.isCallable() || val.isSymbol())) {
-        // Node-API v10 allows references to any value type (not just
-        // object/function/symbol). NAPI_VERSION_EXPERIMENTAL is INT_MAX, so
-        // `>= 10` covers it as well.
         NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version >= 10, napi_invalid_arg);
         can_be_weak = false;
     }

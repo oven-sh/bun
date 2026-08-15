@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -327,6 +327,29 @@ export default function GettingStarted() {
       expect(stderr.toString()).not.toContain("reached unreachable code");
       expect(stderr.toString()).not.toContain("assert(this.cap > 0)");
     }
+  });
+
+  // Same options parser as `Bun.serve({ app })` (dev/plugins.test.ts covers the value
+  // matrix); this used to build with the option silently ignored.
+  test("rejects a non-array plugins option", async () => {
+    using dir = tempDir("bake-production-plugins-not-array", {
+      "server.ts": `export function render() { return new Response("unused"); }`,
+      "bun.app.ts": `
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+            },
+            plugins: 123,
+          },
+        };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app`.cwd(String(dir)).env(bunEnv).throws(false);
+
+    expect(stderr.toString()).toContain("TypeError: plugins must be an array");
+    expect(exitCode).toBe(1);
   });
 
   test("client-side component with default import should work", async () => {

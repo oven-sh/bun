@@ -243,7 +243,7 @@ test("bun update <name> re-resolves a file: dependency of a file: package in the
     cmd: [bunExe(), "update", "b"],
     cwd: String(testDir),
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

@@ -251,6 +251,9 @@ const exports = {
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    if (isCustomIterable(args[0])) {
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, args[0], args[1], "a");
+    }
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
   close: asyncWrap(fs.close, "close"),
@@ -311,15 +314,9 @@ const exports = {
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    if (
-      !$isTypedArrayView(args[0]) &&
-      typeof args[0] !== "string" &&
-      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
-    ) {
+    if (isCustomIterable(args[0])) {
       $debug("fs.promises.writeFile async iterator slow path!");
-      // Node accepts an arbitrary async iterator here
-      // @ts-expect-error
-      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, args[0], args[1], "w");
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
@@ -1606,31 +1603,44 @@ function flagTruncates(flag): boolean {
   return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
-async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+// Node's fs/promises writeFile and appendFile also accept `data` as an iterable
+// or async iterable of chunks (the sync and callback forms do not). Strings and
+// typed arrays are iterable too, but those take the native path.
+function isCustomIterable(data): boolean {
+  return (
+    !$isTypedArrayView(data) &&
+    typeof data !== "string" &&
+    ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
+  );
+}
+
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, defaultFlag: "w" | "a") {
   let encoding;
+  let flag = defaultFlag;
+  let mode = 0o666;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
-    encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
-    flag = optionsOrEncoding?.flag ?? (flag || "w");
-    mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    encoding = optionsOrEncoding?.encoding ?? "utf8";
+    // Node: `options.flag || 'w'`, so an empty flag falls back to the default too.
+    flag = optionsOrEncoding?.flag || defaultFlag;
+    mode = optionsOrEncoding?.mode ?? mode;
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
       throw $makeAbortError(undefined, { cause: signal.reason });
     }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
-    flag ??= "w";
-    mode ??= 0o666;
   }
 
   if (!Buffer.isEncoding(encoding)) {
-    // ERR_INVALID_OPT_VALUE_ENCODING was removed in Node v15.
-    throw new TypeError(`Unknown encoding: ${encoding}`);
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
   }
 
-  let mustClose = typeof fdOrPath === "string";
+  // Callers unwrap a FileHandle to its fd. Anything else is a path (string,
+  // Buffer or URL) that has to be opened with `flag` and `mode`; fs.open
+  // rejects the values that are none of those.
+  const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
-    // Rely on fs.open for further argument validaiton.
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 

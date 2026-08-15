@@ -304,7 +304,9 @@ pub mod registry {
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
         // base64("${username}:${password}")
         pub auth: Box<[u8]>,
-        // URL may contain these special suffixes in the pathname:
+        // The configured URL may carry credentials, which `from_api` moves
+        // into `token`/`auth` and strips from here: `user:pass@` / `:token@`
+        // userinfo, or these special suffixes in the pathname:
         //  :_authToken
         //  :username
         //  :_password
@@ -359,6 +361,27 @@ pub mod registry {
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
             let mut needs_normalize = false;
+
+            // `https://user:pass@host/` or `https://:token@host/`. The config
+            // loaders only split these out of literal registry strings
+            // (`parse_registry_url_string_impl`); a `$VAR` reference or the
+            // object form's `url` still carries them here. Credentials
+            // configured next to the URL win, as with the path suffixes
+            // below, but the URL is stripped either way.
+            if !url.password.is_empty() {
+                if registry.token.is_empty()
+                    && registry.username.is_empty()
+                    && registry.password.is_empty()
+                {
+                    if url.username.is_empty() {
+                        registry.token = url.password.into();
+                    } else {
+                        registry.username = url.username.into();
+                        registry.password = url.password.into();
+                    }
+                }
+                needs_normalize = true;
+            }
 
             // Backing storage for `user`/`auth` when synthesized from
             // username:password.

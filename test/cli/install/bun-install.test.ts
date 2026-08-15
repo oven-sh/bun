@@ -854,6 +854,159 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `registry = "https://user:pass@host/"` written literally is split into
+  // credentials while bunfig.toml is parsed. These cover the registry URLs that
+  // only exist later, when `Scope::from_api` runs: `$ENV_VAR` references and
+  // the object form's `url`.
+  describe("credentials embedded in a registry URL that is not a literal registry string", () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+    const basic = `Basic ${Buffer.from("alice:s3cret").toString("base64")}`;
+
+    async function installWith(opts: {
+      bunfig: (registryOrigin: string) => string;
+      env?: (registryOrigin: string) => Record<string, string>;
+      dependency?: string;
+    }) {
+      const requests: { path: string; authorization: string | null }[] = [];
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          requests.push({ path: pathname, authorization: req.headers.get("authorization") });
+          if (pathname.endsWith(".tgz")) {
+            return new Response(Bun.file(tgz));
+          }
+          const name = decodeURIComponent(pathname.slice(1));
+          if (name !== "no-deps" && name !== "@myorg/pkg") {
+            return new Response("not found", { status: 404 });
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                dist: { integrity, tarball: `http://127.0.0.1:${registry.port}/${name}/-/pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        },
+      });
+      const origin = `127.0.0.1:${registry.port}`;
+      const dependency = opts.dependency ?? "no-deps";
+
+      using dir = tempDir("registry-url-credentials", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { [dependency]: "1.0.0" } }),
+        "bunfig.toml": opts.bunfig(origin),
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), ...opts.env?.(origin) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { requests, stdout, stderr, exitCode };
+    }
+
+    const basicAuthForms: [name: string, opts: Parameters<typeof installWith>[0]][] = [
+      [
+        "install.registry = $ENV_VAR",
+        {
+          bunfig: () => `[install]\nregistry = "$MY_REG"\n`,
+          env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
+        },
+      ],
+      [
+        "install.registry = { url = $ENV_VAR }",
+        {
+          bunfig: () => `[install]\nregistry = { url = "$MY_REG" }\n`,
+          env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
+        },
+      ],
+      [
+        "install.registry = { url = literal }",
+        {
+          bunfig: origin => `[install]\nregistry = { url = "http://alice:s3cret@${origin}/" }\n`,
+        },
+      ],
+      [
+        "install.scopes entry = $ENV_VAR",
+        {
+          bunfig: () => `[install.scopes]\n"@myorg" = "$MY_REG"\n`,
+          env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
+          dependency: "@myorg/pkg",
+        },
+      ],
+    ];
+
+    for (const [name, opts] of basicAuthForms) {
+      it(`sends user:pass@ from the URL as Basic auth (${name})`, async () => {
+        const { requests, stdout, stderr, exitCode } = await installWith(opts);
+        const manifestPath = opts.dependency === "@myorg/pkg" ? "/@myorg%2fpkg" : "/no-deps";
+        const tarballPath = `/${opts.dependency ?? "no-deps"}/-/pkg-1.0.0.tgz`;
+        expect({ requests, stderr }).toEqual({
+          requests: [
+            { path: manifestPath, authorization: basic },
+            { path: tarballPath, authorization: basic },
+          ],
+          stderr: expect.not.stringContaining("s3cret"),
+        });
+        expect(stdout).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    it("sends :token@ from the URL as a Bearer token", async () => {
+      const { requests, stdout, stderr, exitCode } = await installWith({
+        bunfig: () => `[install]\nregistry = "$MY_REG"\n`,
+        env: origin => ({ MY_REG: `http://:tok-from-env@${origin}/` }),
+      });
+      expect({ requests, stderr }).toEqual({
+        requests: [
+          { path: "/no-deps", authorization: "Bearer tok-from-env" },
+          { path: "/no-deps/-/pkg-1.0.0.tgz", authorization: "Bearer tok-from-env" },
+        ],
+        stderr: expect.not.stringContaining("tok-from-env"),
+      });
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    });
+
+    it("does not print the credentials with the request URL", async () => {
+      const { requests, stderr, exitCode } = await installWith({
+        bunfig: () => `[install]\nregistry = "$MY_REG"\n`,
+        env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
+        dependency: "not-on-this-registry",
+      });
+      expect({ requests, stderr }).toEqual({
+        requests: [{ path: "/not-on-this-registry", authorization: basic }],
+        stderr: expect.stringMatching(/error: GET http:\/\/127\.0\.0\.1:\d+\/+not-on-this-registry - 404/),
+      });
+      expect(stderr).not.toContain("s3cret");
+      expect(exitCode).toBe(1);
+    });
+
+    it("credentials configured next to the URL win over the ones inside it", async () => {
+      const { requests, stderr, exitCode } = await installWith({
+        bunfig: () => `[install]\nregistry = { url = "$MY_REG", token = "configured-token" }\n`,
+        env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
+        dependency: "not-on-this-registry",
+      });
+      expect({ requests, stderr }).toEqual({
+        requests: [{ path: "/not-on-this-registry", authorization: "Bearer configured-token" }],
+        stderr: expect.stringMatching(/error: GET http:\/\/127\.0\.0\.1:\d+\/+not-on-this-registry - 404/),
+      });
+      expect(stderr).not.toContain("s3cret");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {
     using dir = tempDir("install-silent-verbose", {
       "package.json": JSON.stringify({ name: "app", dependencies: {} }),

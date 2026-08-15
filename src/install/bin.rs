@@ -1519,8 +1519,7 @@ impl<'a> Linker<'a> {
         Self::join_z_checked(package_dir, target, buf)
     }
 
-    /// `<dir>/<relative>` NUL-terminated in `buf` (a `PathBuffer`), or `None` when it
-    /// does not fit, which is exactly when the `sys` wrappers would reject the path.
+    /// `<dir>/<relative>` with a NUL in `buf`, or `None` if it does not fit (`sys` rejects it too).
     fn join_z_checked<'b>(dir: &[u8], relative: &[u8], buf: &'b mut [u8]) -> Option<&'b ZStr> {
         let without_nul = buf.len() - 1;
         let len = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
@@ -1602,9 +1601,7 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // SAFETY (for the `ZStr::from_raw(abs_dest_buf_ptr, ..)` in each arm): the
-        // detached `abs_dest` is only live across `link_bin_or_create_shim(&mut self)`,
-        // which never touches `abs_dest_buf`.
+        // SAFETY (`from_raw` below): `link_bin_or_create_shim` never touches `abs_dest_buf`.
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
 
         // `abs_target_buf` holds `package_dir`, the join input, so the output needs its own buffer.

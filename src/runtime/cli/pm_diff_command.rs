@@ -49,27 +49,36 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
-/// `original_cwd` is where the user ran the command when the manager had to be started from a scratch folder (no project); relative paths resolve against it.
+/// `original_cwd` is the folder the user ran the command from; the manager has since `chdir`ed to the project
+/// root (or a scratch project), so relative paths and the no-argument form resolve against it.
 pub(crate) fn exec(
     pm: &mut PackageManager,
     positionals: &[&[u8]],
     diff_args: &[&[u8]],
     flags: DiffFlags,
-    original_cwd: Option<&[u8]>,
+    original_cwd: &[u8],
 ) -> Result<(), crate::Error> {
     let mut args: Vec<&[u8]> = diff_args.to_vec();
     args.extend(positionals.iter().skip(1).copied());
     let typed: Vec<&[u8]> = args.clone();
-    if let Some(cwd) = original_cwd {
-        for arg in &mut args {
-            if looks_like_path(arg) && !bun_paths::is_absolute(arg) {
+    for arg in &mut args {
+        if let Some(rest) = arg.strip_prefix(b"~/") {
+            if let Some(home) = bun_core::env_var::HOME.get() {
                 *arg = leak(
                     bun_paths::resolve_path::join_abs_string::<
                         bun_paths::resolve_path::platform::Auto,
-                    >(cwd, &[arg])
+                    >(home, &[rest])
                     .to_vec(),
                 );
             }
+        } else if looks_like_path(arg) && !bun_paths::is_absolute(arg) {
+            *arg =
+                leak(
+                    bun_paths::resolve_path::join_abs_string::<
+                        bun_paths::resolve_path::platform::Auto,
+                    >(original_cwd, &[arg])
+                    .to_vec(),
+                );
         }
     }
     if args.len() > 2 {
@@ -90,10 +99,55 @@ pub(crate) fn exec(
             }
         }
     }
-    let changed = print_diff(&left, &right, flags);
+    print_diff(&left, &right, flags);
     Output::flush();
-    let _ = changed;
     Ok(())
+}
+
+/// Outside any project there is no package.json for the manager to anchor on; make a private, empty one in a fresh
+/// temp folder, `chdir` there, and return its path. Fails closed: an existing path is never reused.
+pub(crate) fn enter_scratch_project() -> Result<&'static [u8], crate::Error> {
+    let mut path = bun_resolver::fs::RealFS::platform_temp_dir().to_vec();
+    let _ = write!(
+        &mut path,
+        "/bun-pm-diff-{}-{:x}",
+        std::process::id(),
+        bun_core::time::nano_timestamp() as u64
+    );
+    path.push(0);
+    let path: &'static [u8] = Vec::leak(path);
+    let z = bun_core::ZStr::from_buf(path, path.len() - 1);
+    let made = bun_sys::mkdir(z, 0o700)
+        .and_then(|()| bun_sys::open_dir_at(Fd::cwd(), z.as_bytes()))
+        .and_then(|dir| {
+            let wrote = bun_sys::File::create(dir, b"package.json", true).and_then(|f| {
+                let wrote = f.write_all(b"{}");
+                let closed = f.close();
+                wrote.and(closed)
+            });
+            let r = wrote.and_then(|()| bun_sys::fchdir(dir));
+            dir.close();
+            r
+        });
+    if let Err(err) = made {
+        Output::err(
+            err,
+            "could not set up a scratch folder at {}",
+            (BStr::new(z.as_bytes()),),
+        );
+        Global::exit(1);
+    }
+    Ok(z.as_bytes())
+}
+
+/// The manager has read what it needs; do not leave the scratch folder behind.
+pub(crate) fn leave_scratch_project(path: &[u8]) {
+    let mut buf = path.to_vec();
+    buf.extend_from_slice(b"/package.json\0");
+    let _ = bun_sys::unlink(bun_core::ZStr::from_buf(&buf, buf.len() - 1));
+    buf.truncate(path.len());
+    buf.push(0);
+    let _ = bun_sys::rmdir(bun_core::ZStr::from_buf(&buf, buf.len() - 1));
 }
 
 // ─── spec resolution ────────────────────────────────────────────────────────
@@ -101,7 +155,7 @@ pub(crate) fn exec(
 fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
         || spec.starts_with(b"/")
-        || spec.starts_with(b"~")
+        || spec.starts_with(b"~/")
         || (cfg!(windows) && spec.len() > 2 && spec[1] == b':')
 }
 
@@ -128,7 +182,7 @@ fn classify(spec: &[u8]) -> Spec<'_> {
 fn resolve_sides<'a>(
     pm: &mut PackageManager,
     args: &[&'a [u8]],
-    original_cwd: Option<&[u8]>,
+    original_cwd: &[u8],
 ) -> (Spec<'a>, Spec<'a>) {
     match args {
         // In a package folder: what is published under this name → the folder.
@@ -139,7 +193,7 @@ fn resolve_sides<'a>(
                     name,
                     version: b"latest",
                 },
-                Spec::Dir(original_cwd.map_or(b".".as_slice(), |c| leak(c.to_vec()))),
+                Spec::Dir(leak(original_cwd.to_vec())),
             )
         }
         [one] => match classify(one) {
@@ -212,10 +266,8 @@ fn leak(v: Vec<u8>) -> &'static [u8] {
     Vec::leak(v)
 }
 
-fn root_package_name(pm: &PackageManager, original_cwd: Option<&[u8]>) -> &'static [u8] {
-    let dir = original_cwd
-        .and_then(|c| bun_sys::open_dir_at(Fd::cwd(), c).ok())
-        .unwrap_or(Fd::cwd());
+fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> &'static [u8] {
+    let dir = bun_sys::open_dir_at(Fd::cwd(), original_cwd).unwrap_or_else(|_| Fd::cwd());
     // The folder we are in, before the workspace root the manager walked up to.
     if let Ok(bytes) = bun_sys::File::read_from(dir, b"package.json") {
         let bump = Bump::new();
@@ -358,10 +410,24 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
             Global::exit(1);
         }
     };
+    // A tree with holes would report those files as deleted, so any read failure is fatal.
+    let fail = |err: bun_sys::Error, rel: &[u8]| -> ! {
+        Output::err(
+            err,
+            "failed to read {}/{}",
+            (BStr::new(root), BStr::new(rel)),
+        );
+        Global::exit(1);
+    };
     let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
         let mut it = DirIterator::iterate(dir);
-        while let Some(entry) = it.next().ok().flatten() {
+        loop {
+            let entry = match it.next() {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(err) => fail(err, &prefix),
+            };
             let name = entry.name.slice_u8();
             if name == b"node_modules" || name == b".git" {
                 continue;
@@ -372,16 +438,16 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
             }
             rel.extend_from_slice(name);
             match entry.kind {
-                bun_sys::FileKind::Directory => {
-                    if let Ok(sub) = bun_sys::open_dir_at(dir, name) {
-                        stack.push((sub, rel));
-                    }
-                }
-                bun_sys::FileKind::File => {
-                    if let Ok(bytes) = bun_sys::File::read_from(dir, name) {
+                bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
+                    Ok(sub) => stack.push((sub, rel)),
+                    Err(err) => fail(err, &rel),
+                },
+                bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
+                    Ok(bytes) => {
                         tree.files.insert(rel, bytes);
                     }
-                }
+                    Err(err) => fail(err, &rel),
+                },
                 _ => {}
             }
         }
@@ -765,6 +831,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
                 (1, n, 0, 0)
             };
             style.hunk_header(&mut change.hunks, range, true);
+            let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
             for (i, line) in Lines(body).enumerate() {
                 style.line(
                     &mut change.hunks,
@@ -775,6 +842,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
                     change.highlight,
                     None,
                 );
+            }
+            if unterminated {
+                change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
             }
         }
         changes.push(change);
@@ -1068,7 +1138,7 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
 
 /// `name@version` → (name, version), minding a leading scope `@`.
 fn split_label(label: &[u8]) -> Option<(&[u8], &[u8])> {
-    let at = label.iter().rposition(|&b| b == b'@')?;
+    let at = strings::last_index_of_char(label, b'@')?;
     (at > 0).then(|| (&label[..at], &label[at + 1..]))
 }
 
@@ -1244,6 +1314,12 @@ fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
     }
     if out.len() > 120 {
         out.truncate(117);
+        while out.last().is_some_and(|&b| b & 0xC0 == 0x80) {
+            out.pop();
+        }
+        if out.last().is_some_and(|&b| b >= 0xC0) {
+            out.pop();
+        }
         out.extend_from_slice(b"...");
     }
     out
@@ -1328,6 +1404,8 @@ impl Style {
             out.push(b'\n');
             return;
         }
+        // A CRLF file's `\r` would send the cursor home and let erase-to-EOL wipe the line just drawn.
+        let text = text.strip_suffix(b"\r").unwrap_or(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
         let (num, accent, bg, strong) = match op {
             Operation::Equal => (new_no, "\x1b[2m", "", ""),
@@ -1404,7 +1482,7 @@ impl Style {
         } else if !bg.is_empty() {
             // The highlighter resets all attributes between tokens; put the tint back after each reset.
             let tail = out.split_off(start);
-            for (i, piece) in tail.split(|&b| b == 0x1b).enumerate() {
+            for (i, piece) in strings::split(&tail, b"\x1b").enumerate() {
                 if i > 0 {
                     out.push(0x1b);
                 }
@@ -1525,6 +1603,8 @@ fn pair_emphasis(ops: &[(Operation, &[u8])], k: usize) -> Option<(usize, usize)>
 }
 
 /// Line diff via diff-match-patch, rendered as unified hunks with `context` lines around each change.
+const NO_NEWLINE_MARKER: &[u8] = b"\\ No newline at end of file\n";
+
 fn unified_hunks(
     old: &[u8],
     new: &[u8],
@@ -1559,6 +1639,11 @@ fn unified_hunks(
         }
     }
     // SAFETY-free lifetime note: `d.text` is owned by `diffs`, which lives to the end of this fn; hunks are rendered here.
+    // `patch`/`git apply` need to know when a side's last line had no terminator.
+    let old_unterminated = !old.is_empty() && !old.ends_with(b"\n");
+    let new_unterminated = !new.is_empty() && !new.ends_with(b"\n");
+    let last_old = ops.iter().rposition(|(op, _)| *op != Operation::Insert);
+    let last_new = ops.iter().rposition(|(op, _)| *op != Operation::Delete);
     let n = ops.len();
     let mut i = 0;
     let mut first = true;
@@ -1641,6 +1726,13 @@ fn unified_hunks(
                 change.highlight,
                 emph,
             );
+            let idx = start + k;
+            if !style.pretty
+                && ((Some(idx) == last_old && old_unterminated)
+                    || (Some(idx) == last_new && new_unterminated))
+            {
+                change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
+            }
             match op {
                 Operation::Equal => {
                     o += 1;

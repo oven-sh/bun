@@ -1758,7 +1758,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_raw = args.flag(b"--raw");
             cli.diff_stat = args.flag(b"--stat");
             if let Some(n) = args.option(b"--unified") {
-                cli.diff_context = strings::parse_int::<usize>(n, 10).ok();
+                match strings::parse_int::<usize>(n, 10) {
+                    Ok(v) => cli.diff_context = Some(v),
+                    Err(_) => {
+                        Output::err_generic(
+                            "invalid --unified value: {}, expected a non-negative integer",
+                            (bstr::BStr::new(n),),
+                        );
+                        Global::exit(1);
+                    }
+                }
             }
         }
 

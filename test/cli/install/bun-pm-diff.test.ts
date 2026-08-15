@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -30,28 +30,31 @@ let registry: string;
 let root: ReturnType<typeof tempDir>;
 let tarballs: Record<string, string> = {};
 
-async function pack(dir: string) {
+// Packs `dir` into `dest` (outside the folder, so folder-side diffs do not see a stray tarball).
+async function pack(dir: string, dest: string) {
   await using p = Bun.spawn({
-    cmd: [bunExe(), "pm", "pack", "--quiet"],
+    cmd: [bunExe(), "pm", "pack", "--quiet", "--destination", dest],
     cwd: dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  await p.exited;
-  const tgz = readdirSync(dir).find(f => f.endsWith(".tgz"));
-  if (!tgz) throw new Error("pack failed: " + (await p.stderr.text()));
-  return join(dir, tgz);
+  const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const tgz = readdirSync(dest).find(f => f.endsWith(".tgz"));
+  if (exitCode !== 0 || !tgz) throw new Error("pack failed: " + stderr);
+  return join(dest, tgz);
 }
 
 beforeAll(async () => {
   root = tempDir("pm-diff", {
     "v1": v1,
     "v2": v2,
+    "tgz1/.keep": "",
+    "tgz2/.keep": "",
     "proj/package.json": JSON.stringify({ name: "proj", dependencies: { diffme: "1.0.0" } }),
   });
-  tarballs["1.0.0"] = await pack(join(String(root), "v1"));
-  tarballs["2.0.0"] = await pack(join(String(root), "v2"));
+  tarballs["1.0.0"] = await pack(join(String(root), "v1"), join(String(root), "tgz1"));
+  tarballs["2.0.0"] = await pack(join(String(root), "v2"), join(String(root), "tgz2"));
   server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -70,7 +73,10 @@ beforeAll(async () => {
   });
   registry = server.url.origin;
 });
-afterAll(() => server?.stop(true));
+afterAll(() => {
+  server?.stop(true);
+  root?.[Symbol.dispose]();
+});
 
 async function diff(args: string[], cwd = String(root)) {
   await using p = Bun.spawn({
@@ -88,7 +94,7 @@ describe("bun pm diff", () => {
   test("two registry versions: summary, notable package.json changes, unified hunks", async () => {
     const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "diffme@2.0.0"]);
     expect(stderr).toBe("");
-    expect(stdout).toMatchInlineSnapshot(`
+    expect(normalizeBunSnapshot(stdout, root)).toMatchInlineSnapshot(`
 "diffme@1.0.0 → diffme@2.0.0
 
 diff --bun a/README.md b/README.md
@@ -139,6 +145,7 @@ diff --bun a/package.json b/package.json
 +    "left-pad": "^1.3.0"
    }
  }
+/ No newline at end of file
 diff --bun a/setup.js b/setup.js
 new file
 --- /dev/null
@@ -151,8 +158,7 @@ diffme@1.0.0 → diffme@2.0.0
   ! postinstall script added: node setup.js
   ! dependencies added: left-pad@^1.3.0
   ! main changed: index.js → dist/index.js
-  ! new binary file logo.bin (6 bytes)
-"
+  ! new binary file logo.bin (6 bytes)"
 `);
     expect(exitCode).toBe(0);
   });
@@ -197,7 +203,13 @@ diffme@1.0.0 → diffme@2.0.0
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await install.exited).toBe(0);
+    const [, installErr, installExit] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(installErr).not.toContain("error:");
+    expect(installExit).toBe(0);
     const { stdout, exitCode } = await diff(["diffme", "--name-only"], proj);
     expect(stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
     expect(exitCode).toBe(0);
@@ -212,11 +224,39 @@ diffme@1.0.0 → diffme@2.0.0
   });
 
   test("no arguments inside a package folder: what is published → this folder", async () => {
-    const { stdout, exitCode } = await diff([], join(String(root), "v1"));
-    expect(stdout.split("\n")[0]).toBe("diffme@2.0.0 → .");
-    // v1 on disk vs 2.0.0 published: the postinstall was *removed* from this side's point of view.
-    expect(stdout).toContain("D setup.js".replace("D ", "")); // setup.js appears as deleted
+    const { stdout, exitCode } = await diff(["--name-only"], join(String(root), "v1"));
+    const lines = stdout.split("\n");
+    expect(lines[0]).toBe("diffme@2.0.0 → .");
+    // 2.0.0 as published → v1 on disk: setup.js and logo.bin are gone from this side, gone.txt is back.
+    expect(lines.filter(l => /^[AMD] /.test(l))).toEqual([
+      "M README.md",
+      "A gone.txt",
+      "M index.js",
+      "D logo.bin",
+      "M package.json",
+      "D setup.js",
+    ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("patch output marks a side that ends without a newline", async () => {
+    using dir = tempDir("pm-diff-nonl", {
+      "a/package.json": `{"name":"x","version":"1.0.0"}`,
+      "b/package.json": `{"name":"x","version":"1.0.1"}\n`,
+      "b/min.js": `let a=1`,
+    });
+    const { stdout, exitCode } = await diff(["./a", "./b"], String(dir));
+    expect(stdout).toContain(
+      '-{"name":"x","version":"1.0.0"}\n\\ No newline at end of file\n+{"name":"x","version":"1.0.1"}\n',
+    );
+    expect(stdout).toContain("+let a=1\n\\ No newline at end of file\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an unparseable -U is an error, not a silent default", async () => {
+    const { stderr, exitCode } = await diff(["diffme@1.0.0", "2.0.0", "-U", "lots"]);
+    expect(stderr).toContain("invalid --unified value");
+    expect(exitCode).toBe(1);
   });
 
   test("on a terminal: per-file headers, a line-number gutter, no patch syntax", async () => {

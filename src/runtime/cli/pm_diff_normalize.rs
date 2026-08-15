@@ -37,7 +37,7 @@ bun_core::comptime_string_map! {
 }
 
 pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
-    let ext = &path[path.iter().rposition(|&b| b == b'.')? + 1..];
+    let ext = &path[bun_core::strings::last_index_of_char(path, b'.')? + 1..];
     // `.d.ts` carries no statements; re-printing it yields an empty file.
     if path.ends_with(b".d.ts") || path.ends_with(b".d.mts") || path.ends_with(b".d.cts") {
         return None;

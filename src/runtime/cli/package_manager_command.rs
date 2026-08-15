@@ -15,7 +15,7 @@ use bun_install::package_manager_real::{
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, FdExt as _, File};
+use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
 use crate::cli::pm_diff_command as PmDiffCommand;
@@ -254,39 +254,27 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             context: cli.diff_context.unwrap_or(3),
         };
         let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
-        let is_diff = args
+        let is_diff = cli
+            .positionals
             .get(1)
             .is_some_and(|a| strings::eql_comptime(a, b"diff"));
         // `bun pm diff a b` needs registry config, not a project: outside one, run from a scratch folder.
-        // init() chdirs to the project root; relative diff paths mean the folder the user was in.
+        // `bun pm diff a b` needs registry config, not a project: outside one, run from a private scratch folder.
         let mut diff_original_cwd: Option<Vec<u8>> = None;
-        if is_diff {
-            let mut cwd_buf = PathBuffer::uninit();
-            if let Ok(len) = bun_sys::getcwd(&mut cwd_buf[..]) {
-                diff_original_cwd = Some(cwd_buf[..len].to_vec());
-            }
-        }
         let mut init = PackageManager::init(&mut *ctx, cli, Subcommand::Pm);
         if is_diff && matches!(&init, Err(e) if *e == bun_install::Error::MissingPackageJSON) {
-            {
-                let mut scratch = Fs::RealFS::platform_temp_dir().to_vec();
-                scratch.extend_from_slice(b"/bun-pm-diff");
-                let _ = Fd::cwd().make_path_u8(&scratch);
-                if let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), &scratch) {
-                    let _ = bun_sys::File::create(dir, b"package.json", true)
-                        .and_then(|f| f.write_all(b"{}"));
-                    if bun_sys::fchdir(dir).is_ok() {
-                        // The resolver singleton captured the original cwd on the first attempt.
-                        let scratch: &'static [u8] = Vec::leak(scratch);
-                        Fs::FileSystem::instance().set_top_level_dir(scratch);
-                        init = PackageManager::init(
-                            &mut *ctx,
-                            CommandLineArguments::parse(Subcommand::Pm)?,
-                            Subcommand::Pm,
-                        );
-                    }
-                }
-            }
+            let mut cwd_buf = PathBuffer::uninit();
+            let len = bun_sys::getcwd(&mut cwd_buf[..])?;
+            diff_original_cwd = Some(cwd_buf[..len].to_vec());
+            let scratch = PmDiffCommand::enter_scratch_project()?;
+            // The resolver singleton captured the original cwd on the first attempt.
+            Fs::FileSystem::instance().set_top_level_dir(scratch);
+            init = PackageManager::init(
+                &mut *ctx,
+                CommandLineArguments::parse(Subcommand::Pm)?,
+                Subcommand::Pm,
+            );
+            PmDiffCommand::leave_scratch_project(scratch);
         }
         let (pm, cwd) = match init {
             Ok(v) => v,
@@ -800,7 +788,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 &positionals,
                 &diff_args,
                 diff_flags,
-                diff_original_cwd.as_deref(),
+                diff_original_cwd.as_deref().unwrap_or(&cwd),
             )?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {

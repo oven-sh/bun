@@ -119,9 +119,6 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     };
 
-    // `load_by_file` only consults `scope.url_hash` and `scope.url.href()`,
-    // which `set_url` derives the same way `bun install` did when it wrote
-    // the manifest.
     let mut scope = npm::registry::Scope::default();
     scope.set_url(Box::from(registry.slice()));
 

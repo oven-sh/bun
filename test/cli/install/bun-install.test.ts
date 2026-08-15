@@ -9294,7 +9294,7 @@ describe.concurrent("bun-install", () => {
     // whether a tarball request gets the Authorization header, the cache folder
     // name) has to read the same canonical form, otherwise the install fails
     // before or after the first request depending on the spelling.
-    describe("spellings the WHATWG parser rewrites", () => {
+    describe.concurrent("spellings the WHATWG parser rewrites", () => {
       const token = "registry-spelling-token";
       const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
 

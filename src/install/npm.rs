@@ -322,18 +322,7 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// Stores the configured registry URL and recomputes `url_hash`.
-        ///
-        /// Manifest URLs are built from this href by the WHATWG parser
-        /// (`bun_url::join`), which rewrites every spelling it accepts
-        /// (`https:host/path`, `..` segments, unencoded characters, ...), so
-        /// the href is stored in that rewritten form: the `URL::parse` views
-        /// the same-origin checks compare against, the tarball URLs built by
-        /// concatenation and `url_hash` all have to agree with the requests.
-        /// A string the parser rejects is stored as written, so the join
-        /// fails on it and reports it unchanged. Credentials written into the
-        /// URL (`/:_authToken=...`) must be split off before this call: the
-        /// parser would percent-encode them.
+        /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
             self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));

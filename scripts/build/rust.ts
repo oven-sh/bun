@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
-import type { Ninja } from "./ninja.ts";
+import type { Ninja, Rule } from "./ninja.ts";
 import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
@@ -141,6 +141,20 @@ export function rustLibPath(cfg: Config): string {
   return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_rust${cfg.libSuffix}`);
 }
 
+/**
+ * The dep-info file cargo writes next to `rustLibPath()` (same stem, `.d`):
+ * a Makefile-style list of every file read to produce the staticlib, i.e.
+ * the `.rs` sources, `build.rs` files, path-dep sources (lol-html), the
+ * codegen `.rs` files, and every `include_bytes!` / `include_str!` asset
+ * (`completions/bun.*`, the `bun init` / `bun create` templates,
+ * `src/runtime/server/dev-error-page.html`, ...). The cargo edge's depfile;
+ * see `registerRustRules()`.
+ */
+export function rustDepInfoPath(cfg: Config): string {
+  const { subdir } = cargoProfile(cfg);
+  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_rust.d`);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Ninja rules
 // ───────────────────────────────────────────────────────────────────────────
@@ -164,6 +178,21 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
 
+  // Staleness of the cargo edges. The declared inputs (the configure-time
+  // glob in `RustBuildInputs.rustSources`: `*.rs` + Cargo manifests) know
+  // nothing about the files those sources `include_bytes!`; cargo's dep-info
+  // (`rustDepInfoPath()`, bound to `$dep_info` per edge) lists them, so it is
+  // the edge's depfile and no asset glob has to be maintained. `deps = gcc`
+  // as for the compile rules: ninja parses the file as soon as cargo exits,
+  // keeps the list in .ninja_deps and deletes the file, which is also why
+  // the target name inside it (cargo spells it absolute) is never compared
+  // against the buildDir-relative output. Cargo rewrites the file on any
+  // invocation that finds it missing, no-op ones included; nothing else
+  // reads it. The glob stays as the baseline: the dep-info does not list
+  // Cargo.toml / Cargo.lock / rust-toolchain.toml, and the deps log is
+  // empty until the edge has run once in a build dir.
+  const depInfoOpts: Pick<Rule, "depfile" | "deps"> = { depfile: "$dep_info", deps: "gcc" };
+
   // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
   // lives there). Env passed via stream.ts `--env=K=V`.
   //
@@ -173,6 +202,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   n.rule("rust_build", {
     command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
     description: "cargo bun_bin → $label",
+    ...depInfoOpts,
     pool: "console",
     restat: true,
   });
@@ -266,6 +296,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
       description: "cargo bun_bin → $label ($rust_target_arg)",
+      ...depInfoOpts,
       pool: "console",
       restat: true,
     });
@@ -297,7 +328,9 @@ export interface RustBuildInputs {
    * All `*.rs` source files + workspace `Cargo.toml`/`Cargo.lock` (globbed
    * at configure time). Implicit inputs for ninja's staleness check —
    * cargo discovers sources itself; this is just so ninja knows when to
-   * re-invoke.
+   * re-invoke. Files that `.rs` sources embed (`include_bytes!` etc.) are
+   * not globbed: from the second build on they come from cargo's dep-info,
+   * the edge's depfile (see `registerRustRules()`).
    */
   rustSources: string[];
   /**
@@ -852,7 +885,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rule: useCrossRule ? "rust_build_cross" : "rust_build",
     inputs: [],
     // Cargo binary itself + every .rs/Cargo.toml so editing one re-invokes
-    // (cargo's own fingerprinting then decides what to actually recompile).
+    // (cargo's own fingerprinting then decides what to actually recompile);
+    // the embedded assets are added by the depfile ($dep_info, see the rule).
     // Codegen `.rs` outputs are side effects of edges in `codegenInputs`,
     // so depending on those orders the codegen step before cargo without
     // ninja needing to know the `.rs` paths. vendorStamps orders the
@@ -861,6 +895,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {
       cwd: cfg.cwd,
+      dep_info: n.rel(rustDepInfoPath(cfg)),
       args: quoteArgs(args, hostWin),
       ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
       label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,

@@ -1366,7 +1366,7 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1378,8 +1378,15 @@ pub mod fs {
 
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::PathBuffer::uninit();
-            let entry_path_len =
-                join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
+            let join_capacity = outpath.len() - 2;
+            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+                self.cwd,
+                &mut outpath[..join_capacity],
+                &combo,
+            ) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let entry_path_len = entry_path.len();
 
             outpath[entry_path_len + 1] = 0;
             outpath[entry_path_len] = 0;

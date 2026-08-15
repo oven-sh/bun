@@ -1953,23 +1953,28 @@ describe.concurrent("test file discovery (scanner)", () => {
         // Each level adds "/" + segment = 255 bytes. The deepest directory the
         // scanner can still open is the last one whose path is at most
         // maxPathBytes - 1 (it reserves one byte for the NUL); the directory
-        // below it is skipped. A 255-byte file name in the deepest directory
+        // below it is skipped. A 255-byte name in the deepest directory
         // overflows too: that directory is at most 254 bytes short of the limit
-        // and the name adds 256.
+        // and the name adds 256. The deepest directory gets three such entries:
+        // a test file, a subdirectory, and a symlink. readdir does not report a
+        // symlink's kind, so the scanner stats it first, and that stat builds
+        // the path through the resolver (RealFS::kind) rather than through the
+        // scanner's own joins.
         const segment = Buffer.alloc(254, "d").toString();
         const longTestFile = Buffer.alloc(247, "f").toString() + ".test.ts";
+        const longTestLink = Buffer.alloc(247, "l").toString() + ".test.ts";
         const fitDepth = Math.floor((maxPathBytes - 1 - root.length) / (segment.length + 1));
-        expect(longTestFile).toHaveLength(255);
+        expect([longTestFile.length, longTestLink.length]).toEqual([255, 255]);
         expect(root.length + fitDepth * 255 + 256).toBeGreaterThan(maxPathBytes);
 
-        // The two over-long entries cannot be addressed by absolute path
+        // The over-long entries cannot be addressed by absolute path
         // (ENAMETOOLONG), so walk down the chain and create them relative to
         // the deepest directory.
         const script = ["set -e"];
         for (let level = 1; level <= fitDepth; level++) {
           script.push(`mkdir ${segment} && cd ${segment}`);
         }
-        script.push(`touch ${longTestFile}`, `mkdir ${segment}`);
+        script.push(`touch ${longTestFile}`, `ln -s ${longTestFile} ${longTestLink}`, `mkdir ${segment}`);
         await using setup = Bun.spawn({
           cmd: ["bash", "-c", script.join("\n")],
           env: bunEnv,

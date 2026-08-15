@@ -761,7 +761,11 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
 /// with different content) or another provider got there first; the provider
 /// then drops what it collected.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeCompileCache__attach(key: u64, entry_id: u64, provider: *const c_void) -> bool {
+pub extern "C" fn Bun__NodeCompileCache__attach(
+    key: u64,
+    entry_id: u64,
+    provider: *const c_void,
+) -> bool {
     let mut guard = STATE.lock();
     let Some(entry) = guard.as_mut().and_then(|state| state.entries.get_mut(&key)) else {
         return false;

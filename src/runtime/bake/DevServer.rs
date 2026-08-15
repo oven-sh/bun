@@ -3259,11 +3259,8 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
-        // End the AST scope and hand its state to the bundle: the small
-        // `AstVec`s built during setup live in it, and the event loop callbacks
-        // that finish the bundle (`BundleV2::enter_async_ast_scope`) reinstall
-        // it so their `AstAlloc` allocations land in `heap` too instead of
-        // leaking on the global heap once per rebuild.
+        // End the AST scope; the bundle reinstalls its state for the callbacks
+        // that finish the bundle (`BundleV2::enter_async_ast_scope`).
         drop(ast_scope);
         // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
         // exited, so no `&mut` to the allocator is live.

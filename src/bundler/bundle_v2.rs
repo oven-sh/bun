@@ -142,50 +142,34 @@ pub struct BundleV2<'a> {
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
 
-    /// See [`AsyncAstAlloc`]. Declared last: the state's inline chunk backs
-    /// small `AstVec`s stored in `graph` / `linker`, so it must outlive their
-    /// drop glue (struct fields drop in declaration order).
+    /// Declared last: `graph` / `linker` hold `AstVec`s backed by this state's
+    /// inline chunk, so it must drop after them.
     pub(crate) async_ast_alloc: AsyncAstAlloc,
 }
 
-/// The `AstAlloc` state of an `asynchronous` (dev server) bundle.
-///
-/// `AstAlloc` allocates through the `AstAllocState` installed on the calling
-/// thread and leaks on the global heap when there is none (`deallocate` is a
-/// no-op). A synchronous bundle (`Bun.build`, the CLI) keeps one installed on
-/// its own thread for the whole pass. A dev server bundle only has one while
-/// `DevServer::start_async_bundle` sets it up; the rest of the graph work
-/// arrives later as JS event loop callbacks (`on_parse_task_complete`,
-/// `on_load`, `on_resolve`, `on_notify_defer`, and `finish_from_bake_dev_server`
-/// reached from them) with nothing installed, so everything those built through
-/// `AstAlloc` (`LinkerGraph::load`'s per-file `resolved_exports`, `clone_ast`,
-/// `InputFile::additional_files`, ...) leaked once per rebuild.
-///
-/// The setup state, which spills into `graph.heap`, is parked here between
-/// callbacks and installed for the duration of each one, so those allocations
-/// die with the bundle heap like everything else the bundle owns.
+/// The `AstAllocState` of an `asynchronous` (dev server) bundle, spilling
+/// into `graph.heap`. The bundle's graph work runs as JS event loop callbacks,
+/// which would otherwise run with no state installed and leak every `AstAlloc`
+/// allocation on the global heap; each callback installs this one for its
+/// duration ([`BundleV2::enter_async_ast_scope`]).
 #[derive(Default)]
 pub(crate) struct AsyncAstAlloc(AsyncAstState);
 
 #[derive(Default)]
 enum AsyncAstState {
-    /// Synchronous bundle: [`BundleV2::enter_async_ast_scope`] is a no-op.
+    /// Synchronous bundle: the owning thread keeps its own state installed.
     #[default]
     Disabled,
-    /// Between callbacks.
     Parked(Box<AstAllocState>),
-    /// During a callback. A nested `enter` is a no-op.
     Installed {
-        /// Identity of the installed box.
         id: *const AstAllocState,
-        /// The thread-local occupant `enter` displaced; reinstated by `exit`.
+        /// Thread-local occupant displaced by `enter`, reinstated by `exit`.
         displaced: Option<Box<AstAllocState>>,
     },
 }
 
 impl AsyncAstAlloc {
-    /// Install the parked state, spilling into `spill`. Returns the installed
-    /// box's identity, or null when nothing was installed.
+    /// Returns the installed state's identity; null (and a no-op) unless parked.
     fn enter(&mut self, spill: *mut bun_alloc::mimalloc::Heap) -> *const AstAllocState {
         let mut state = match core::mem::take(&mut self.0) {
             AsyncAstState::Parked(state) => state,
@@ -203,8 +187,7 @@ impl AsyncAstAlloc {
         id
     }
 
-    /// Uninstall the state, reinstating whatever `enter` displaced, and park it
-    /// again. No-op unless installed.
+    /// Uninstalls and parks the state again; no-op unless installed.
     fn exit(&mut self) {
         let (id, displaced) = match core::mem::take(&mut self.0) {
             AsyncAstState::Installed { id, displaced } => (id, displaced),
@@ -225,21 +208,14 @@ impl AsyncAstAlloc {
 
 impl Drop for AsyncAstAlloc {
     fn drop(&mut self) {
-        // Normally already parked by `deinit_without_freeing_arena`; this keeps
-        // the thread-local from pointing at the freed box otherwise.
         self.exit();
     }
 }
 
-/// Returned by [`BundleV2::enter_async_ast_scope`]; uninstalls the bundle's
-/// state when dropped.
-///
-/// The callback holding this guard may be the one that completes the bundle:
-/// `finish_from_bake_dev_server` → `DevServer::finalize_bundle` frees the
-/// `BundleV2` before returning into the callback. That teardown uninstalls the
-/// state itself (`deinit_without_freeing_arena`, then `AsyncAstAlloc::drop`),
-/// so this guard dereferences `bv2` only while the state it installed is still
-/// the active one, which proves the `BundleV2` is still alive.
+/// Uninstalls the bundle's state on drop. The callback holding it may complete
+/// the bundle, which frees the `BundleV2` before the callback returns; that
+/// teardown uninstalls the state itself, so `bv2` is only touched while the
+/// state this guard installed is still the active one.
 #[must_use = "the state is uninstalled as soon as the guard drops"]
 pub(crate) struct AsyncAstScope {
     bv2: *mut BundleV2<'static>,
@@ -253,11 +229,9 @@ impl Drop for AsyncAstScope {
         {
             return;
         }
-        // SAFETY: the state this guard installed is still active, so the
-        // `BundleV2` owning it has not been torn down (see the type doc). The
-        // guard is a local of a callback running on the bundle's own thread,
-        // and every borrow of `*bv2` taken by the callback body has ended by
-        // the time its locals drop.
+        // SAFETY: the state is still installed, so the `BundleV2` owning it has
+        // not been torn down (see the type doc); the callback body's borrows of
+        // `*bv2` have ended by the time its locals drop.
         unsafe { (*self.bv2).async_ast_alloc.exit() };
     }
 }
@@ -388,20 +362,17 @@ impl<'a> BundleV2<'a> {
         }
     }
 
-    /// Dev server: hand over the `AstAllocState` the bundle was set up under,
-    /// once setup's own scope has exited, so the event loop callbacks that
-    /// finish the bundle allocate through it as well (see [`AsyncAstAlloc`]).
+    /// Dev server: the (uninstalled) state the bundle was set up under; see
+    /// [`AsyncAstAlloc`].
     pub fn adopt_async_ast_state(&mut self, state: Box<AstAllocState>) {
         debug_assert!(self.asynchronous);
         debug_assert!(matches!(self.async_ast_alloc.0, AsyncAstState::Disabled));
         self.async_ast_alloc.0 = AsyncAstState::Parked(state);
     }
 
-    /// Install the bundle's parked `AstAllocState`, if it has one, until the
-    /// returned guard drops. Every JS event loop callback that works on the
-    /// graph declares this as its first local, so the state is still installed
-    /// while anything declared later (or called from the body) completes the
-    /// bundle.
+    /// Must be the first local of every event loop callback that works on the
+    /// graph, so the state is still installed when a later guard or the body
+    /// completes the bundle.
     pub(crate) fn enter_async_ast_scope(&mut self) -> AsyncAstScope {
         let installed = self.async_ast_alloc.enter(self.graph.heap.heap_ptr());
         AsyncAstScope {
@@ -5169,9 +5140,8 @@ pub mod bv2_impl {
                 drop(free);
             }
 
-            // A dev server bundle is torn down from inside the callback that
-            // completed it, i.e. while its state is installed; the heap that
-            // state spills into is destroyed right after this returns.
+            // The dev server tears a bundle down from inside the callback that
+            // completed it, so the state is still installed here.
             self.async_ast_alloc.exit();
         }
 

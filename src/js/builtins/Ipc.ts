@@ -55,8 +55,6 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      // Adopting the fd is synchronous; 'listening' is emitted from a timer,
-      // which would deliver this message behind everything decoded after it.
       server.listen({ fd, exclusive: true });
       if (server._handle) {
         emit(target, serialized.msg, server);
@@ -87,8 +85,6 @@ export function parseHandle(target, serialized, fd) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got
       const dgram = require("node:dgram");
       const socket = new dgram.Socket(serialized.dgramType || "udp4");
-      // bind({ fd }) adopts through a promise, so unlike the net.Server case
-      // this message still lands behind the ones decoded after it.
       socket.bind({ fd, exclusive: true }, () => {
         emit(target, serialized.msg, socket);
       });

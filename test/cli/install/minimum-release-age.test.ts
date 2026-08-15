@@ -2693,6 +2693,9 @@ export const scanner = {
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
       chmodSync(cacheRoot, 0o755);
+      // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
+      // chmod it too or `is_trusted_cache_root` refuses under umask 002.
+      chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
       writeFileSync(
         join(pkgDir, "package.json"),
@@ -2818,6 +2821,9 @@ export const scanner = {
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
       chmodSync(cacheRoot, 0o755);
+      // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
+      // chmod it too or `is_trusted_cache_root` refuses under umask 002.
+      chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
 
       // Root package.json — bunx uses its mtime for the 24h staleness check.
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
@@ -2924,6 +2930,9 @@ export const scanner = {
         const cacheBinDir = join(cacheRoot, "node_modules", ".bin");
         mkdirSync(cacheBinDir, { recursive: true });
         chmodSync(cacheRoot, 0o755);
+        // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
+        // chmod it too or `is_trusted_cache_root` refuses under umask 002.
+        chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
         // Root package.json for the 24h staleness check.
         writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
         // Cached binary at the REAL bin name (not the initial-guess `cli`-style
@@ -2965,6 +2974,9 @@ export const scanner = {
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
       chmodSync(cacheRoot, 0o755);
+      // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
+      // chmod it too or `is_trusted_cache_root` refuses under umask 002.
+      chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
 
       // Root package.json drives the 24h mtime staleness check.
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));

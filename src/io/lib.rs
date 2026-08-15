@@ -383,7 +383,7 @@ impl EventLoopCtx {
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard> {
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
         // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
         unsafe { (*self.pipe_read_scratch()).claim() }
     }

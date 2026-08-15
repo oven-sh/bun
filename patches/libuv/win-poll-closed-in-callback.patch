@@ -1,0 +1,40 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -237,11 +237,20 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+   /* poll_cb may have called uv_poll_start (covered above by the dual-req
+    * submitting the other slot) or uv_poll_stop / uv_close. Only the
+    * close-endgame check needs to run post-callback. A re-submit here is
+-   * still needed for the `events == 0` path (filtered-out completion). */
++   * still needed for the `events == 0` path (filtered-out completion).
++   *
++   * poll_cb may also have run the loop re-entrantly (uv_run from inside the
++   * callback). If it closed this handle and the nested run already processed
++   * the endgame, the handle is UV_HANDLE_CLOSED: its close_cb has run, and
++   * queueing it again would run uv__poll_endgame a second time (an assert
++   * here, a second close_cb in release). The embedder's close_cb keeps the
++   * handle memory alive in that situation; that is what makes reading
++   * handle->flags here valid at all. */
+   if ((handle->events & ~(handle->submitted_events_1 |
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);
+-  } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++  } else if ((handle->flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED)) ==
++                 UV_HANDLE_CLOSING &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+@@ -439,10 +448,13 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+     }
+   }
+ 
++  /* Same re-entrancy case as uv__fast_poll_process_poll_req: a handle closed
++   * and already through its endgame inside poll_cb must not be queued again. */
+   if ((handle->events & ~(handle->submitted_events_1 |
+       handle->submitted_events_2)) != 0) {
+     uv__slow_poll_submit_poll_req(loop, handle);
+-  } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++  } else if ((handle->flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED)) ==
++                 UV_HANDLE_CLOSING &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
+     uv__want_endgame(loop, (uv_handle_t*) handle);

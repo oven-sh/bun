@@ -381,6 +381,31 @@ describe.concurrent("socket", () => {
     void stderr;
   }, 30_000);
 
+  // A handler that closes its own socket and then runs the event loop
+  // re-entrantly (here: bun:test's expect().resolves) must not have the socket
+  // freed under the dispatch that is still holding it. The fixture has to be a
+  // `bun test` file because that is where the re-entrant run comes from.
+  it("socket closed inside its own handler survives a nested event loop run", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", join(import.meta.dir, "socket-close-in-handler-nested-loop-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      // stdout also carries the `bun test` banner; the fixture prints one line per case.
+      cases: stdout.split("\n").filter(line => line.endsWith(": ok")),
+      exitCode,
+      // Only populated when the assertion is about to fail, so the diff shows why.
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+    }).toEqual({
+      cases: ["data: ok", "open: ok", "end: ok"],
+      exitCode: 0,
+      stderrTail: "",
+    });
+  }, 30_000);
+
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
       port: 0,

@@ -400,16 +400,11 @@ pub use bun_io::{FmtAdapter, Write};
 /// Only impls `bun_io::Write` — `write!` resolves to `bun_io::Write::write_fmt`
 /// (alloc-free stack `Bridge`, async-signal-safe).
 ///
-/// Never returns `Err`: callers `abort()` on error, which would also skip the
-/// report upload and the re-raise of the original signal, so a closed stderr
-/// or a vanished reader silently drops the bytes. A full stderr is waited for.
-///
-/// Everything below is async-signal-safe: `bun_sys::write` is a bare
-/// `write(2)` (a bare kernel32 `WriteFile` on Windows, which matters there
-/// too: the CRT's `_write` takes a per-fd lock that the VEH handler would
-/// self-deadlock on when the faulting thread was inside CRT stdio),
-/// `bun_sys::posix::poll` is a bare `poll(2)`, and `bun_sys::Error` does not
-/// allocate.
+/// Waits for a full stderr but never returns `Err` for an unwritable one:
+/// callers `abort()` on `Err`, skipping the report upload and signal re-raise.
+/// Signal-safe: `bun_sys::write`/`posix::poll` are bare syscalls (on Windows a
+/// bare `WriteFile`, not the CRT, whose per-fd lock a VEH handler can deadlock
+/// on) and `bun_sys::Error` does not allocate.
 pub(crate) struct StderrWriter;
 pub(crate) fn stderr_writer() -> StderrWriter {
     StderrWriter
@@ -418,9 +413,8 @@ impl Write for StderrWriter {
     fn write_all(&mut self, mut bytes: &[u8]) -> bun_io::Result<()> {
         #[cfg(not(windows))]
         let stderr = bun_sys::Fd::stderr();
-        // Looked up live rather than through `Fd::stderr()`: the cache behind
-        // that is filled by `Output`'s stdio init, which runs after the crash
-        // handler is installed, and crashes in between still have to print.
+        // Not `Fd::stderr()`: its cache is filled by `Output`'s stdio init,
+        // which runs after the crash handler is installed.
         #[cfg(windows)]
         let Some(stderr) = bun_sys::windows::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE)
             .map(bun_sys::Fd::from_system)
@@ -432,15 +426,14 @@ impl Write for StderrWriter {
                 Ok(0) => break,
                 Ok(n) => bytes = &bytes[n..],
                 Err(err) => match err.get_errno() {
-                    // `bun_sys::write` retries EINTR itself on Linux, but not on
-                    // macOS (`write$NOCANCEL` is issued once).
+                    // `bun_sys::write` only retries EINTR on Linux; macOS issues
+                    // `write$NOCANCEL` once.
                     #[cfg(unix)]
                     bun_sys::E::EINTR => {}
-                    // fd 2 is O_NONBLOCK once `process.stderr` has touched a
-                    // pipe (the flag is on the open file description, so it is
-                    // inherited too). A full pipe only means the reader is
-                    // behind: wait for it, as a blocking stderr would, instead
-                    // of dropping the rest of the report.
+                    // A piped fd 2 is O_NONBLOCK once `process.stderr` has used
+                    // it (the flag is on the shared open file description).
+                    // Full only means the reader is behind: wait like a blocking
+                    // stderr would instead of dropping the report.
                     #[cfg(unix)]
                     bun_sys::E::EAGAIN => {
                         let mut pfd = [bun_sys::posix::PollFd {

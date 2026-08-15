@@ -188,12 +188,19 @@ describe.if(isPosix)("crash report reaches a full non-blocking stderr", () => {
       const { value: marker } = await proc.stdout.getReader().read();
       expect(new TextDecoder().decode(marker)).toBe("crashing\n");
 
-      // The child crashes right after the marker and has its whole report
-      // written (or, before the fix, dropped) within a millisecond or so.
-      // Nothing observable separates "still formatting" from "waiting in
-      // poll(2) for us", so give it a moment before draining the fifo: without
-      // the fix the child exits on its own, with it the race times out.
-      await Promise.race([proc.exited, Bun.sleep(1_000)]);
+      // The child crashes right after the marker and every report write hits
+      // the full fifo within about a millisecond of it (measured on release and
+      // debug ASAN builds). A handler that waits is then blocked in poll(2),
+      // which nothing outside the process can observe, so the only evidence
+      // that it is waiting rather than dead is that it is still alive well
+      // after that point; a handler that dropped the report is gone within a
+      // few hundred milliseconds. The sleep is that margin, not a wait for the
+      // child to get going.
+      const exitedWithoutReader = await Promise.race([
+        proc.exited.then(() => true),
+        Bun.sleep(1_000).then(() => false),
+      ]);
+      expect(exitedWithoutReader, "crash handler gave up on stderr instead of waiting for the reader").toBe(false);
 
       // Draining the fill unblocks the child; whatever follows it is the report.
       const report = (await Bun.file(readEnd).text()).slice(filled);

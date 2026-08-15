@@ -352,8 +352,13 @@ describe("update", () => {
       await createUpdateMonorepo(packageDir, `catalog-update-latest-${label.replace(/\W+/g, "-")}`, isTopLevel);
       await runBunInstall(bunEnv, packageDir);
 
-      const { err, exitCode } = await runUpdate(packageDir, ...flags);
+      const { out, err, exitCode } = await runUpdate(packageDir, ...flags);
       expect(err).not.toContain("error:");
+
+      // The moved entry is reported like a direct dependency of the root, even though only pkg1 depends on it.
+      // a-dep still resolves to 1.0.10 (only its literal changes), so it gets no row.
+      expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+      expect(out.match(/^.*a-dep.*$/gm)).toBeNull();
 
       // catalog entries are updated, preserving the pinning style
       const root = await file(join(packageDir, "package.json")).json();
@@ -405,8 +410,11 @@ describe("update", () => {
     await createUpdateMonorepo(packageDir, "catalog-update-in-workspace");
     await runBunInstall(bunEnv, packageDir);
 
-    const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "--latest");
+    const { out, err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "--latest");
     expect(err).not.toContain("error:");
+
+    // pkg1's own `catalog:` row is an update row, not a `+ no-deps@2.0.0` install row.
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
 
     const root = await file(join(packageDir, "package.json")).json();
     expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
@@ -417,6 +425,60 @@ describe("update", () => {
       "a-dep": "catalog:a",
     });
     expect(exitCode).toBe(0);
+  });
+
+  test("--latest reports a catalog entry the root itself depends on once", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-root-consumer",
+          workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:" } }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { out, err, exitCode } = await runUpdate(packageDir, "--latest");
+    expect(err).not.toContain("error:");
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(root.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("--latest reports a catalog entry whose new version needs no install (isolated store already has it)", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await createUpdateMonorepo(packageDir, "catalog-update-isolated-rerun");
+    await runBunInstall(bunEnv, packageDir);
+    const rootBefore = await file(join(packageDir, "package.json")).text();
+    const lockBefore = await file(join(packageDir, "bun.lock")).text();
+
+    const first = await runUpdate(packageDir, "--latest");
+    expect(first.err).not.toContain("error:");
+    expect(first.out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect(first.exitCode).toBe(0);
+
+    // Like `git checkout .` followed by `bun install`: the project is back on 1.1.0 while node_modules/.bun keeps no-deps@2.0.0.
+    await Promise.all([
+      write(join(packageDir, "package.json"), rootBefore),
+      write(join(packageDir, "bun.lock"), lockBefore),
+    ]);
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    const second = await runUpdate(packageDir, "--latest");
+    expect(second.err).not.toContain("error:");
+    expect(second.out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(second.exitCode).toBe(0);
   });
 
   test("--latest updates the same package independently per catalog", async () => {
@@ -542,8 +604,9 @@ describe("update", () => {
         ),
       ]);
 
-      const { err, exitCode } = await runUpdate(packageDir, ...args);
+      const { out, err, exitCode } = await runUpdate(packageDir, ...args);
       expect(err).not.toContain("error:");
+      expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
 
       const root = await file(join(packageDir, "package.json")).json();
       expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });

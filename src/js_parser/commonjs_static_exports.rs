@@ -136,18 +136,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn exports_object(&self, expr: &Expr) -> Option<ExportsObject> {
         let is_module = |target: &Expr| self.identifier_name(target) == Some(b"module");
-        match expr.data {
+        let is_module_exports = match expr.data {
             ExprData::EIdentifier(_) => {
-                (self.identifier_name(expr) == Some(b"exports")).then_some(ExportsObject::Exports)
+                return (self.identifier_name(expr) == Some(b"exports"))
+                    .then_some(ExportsObject::Exports);
             }
-            ExprData::EDot(dot) => {
-                (dot.name == b"exports" && is_module(&dot.target)).then_some(ExportsObject::ModuleExports)
+            ExprData::EDot(dot) => dot.name == b"exports" && is_module(&dot.target),
+            ExprData::EIndex(index) => {
+                self.string_literal(&index.index) == Some(b"exports") && is_module(&index.target)
             }
-            ExprData::EIndex(index) => (self.string_literal(&index.index) == Some(b"exports")
-                && is_module(&index.target))
-            .then_some(ExportsObject::ModuleExports),
-            _ => None,
-        }
+            _ => false,
+        };
+        is_module_exports.then_some(ExportsObject::ModuleExports)
     }
 
     /// `exports.x` / `exports["x"]` / `module.exports.x` / `module.exports["x"]` => `x`
@@ -219,7 +219,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         for property in object.properties.iter() {
             if property.kind == G::PropertyKind::Spread {
-                if let Some(specifier) = property.value.as_ref().and_then(|v| self.require_specifier(v)) {
+                if let Some(specifier) = property
+                    .value
+                    .as_ref()
+                    .and_then(|v| self.require_specifier(v))
+                {
                     self.commonjs_static_exports.add_reexport(specifier);
                 }
             } else if let Some(name) = self.property_key_name(property) {
@@ -246,7 +250,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // __exportStar(require("./x"), exports) (TypeScript), __export(require("./x")) (older TypeScript)
             ExprData::EIdentifier(_) => {
-                if matches!(self.identifier_name(&call.target), Some(b"__exportStar" | b"__export")) {
+                if matches!(
+                    self.identifier_name(&call.target),
+                    Some(b"__exportStar" | b"__export")
+                ) {
                     self.record_commonjs_static_export_star(call.args.as_slice());
                 }
             }
@@ -264,9 +271,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ExprData::EObject(descriptor) = descriptor.data else {
             return;
         };
-        let defines_value_or_getter = descriptor.properties.iter().any(|property| {
-            matches!(self.property_key_name(property), Some(b"value" | b"get"))
-        });
+        let defines_value_or_getter = descriptor
+            .properties
+            .iter()
+            .any(|property| matches!(self.property_key_name(property), Some(b"value" | b"get")));
         if !defines_value_or_getter {
             return;
         }

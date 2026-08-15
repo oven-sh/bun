@@ -319,7 +319,12 @@ test.concurrent("default and __esModule keep their evaluated meaning", async () 
       console.log(JSON.stringify({ def, other: typeof other, keys: Object.keys(ns), esModule: typeof ns.__esModule }));
     `,
   });
-  expect(result).toEqual({ def: { real: 1 }, other: "undefined", keys: ["default", "other", "real"], esModule: "undefined" });
+  expect(result).toEqual({
+    def: { real: 1 },
+    other: "undefined",
+    keys: ["default", "other", "real"],
+    esModule: "undefined",
+  });
 });
 
 test.concurrent("a name that is neither detected nor evaluated is still a link error", async () => {

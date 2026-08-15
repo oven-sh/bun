@@ -59,10 +59,8 @@ pub struct Graph<'a> {
     /// not done until it is back. Bundle thread only.
     pub(crate) defer_hop_out: bool,
 
-    /// onResolve / onLoad requests a plugin currently holds (dispatched to its
-    /// VM, not yet answered). Bundle thread only. Failed wholesale when that
-    /// VM shuts down mid-build (`BundleV2::is_done`).
-    pub(crate) outstanding_resolves: OutstandingList<crate::bundle_v2::api::JSBundler::Resolve>,
+    /// onLoad requests currently handed to the plugins' thread (dispatched, not yet answered), so
+    /// `drain_deferred_tasks` can reach the ones that called `.defer()`. Bundle thread only.
     pub(crate) outstanding_loads: OutstandingList<crate::bundle_v2::api::JSBundler::Load>,
     /// The owning VM cancelled this pass; plugin requests were failed and no
     /// deferred batch will run.
@@ -173,7 +171,6 @@ impl<'a> Graph<'a> {
             pending_items: 0,
             deferred_pending: 0,
             defer_hop_out: false,
-            outstanding_resolves: OutstandingList::default(),
             outstanding_loads: OutstandingList::default(),
             cancelled: false,
             build_graphs: EnumMap::default(),

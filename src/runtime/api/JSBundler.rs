@@ -1537,8 +1537,6 @@ pub mod js_bundler {
                         }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        // `mini.enqueueTaskConcurrentWithExtraCtx(
-                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,

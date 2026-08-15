@@ -1106,9 +1106,6 @@ pub mod bv2_impl {
                 pub value: ResolveValue,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
-                /// Links in the bundle's list of requests a plugin currently
-                /// holds (`Graph::outstanding_resolves`); bundle thread only.
-                pub(crate) outstanding: crate::Graph::OutstandingLink<Resolve>,
             }
             impl Default for Resolve {
                 fn default() -> Self {
@@ -1117,7 +1114,6 @@ pub mod bv2_impl {
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    outstanding: Default::default(),
                 }
                 }
             }
@@ -1148,7 +1144,6 @@ pub mod bv2_impl {
                     import_record: record,
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    outstanding: Default::default(),
                 }
                 }
                 /// Hands the request over to the plugins' (JS) thread, which answers it exactly once — the
@@ -1160,7 +1155,6 @@ pub mod bv2_impl {
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_resolves.push(self);
                         if bv2.graph.cancelled {
                             self.value =
                                 ResolveValue::Err(super::super::cancelled_plugin_request_msg(
@@ -1350,11 +1344,6 @@ pub mod bv2_impl {
                 }
             }
             impl crate::Graph::OutstandingNode for Load {
-                fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
-                    &mut self.outstanding
-                }
-            }
-            impl crate::Graph::OutstandingNode for Resolve {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
                     &mut self.outstanding
                 }
@@ -2108,10 +2097,13 @@ pub mod bv2_impl {
             false
         }
 
-        /// The defer hop is back from the plugins' thread (bundle thread): the pass may finish again.
+        /// The defer hop is back from the plugins' thread (bundle thread): the pass may finish again — and
+        /// if everything else finished while it was out, it finishes now (an async pass re-evaluates
+        /// doneness only on events; `Bun.build`'s Mini loop polls it).
         pub fn on_defer_hop_back(&mut self) {
             debug_assert!(self.graph.defer_hop_out);
             self.graph.defer_hop_out = false;
+            self.on_after_decrement_scan_counter();
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
@@ -4594,7 +4586,6 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
-            this.graph.outstanding_resolves.unlink(resolve);
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();

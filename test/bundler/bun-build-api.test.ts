@@ -618,6 +618,30 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toMatchObject({ line: 1, column: 5, lineText: "(1, ...a);" });
   });
 
+  test.concurrent('an invalid package.json "exports" value is reported at the value, not its key', async () => {
+    const dir = tempDirWithFiles("invalid-exports-position", {
+      "index.js": 'import "bool-exports";\nimport "array-exports";\n',
+      "node_modules/bool-exports/package.json": '{\n  "name": "bool-exports",\n  "exports": true\n}\n',
+      "node_modules/array-exports/package.json": '{\n  "name": "array-exports",\n  "exports": [true]\n}\n',
+    });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.js")], throw: false });
+    const warnings = x.logs
+      .filter(log => log.message === "This value must be a string, an object, an array, or null")
+      .map(({ level, position }) => ({
+        level,
+        file: path.basename(path.dirname(position!.file)),
+        line: position!.line,
+        column: position!.column,
+        length: position!.length,
+        lineText: position!.lineText,
+      }))
+      .sort((a, b) => a.file.localeCompare(b.file));
+    expect(warnings).toEqual([
+      { level: "warn", file: "array-exports", line: 3, column: 15, length: 4, lineText: '  "exports": [true]' },
+      { level: "warn", file: "bool-exports", line: 3, column: 14, length: 4, lineText: '  "exports": true' },
+    ]);
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

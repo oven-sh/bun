@@ -765,23 +765,23 @@ pub fn value_loc_of_property(
 /// Where an immutable-AST JSON value sits in its document, so its source location can be recovered.
 #[derive(Clone, Copy)]
 pub enum ValueLocation<'p> {
-    /// The value's own location, when the node carries one (the document root).
-    At(Option<bun_ast::Loc>),
     /// The value of the property whose key is at this location.
     Property(bun_ast::Loc),
     ArrayItem(&'p ValueLocation<'p>, usize),
+    /// Nothing recorded where the value came from; diagnostics about it carry no location.
+    Unknown,
 }
 
 impl ValueLocation<'_> {
     /// First byte of the value, falling back to the nearest key/container location.
     pub fn resolve(&self, contents: &[u8]) -> Option<bun_ast::Loc> {
         match self {
-            ValueLocation::At(loc) => *loc,
             ValueLocation::Property(key_loc) => Some(property_value_loc_or_key(contents, *key_loc)),
             ValueLocation::ArrayItem(array, index) => {
                 let array_loc = array.resolve(contents)?;
                 Some(array_item_loc(contents, array_loc, *index).unwrap_or(array_loc))
             }
+            ValueLocation::Unknown => None,
         }
     }
 }

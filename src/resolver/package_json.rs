@@ -1043,7 +1043,11 @@ pub(crate) struct Visitor<'a> {
 
 impl<'a> Visitor<'a> {
     pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let vloc = json_parser::ValueLocation::At(expr.loc);
+        // `as_property` stamps a tape value with its key's location.
+        let vloc = expr.loc.map_or(
+            json_parser::ValueLocation::Unknown,
+            json_parser::ValueLocation::Property,
+        );
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
                 data: EntryData::Null,

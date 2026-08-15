@@ -105,8 +105,7 @@ while (true) {
     reportUncaught(_e);
   }
 
-  // This loop never yields to the event loop: run what the script queued while
-  // its status and coverage are still the ones being reported.
+  // This loop never yields to the event loop, so run what the script queued before reporting its status.
   drainMicrotasks();
 
   // Send status back (4 bytes: exit code in REPRL format)

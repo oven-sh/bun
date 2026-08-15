@@ -229,6 +229,43 @@ pub(crate) fn perform_security_scan_after_resolution(
 
     let scan_all =
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
+    scan_installing_scanner_if_needed(
+        manager,
+        security_scanner,
+        scan_all,
+        seeds,
+        command_ctx,
+        original_cwd,
+    )
+}
+
+pub fn perform_security_scan_for_all(
+    manager: &mut PackageManager,
+    command_ctx: CommandContext,
+    original_cwd: &[u8],
+) -> Result<Option<SecurityScanResults>, Error> {
+    let Some(security_scanner) = manager.options.security_scanner else {
+        return Ok(None);
+    };
+
+    scan_installing_scanner_if_needed(
+        manager,
+        security_scanner,
+        true,
+        &[],
+        command_ctx,
+        original_cwd,
+    )
+}
+
+fn scan_installing_scanner_if_needed(
+    manager: &mut PackageManager,
+    security_scanner: &[u8],
+    scan_all: bool,
+    seeds: &[PackageID],
+    command_ctx: CommandContext,
+    original_cwd: &[u8],
+) -> Result<Option<SecurityScanResults>, Error> {
     let result = attempt_security_scan(
         manager,
         security_scanner,
@@ -251,48 +288,6 @@ pub(crate) fn perform_security_scan_after_resolution(
                 security_scanner,
                 scan_all,
                 seeds,
-                command_ctx,
-                original_cwd,
-                true,
-            )?;
-            match retry_result {
-                ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-                ScanAttemptResult::NeedsInstall(_) => Err(crate::Error::SecurityScannerRetryFailed),
-            }
-        }
-    }
-}
-
-pub fn perform_security_scan_for_all(
-    manager: &mut PackageManager,
-    command_ctx: CommandContext,
-    original_cwd: &[u8],
-) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner else {
-        return Ok(None);
-    };
-
-    let result = attempt_security_scan(
-        manager,
-        security_scanner,
-        true,
-        &[],
-        command_ctx,
-        original_cwd,
-    )?;
-    match result {
-        ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-        ScanAttemptResult::NeedsInstall(pkg_id) => {
-            bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
-            let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
-            bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
-
-            let retry_result = attempt_security_scan_with_retry(
-                manager,
-                security_scanner,
-                true,
-                &[],
                 command_ctx,
                 original_cwd,
                 true,

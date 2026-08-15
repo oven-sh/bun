@@ -211,9 +211,9 @@ pub struct Lockfile {
 pub(crate) struct AppendedFor {
     /// The row it was appended for is declared by the root or a workspace.
     pub direct: bool,
-    /// A row's range (after overrides and catalogs) was this exact version:
-    /// the appending row's, or a later one's while the package was not yet
-    /// reusable (`mark_pinned_by_reuse`).
+    /// A regular (non-peer) row's range, after overrides and catalogs, was
+    /// this exact version: the appending row's, or a later one's while the
+    /// package was not yet reusable (`mark_pinned_by_reuse`).
     pub pinned: bool,
 }
 

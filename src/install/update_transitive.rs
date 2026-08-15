@@ -1215,9 +1215,10 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        let direct_stays = edges_on.direct[inst_i]
+        // Rows the differ lands back on `current`; like followers, the redirect can still carry them.
+        let direct_stayers: Vec<DependencyID> = edges_on.direct[inst_i]
             .iter()
-            .any(|&(dep_id, latest, keep)| {
+            .filter(|&&(dep_id, latest, keep)| {
                 direct_row_stays(
                     &manager.lockfile,
                     manifest,
@@ -1228,7 +1229,9 @@ fn plan_edges(
                     min_age,
                     excludes,
                 )
-            });
+            })
+            .map(|&(dep_id, ..)| dep_id)
+            .collect();
         // Holds cascade (a held want stays behind and can block another), so iterate to a fixed point.
         let mut held_wants = vec![false; inst.wants.len()];
         loop {
@@ -1240,6 +1243,13 @@ fn plan_edges(
                 if held_wants[w] || plan.to.is_none() {
                     continue;
                 }
+                // The redirect carries every remaining edge toward the FIRST pinned want's target.
+                let redirect_v = (0..inst.wants.len())
+                    .find(|&i| {
+                        !held_wants[i] && planned[i].as_ref().is_some_and(|plan| plan.to.is_some())
+                    })
+                    .and_then(|i| planned[i].as_ref().map(|plan| plan.v))
+                    .unwrap_or(plan.v);
                 if forks_surviving_instance(
                     &manager.lockfile,
                     inst,
@@ -1247,8 +1257,8 @@ fn plan_edges(
                     &planned,
                     &held_wants,
                     &edge_wants,
-                    direct_stays,
-                    plan.v,
+                    &direct_stayers,
+                    redirect_v,
                     manifest_buf,
                 ) {
                     held_wants[w] = true;
@@ -1670,7 +1680,7 @@ fn direct_row_stays(
             _ => return false,
         }
     };
-    // `keep_locked_if_ahead`: a lookup below the row's locked version lands it back on that version.
+    // `keep_locked_if_ahead`: a lookup below the row's locked version lands it back on that version, when the manifest still has it.
     found.is_some_and(|found| {
         let locked = match keep {
             KeepLocked::No => None,
@@ -1678,7 +1688,9 @@ fn direct_row_stays(
             KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
         };
         if let Some(locked) = locked {
-            if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less {
+            if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less
+                && manifest.find_by_version(locked).is_some()
+            {
                 return locked.order(current, buf, buf) == Ordering::Equal;
             }
         }
@@ -1695,8 +1707,8 @@ fn forks_surviving_instance(
     planned: &[Option<Planned>],
     held_wants: &[bool],
     edge_wants: &[(DependencyID, Option<usize>)],
-    direct_stays: bool,
-    v: Semver::Version,
+    direct_stayers: &[DependencyID],
+    redirect_v: Semver::Version,
     manifest_buf: &[u8],
 ) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1706,23 +1718,26 @@ fn forks_surviving_instance(
     {
         return false;
     }
-    if direct_stays {
-        return true;
-    }
     let deps = lockfile.buffers.dependencies.as_slice();
     let stays = |version: &dependency::Version| {
         version.tag != DependencyVersionTag::Npm
-            || !version.npm().version.satisfies(v, buf, manifest_buf)
+            || !version
+                .npm()
+                .version
+                .satisfies(redirect_v, buf, manifest_buf)
     };
+    let uncarried = |edge: DependencyID| {
+        let dep = &deps[edge as usize];
+        dep.behavior.is_bundled()
+            || dedupe::effective_npm_range(lockfile, edge, dep).is_none_or(|range| stays(&range))
+    };
+    if direct_stayers.iter().any(|&edge| uncarried(edge)) {
+        return true;
+    }
     edge_wants.iter().any(|&(edge, owner)| match owner {
         Some(w) if w == want_index => false,
         Some(w) => (planned[w].is_none() || held_wants[w]) && stays(&inst.wants[w].version),
-        None => {
-            let dep = &deps[edge as usize];
-            dep.behavior.is_bundled()
-                || dedupe::effective_npm_range(lockfile, edge, dep)
-                    .is_none_or(|range| stays(&range))
-        }
+        None => uncarried(edge),
     })
 }
 

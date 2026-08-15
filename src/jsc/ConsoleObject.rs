@@ -5250,6 +5250,8 @@ pub mod formatter {
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
 
                         if print_children && !self.single_line {
+                            // Empty children (`""` or `[]`) break out of this block and
+                            // fall through to the self-closing ` />` below.
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {
@@ -5372,12 +5374,12 @@ pub mod formatter {
                                     writer.write_all(pf!("<r>").as_bytes());
                                 }
                                 writer.write_all(b">");
-                            }
 
-                            if writer.failed {
-                                self.failed = true;
+                                if writer.failed {
+                                    self.failed = true;
+                                }
+                                return Ok(());
                             }
-                            return Ok(());
                         }
                     }
                 }

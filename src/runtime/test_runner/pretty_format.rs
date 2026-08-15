@@ -2155,6 +2155,8 @@ impl<'a> Formatter<'a> {
                                     matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
 
                                 if print_children {
+                                    // Empty children (`""` or `[]`) break out of this block and
+                                    // fall through to the self-closing ` />` below.
                                     'print_children: {
                                         match tag.tag {
                                             Tag::String => {
@@ -2282,9 +2284,9 @@ impl<'a> Formatter<'a> {
                                             );
                                         }
                                         writer.write_all(b">");
-                                    }
 
-                                    return Ok(true);
+                                        return Ok(true);
+                                    }
                                 }
                             }
                         }

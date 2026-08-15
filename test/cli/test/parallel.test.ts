@@ -34,6 +34,44 @@ async function run(dir: Dir, args: string[], env: Record<string, string | undefi
   };
 }
 
+/**
+ * Like `run`, for fixtures that park on a `release` marker this process writes:
+ * the coordinator's stderr is read as it streams, and the marker is written as
+ * soon as `releaseWhen` accepts what has been printed so far. Returns that
+ * output too, so a case can assert what had (and had not) been printed by then.
+ */
+async function runReleasing(
+  dir: Dir,
+  args: string[],
+  env: Record<string, string | undefined>,
+  releaseWhen: (printed: string) => boolean,
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const decoder = new TextDecoder();
+  let printed = "";
+  let printedAtRelease: string | undefined;
+  for await (const chunk of proc.stderr) {
+    printed += decoder.decode(chunk, { stream: true });
+    if (printedAtRelease === undefined && releaseWhen(printed)) {
+      printedAtRelease = printed;
+      await Bun.write(`${dir}/release`, "");
+    }
+  }
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return {
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(printed, String(dir)),
+    printedAtRelease: normalizeBunSnapshot(printedAtRelease ?? "", String(dir)),
+    exitCode,
+  };
+}
+
 /** The block of counts the run ends with (" N pass" ... "Ran N tests across M files."). */
 function summaryOf(stderr: string) {
   const i = stderr.lastIndexOf("\n\n");
@@ -402,31 +440,15 @@ describe.concurrent("bun test --parallel", () => {
       test("${tag}-fast", () => expect(1).toBe(1));
       test("${tag}-slow", async () => { await waitFor(() => exists("release")); }, T);`;
     using dir = tempDir("parallel-realtime", { "a.test.js": fixture("a"), "b.test.js": fixture("b") });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const { stdout, stderr, printedAtRelease, exitCode } = await runReleasing(dir, ["--parallel=2"], bunEnv, printed =>
+      /^\(pass\) [ab]-fast/m.test(printed),
+    );
 
-    const decoder = new TextDecoder();
-    let streamed = "";
-    let seenBeforeRelease: string[] | undefined;
-    for await (const chunk of proc.stderr) {
-      streamed += decoder.decode(chunk, { stream: true });
-      if (seenBeforeRelease === undefined && /^\(pass\) [ab]-fast/m.test(streamed)) {
-        seenBeforeRelease = Object.values(resultsByFile(normalizeBunSnapshot(streamed))).flat();
-        await Bun.write(`${dir}/release`, "");
-      }
-    }
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const stderr = normalizeBunSnapshot(streamed, String(dir));
-
-    // Whatever had been printed by then came from tests whose file was still
-    // running: the slow tests were all still parked.
-    expect(seenBeforeRelease!.length).toBeGreaterThanOrEqual(1);
-    expect(seenBeforeRelease!.filter(line => !line.endsWith("-fast"))).toEqual([]);
+    // Whatever had been printed by then came from files that were still
+    // running: every slow test was still parked.
+    const seenBeforeRelease = Object.values(resultsByFile(printedAtRelease)).flat();
+    expect(seenBeforeRelease.length).toBeGreaterThanOrEqual(1);
+    expect(seenBeforeRelease.filter(line => !line.endsWith("-fast"))).toEqual([]);
     expect(resultsByFile(stderr)).toEqual({
       "a.test.js": ["(pass) a-fast", "(pass) a-slow"],
       "b.test.js": ["(pass) b-fast", "(pass) b-slow"],
@@ -437,7 +459,7 @@ describe.concurrent("bun test --parallel", () => {
        2 expect() calls
       Ran 4 tests across 2 files."
     `);
-    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>) 2x PARALLEL"`);
+    expect(stdout).toMatchInlineSnapshot(`"bun test <version> (<revision>) 2x PARALLEL"`);
     expect(exitCode).toBe(0);
   });
 
@@ -497,13 +519,13 @@ describe.concurrent("bun test --parallel", () => {
 
   test("--reporter=junit keeps the suites a worker finished before it crashed", async () => {
     // Sorted, the four files split into [a-wait, b] for worker 1 and
-    // [c-pass, z-crash] for worker 2. a-wait parks until z-crash has written
-    // its pid, so worker 2 is the one that runs c-pass and then dies; c-pass
-    // printing the same pid proves it. Its suite must survive the crash.
+    // [c-pass, z-crash] for worker 2. a-wait parks until z-crash has recorded
+    // its pid, so worker 2 is the one that runs c-pass and then dies; both
+    // files recording the same pid proves it. c-pass's suite must survive.
     using dir = tempDir("parallel-junit-crash", {
       "a-wait.test.js": `${prelude} test("wait for the crash", async () => { await waitFor(() => exists("crashed-pid")); }, T);`,
       "b.test.js": passing("b"),
-      "c-pass.test.js": `import {test,expect} from "bun:test"; test("finished before the crash", () => { console.log("PID=" + process.pid); expect(1).toBe(1); });`,
+      "c-pass.test.js": `import {test,expect} from "bun:test"; test("finished before the crash", async () => { await Bun.write("passed-pid", String(process.pid)); expect(1).toBe(1); });`,
       "z-crash.test.js": `import {test} from "bun:test"; test("boom", async () => { await Bun.write("crashed-pid", String(process.pid)); process.exit(7); });`,
     });
     const { stderr, exitCode } = await run(
@@ -512,7 +534,11 @@ describe.concurrent("bun test --parallel", () => {
       scaleNow,
     );
 
-    expect(stderr.match(/^PID=(\d+)$/m)![1]).toBe(await Bun.file(`${dir}/crashed-pid`).text());
+    const [passedPid, crashedPid] = await Promise.all(
+      ["passed-pid", "crashed-pid"].map(f => Bun.file(`${dir}/${f}`).text()),
+    );
+    expect(passedPid).toMatch(/^\d+$/);
+    expect(crashedPid).toBe(passedPid);
     expect(normalizeJunit(await Bun.file(`${dir}/out.xml`).text())).toMatchInlineSnapshot(`
       "<?xml version="1.0" encoding="UTF-8"?>
       <testsuites name="bun test" tests="4" assertions="2" failures="1" skipped="0">
@@ -752,21 +778,34 @@ describe.concurrent("bun test --parallel", () => {
   test("never interleaves console output of one file with another's", async () => {
     // Test i of each file logs a marker and then parks until the other file's
     // test i has logged its marker too, so both files' output is in flight at
-    // the same moment in both workers. Output is still printed in per-test
-    // blocks under the right header: it is buffered per test and flushed with
-    // that test's result line.
+    // the same moment in both workers. The coordinator buffers a worker's
+    // output and prints it, under that file's header, with the worker's next
+    // result line. Output travels on a different pipe than the result frames,
+    // so a marker logged by a test that finishes instantly can arrive after
+    // that test's own result and is then printed with the file's next one. The
+    // drain test at the end of each file, released only once this process has
+    // seen both files' last marked result, is that next result for the final
+    // round: output still buffered when a worker exits is printed under
+    // whichever header happens to be current.
     const fixture = (tag: string, other: string) => `${prelude}
       console.error("PID-${tag}=" + process.pid);
       for (let i = 0; i < 3; i++) test("${tag}" + i, async () => {
         console.error("MARK-${tag}-" + i);
         await Bun.write("gate/${tag}-" + i, "");
         await waitFor(() => exists("gate/${other}-" + i));
-      }, T);`;
+      }, T);
+      test("${tag}-drain", async () => { await waitFor(() => exists("release")); }, T);`;
     using dir = tempDir("parallel-no-interleave", { "a.test.js": fixture("a", "b"), "b.test.js": fixture("b", "a") });
-    const { stderr, exitCode } = await run(dir, ["--parallel=2"], scaleNow);
+    const { stderr, exitCode } = await runReleasing(
+      dir,
+      ["--parallel=2"],
+      scaleNow,
+      printed => printed.includes("(pass) a2") && printed.includes("(pass) b2"),
+    );
 
     expect(resultsByFile(stderr, /^(?:MARK-|\(pass\) |PID-)/)).toEqual({
       "a.test.js": [
+        "(pass) a-drain",
         "(pass) a0",
         "(pass) a1",
         "(pass) a2",
@@ -776,6 +815,7 @@ describe.concurrent("bun test --parallel", () => {
         expect.stringMatching(/^PID-a=\d+$/),
       ],
       "b.test.js": [
+        "(pass) b-drain",
         "(pass) b0",
         "(pass) b1",
         "(pass) b2",
@@ -787,16 +827,16 @@ describe.concurrent("bun test --parallel", () => {
     });
     const [pidA, pidB] = [/^PID-a=(\d+)$/m, /^PID-b=(\d+)$/m].map(re => stderr.match(re)![1]);
     expect(pidA).not.toBe(pidB);
-    // A marker is followed by its own test's result line (or, if the worker's
-    // pipe was read after its result frame, by the rest of that file's block),
-    // never by the other file's marker.
+    // A marker is followed by a result line or a further marker of its own
+    // file (the marker of a test that finished instantly may be flushed with
+    // the next result, see above), never by anything of the other file.
     const lines = stderr.split("\n");
     const followers = lines.flatMap((line, i) => (line.startsWith("MARK-") ? [`${line} -> ${lines[i + 1]}`] : []));
-    expect(followers.filter(f => !/^MARK-(\w)-\d -> (?:\(pass\) \1|MARK-\1|$)/.test(f))).toEqual([]);
+    expect(followers.filter(f => !/^MARK-(\w)-\d -> (?:\(pass\) |MARK-)\1/.test(f))).toEqual([]);
     expect(summaryOf(stderr)).toMatchInlineSnapshot(`
-      " 6 pass
+      " 8 pass
        0 fail
-      Ran 6 tests across 2 files."
+      Ran 8 tests across 2 files."
     `);
     expect(exitCode).toBe(0);
   });
@@ -1178,19 +1218,23 @@ describe.concurrent("bun test --parallel", () => {
 
   test("SIGTERM on the coordinator kills the workers and their grandchildren", async () => {
     // Each worker spawns a grandchild; both record their pid as a file in
-    // pids/ and then stay alive (bounded, so a failing run cannot leak them
-    // for long). Workers run in their own process group, which is what the
+    // pids/ and then stay alive for `fixtureLifeMs`, far longer than the
+    // `killWindowMs` this test gives the kill to take effect, so only the kill
+    // can make them disappear in time; a failing run kills the survivors
+    // itself. Workers run in their own process group, which is what the
     // coordinator's signal handler kills.
+    const fixtureLifeMs = 60_000;
+    const killWindowMs = 10_000;
     const fixture = `import { test } from "bun:test";
       test("stay busy", async () => {
         Bun.spawn({ cmd: [process.execPath, "grandchild.js"], stdout: "ignore", stderr: "ignore" });
         await Bun.write("pids/worker-" + process.pid, "");
-        await Bun.sleep(30_000);
-      }, 60_000);`;
+        await Bun.sleep(${fixtureLifeMs});
+      }, ${fixtureLifeMs + 10_000});`;
     using dir = tempDir("parallel-deathsig", {
       "a.test.ts": fixture,
       "b.test.ts": fixture,
-      "grandchild.js": `await Bun.write("pids/grandchild-" + process.pid, ""); setTimeout(() => {}, 30_000);`,
+      "grandchild.js": `await Bun.write("pids/grandchild-" + process.pid, ""); setTimeout(() => {}, ${fixtureLifeMs});`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2"],
@@ -1243,11 +1287,16 @@ describe.concurrent("bun test --parallel", () => {
       }
     };
     const descendants = [...tree.workers, ...tree.grandchildren];
-    const gone = Date.now() + parkMs;
+    const killWindow = Date.now() + killWindowMs;
     let outstanding = descendants.filter(alive);
-    while (outstanding.length > 0 && Date.now() < gone) {
+    while (outstanding.length > 0 && Date.now() < killWindow) {
       await Bun.sleep(10);
       outstanding = descendants.filter(alive);
+    }
+    for (const pid of outstanding) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
     }
     expect(outstanding).toEqual([]);
   });
@@ -1263,14 +1312,12 @@ describe.concurrent("bun test --parallel", () => {
     // whether state carries over between files is observable.
     const args = ["--parallel=2", "--parallel-delay=1000000"];
     const [isolated, shared] = await Promise.all([run(dir, args), run(dir, [...args, "--no-isolate"])]);
-    const keep = /^(?:COUNT |\(pass\) )/;
+    const counts = (stderr: string) => [...stderr.matchAll(/^COUNT .*$/gm)].map(m => m[0]);
+    const results = { "a.test.ts": ["(pass) a"], "b.test.ts": ["(pass) b"], "c.test.ts": ["(pass) c"] };
 
     // Default (--isolate): every file starts from a fresh registry and global.
-    expect(resultsByFile(isolated.stderr, keep)).toEqual({
-      "a.test.ts": ["(pass) a", "COUNT 1 G a"],
-      "b.test.ts": ["(pass) b", "COUNT 1 G b"],
-      "c.test.ts": ["(pass) c", "COUNT 1 G c"],
-    });
+    expect(counts(isolated.stderr).sort()).toEqual(["COUNT 1 G a", "COUNT 1 G b", "COUNT 1 G c"]);
+    expect(resultsByFile(isolated.stderr)).toEqual(results);
     expect(summaryOf(isolated.stderr)).toMatchInlineSnapshot(`
       " 3 pass
        0 fail
@@ -1279,15 +1326,10 @@ describe.concurrent("bun test --parallel", () => {
     expect(isolated.exitCode).toBe(0);
 
     // --no-isolate: the counter keeps climbing across files (one registry) and
-    // every file sees the global the first one set, whichever file that was.
-    const counts = [...shared.stderr.matchAll(/^COUNT (\d) G (\w)$/gm)];
-    expect(counts.map(m => m[1])).toEqual(["1", "2", "3"]);
-    expect(new Set(counts.map(m => m[2])).size).toBe(1);
-    expect(resultsByFile(shared.stderr)).toEqual({
-      "a.test.ts": ["(pass) a"],
-      "b.test.ts": ["(pass) b"],
-      "c.test.ts": ["(pass) c"],
-    });
+    // every file sees the global set by whichever file the worker ran first.
+    const first = shared.stderr.match(/^COUNT 1 G (\w)$/m)?.[1];
+    expect(counts(shared.stderr)).toEqual([`COUNT 1 G ${first}`, `COUNT 2 G ${first}`, `COUNT 3 G ${first}`]);
+    expect(resultsByFile(shared.stderr)).toEqual(results);
     expect(summaryOf(shared.stderr)).toMatchInlineSnapshot(`
       " 3 pass
        0 fail
